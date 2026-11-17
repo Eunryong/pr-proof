@@ -61,16 +61,23 @@ def close_all(store: Store, github: GitHub, repo_name: str, pr_number: int) -> i
     return closed
 
 
-def blocked_by_history(store: Store, repo_name: str, pr_number: int, skill: str, head: str) -> str:
-    """같은 스킬의 제안을 다시 만들면 안 되는 이유. 괜찮으면 빈 문자열."""
+def blocked_by_history(
+    store: Store, repo_name: str, pr_number: int, skill: str, head: str
+) -> tuple[str, int | None]:
+    """같은 스킬의 제안을 다시 만들면 안 되는 이유와 그 제안 PR 번호. 괜찮으면 ("", None).
+
+    - merged: 제안을 머지해서 생긴 커밋. 다시 제안하면 루프가 된다
+    - rejected: 이 커밋의 제안을 사람이 닫았다
+    - open: 이 커밋의 제안이 이미 열려 있다. 다시 권하지 않고 그 PR을 가리킨다
+    """
     for p in store.proposals(repo_name, pr_number):
         if p.skill != skill:
             continue
         if p.state == "merged" and p.merge_commit == head:
-            return "merged"  # 제안을 머지해서 생긴 커밋. 다시 제안하면 루프가 된다
-        if p.state == "rejected" and p.head_sha == head:
-            return "rejected"
-    return ""
+            return "merged", p.number
+        if p.state in ("rejected", "open") and p.head_sha == head:
+            return p.state, p.number
+    return "", None
 
 
 def pipeline_secrets() -> list[str]:

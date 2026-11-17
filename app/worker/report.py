@@ -21,8 +21,9 @@ MAX_OUTPUT_CHARS: Final = 1500
 MAX_PATCH_CHARS: Final = 6000
 
 # 코멘트 node가 정하는 수정 제안 상태: 승인 대기, 승인 없이 바로 수정, 또는 제안하지 않는 이유
-# merged: 제안을 머지해 생긴 커밋, rejected: 이 커밋의 제안이 거절됨 (다시 제안하지 않음)
-Proposal = Literal["approval", "auto", "merged", "rejected"] | FixBlocker
+# merged: 제안을 머지해 생긴 커밋, rejected: 이 커밋의 제안이 거절됨 (다시 제안하지 않음),
+# open: 이 커밋의 제안이 이미 열려 있음 (다시 권하지 않고 그 PR을 가리킴)
+Proposal = Literal["approval", "auto", "merged", "rejected", "open"] | FixBlocker
 FIX_COMMAND: Final = "/fix lint"
 _FIX_STATUS_TEXT: Final[Mapping[str, str]] = {
     "nothing_fixed": "적용할 수 있는 수정이 없음",
@@ -137,11 +138,23 @@ def proposal_suffix(proposal: Proposal | None) -> str:
     return ""
 
 
-def proposal_details(proposal: Proposal | None, run: PytestRun) -> list[str]:
+def _pr_ref(number: int | None) -> str:
+    return f"(#{number})" if number is not None else ""
+
+
+def proposal_details(
+    proposal: Proposal | None, run: PytestRun, number: int | None = None
+) -> list[str]:
+    ref = _pr_ref(number)
     if proposal == "merged":
-        return ["", "이 커밋은 lint 제안 PR을 머지한 결과라 같은 제안을 다시 만들지 않습니다."]
+        return [
+            "",
+            f"이 커밋은 lint 제안 PR{ref}을 머지한 결과라 같은 제안을 다시 만들지 않습니다.",
+        ]
     if proposal == "rejected":
-        return ["", "이 커밋의 lint 제안 PR이 머지되지 않고 닫혀 다시 제안하지 않습니다."]
+        return ["", f"이 커밋의 lint 제안 PR{ref}이 머지되지 않고 닫혀 다시 제안하지 않습니다."]
+    if proposal == "open":
+        return ["", f"이 커밋의 lint 제안 PR{ref}이 열려 있습니다. 그 PR을 확인해 주세요."]
     if proposal == "tests":
         return [
             "",
@@ -150,7 +163,7 @@ def proposal_details(proposal: Proposal | None, run: PytestRun) -> list[str]:
     if proposal == "approval":
         return [
             "",
-            f"`{FIX_COMMAND}`을 코멘트로 달면 ruff의 안전한 수정 중 PR이 바꾼 줄의 것만 적용하고, "
+            f"`{FIX_COMMAND}`를 코멘트로 달면 ruff의 안전한 수정 중 PR이 바꾼 줄의 것만 적용하고, "
             "테스트로 확인한 뒤 수정안을 만듭니다.",
         ]
     return []
@@ -277,6 +290,7 @@ def render_result(
     proposal: Proposal | None = None,
     fix: FixOutcome | None = None,
     proposal_result: ProposalResult | None = None,
+    proposal_number: int | None = None,
     from_sync: bool = False,
 ) -> str:
     memory_gb = base.memory_gb if base else MEMORY_LIMIT_GB
@@ -284,7 +298,7 @@ def render_result(
     if fix is not None:
         extra = fix_section(fix, proposal_result)
     else:
-        extra = proposal_details(proposal, run)
+        extra = proposal_details(proposal, run, proposal_number)
     return _compose(
         format_test_line(run, memory_gb),
         format_test_details(run, memory_gb, max_memory_gb),

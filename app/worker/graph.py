@@ -171,27 +171,29 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
         run = tests_for(job)
         return {"test_run": run, **({"stopped": "cancelled"} if run.cancelled else {})}
 
-    def proposal_state(state: FlowState) -> report.Proposal:
+    def proposal_state(state: FlowState) -> tuple[report.Proposal, int | None]:
         blocker = fix_rules.lint_fix_blocker(state.get("lint"), state["test_run"])
         if blocker is not None:
-            return blocker
+            return blocker, None
         job = state["job"]
-        history = proposal.blocked_by_history(
+        history, number = proposal.blocked_by_history(
             ctx.store, job.repo, job.pr_number, "lint", job.head_sha
         )
         if history:
-            return history  # 제안을 머지해 생긴 커밋이거나, 이 커밋의 제안이 거절됐다
-        return "approval" if ctx.base.repo.skills.fix.require_approval else "auto"
+            return history, number  # 머지해 생긴 커밋, 거절된 제안, 이미 열린 제안
+        return ("approval" if ctx.base.repo.skills.fix.require_approval else "auto"), None
 
     def comment(state: FlowState) -> FlowState:
         job = state["job"]
+        state_, number = proposal_state(state)
         body = report.render_result(
             state["test_run"],
             job.head_sha,
             time.monotonic() - ctx.started,
             lint=state.get("lint"),
             base=ctx.base,
-            proposal=proposal_state(state),
+            proposal=state_,
+            proposal_number=number,
             from_sync=job.source == "sync",
         )
         ctx.comment_id = ctx.github.upsert_comment(job.repo, job.pr_number, body, ctx.comment_id)
@@ -200,7 +202,7 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
     def after_comment(state: FlowState) -> str:
         if ctx.store.is_stale(state["job"]):
             return END
-        match proposal_state(state):
+        match proposal_state(state)[0]:
             case "approval":
                 return AWAIT_FIX
             case "auto":

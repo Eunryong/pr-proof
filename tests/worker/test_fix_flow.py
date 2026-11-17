@@ -105,7 +105,8 @@ def test_second_fix_command_has_nothing_pending(fix_env) -> None:
     main.handle(_update(), fix_env["deps"])
     main.handle(_fix_command(77), fix_env["deps"])
     assert main.handle(_fix_command(78), fix_env["deps"]) == "no_pending_fix"
-    assert "승인을 기다리는 lint 수정이 없습니다" in _replies(fix_env["gh"])[-1]
+    # 이미 열린 제안이 있으면 일반 문구 대신 그 번호를 알려준다
+    assert "lint 제안 PR #900이 이미 열려 있습니다" in _replies(fix_env["gh"])[-1]
     assert fix_env["state"]["fix_calls"] == 1
 
 
@@ -123,7 +124,6 @@ def test_new_commit_invalidates_pending_fix(fix_env) -> None:
 
 def test_recheck_starts_a_fresh_checkpoint(fix_env) -> None:
     main.handle(_update(), fix_env["deps"])
-    main.handle(_fix_command(77), fix_env["deps"])
     main.handle(_fix_command(80, "/recheck"), fix_env["deps"])  # 같은 커밋을 다시 검사
     assert main.handle(_fix_command(81), fix_env["deps"]) == "fix:ready"  # 다시 기다리고 있었다
 
@@ -322,7 +322,7 @@ def test_merged_proposal_does_not_loop(fix_env) -> None:
     main.handle(update, fix_env["deps"])
     body = bodies(fix_env["gh"])[-1]
     assert "자동 수정 가능" not in body
-    assert "lint 제안 PR을 머지한 결과라 같은 제안을 다시 만들지 않습니다" in body
+    assert f"lint 제안 PR(#{number})을 머지한 결과라 같은 제안을 다시 만들지 않습니다" in body
     (record,) = fix_env["deps"].store.proposals("o/r", 1)
     assert (record.state, record.merge_commit) == ("merged", merge)
 
@@ -334,16 +334,31 @@ def test_rejected_proposal_is_not_offered_again_for_same_commit(fix_env) -> None
     main.handle(_fix_command(80, "/recheck"), fix_env["deps"])
     body = bodies(fix_env["gh"])[-1]
     assert "자동 수정 가능" not in body
-    assert "머지되지 않고 닫혀 다시 제안하지 않습니다" in body
+    assert f"lint 제안 PR(#{number})이 머지되지 않고 닫혀 다시 제안하지 않습니다" in body
     assert fix_env["deps"].store.proposals("o/r", 1)[0].state == "rejected"
 
 
-def test_second_fix_on_same_commit_updates_proposal(fix_env) -> None:
+def test_fix_after_rejection_names_the_closed_proposal(fix_env) -> None:
+    """/recheck 없이 제안을 닫고 바로 /fix를 달아도 답글에 닫힌 제안 번호가 나온다."""
+    _open_and_fix(fix_env)
+    (number,) = fix_env["gh"].pulls
+    fix_env["gh"].pulls[number]["state"] = "closed"
+    assert main.handle(_fix_command(80), fix_env["deps"]) == "no_pending_fix"
+    reply = _replies(fix_env["gh"])[-1]
+    assert f"lint 제안 PR #{number}이 머지되지 않고 닫혀 다시 제안하지 않습니다" in reply
+    assert len(fix_env["gh"].pulls) == 1
+
+
+def test_recheck_with_open_proposal_points_to_it(fix_env) -> None:
+    """같은 커밋에 열린 제안이 있으면 /fix를 다시 권하지 않고 그 PR을 가리킨다."""
     _open_and_fix(fix_env, 77)
+    (number,) = fix_env["gh"].pulls
     main.handle(_fix_command(80, "/recheck"), fix_env["deps"])
-    assert main.handle(_fix_command(81), fix_env["deps"]) == "fix:ready"
-    assert len(fix_env["gh"].pulls) == 1  # 같은 브랜치의 열린 제안을 갱신
-    assert "을 갱신했습니다." in bodies(fix_env["gh"])[-1]
+    body = bodies(fix_env["gh"])[-1]
+    assert "자동 수정 가능" not in body
+    assert f"lint 제안 PR(#{number})이 열려 있습니다" in body
+    assert main.handle(_fix_command(81), fix_env["deps"]) == "no_pending_fix"
+    assert len(fix_env["gh"].pulls) == 1
     assert len(fix_env["deps"].store.proposals("o/r", 1)) == 1
 
 
