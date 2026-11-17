@@ -172,7 +172,8 @@ F1–F8이 1–3단계(판정까지), F9–F11이 4–5단계(생성·수정·�
 - **테스트는 파이프라인이 직접 실행한다.** 이 프로젝트의 핵심이다. CI 결과를 가져다 쓰지 않고, 워커가 PR worktree에서 `.venv` + pytest로 테스트를 돌려 결과 JSON과 커버리지 파일을 남긴다. 이후의 모든 판정(diff-cover, 뮤테이션, 생성·수정 검증)이 이 실행 결과에서 나온다.
 - **실행 위치는 샌드박스 컨테이너다 (1단계부터).** worktree를 컨테이너의 `/work`에 마운트하고, 워커가 `docker exec`로 `/work/.venv/bin/pytest`를 실행한다. 명령과 산출물은 호스트에서 돌릴 때와 같고, PR 코드가 호스트 계정에서 실행되지 않는다는 점만 다르다.
 - **`.venv` 준비:** 의존성 파일(`requirements*.txt`, `pyproject.toml`, lock 파일)의 해시별로 `.venv`를 만들어 호스트 캐시에 두고 `/work/.venv`로 마운트한다. 해시가 같으면 다시 설치하지 않는다. 설치는 네트워크가 열린 별도 컨테이너에서, 테스트 실행은 네트워크가 막힌 컨테이너에서 한다.
-- **캐시 키:** 의존성 파일 해시 + 베이스 이미지 digest + Python 버전. `.venv`는 인터프리터 경로에 묶여 있어 이미지가 바뀌면 다시 만들어야 한다.
+- **캐시 키:** 의존성 파일 해시 + 베이스 이미지 digest + Python 버전 (+ 검사 도구 버전). `.venv`는 인터프리터 경로에 묶여 있어 이미지가 바뀌면 다시 만들어야 한다.
+- **1단계 구현:** 의존성 파일은 루트의 `requirements*.txt`와 `pyproject.toml`(`dependencies`와 모든 `optional-dependencies`, 프로젝트 자신은 제외)이다. lock 파일은 아직 쓰지 않는다. 검사 도구(`pytest-cov`, `pytest-json-report`)는 리포 의존성과 같은 `.venv`에 설치하고, pytest 버전은 리포가 고정한 것을 따른다. 설치 컨테이너에는 의존성 파일만 마운트하고, 임시 폴더에 만든 뒤 완료 표시와 함께 캐시 경로로 옮겨 설치 중 실패한 `.venv`가 캐시에 남지 않게 한다.
 - **`.venv`는 테스트 컨테이너에 읽기 전용(`:ro`)으로 마운트한다.** 여러 PR이 같은 `.venv`를 쓰므로, 쓰기가 가능하면 한 PR이 site-packages의 pytest를 바꿔 다른 PR과 AI 테스트 검증 결과를 조작할 수 있다. 쓰기 가능한 마운트는 설치 컨테이너에만 준다.
 - **`.venv`에는 의존성만 설치하고 대상 리포 자체는 설치하지 않는다.** 리포를 설치하면 같은 해시의 다른 PR이 남의 소스를 import한다. 테스트가 리포를 import할 수 있도록 실행할 때 `PYTHONPATH=/work`(src 구조면 `/work/src`)를 넘긴다.
 - **산출물:** `pytest --json-report`의 JSON과 커버리지 파일(`.coverage`, `coverage.xml`)을 worktree의 `.pipeline-out/`에 남긴다. `.venv`와 `.pipeline-out/`은 "허용 범위 밖 변경" 검사에서 제외한다.
@@ -183,7 +184,7 @@ F1–F8이 1–3단계(판정까지), F9–F11이 4–5단계(생성·수정·�
 ### F6. 테스트 품질 검사
 
 - **변경 라인 커버리지:** `diff-cover`로 PR에서 바뀐 줄 중 테스트가 지나가지 않은 줄을 찾는다. diff-cover는 PR 코드를 실행하지 않으므로 호스트에서 돌린다. 입력은 샌드박스가 남긴 `coverage.xml`과 호스트에서 만든 `changes.diff`다.
-- `coverage.xml`의 경로는 컨테이너 기준(`/work/...`)이 아니라 리포 기준 상대 경로여야 한다. coverage의 `relative_files = true`를 파이프라인 쪽 설정 파일에 두고 `--cov-config`로 넘긴다. 대상 리포에 자체 coverage 설정이 있으면 그 설정을 덮어쓰게 되므로, 그 경우의 처리(설정 병합 또는 호스트에서 경로 접두사 제거)는 1단계 구현에서 확인한다.
+- `coverage.xml`의 경로는 컨테이너 기준(`/work/...`)이 아니라 리포 기준 상대 경로여야 한다. coverage의 `relative_files = true`를 파이프라인 쪽 설정 파일에 두고 `--cov-config`로 넘긴다. 1단계 구현에서는 대상 리포의 coverage 설정을 쓰지 않고 파이프라인 설정(`sandbox/coveragerc`: `relative_files`, `source = .`, `.venv/` 제외)만 쓴다. 기본 `# pragma: no cover`는 그대로 동작한다. 리포 설정의 `omit`·`exclude_lines`를 반영할지는 협업 리포 검증 때 다시 본다.
 - **수상한 테스트 탐지 (정적 검사):** assert가 없거나 `assert True`인 테스트, 테스트 대상 자체를 mock한 테스트, 새로 skip 처리된 테스트, 같은 PR에서 assert를 지운 변경. 이 항목들은 ⚠️ 조건이다.
 - **기대값을 바꾼 변경은 판정에 넣지 않는다.** 기능을 의도적으로 바꾸며 테스트를 갱신하는 정상적인 PR과 구분할 수 없기 때문이다. 코멘트에 "리뷰어 확인 필요"로만 표시한다. assert 삭제는 ⚠️로 둔다. 바뀐 줄 뮤테이션으로는 삭제된 assert를 잡을 수 없다.
 
@@ -195,7 +196,7 @@ F1–F8이 1–3단계(판정까지), F9–F11이 4–5단계(생성·수정·�
 - PR당 뮤턴트 상한(기본 50개)과 뮤턴트별 타임아웃을 둔다.
 - 결과: 뮤테이션 점수(잡은 수 ÷ 전체)와 살아남은 뮤턴트 목록(파일, 줄, 바뀐 내용).
 - 뮤턴트 하나를 지정해 다시 실행할 수 있어야 한다. F9에서 AI 테스트가 목표 뮤턴트를 잡는지 확인하는 데 쓴다. `mutmut run <뮤턴트 이름>`으로 한다.
-- **0단계 스파이크 결과 (mutmut 3.8.1, `eval/repos/orders`):**
+- **0단계 스파이크 결과 (mutmut 3.8.1, 예제 리포 `orders`):**
   - 뮤턴트 지정 실행은 된다. 이름은 `모듈.x_함수__mutmut_N` 형식이고 glob(`모듈.x_함수*`)도 받는다. 지정하지 않은 뮤턴트는 `not checked`로 남는다.
   - "바뀐 줄만"은 기본 기능이 없다. 다음 순서로 구현한다: ① 매칭되지 않는 이름으로 `mutmut run`을 돌려 뮤턴트만 생성(실행 0개, 종료 코드 1) → ② `mutmut show <이름>`의 diff(함수 기준 줄 번호)와 AST의 함수 시작 줄로 뮤턴트의 실제 줄을 계산 → ③ `changes.diff`의 바뀐 줄에 해당하는 뮤턴트만 골라 상한(50개)까지 이름을 지정해 실행.
   - 결과는 `mutmut results --all true`와 `mutants/` 아래 `.meta` JSON(뮤턴트별 종료 코드), `mutmut export-cicd-stats`로 읽는다.
@@ -429,13 +430,15 @@ sync:
 
 ```bash
 docker run -d --name job-<id> --network none \
-  --memory 1g --cpus 1 --user "$(id -u):$(id -g)" -e HOME=/tmp \
+  --memory 1g --cpus 1 --pids-limit 256 --user "$(id -u):$(id -g)" -e HOME=/tmp \
   -v /tmp/pipeline/pr-<n>:/work -w /work \
   -v ~/.cache/pipeline/venvs/<cache-key>:/work/.venv:ro \
+  -v <pr-proof>/sandbox/coveragerc:/pipeline/coveragerc:ro \
   pipeline-sandbox sleep infinity
 docker exec -e PYTHONPATH=/work job-<id> timeout 600 .venv/bin/pytest \
+  -p no:cacheprovider \
   --json-report --json-report-file=.pipeline-out/report.json \
-  --cov --cov-config=<파이프라인 coverage 설정> \
+  --cov --cov-config=/pipeline/coveragerc \
   --cov-report=xml:.pipeline-out/coverage.xml
 docker rm -f job-<id>
 ```
@@ -516,7 +519,8 @@ claude -p "$PROMPT" \
 **파이프라인 자체의 평가 세트**
 
 - 작은 예제 리포에 버그를 일부러 넣은 케이스와 위반을 일부러 넣은 케이스(기존 구조에 없던 import 방향, 하드코딩 값, 컨벤션 위반)를 만든다. 넣은 것을 알기 때문에 정답이 있다.
-- 예제 리포는 파이프라인 리포의 `eval/` 안에 둔다. GitHub 없이 로컬에서 돌릴 수 있어야 한다. 구조 검증이 특정 패턴에 묶이지 않음을 보이기 위해 구조가 다른 예제를 둘 이상 둔다(예: 레이어별 폴더, 기능별 폴더).
+- 예제 리포는 파이프라인 리포와 분리한 별도 GitHub 리포에 둔다. 첫 예제는 `Eunryong/eval`(주문 금액 계산 `orders`)이고, 파이프라인의 첫 대상 리포로 등록해 실제 PR과 웹훅으로 각 단계를 확인한다. 파이프라인 자체의 통합 테스트는 이 리포를 클론해 쓴다. 파이프라인 리포(`pr-proof`) 자체는 대상으로 등록하지 않는다.
+- 구조 검증이 특정 패턴에 묶이지 않음을 보이기 위해 구조가 다른 예제를 둘 이상 둔다(예: 레이어별 폴더, 기능별 폴더). 예제를 늘릴 때는 리포를 추가한다.
 - 2단계에서 ❌ / ⚠️ / ✅ 케이스 3–5개로 시작해 판정 로직의 E2E 테스트로 쓰고, 7단계에서 20–30개로 늘린다.
 - 프롬프트, 모델, 라우팅 규칙을 바꿀 때마다 평가 세트를 돌리고, DB에 저장된 기준선과 비교한다. 처치율·해소율이나 비용이 기준선보다 나빠지면 변경을 채택하지 않는다.
 
@@ -586,7 +590,7 @@ pipeline/
 │   ├── ai/             # 모델 백엔드, 프롬프트, 라우팅
 │   ├── memory.py       # 기록 저장과 검색 (SQLite + Chroma)
 │   └── notify.py       # Slack
-├── eval/               # 예제 리포, 버그·위반 주입 케이스, 실행 스크립트
+├── eval/               # 버그·위반 주입 케이스, 실행 스크립트 (예제 리포는 별도 GitHub 리포, 2단계부터)
 ├── sandbox/Dockerfile  # 테스트 샌드박스 베이스 이미지
 ├── tests/              # 파이프라인 자체 테스트 (단위·통합·E2E)
 ├── docker-compose.yml  # redis, chroma
@@ -640,14 +644,14 @@ sync:   python -m app.sync
 
 각 단계는 동작하는 상태로 끝낸다. 완료 기준은 평가 세트의 예제 리포와 저장해 둔 웹훅 페이로드로 돌리는 자동 테스트다. 실제 협업 리포에서의 검증은 나중에 따로 한다.
 
-**자체 테스트:** 이 파이프라인의 리포(`pr-proof`)를 첫 대상 리포로 등록한다. 작업은 기능 단위 브랜치와 PR로 진행하고, 1단계가 동작한 뒤부터는 파이프라인이 자기 PR을 검사한다. 그 전에는 파이프라인 자체의 단위 테스트(`pytest`)로 확인한다.
+**검증 대상:** 첫 대상 리포는 예제 리포 `Eunryong/eval`이다. 파이프라인 작업은 기능 단위 브랜치와 PR로 진행하고, 파이프라인 자체의 단위·통합 테스트(`pytest`)로 확인한다. 파이프라인 리포는 자기 PR을 검사하지 않는다.
 
 ### 0단계. 준비
 
 - [x] 파이프라인 리포 생성, 디렉터리 구조·Procfile·docker-compose·pyproject 작성
 - [x] 스파이크: mutmut으로 바뀐 줄의 뮤턴트만 실행, 뮤턴트 하나를 지정해 재실행 (결과는 F7)
 - [x] 스파이크: claude CLI의 로그인 확인 명령, 경로 단위 권한 제한, 프로젝트 설정 차단 옵션 (결과는 보안·인증)
-- [x] `eval/`에 첫 예제 리포 `eval/repos/orders` (README에 구조 설명이 있고 폴더 구조가 일관된 작은 Python 프로젝트)
+- [x] 첫 예제 리포 `orders`를 별도 리포 `Eunryong/eval`로 분리 (README에 구조 설명이 있고 폴더 구조가 일관된 작은 Python 프로젝트)
 
 ### 1단계. 수신 → 샌드박스 테스트 → PR 코멘트, 동기화
 
@@ -655,13 +659,13 @@ sync:   python -m app.sync
 - [ ] `jobs.py` 작업 계약, RQ 워커 진입점, 작업 키 중복 방지
 - [ ] preflight: gh·claude 로그인, Docker, Redis 확인
 - [ ] bare clone 캐시 + worktree 생성·정리, 호스트에서 `changes.diff` 만들기
-- [ ] 샌드박스: 베이스 Dockerfile, 캐시 키(의존성 해시 + 이미지 digest + Python 버전)별 `.venv` 설치와 캐시, 테스트 컨테이너에는 `:ro` 마운트, `run_in_sandbox()`
+- [x] 샌드박스: 베이스 Dockerfile, 캐시 키(의존성 해시 + 이미지 digest + Python 버전)별 `.venv` 설치와 캐시, 테스트 컨테이너에는 `:ro` 마운트, `run_in_sandbox()`
 - [ ] LangGraph 직선 그래프(체크아웃 → 테스트 → 코멘트). 체크포인터 없이 시작
-- [ ] worktree에서 `.venv` + pytest 직접 실행 (샌드박스 안), 결과 JSON과 커버리지 파일 남기기
+- [x] worktree에서 `.venv` + pytest 직접 실행 (샌드박스 안), 결과 JSON과 커버리지 파일 남기기
 - [ ] PR 코멘트 하나 달고 진행하면서 수정하기
 - [ ] SQLite `runs`에 결과·상태·생존 확인 시각 저장
 - [ ] sync: 열린 PR의 head 비교, 닫힌 PR 처리, 죽은 작업 재등록
-- [ ] 최신 커밋 확인과 정리: 단계 사이, 그리고 `run_in_sandbox()` 실행 중 10초 간격
+- [ ] 최신 커밋 확인과 정리: 단계 사이, 그리고 `run_in_sandbox()` 실행 중 10초 간격 (실행 중 확인과 컨테이너 정리는 구현. Redis 최신 head 연결과 단계 사이 확인이 남음)
 
 ### 2단계. 테스트 품질 판정
 

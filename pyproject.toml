@@ -27,11 +27,11 @@ include = ["app*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["docker: Docker가 필요한 통합 테스트 (없으면 건너뛴다)"]
 
 [tool.ruff]
 target-version = "py311"
 line-length = 100
-extend-exclude = ["eval/repos"]
 
 [tool.ruff.format]
 exclude = ["*.md"]

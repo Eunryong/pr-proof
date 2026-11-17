@@ -1,0 +1,10 @@
+# 샌드박스 pytest에 --cov-config로 넘기는 파이프라인 쪽 coverage 설정.
+# coverage.xml의 경로를 컨테이너 기준(/work/...)이 아니라 리포 기준 상대 경로로 남긴다.
+# 대상 리포의 coverage 설정은 쓰지 않는다 (docs/DESIGN.md F6).
+[run]
+relative_files = True
+source = .
+omit =
+    .venv/*
+    .pipeline-out/*
+data_file = .pipeline-out/.coverage
