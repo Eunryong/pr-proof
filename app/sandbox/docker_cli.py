@@ -70,6 +70,22 @@ def ensure_image(tag: str = IMAGE) -> Image:
     return Image(id=info["Id"], python_version=env.get("PYTHON_VERSION", "unknown"))
 
 
+def container_running(name: str) -> bool:
+    """컨테이너가 살아 있는지. docker에 닿지 않아도 False."""
+    try:
+        proc = subprocess.run(
+            ["docker", "inspect", "-f", "{{.State.Running}}", name],
+            capture_output=True,
+            text=True,
+            env=minimal_env(),
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return proc.returncode == 0 and proc.stdout.strip() == "true"
+
+
 def remove_container(name: str) -> None:
     """컨테이너를 지운다. 이미 없어도 오류로 보지 않는다."""
     subprocess.run(

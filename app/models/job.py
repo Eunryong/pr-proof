@@ -1,4 +1,4 @@
-"""api·sync와 worker 사이의 작업 계약. 프로세스 사이에는 이 모델만 넘긴다."""
+"""웹(웹훅·동기화)과 워커 사이의 작업 계약. 프로세스 사이에는 이 모델만 넘긴다."""
 
 from typing import Literal
 
@@ -11,7 +11,7 @@ class PRJob(BaseModel):
     kind: Literal["update", "command", "close"]
     head_sha: str | None = None  # issue_comment 웹훅에는 없다. 없으면 워커가 조회한다
     base_sha: str | None = None
-    command: str | None = None  # "/recheck", "/mutate", "/generate-tests", "/fix lint" ...
+    command: str | None = None  # "/recheck", "/fix lint" 등. 값 검증과 꺼진 확장 안내는 워커가 한다
     comment_id: int | None = None  # 명령의 코멘트 ID
     source: Literal["webhook", "sync"]
     delivery_id: str | None = None  # 웹훅으로 온 작업에만 있다

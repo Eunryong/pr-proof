@@ -6,11 +6,13 @@ from pathlib import Path
 from typing import Final
 
 from app.models.test_run import PytestRun, ReportSummary
+from app.sandbox import docker_cli
 from app.sandbox.container import (
     DEFAULT_TIMEOUT,
     OUT_DIR,
     PIPELINE_DIR,
     POLL_SECONDS,
+    ExecResult,
     run_in_sandbox,
 )
 
@@ -19,6 +21,8 @@ COVERAGE_XML: Final = f"{OUT_DIR}/coverage.xml"
 # coverage.xml 경로를 리포 기준 상대 경로로 남기는 파이프라인 쪽 설정 (docker/sandbox/coveragerc)
 COVERAGERC: Final = f"{PIPELINE_DIR}/coveragerc"
 MAX_OUTPUT_CHARS: Final = 4000
+# docker exec 자체가 실패한 종료 코드: 125 docker 오류, 126 실행 불가, 127 명령 없음(.venv 손상)
+DOCKER_EXEC_FAILED: Final = frozenset({125, 126, 127})
 
 
 def pythonpath_for(worktree: Path) -> str:
@@ -69,6 +73,7 @@ def run_tests(
         poll_seconds=poll_seconds,
     )
     summary = read_summary(report)
+    _raise_if_environment_failed(container, result, has_report=summary is not None)
     return PytestRun(
         exit_code=result.returncode,
         summary=summary,
@@ -78,3 +83,20 @@ def run_tests(
         cancelled=result.cancelled,
         output=(result.stdout + result.stderr)[-MAX_OUTPUT_CHARS:],
     )
+
+
+def _raise_if_environment_failed(container: str, result: ExecResult, *, has_report: bool) -> None:
+    """PR 코드 탓이 아닌 실패를 SandboxError(환경 오류)로 올린다.
+
+    docker exec 자체가 실패했거나, 결과 파일이 없는데 컨테이너가 이미 죽어 있으면 환경 오류다.
+    컨테이너가 살아 있는데 결과가 없으면 PR 코드 문제(unrunnable)로 둔다.
+    """
+    returncode = result.returncode
+    if result.cancelled or result.timed_out or returncode is None:
+        return
+    if returncode in DOCKER_EXEC_FAILED:
+        raise docker_cli.SandboxError(
+            f"docker exec 실패 ({returncode}): {result.stderr.strip()[-500:]}"
+        )
+    if not has_report and returncode != 0 and not docker_cli.container_running(container):
+        raise docker_cli.SandboxError(f"컨테이너 {container}가 실행 중이 아니다 ({returncode})")

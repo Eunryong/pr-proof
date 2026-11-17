@@ -49,11 +49,42 @@ SUMMARY: Final = ReportSummary(passed=1, total=1)
         (PytestRun(exit_code=5, summary=ReportSummary()), "no_tests"),
         (PytestRun(exit_code=124, summary=None, timed_out=True), "timeout"),
         (PytestRun(exit_code=None, summary=None, cancelled=True), "cancelled"),
-        (PytestRun(exit_code=0, summary=None), "error"),  # 결과 파일 없음
-        (PytestRun(exit_code=1, summary=None), "error"),
-        (PytestRun(exit_code=4, summary=SUMMARY), "error"),  # 사용법 오류
+        (PytestRun(exit_code=0, summary=None), "unrunnable"),  # 결과 파일 없음
+        (PytestRun(exit_code=1, summary=None), "unrunnable"),
+        (PytestRun(exit_code=4, summary=SUMMARY), "unrunnable"),  # 사용법 오류
+        (PytestRun(exit_code=137, summary=None), "unrunnable"),  # OOM
     ],
 )
 def test_status(run: PytestRun, status: str) -> None:
     assert run.status == status
     assert run.ok is (status == "passed")
+
+
+@pytest.mark.parametrize(
+    ("run", "reason"),
+    [
+        (PytestRun(exit_code=137, summary=None), "메모리 한도를 넘어 종료됨"),
+        (PytestRun(exit_code=3, summary=SUMMARY), "pytest 내부 오류"),
+        (PytestRun(exit_code=4, summary=None), "pytest 설정·인자 오류"),
+        (PytestRun(exit_code=1, summary=None), "결과 파일 없음 (conftest 등 수집 전 오류)"),
+        (PytestRun(exit_code=0, summary=SUMMARY), None),  # 실행 불가가 아님
+    ],
+)
+def test_unrunnable_reason(run: PytestRun, reason: str | None) -> None:
+    assert run.unrunnable_reason == reason
+
+
+@pytest.mark.parametrize(
+    ("run", "lint", "code"),
+    [
+        (PytestRun(exit_code=0, summary=SUMMARY), True, True),
+        (PytestRun(exit_code=5, summary=ReportSummary()), True, False),  # 안전망 없음
+        (PytestRun(exit_code=1, summary=SUMMARY), False, False),
+        (PytestRun(exit_code=124, summary=None, timed_out=True), False, False),
+        (PytestRun(exit_code=4, summary=None), False, False),
+        (PytestRun(exit_code=None, summary=None, cancelled=True), False, False),
+    ],
+    ids=["passed", "no_tests", "failed", "timeout", "unrunnable", "cancelled"],
+)
+def test_fix_permissions_follow_safety_net(run: PytestRun, lint: bool, code: bool) -> None:
+    assert (run.allows_lint_fix, run.allows_code_fix) == (lint, code)

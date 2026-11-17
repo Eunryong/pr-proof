@@ -95,3 +95,16 @@ def test_install_failure_is_environment_error(worktree: Path, image: Image, tmp_
     with pytest.raises(SandboxError):
         venv.ensure_venv(worktree, image, cache_dir=cache)
     assert list(cache.iterdir()) == []
+
+
+def test_broken_conftest_is_unrunnable_not_environment_error(job: str, worktree: Path) -> None:
+    (worktree / "conftest.py").write_text("raise RuntimeError('broken conftest')\n")
+    run = pytest_runner.run_tests(job, worktree)
+    assert run.status == "unrunnable"
+    assert "broken conftest" in run.output
+
+
+def test_container_gone_is_environment_error(job: str, worktree: Path) -> None:
+    docker_cli.remove_container(job)
+    with pytest.raises(SandboxError):
+        pytest_runner.run_tests(job, worktree)
