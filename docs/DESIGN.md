@@ -288,7 +288,7 @@ SKILLS = {"lint": run_lint, "static": run_static, "structure": run_structure}
 
   네트워크가 끊기면 pip이 `Could not find a version`도 함께 출력하므로 네트워크 표지를 먼저 본다. 설치 컨테이너 자체가 실패하면(종료 코드 125·126·127) pip 출력과 무관하게 환경 오류다. 연속 실패 횟수는 같은 작업의 재시도 번호(RQ 재시도)로 센다. 환경 오류는 정해진 간격(60초, 5분, 15분)으로 3회까지 다시 시도하고, 마지막 시도에서도 실패하면 코멘트를 "환경 문제로 검사하지 못함 (다음 커밋에서 다시 검사합니다)"로 바꾼다.
 - **종료 코드 137 (SIGKILL):** 먼저 취소와 시간 초과인지 본다. 그때는 파이프라인이 컨테이너를 지워서 137이 나올 수 있다. 둘 다 아닐 때만 메모리 한도 초과로 분류한다. 메모리 한도로 컨테이너 자체가 죽은 경우(docker inspect의 `OOMKilled`)도 환경 오류가 아니라 메모리 초과(`unrunnable`)다.
-- **메모리 초과 안내:** 코멘트에 "실행 불가 (메모리 한도 1GB를 넘어 종료됨)"과 "메모리 한도는 1GB입니다 (현재 고정)"을 넣는다. 2단계에서 설정을 연결하면 "base 브랜치의 `.pipeline.yaml`에서 `sandbox.memory_gb`로 늘릴 수 있다"는 안내로 바꾼다. 늘릴 수 있는 상한은 파이프라인 쪽 설정(`sandbox.max_memory_gb`)이 정한다. 설정은 base 브랜치에서 읽으므로 PR이 자기 한도를 올릴 수 없다.
+- **메모리 초과 안내:** 코멘트에 "실행 불가 (메모리 한도 1GB를 넘어 종료됨)"과 "base 브랜치의 `.pipeline.yaml`에서 `sandbox.memory_gb`로 4GB까지 늘릴 수 있습니다"를 넣는다. 이미 상한이면 늘릴 수 있다는 말 대신 상한임을 적는다. `.pipeline.yaml`을 읽지 못하면 기본값(1GB)으로 검사하고 이유를 코멘트의 "설정:"에 적는다. 늘릴 수 있는 상한은 파이프라인 쪽 설정(`sandbox.max_memory_gb`)이 정한다. 설정은 base 브랜치에서 읽으므로 PR이 자기 한도를 올릴 수 없다.
 - **위반 줄의 커버리지:** 샌드박스가 남긴 `coverage.xml`로 위반 줄이 테스트로 실행되는지 본다. 실행되지 않는 줄의 위반은 "테스트가 지나가지 않아 자동 수정 대상 아님"으로 표시하고 알리기만 한다. 고친 뒤 테스트가 통과해도 그 줄의 동작을 확인한 것이 아니기 때문이다.
 - PR 전체의 변경 라인 커버리지(`diff-cover`)는 참고 지표로 코멘트에 적는다. diff-cover는 PR 코드를 실행하지 않으므로 호스트에서 돌린다. 입력은 샌드박스가 남긴 `coverage.xml`과 호스트에서 만든 `changes.diff`다.
 - `coverage.xml`의 경로는 컨테이너 기준(`/work/...`)이 아니라 리포 기준 상대 경로여야 한다. coverage의 `relative_files = true`를 파이프라인 쪽 설정 파일에 두고 `--cov-config`로 넘긴다. 1단계 구현에서는 대상 리포의 coverage 설정을 쓰지 않고 파이프라인 설정(`docker/sandbox/coveragerc`: `relative_files`, `source = .`, `.venv/` 제외)만 쓴다. 기본 `# pragma: no cover`는 그대로 동작한다. 리포 설정의 `omit`·`exclude_lines`를 반영할지는 협업 리포 검증 때 다시 본다.
@@ -641,6 +641,9 @@ pipeline/
 │   ├── models/                  # 웹·워커 공용 데이터
 │   │   ├── job.py               # PRJob: 작업 데이터 계약, 작업 키
 │   │   ├── test_run.py          # PytestRun, ReportSummary, 실행 상태
+│   │   ├── diff.py              # changes.diff에서 바뀐 줄 읽기
+│   │   ├── finding.py           # Finding, SkillResult
+│   │   ├── repo_config.py       # 대상 리포 .pipeline.yaml 스키마
 │   │   ├── state_keys.py        # Redis 키 형식 (최신 head, 작업 키)
 │   │   └── db.py                # SQLModel 테이블 정의
 │   ├── controllers/             # 웹
@@ -655,12 +658,13 @@ pipeline/
 │   │   └── responses.py         # API 응답
 │   ├── worker/                  # 워커
 │   │   ├── main.py              # 진입점: RQ 워커, preflight
-│   │   ├── graph.py             # 작업 흐름: LangGraph 노드와 분기 (지금은 run_pr_tests())
+│   │   ├── graph.py             # 작업 흐름: LangGraph 노드와 분기 (체크아웃 → 규칙 검사 → 테스트 → 코멘트)
 │   │   ├── report.py            # PR 코멘트 마크다운 (결과, 위반과 출처, 수정 제안, 테스트, 비용)
 │   │   ├── state.py             # 처리 기록·생존 확인 쓰기 (SQLite), 최신 head 확인 (Redis)
 │   │   ├── repo.py              # bare clone 캐시, worktree, changes.diff (git, 호스트)
 │   │   ├── github.py            # GitHub 쓰기: post_comment, update_comment, open_pr (gh CLI)
-│   │   ├── skills/              # lint, static, structure: 검출과 수정
+│   │   ├── base_config.py       # base 브랜치의 .pipeline.yaml·ruff 설정 읽기
+│   │   ├── skills/              # lint(ruff, 바뀐 줄만), static, structure: 검출과 수정
 │   │   ├── safety.py            # 안전망: 위반 줄 커버리지, diff-cover
 │   │   ├── extensions/          # 선택 확장: suspicious, mutation, ai_tests (7단계)
 │   │   ├── rules.py             # 구조 규칙 읽기: README 변환, import 그래프, 이름 패턴
@@ -671,7 +675,8 @@ pipeline/
 │       ├── docker_cli.py        # docker 호출, 최소 환경, 자원 제한, 베이스 이미지, SandboxError
 │       ├── venv.py              # 의존성 파일, 캐시 키, .venv 설치와 캐시
 │       ├── container.py         # 작업 컨테이너 띄우기, run_in_sandbox() (취소·타임아웃)
-│       └── pytest_runner.py     # pytest 실행, report.json·coverage.xml 읽기
+│       ├── pytest_runner.py     # pytest 실행, report.json·coverage.xml 읽기
+│       └── ruff_runner.py       # ruff check 실행, JSON 결과 읽기
 ├── docker/sandbox/              # 샌드박스 베이스 이미지(Dockerfile), coverage 설정
 ├── eval/                        # 위반 주입 케이스, 실행 스크립트 (예제 리포는 별도 GitHub 리포, 2단계부터)
 ├── tests/                       # 파이프라인 자체 테스트. app/과 같은 폴더로 나눈다
@@ -751,10 +756,11 @@ worker: python -m app.worker.main
 
 메인 흐름(검출 → 승인 → 수정 → 검증 → 제안 PR)을 가장 단순한 스킬로 처음부터 끝까지 완성한다.
 
-- [ ] `.pipeline.yaml`·도구 설정 파일을 base 브랜치에서 읽기, `sandbox.memory_gb`(상한 `max_memory_gb`)를 설치·작업 컨테이너에 적용하고 메모리 초과 코멘트에 설정 안내 추가
+- [x] `.pipeline.yaml`·도구 설정 파일을 base 브랜치에서 읽기, `sandbox.memory_gb`(상한 `max_memory_gb`)를 설치·작업 컨테이너에 적용하고 메모리 초과 코멘트에 설정 안내 추가
 - [x] 의존성 설치 실패 처리: 원인 분류에 따라 실행 불가·환경 오류, 판단 불가는 재시도 번호로 (1단계에서 처리)
-- [ ] `Finding` 인터페이스, ruff로 바뀐 줄의 위반 검출 (`changes.diff`)
-- [ ] PR 코멘트: "테스트:" 줄과 "규칙:" 줄(⚠️/✅), 위반 목록과 출처, 제안 명령
+- [x] `Finding` 인터페이스, ruff로 바뀐 줄의 위반 검출 (`changes.diff`). ruff는 베이스 이미지에 넣고 `.venv` 없는 컨테이너에서 설치보다 먼저 돌린다 (설치가 실패해도 규칙 결과를 보여줌)
+- [x] PR 코멘트: "테스트:" 줄과 "규칙:" 줄(⚠️/✅, 검사하지 못하면 기호 없이 글자), 위반 목록과 출처
+- [ ] PR 코멘트의 제안 명령 (`/fix lint`): 명령 처리와 함께
 - [ ] 명령 처리: `/recheck`, `/fix lint`, 꺼진 확장 명령에는 "꺼져 있음" 코멘트
 - [ ] SqliteSaver 체크포인트, thread_id `repo#pr#head_sha`, `/fix lint` interrupt·재개 (재개 시 worktree 다시 만들기)
 - [ ] 수정: `ruff check --fix`(안전한 수정만), 조건부 `ruff format` → 샌드박스 테스트 재실행 → 위반 0 확인

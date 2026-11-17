@@ -36,7 +36,7 @@ BACKLOG.md 형식:
 
 ## 현재 단계
 
-- 0단계 완료. 1단계 (수신 → 체크아웃 → 샌드박스 테스트 → PR 코멘트, PR 상태 동기화) 체크리스트 완료, PR 머지 후 2단계 시작. 이후 2단계 lint → 3단계 static → 4단계 structure 순서다. 뮤테이션·AI 테스트 생성은 7단계 선택 확장이다. 완료하면 `docs/DESIGN.md`의 체크리스트를 갱신한다.
+- 0단계 완료. 1단계 (수신 → 체크아웃 → 샌드박스 테스트 → PR 코멘트, PR 상태 동기화) 체크리스트 완료. 2단계 진행 중 (설정 읽기·lint 검출·규칙 줄 완료, 다음은 명령 처리와 `/fix lint`). 이후 2단계 lint → 3단계 static → 4단계 structure 순서다. 뮤테이션·AI 테스트 생성은 7단계 선택 확장이다. 완료하면 `docs/DESIGN.md`의 체크리스트를 갱신한다.
 - 작업은 기능 단위 브랜치와 PR로 진행한다.
 - 첫 대상 리포는 별도 예제 리포 `Eunryong/eval`이다. 이 리포(`pr-proof`)는 자기 PR을 검사하지 않는다.
 - 실제 협업 리포 검증은 나중에 한다. 각 단계는 예제 리포와 저장해 둔 웹훅 페이로드로 검증한다.
@@ -62,7 +62,7 @@ pytest -m docker      # 실제 Docker·예제 리포가 필요한 통합 테스�
 - `app/models/`: 웹·워커 공용 데이터. 외부 호출 없음
 - `app/controllers/`, `app/services/`, `app/views/`: 웹 쪽 MVC (webhook, sync). GitHub은 조회만 한다
 - `app/worker/`: 워커 진입점, 작업 흐름(LangGraph), PR 코멘트, 처리 기록 쓰기, GitHub 쓰기
-- `app/sandbox/`: 워커가 쓰는 docker 도구 (`docker_cli`, `venv`, `container`, `pytest_runner`)
+- `app/sandbox/`: 워커가 쓰는 docker 도구 (`docker_cli`, `venv`, `container`, `pytest_runner`, `ruff_runner`)
 - 웹 쪽은 `worker/`·`sandbox/`를, 워커는 웹 쪽을 import하지 않는다. `tests/test_layers.py`가 검사한다
 - 테스트는 `tests/` 아래 같은 이름의 폴더에 둔다
 

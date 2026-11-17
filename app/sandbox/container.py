@@ -42,19 +42,26 @@ class ExecResult:
 
 @contextmanager
 def running(
-    worktree: Path, venv: Path, *, job_id: str | None = None, tag: str = docker_cli.IMAGE
+    worktree: Path,
+    venv: Path | None,
+    *,
+    job_id: str | None = None,
+    memory_gb: float = docker_cli.MEMORY_LIMIT_GB,
+    tag: str = docker_cli.IMAGE,
 ) -> Iterator[str]:
     """작업 컨테이너를 띄우고 이름을 돌려준다. 블록을 나가면 지운다.
 
     네트워크 없음, 자원 제한, 호스트 UID·GID. .venv와 파이프라인 설정은 읽기 전용.
+    venv가 None이면 .venv 없이 띄운다 (이미지에 든 ruff만 쓰는 규칙 검사).
     """
     name = f"job-{job_id or uuid.uuid4().hex[:12]}"
     (worktree / OUT_DIR).mkdir(exist_ok=True)
+    venv_mount = ("-v", f"{venv.resolve()}:{VENV_IN_CONTAINER}:ro") if venv is not None else ()
     docker_cli.run(
-        "run", "-d", "--name", name, "--network", "none", *docker_cli.LIMITS,
+        "run", "-d", "--name", name, "--network", "none", *docker_cli.limits(memory_gb),
         "--user", docker_cli.user(), "-e", "HOME=/tmp",
         "-v", f"{worktree.resolve()}:{WORKDIR}", "-w", WORKDIR,
-        "-v", f"{venv.resolve()}:{VENV_IN_CONTAINER}:ro",
+        *venv_mount,
         "-v", f"{docker_cli.IMAGE_DIR}:{PIPELINE_DIR}:ro",
         tag, "sleep", "infinity",
     )  # fmt: skip

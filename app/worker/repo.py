@@ -86,6 +86,16 @@ def fetch_pr(bare: Path, pr_number: int, base_sha: str) -> None:
     )  # fmt: skip
 
 
+def read_base_files(worktree: Path, base_sha: str, names: tuple[str, ...]) -> dict[str, str]:
+    """base 커밋의 리포 최상위 파일 중 있는 것만 {이름: 내용}으로 읽는다.
+
+    설정과 규칙은 PR head가 아니라 base에서 읽는다 (PR이 자기 검사 기준을 바꾸지 못하게).
+    """
+    listed = _git("ls-tree", "--name-only", "-z", base_sha, "--", *names, cwd=worktree)
+    present = [name for name in listed.split("\0") if name in names]
+    return {name: _git("show", f"{base_sha}:{name}", cwd=worktree) for name in present}
+
+
 def write_changes_diff(worktree: Path, base_sha: str, head_sha: str) -> Path:
     out = worktree / CHANGES_DIFF
     out.parent.mkdir(exist_ok=True)

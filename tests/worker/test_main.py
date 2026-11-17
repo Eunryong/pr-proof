@@ -10,19 +10,29 @@ import pytest
 
 from app import config
 from app.models import state_keys
+from app.models.finding import Finding, SkillResult
 from app.models.job import PRJob
+from app.models.repo_config import RepoConfig
 from app.models.test_run import PytestRun, ReportSummary
 from app.sandbox.docker_cli import SandboxError
 from app.sandbox.venv import DependencyInstallError
-from app.worker import graph, main, repo
+from app.worker import base_config, graph, main, repo
+from app.worker.base_config import BaseConfig
 from app.worker.github import GitHub
 from app.worker.repo import Checkout
+from app.worker.skills import lint
 from app.worker.state import Store
 
 from .test_github import FakeGh
 
 HEAD: Final = "a" * 40
 PASSED: Final = PytestRun(exit_code=0, summary=ReportSummary(passed=9, total=9))
+BASE: Final = BaseConfig(
+    repo=RepoConfig(), memory_gb=2, max_memory_gb=4, ruff_config=None, ruff_source="기본 규칙"
+)
+VIOLATION: Final = Finding(
+    file="a.py", line=1, severity="error", message="m", skill="lint", source="x", code="F401"
+)
 
 
 @pytest.fixture
@@ -42,6 +52,10 @@ def env(tmp_path: Path, monkeypatch):
         yield Checkout(path=path, head_sha=head_sha, base_sha=base_sha)
 
     monkeypatch.setattr(repo, "checkout", fake_checkout)
+    monkeypatch.setattr(base_config, "load", lambda *a, **k: BASE)
+    monkeypatch.setattr(
+        lint, "run_lint", lambda *a, **k: SkillResult(skill="lint", findings=(VIOLATION,))
+    )
     redis.set(state_keys.latest_head("o/r", 1), HEAD)
     return {"deps": deps, "gh": gh, "redis": redis, "monkeypatch": monkeypatch}
 
@@ -66,10 +80,12 @@ def test_passed_run_posts_progress_then_result(env) -> None:
     _runner(env, lambda *a, **k: PASSED)
     assert main.handle(_payload(), env["deps"]) == "passed"
     bodies = _bodies(env["gh"])
-    assert "진행 중 (체크아웃)" in bodies[0] and "진행 중 (테스트 실행)" in bodies[1]
+    assert "진행 중 (체크아웃)" in bodies[0]
+    assert "진행 중 (규칙 검사)" in bodies[1] and "진행 중 (테스트 실행)" in bodies[2]
     assert "**테스트:** 통과 (9개)" in bodies[-1]
+    assert "**규칙:** ⚠️ 위반 1건 (lint 1)" in bodies[-1]
     # 첫 코멘트 뒤에는 같은 코멘트를 고친다
-    assert env["gh"].kinds() == ["find", "create", "patch", "patch"]
+    assert env["gh"].kinds() == ["find", "create", "patch", "patch", "patch"]
     assert env["deps"].store.last_comment_id("o/r", 1) == 555
 
 
@@ -130,7 +146,27 @@ def test_resolution_failure_is_unrunnable_at_once(env) -> None:
 
     _runner(env, no_package)
     assert main.handle(_payload(), env["deps"]) == "unrunnable"
-    assert "실행 불가 (의존성을 설치하지 못함)" in _bodies(env["gh"])[-1]
+    body = _bodies(env["gh"])[-1]
+    assert "실행 불가 (의존성을 설치하지 못함)" in body
+    assert "**규칙:** ⚠️ 위반 1건" in body  # 규칙 검사는 설치와 따로 돈다
+
+
+def test_tests_get_repo_memory_limit(env) -> None:
+    seen = {}
+
+    def runner(*args, **kwargs):
+        seen.update(kwargs)
+        return PASSED
+
+    _runner(env, runner)
+    main.handle(_payload(), env["deps"])
+    assert seen["memory_gb"] == BASE.memory_gb
+
+
+def test_commit_that_goes_stale_during_lint_stops(env) -> None:
+    env["monkeypatch"].setattr(lint, "run_lint", lambda *a, **k: None)  # 취소됨
+    _runner(env, lambda *a, **k: pytest.fail("테스트까지 가면 안 된다"))
+    assert main.handle(_payload(), env["deps"]) == "stale"
 
 
 @pytest.mark.parametrize(("attempt", "unrunnable"), [(1, False), (2, True)])

@@ -14,9 +14,9 @@ IMAGE: Final = "pipeline-sandbox"
 # 베이스 이미지 Dockerfile과 컨테이너에 읽기 전용으로 넣는 파이프라인 설정(coveragerc)
 IMAGE_DIR: Final = Path(__file__).resolve().parents[2] / "docker" / "sandbox"
 
-# 설치·작업 컨테이너 공통 자원 제한. 메모리는 PR 코멘트 안내에도 쓴다
-MEMORY_LIMIT_GB: Final = 1
-LIMITS: Final = ("--memory", f"{MEMORY_LIMIT_GB}g", "--cpus", "1", "--pids-limit", "256")
+# 설치·작업 컨테이너 공통 자원 제한. 메모리는 대상 리포의 sandbox.memory_gb로 바꿀 수 있다
+MEMORY_LIMIT_GB: Final = 1.0
+_FIXED_LIMITS: Final = ("--cpus", "1", "--pids-limit", "256")
 # docker 자체가 실패한 종료 코드: 125 docker 오류, 126 실행 불가, 127 명령 없음
 DOCKER_FAILED: Final = frozenset({125, 126, 127})
 
@@ -33,6 +33,11 @@ class Image:
 
     id: str
     python_version: str
+
+
+def limits(memory_gb: float = MEMORY_LIMIT_GB) -> tuple[str, ...]:
+    """자원 제한 인자. 메모리는 MB 정수로 넘긴다 (1.5GB 같은 소수 한도)."""
+    return ("--memory", f"{int(memory_gb * 1024)}m", *_FIXED_LIMITS)
 
 
 def minimal_env() -> dict[str, str]:
