@@ -5,7 +5,7 @@
 ## 지켜야 할 원칙
 
 - 판정(통과·실패, 점수)은 결정적 도구(pytest, diff-cover, mutmut 등)만 낸다. AI 호출 결과로 판정하지 않는다.
-- api(FastAPI), sync, worker는 메모리를 공유하지 않는다. 넘길 값은 `app/models/job.py`의 `PRJob`으로만, 상태는 Redis(임시)·SQLite(영구)에 둔다.
+- 웹(api)과 worker는 메모리를 공유하지 않는다. 넘길 값은 `app/models/job.py`의 `PRJob`으로만, 상태는 Redis(임시)·SQLite(영구)에 둔다.
 - PR에서 온 코드와 AI가 쓴 코드는 Docker 샌드박스에서만 실행한다. 호스트에서 대상 리포의 pytest를 돌리지 않는다.
 - 대상 리포의 설정과 규칙은 PR head가 아니라 base 브랜치에서 읽는다.
 - 비밀값은 코드·환경변수에 넣지 않는다. `app/config.py`의 파일 읽기 함수로만 접근한다.
@@ -23,7 +23,7 @@
 
 ```
 docker compose up -d  # redis
-honcho start          # api, worker, sync
+honcho start          # api(웹훅 + 동기화 루프), worker
 pytest                # 파이프라인 자체 테스트
 ```
 
@@ -31,11 +31,14 @@ pytest                # 파이프라인 자체 테스트
 
 ## 코드 구조
 
-- `app/models/`: api와 워커가 같이 쓰는 데이터. 외부 호출 없음
-- `app/controllers/`, `app/services/`, `app/views/`: 웹(api) 쪽 MVC. 웹훅을 받아 큐에 넣기만 한다
-- `app/worker/`: 워커 진입점, 작업 흐름(LangGraph), PR 코멘트, 워커가 쓰는 git·gh 도구
+- 웹(api)은 GitHub 변화를 감지해 `PRJob`을 큐에 넣기만 한다. 감지 방법은 웹훅과 동기화(api 안의 주기 루프) 두 가지다
+- 워커는 큐에서 작업을 꺼내 처리하고 결과(코멘트, 제안 PR)를 GitHub에 남긴다
+- 둘 사이에는 큐와 Redis·SQLite 상태만 오간다. 키 형식과 테이블 정의는 `models/`, 읽기·쓰기 코드는 각자 자기 쪽에 둔다
+- `app/models/`: 웹·워커 공용 데이터. 외부 호출 없음
+- `app/controllers/`, `app/services/`, `app/views/`: 웹 쪽 MVC (webhook, sync). GitHub은 조회만 한다
+- `app/worker/`: 워커 진입점, 작업 흐름(LangGraph), PR 코멘트, 처리 기록 쓰기, GitHub 쓰기
 - `app/sandbox/`: 워커가 쓰는 docker 도구 (`docker_cli`, `venv`, `container`, `pytest_runner`)
-- 웹 쪽은 `worker/`와 `sandbox/`를 import하지 않는다. 의존 방향은 `tests/test_layers.py`가 검사한다
+- 웹 쪽은 `worker/`·`sandbox/`를, 워커는 웹 쪽을 import하지 않는다. `tests/test_layers.py`가 검사한다
 - 테스트는 `tests/` 아래 같은 이름의 폴더에 둔다
 
 ## 코드 스타일

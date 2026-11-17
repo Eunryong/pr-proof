@@ -37,13 +37,13 @@ PR이 올라오면 테스트를 돌리는 데서 끝나지 않고, **테스트�
 
 ## 전체 아키텍처
 
-api, worker, sync는 로컬 프로세스로 실행한다. 컨테이너는 Redis, Chroma, 테스트 샌드박스 세 가지다.
+로컬 프로세스는 api(웹)와 worker 두 개다. api는 GitHub 변화를 감지해 작업을 큐에 넣고(웹훅 수신 + 동기화), worker는 작업을 처리해 결과를 GitHub에 남긴다. 컨테이너는 Redis, Chroma, 테스트 샌드박스 세 가지다.
 
 ```
 GitHub ──웹훅──▶ api (FastAPI) ──등록──▶ Redis 큐 ──꺼내기──▶ worker (LangGraph)
-  │ ▲                                     ▲                    │
-  │ │            sync (시작 시 + 5분마다) ──┘                    ├─ 실행 ─▶ 테스트 샌드박스
-  │ │             │                     등록                    │         (작업마다 새 컨테이너, 네트워크 차단)
+  │ ▲             동기화 루프                                   │
+  │ │            (시작 시 + 5분마다)                             ├─ 실행 ─▶ 테스트 샌드박스
+  │ │             │                                            │         (작업마다 새 컨테이너, 네트워크 차단)
   └─┼─ PR 상태 ───┘ (gh로 조회)                                  ├─ 검색 ─▶ Chroma (과거 기록)
     │                                                          ├─ 저장 ─▶ SQLite (이력·체크포인트)
     └────────── 코멘트 · 제안 PR (gh) ◀─────────────────────────┤
@@ -54,8 +54,7 @@ GitHub ──웹훅──▶ api (FastAPI) ──등록──▶ Redis 큐 ─�
 
 | 구성 | 위치 | 역할 |
 | --- | --- | --- |
-| api (FastAPI) | 로컬 | 웹훅 수신, 서명 검증, 중복 제거, 큐 등록 |
-| sync | 로컬 | GitHub PR 상태와 처리 이력을 비교해 놓친 작업 등록 |
+| api (FastAPI) | 로컬 | GitHub 변화 감지와 작업 등록. 웹훅 수신(서명 검증, 중복 제거)과, 같은 프로세스 안의 동기화 루프(GitHub PR 상태 ↔ 처리 이력 비교) |
 | worker (LangGraph) | 로컬 | 작업 흐름, 모델 라우팅, interrupt·체크포인트 |
 | claude CLI | 로컬 | 테스트·수정안 작성 (파일 읽기·쓰기만) |
 | gh CLI | 로컬 | PR 정보, 코멘트, 제안 PR |
@@ -133,7 +132,7 @@ F1–F8이 1–3단계(판정까지), F9–F11이 4–5단계(생성·수정·�
 
 ### F2. PR 상태 동기화
 
-로컬 서버가 꺼져 있던 동안의 웹훅은 사라지고, GitHub은 실패한 웹훅을 자동으로 다시 보내지 않는다. sync 프로세스가 GitHub의 PR 상태(`gh`)와 SQLite의 처리 이력을 비교해 차이를 작업으로 등록한다.
+로컬 서버가 꺼져 있던 동안의 웹훅은 사라지고, GitHub은 실패한 웹훅을 자동으로 다시 보내지 않는다. api 프로세스 안의 동기화 루프가 GitHub의 PR 상태(`gh`)와 SQLite의 처리 이력을 비교해 차이를 작업으로 등록한다. 웹훅(GitHub이 알려줌)과 동기화(우리가 물어봄)는 감지 방법만 다르고, 둘 다 `PRJob`을 큐에 넣는 것으로 끝난다. 워커는 작업이 어디서 왔는지 몰라도 된다.
 
 | 비교 | 차이가 있으면 |
 | --- | --- |
@@ -143,7 +142,8 @@ F1–F8이 1–3단계(판정까지), F9–F11이 4–5단계(생성·수정·�
 | PR 코멘트의 명령 ↔ 처리한 코멘트 ID | `command` 등록 |
 | "실행 중"으로 남았는데 워커 생존 확인이 끊긴 작업 | 다시 등록 |
 
-- 실행 시점: 시작 시 1회, 이후 5분마다(설정값). 수동 실행 명령도 둔다.
+- 실행 시점: api 시작 시 1회, 이후 5분마다(설정값). FastAPI lifespan에서 백그라운드 루프로 띄우고, `gh` 호출은 스레드에서 실행해 웹훅 응답을 막지 않는다.
+- 수동 실행은 CLI(`python -m app.cli sync`)로 한다. api는 웹훅용 터널로 외부에 열려 있으므로 HTTP 엔드포인트로 만들지 않는다.
 - 서버가 꺼진 동안 커밋이 여러 개 쌓였어도 최신 head만 검사한다.
 - 놓친 명령은 현재 head가 올라온 뒤에 달린 것만 처리한다. 이전 커밋에 대한 `/generate-tests`를 뒤늦게 실행하지 않는다. F1의 작성자 권한 확인을 똑같이 적용한다.
 - 동기화로 처리한 검사는 PR 코멘트에 한 줄 남긴다. 예: "동기화로 처리됨 (웹훅 누락)".
@@ -152,7 +152,7 @@ F1–F8이 1–3단계(판정까지), F9–F11이 4–5단계(생성·수정·�
 ### F3. 큐와 워커
 
 - 큐는 Redis + RQ를 쓴다. 워커가 하는 일이 대부분 subprocess 실행이라 동기식이 맞다.
-- api와 sync는 작업 데이터(`PRJob`)만 큐에 넣는다.
+- api(웹훅·동기화)는 작업 데이터(`PRJob`)만 큐에 넣는다.
 - 중복 방지: 같은 `(repo, PR 번호, head SHA, 작업 종류)`의 작업이 대기 중이거나 실행 중이면 등록하지 않는다. 명령은 코멘트 ID로 구분한다. 이미 끝난 일인지는 워커가 DB를 보고 판단한다.
 - 워커는 별도 프로세스로 로컬에서 실행하고, 동시 작업 수는 1개로 시작한다.
 - 같은 PR에 새 커밋이 오면 최신 커밋만 처리한다. Redis에 PR별 최신 head SHA를 두고, 워커가 각 단계 시작 전에 확인해 자기 커밋이 낡았으면 컨테이너와 worktree를 정리하고 끝낸다. 오래 걸리는 실행(pytest, mutmut) 도중에도 확인한다. `run_in_sandbox()`가 `docker exec`를 `subprocess.Popen`으로 띄우고, 끝날 때까지 10초마다 Redis의 최신 head를 확인해 낡았으면 `docker rm -f`로 컨테이너를 지우고 정리한다. 취소는 워커 자신이 하며, 작업을 밖에서 강제 종료하지 않는다.
@@ -550,7 +550,7 @@ claude -p "$PROMPT" \
 
 ## 프로젝트 구조와 기술 스택
 
-한 리포, 한 Python 프로젝트에서 api, worker, sync를 진입점 세 개로 나눠 실행한다.
+한 리포, 한 Python 프로젝트에서 api와 worker를 진입점 두 개로 나눠 실행한다.
 
 **기술 스택**
 
@@ -570,42 +570,52 @@ claude -p "$PROMPT" \
 
 **디렉터리 구조**
 
-코드는 프로세스 역할에 따라 나눈다. 웹(api)은 요청을 받아 큐에 넣기만 하고 PR 코드를 실행하지 않으므로 MVC로 짜고, 워커와 워커가 쓰는 docker 도구는 따로 둔다.
+코드는 프로세스 역할에 따라 나눈다.
+
+- **웹(api):** GitHub 변화를 감지해 `PRJob`을 큐에 넣는다. 감지 방법은 웹훅(GitHub이 알려줌)과 동기화(우리가 물어봄) 두 가지다. PR 코드를 실행하지 않고, 워커가 무엇을 했는지 몰라도 된다. MVC로 짠다.
+- **워커:** 큐에서 작업을 꺼내 처리하고 결과(코멘트, 제안 PR)를 GitHub에 남긴다. 작업이 웹훅에서 왔는지 동기화에서 왔는지 몰라도 된다.
+- **둘 사이:** 큐(`PRJob`)와 Redis·SQLite에 남긴 상태만 오간다. 웹이 Redis에 쓴 최신 head를 워커가 읽고, 워커가 SQLite에 쓴 처리 기록을 동기화가 읽는다. 키 형식과 테이블 정의는 공용 `models/`에 두고, 실제 읽기·쓰기 코드는 각자 자기 쪽에 둔다.
+- **GitHub 호출도 각자 갖는다.** 웹은 조회(열린 PR, head SHA, 코멘트 목록), 워커는 쓰기(코멘트, 제안 PR)만 해서 겹치지 않는다.
 
 | 패키지 | 역할 | import 가능 |
 | --- | --- | --- |
-| `models/` | api와 워커가 같이 쓰는 데이터와, 그 데이터만으로 계산되는 규칙(작업 키, 실행 상태). 외부 호출 없음 | models |
-| `controllers/` | 웹: 요청 하나(웹훅)를 받아 서비스를 부르고 뷰로 응답을 만든다 | models, services, views |
-| `services/` | 웹: 서명 검증, Redis 큐 등록과 중복 제거 | models |
+| `models/` | 웹과 워커가 같이 쓰는 데이터: `PRJob`, 테스트 결과, Redis 키 형식, DB 테이블 정의. 외부 호출 없음 | models |
+| `controllers/` | 웹: 요청 하나(웹훅 한 건, 동기화 한 번)를 받아 서비스를 부르고 뷰로 응답을 만든다 | models, services, views |
+| `services/` | 웹: 서명 검증, 큐 등록과 중복 방지, 최신 head 기록, GitHub 조회, 처리 기록 조회 | models |
 | `views/` | 웹: 모델을 API 응답으로 바꾼다 | models |
-| `worker/` | 워커: 진입점, 작업 흐름(LangGraph), PR 코멘트 만들기, 워커가 쓰는 git·gh 도구 | models, sandbox |
+| `worker/` | 워커: 진입점, 작업 흐름(LangGraph), PR 코멘트, 처리 기록 쓰기, git·GitHub 쓰기 | models, sandbox |
 | `sandbox/` | 워커가 쓰는 docker 도구. PR 코드는 여기를 거쳐서만 실행한다 | models |
 
-웹 쪽(controllers·services·views)은 `worker/`와 `sandbox/`를 import하지 않는다. 의존 방향은 `tests/test_layers.py`가 검사한다.
+웹 쪽(controllers·services·views)은 `worker/`와 `sandbox/`를, 워커는 웹 쪽을 import하지 않는다. 의존 방향은 `tests/test_layers.py`가 검사한다.
 
 ```
 pipeline/
 ├── app/
-│   ├── api.py                   # 진입점: FastAPI 앱 (uvicorn)
-│   ├── sync.py                  # 진입점: PR 상태 동기화 루프
+│   ├── api.py                   # 진입점: FastAPI 앱 (uvicorn), lifespan에서 동기화 루프 시작
+│   ├── cli.py                   # 수동 명령: python -m app.cli sync
 │   ├── config.py                # 설정 로드, 비밀값 파일 읽기
-│   ├── models/                  # api·워커 공용 데이터
-│   │   ├── job.py               # PRJob: 작업 데이터 계약
+│   ├── models/                  # 웹·워커 공용 데이터
+│   │   ├── job.py               # PRJob: 작업 데이터 계약, 작업 키
 │   │   ├── test_run.py          # PytestRun, ReportSummary, 실행 상태
-│   │   └── db.py                # SQLModel 테이블
-│   ├── controllers/             # 웹: MVC
-│   │   └── webhook.py           # 웹훅 → PRJob → 큐
-│   ├── services/
+│   │   ├── state_keys.py        # Redis 키 형식 (최신 head, 작업 키)
+│   │   └── db.py                # SQLModel 테이블 정의
+│   ├── controllers/             # 웹
+│   │   ├── webhook.py           # 웹훅 감지 → PRJob → 큐
+│   │   └── sync.py              # 동기화: GitHub 조회 → 처리 기록과 비교 → PRJob → 큐
+│   ├── services/                # 웹
 │   │   ├── signature.py         # 웹훅 서명 검증
-│   │   └── queue.py             # 큐 등록, 작업 키 중복 방지
-│   ├── views/
+│   │   ├── queue.py             # 큐 등록, 작업 키 중복 방지, 최신 head 기록 (Redis)
+│   │   ├── github.py            # GitHub 조회: 열린 PR, head SHA, 코멘트 목록 (gh CLI)
+│   │   └── history.py           # 처리 기록 조회 (SQLite)
+│   ├── views/                   # 웹
 │   │   └── responses.py         # API 응답
 │   ├── worker/                  # 워커
 │   │   ├── main.py              # 진입점: RQ 워커, preflight
 │   │   ├── graph.py             # 작업 흐름: LangGraph 노드와 분기 (지금은 run_pr_tests())
 │   │   ├── report.py            # PR 코멘트 마크다운 (판정, 테스트, 커버리지, 뮤턴트, 위반, 비용)
+│   │   ├── state.py             # 처리 기록·생존 확인 쓰기 (SQLite), 최신 head 확인 (Redis)
 │   │   ├── repo.py              # bare clone 캐시, worktree, changes.diff (git, 호스트)
-│   │   ├── github.py            # fetch_pr, list_open_prs, post_comment, update_comment, open_pr (gh CLI)
+│   │   ├── github.py            # GitHub 쓰기: post_comment, update_comment, open_pr (gh CLI)
 │   │   ├── checks/              # diff_coverage, suspicious, mutation
 │   │   ├── skills/              # lint, static, structure
 │   │   ├── rules.py             # 구조 규칙 읽기: README 변환, import 그래프, 이름 패턴
@@ -621,14 +631,12 @@ pipeline/
 ├── eval/                        # 버그·위반 주입 케이스, 실행 스크립트 (예제 리포는 별도 GitHub 리포, 2단계부터)
 ├── tests/                       # 파이프라인 자체 테스트. app/과 같은 폴더로 나눈다
 ├── docker-compose.yml           # redis, chroma
-└── Procfile                     # api, worker, sync
+└── Procfile                     # api, worker
 ```
-
-sync가 쓰는 gh 조회와 DB 접근의 위치는 sync를 만들 때 정한다.
 
 파일은 필요한 단계에서 만든다. `skills/`, `rules.py`는 2·5단계, `memory.py`와 compose의 chroma는 6단계에 추가한다.
 
-**작업 데이터 계약 (api·sync ↔ worker)**
+**작업 데이터 계약 (웹 ↔ 워커)**
 
 ```python
 class PRJob(BaseModel):
@@ -666,7 +674,6 @@ docker compose up -d      # redis (6단계부터 chroma)
 # Procfile — honcho start
 api:    uvicorn app.api:app --port 8000
 worker: python -m app.worker.main
-sync:   python -m app.sync
 ```
 
 ## 단계별 구현 계획
@@ -693,7 +700,7 @@ sync:   python -m app.sync
 - [x] worktree에서 `.venv` + pytest 직접 실행 (샌드박스 안), 결과 JSON과 커버리지 파일 남기기
 - [ ] PR 코멘트 하나 달고 진행하면서 수정하기
 - [ ] SQLite `runs`에 결과·상태·생존 확인 시각 저장
-- [ ] sync: 열린 PR의 head 비교, 닫힌 PR 처리, 죽은 작업 재등록
+- [ ] 동기화(api 안의 루프): 열린 PR의 head 비교, 닫힌 PR 처리, 죽은 작업 재등록
 - [ ] 최신 커밋 확인과 정리: 단계 사이, 그리고 `run_in_sandbox()` 실행 중 10초 간격 (실행 중 확인과 컨테이너 정리는 구현. Redis 최신 head 연결과 단계 사이 확인이 남음)
 
 ### 2단계. 테스트 품질 판정
@@ -709,7 +716,7 @@ sync:   python -m app.sync
 
 - [ ] 바뀐 줄만 대상으로 mutmut 실행, 뮤턴트 상한·타임아웃
 - [ ] Draft가 아닐 때 실행, `/mutate`·`/recheck` 명령, 작성자 권한 확인
-- [ ] sync: 뮤테이션 누락, 놓친 명령 보충
+- [ ] 동기화: 뮤테이션 누락, 놓친 명령 보충
 - [ ] 결과 캐시 (소스 해시, 테스트 해시)
 
 ### 4단계. AI 테스트 생성과 제안 PR
