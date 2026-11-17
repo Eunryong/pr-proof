@@ -178,7 +178,7 @@ F1–F5는 수신과 실행 기반(1단계), F6–F10은 검출·안전망·수�
 
 - 리포마다 처음 한 번만 `git clone --bare`로 코드를 캐시한다.
 - PR마다 `git fetch origin pull/<n>/head` 후 `git worktree add`로 별도 폴더를 만든다.
-- **git 명령은 호스트에서만 실행한다.** worktree의 `.git`은 호스트의 bare 저장소 경로를 가리키는 파일이라, `/work`만 마운트된 컨테이너 안에서는 git이 동작하지 않는다. 워커가 호스트에서 `git diff base...head`를 만들어 `.pipeline-out/changes.diff`로 저장하고, diff가 필요한 도구(바뀐 줄의 위반 검출, diff-cover, 확장의 바뀐 줄 뮤테이션)는 이 파일을 입력으로 받는다.
+- **git 명령은 호스트에서만 실행한다.** worktree의 `.git`은 호스트의 bare 저장소 경로를 가리키는 파일이라, `/work`만 마운트된 컨테이너 안에서는 git이 동작하지 않는다. 워커가 호스트에서 `git merge-base base head`로 PR 브랜치가 갈라진 커밋을 구하고, 그 커밋과 head의 diff(`git diff base...head`와 같음)를 `.pipeline-out/changes.diff`로 저장한다. base 브랜치가 앞서 나가도 main에서 바뀐 줄이 PR의 변경으로 잡히지 않는다. 설정과 규칙은 갈라진 커밋이 아니라 base 브랜치의 지금 커밋에서 읽는다. diff가 필요한 도구(바뀐 줄의 위반 검출, diff-cover, 확장의 바뀐 줄 뮤테이션)는 이 파일을 입력으로 받는다.
 - 작업이 끝나면 worktree를 지운다. 인증은 `gh auth setup-git`으로 gh 로그인을 재사용한다.
 - interrupt로 멈췄다가 재개할 때는 worktree를 다시 만든다. 그래프 상태에는 경로가 아니라 데이터(위반 목록, 커버 여부, 테스트 결과)만 넣는다.
 
@@ -257,7 +257,7 @@ SKILLS = {"lint": run_lint, "static": run_static, "structure": run_structure}
 - **시작 조건:** 위반이 있고 안전망 조건(F8)을 충족하면 PR 코멘트로 "`/fix lint`", "`/fix static`", "`/fix structure`"를 제안하고, LangGraph `interrupt`로 그래프 상태를 저장한 뒤 멈춘다. 워커는 그동안 다른 작업을 처리한다. 리뷰어가 `/fix <skill>`을 달면 `command` 작업이 등록되고 같은 그래프가 그 지점부터 재개된다. `require_approval: false`면 승인 없이 바로 수정한다.
 - 체크포인트 thread_id는 `repo#pr#head_sha`다. 새 커밋이 오면 SHA가 달라져, 멈춰 있던 그래프는 별도 처리 없이 무효가 된다. 재개할 때 worktree는 다시 만든다 (F4).
 - **AI 수정 루프:** ① 입력: 위반 목록과 출처, 해당 소스, 리포의 기존 상수·설정 위치 예시, (5단계부터) Chroma에서 찾은 비슷한 과거 수정 → ② AI(claude CLI)가 worktree의 파일을 고침 → ③ 결정적 검증 → ④ 실패하면 오류와 남은 위반을 AI에 다시 넘김, 최대 3회. 이 루프(작성 → 검증 → 재시도 → 제안 PR)는 하나의 서브그래프로 만들고, `static`과 `structure`가 프롬프트와 검증 함수만 바꿔 쓴다.
-- `lint` 수정은 ruff의 안전한 수정(`applicability: safe`)만 적용한다. unsafe·display-only 수정은 쓰지 않는다. `ruff check --fix`는 파일 전체의 위반을 고쳐 PR이 건드리지 않은 줄(기존 코드의 위반)까지 바꾸므로 쓰지 않는다. 대신 `ruff check --output-format json`이 내는 수정 편집 중 PR이 바꾼 줄에 걸린 위반의 것만 호스트에서 텍스트로 적용한다(코드를 실행하지 않는다). 편집이 겹치면 한 회차에 하나만 적용하고, base와의 diff로 바뀐 줄을 다시 세서 최대 5회 반복한다. 자동으로 고치지 못한 위반은 그대로 남기고 코멘트에 알린다.
+- `lint` 수정은 ruff의 안전한 수정(`applicability: safe`)만 적용한다. unsafe·display-only 수정은 쓰지 않는다. `ruff check --fix`는 파일 전체의 위반을 고쳐 PR이 건드리지 않은 줄(기존 코드의 위반)까지 바꾸므로 쓰지 않는다. 대신 `ruff check --output-format json`이 내는 수정 편집 중 PR이 바꾼 줄에 걸린 위반의 것만 호스트에서 텍스트로 적용한다(코드를 실행하지 않는다). 편집이 겹치면 한 회차에 하나만 적용하고, 갈라진 커밋(merge-base)과 worktree의 diff로 바뀐 줄을 다시 세서 최대 5회 반복한다. 자동으로 고치지 못한 위반은 그대로 남기고 코멘트에 알린다.
 - `lint` 수정안의 검증: 고친 뒤 규칙 검사에서 원래 없던 위반이 없고(파일·규칙·메시지의 개수로 비교, 줄 번호는 밀리므로 쓰지 않음), 허용 범위 안이고, 샌드박스 테스트 결과가 수정 전과 같다(상태와 통과 개수). 통과하면 수정안 diff를 `data_dir/fixes/` 아래에 저장하고 코멘트에 보여준다.
 - `ruff format`은 base 브랜치에서 `ruff format --check`가 통과하는 리포에서만, PR이 바꾼 파일에 적용한다. base가 포맷돼 있지 않으면 PR이 건드리지 않은 줄까지 diff가 커지므로 format을 뺀다.
 - 종료 조건: 테스트 통과, 원래 위반 해소, 새 위반 없음.

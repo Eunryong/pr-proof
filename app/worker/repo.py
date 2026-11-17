@@ -36,7 +36,9 @@ class GitError(RuntimeError):
 class Checkout:
     path: Path
     head_sha: str
-    base_sha: str
+    base_sha: str  # base 브랜치의 지금 커밋. 설정·규칙은 여기서 읽는다
+    # PR 브랜치가 갈라진 커밋. PR이 바꾼 줄은 여기와 비교한다. base가 앞서 나가면 base_sha와 다르다
+    merge_base: str
 
 
 def _git(*args: str, cwd: Path | None = None) -> str:
@@ -105,9 +107,16 @@ def read_base_files_from_cache(
     return read_base_files(bare, base_sha, names)
 
 
-def working_diff(worktree: Path, base_sha: str) -> str:
-    """base 커밋과 worktree의 지금 파일 사이의 diff. 수정을 적용한 뒤 바뀐 줄을 다시 셀 때 쓴다."""
-    return _git("diff", "--no-color", base_sha, cwd=worktree)
+def merge_base(worktree: Path, base_sha: str, head_sha: str) -> str:
+    return _git("merge-base", base_sha, head_sha, cwd=worktree).strip()
+
+
+def working_diff(worktree: Path, merge_base_sha: str) -> str:
+    """갈라진 커밋과 worktree의 지금 파일 사이의 diff. 수정을 적용한 뒤 바뀐 줄을 다시 셀 때 쓴다.
+
+    base 브랜치의 지금 커밋과 비교하면, PR이 갈라진 뒤 base에서 바뀐 줄까지 PR의 변경으로 잡힌다.
+    """
+    return _git("diff", "--no-color", merge_base_sha, cwd=worktree)
 
 
 def status(worktree: Path) -> str:
@@ -120,10 +129,11 @@ def head_diff(worktree: Path) -> str:
     return _git("diff", "--no-color", "HEAD", cwd=worktree)
 
 
-def write_changes_diff(worktree: Path, base_sha: str, head_sha: str) -> Path:
+def write_changes_diff(worktree: Path, merge_base_sha: str, head_sha: str) -> Path:
+    """PR이 바꾼 내용 (`git diff base...head`와 같다). 수정 후 다시 셀 때와 같은 기준을 쓴다."""
     out = worktree / CHANGES_DIFF
     out.parent.mkdir(exist_ok=True)
-    out.write_text(_git("diff", "--no-color", f"{base_sha}...{head_sha}", cwd=worktree))
+    out.write_text(_git("diff", "--no-color", merge_base_sha, head_sha, cwd=worktree))
     return out
 
 
@@ -146,8 +156,9 @@ def checkout(
     path.parent.mkdir(parents=True, exist_ok=True)
     _git("worktree", "add", "--quiet", "--detach", str(path), head_sha, cwd=bare)
     try:
-        write_changes_diff(path, base_sha, head_sha)
-        yield Checkout(path=path, head_sha=head_sha, base_sha=base_sha)
+        fork_point = merge_base(path, base_sha, head_sha)
+        write_changes_diff(path, fork_point, head_sha)
+        yield Checkout(path=path, head_sha=head_sha, base_sha=base_sha, merge_base=fork_point)
     finally:
         try:
             _git("worktree", "remove", "--force", str(path), cwd=bare)

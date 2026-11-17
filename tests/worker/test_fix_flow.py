@@ -44,7 +44,7 @@ def fix_env(env):
     mp.setattr(lint, "run_lint", lambda *a, **k: SkillResult("lint", (FIXABLE, UNFIXABLE), "x"))
     state = {"fix_calls": 0, "status": " M a.py\0", "after": (UNFIXABLE,)}
 
-    def fake_fix(worktree, base, base_sha, **kwargs):
+    def fake_fix(worktree, base, merge_base, **kwargs):
         state["fix_calls"] += 1
         after = SkillResult("lint", state["after"], "x")
         return LintFix(after=after, applied=1, touched_files=("a.py",))
