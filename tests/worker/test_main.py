@@ -47,7 +47,7 @@ def env(tmp_path: Path, monkeypatch):
 
 
 def _payload(kind: str = "update", **extra) -> str:
-    fields = {"repo": "o/r", "pr_number": 1, "kind": kind, "source": "webhook", **extra}
+    fields = {"repo": "o/r", "pr_number": 1, "kind": kind, "source": "webhook"} | extra
     if kind != "command":
         fields.setdefault("head_sha", HEAD)
         fields.setdefault("base_sha", "b" * 40)
@@ -112,12 +112,16 @@ def test_environment_error_shows_wait_and_raises_for_retry(env) -> None:
     assert env["redis"].get(state_keys.job(job.dedup_key)) is not None  # 재시도 동안 키 유지
 
 
-def test_last_environment_retry_says_not_checked(env) -> None:
+def test_last_environment_retry_says_not_checked_and_releases_key(env) -> None:
     _runner(env, lambda *a, **k: (_ for _ in ()).throw(SandboxError("x")))
     env["monkeypatch"].setattr(main, "_attempt", lambda: (4, True))
+    job = PRJob.model_validate_json(_payload())
+    env["redis"].set(state_keys.job(job.dedup_key), "1")
     with pytest.raises(SandboxError):
         main.handle(_payload(), env["deps"])
     assert "환경 문제로 검사하지 못함" in _bodies(env["gh"])[-1]
+    # 동기화가 30분 뒤 같은 커밋을 다시 넣을 수 있어야 한다
+    assert env["redis"].get(state_keys.job(job.dedup_key)) is None
 
 
 def test_resolution_failure_is_unrunnable_at_once(env) -> None:
@@ -148,3 +152,9 @@ def test_command_job_is_not_handled_yet(env) -> None:
     payload = _payload("command", command="/recheck", comment_id=9)
     assert main.handle(payload, env["deps"]) == "command_not_supported"
     assert env["gh"].calls == []
+
+
+def test_sync_job_result_says_so(env) -> None:
+    _runner(env, lambda *a, **k: PASSED)
+    main.handle(_payload(source="sync"), env["deps"])
+    assert "동기화로 처리됨 (웹훅 누락)" in _bodies(env["gh"])[-1]

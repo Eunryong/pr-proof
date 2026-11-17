@@ -76,10 +76,12 @@ def render_test_section(run: PytestRun, memory_limit_gb: int = MEMORY_LIMIT_GB) 
 HEADER: Final = "### pr-proof"
 
 
-def _footer(head_sha: str, seconds: float | None = None) -> str:
+def _footer(head_sha: str, seconds: float | None = None, *, from_sync: bool = False) -> str:
     parts = [f"커밋 `{head_sha[:7]}`"]
     if seconds is not None:
         parts.append(f"{seconds:.0f}초")
+    if from_sync:
+        parts.append("동기화로 처리됨 (웹훅 누락)")
     return "<sub>" + " · ".join(parts) + "</sub>"
 
 
@@ -87,8 +89,9 @@ def render_progress(head_sha: str, step: str) -> str:
     return f"{HEADER}\n\n**테스트:** 진행 중 ({step})\n\n{_footer(head_sha)}\n"
 
 
-def render_result(run: PytestRun, head_sha: str, seconds: float) -> str:
-    return f"{HEADER}\n\n{render_test_section(run)}\n{_footer(head_sha, seconds)}\n"
+def render_result(run: PytestRun, head_sha: str, seconds: float, *, from_sync: bool = False) -> str:
+    footer = _footer(head_sha, seconds, from_sync=from_sync)
+    return f"{HEADER}\n\n{render_test_section(run)}\n{footer}\n"
 
 
 def render_install_failure(head_sha: str, detail: str) -> str:

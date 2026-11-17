@@ -22,6 +22,11 @@ def seen_delivery(redis: Redis, delivery_id: str) -> bool:
     return not redis.set(key, "1", nx=True, ex=state_keys.DELIVERY_TTL_SECONDS)
 
 
+def clear_job(redis: Redis, job: PRJob) -> None:
+    """죽은 워커가 남긴 작업 키를 지운다. 동기화가 생존 확인이 끊긴 작업을 다시 넣을 때 쓴다."""
+    redis.delete(state_keys.job(job.dedup_key))
+
+
 def enqueue(redis: Redis, job: PRJob) -> EnqueueResult:
     """작업을 큐에 넣는다. 같은 작업이 대기·실행 중이면 넣지 않는다."""
     if job.kind == "update" and job.head_sha:

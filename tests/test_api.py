@@ -11,7 +11,7 @@ from app.services import signature
 
 @pytest.fixture
 def client(tmp_path: Path, monkeypatch):
-    (tmp_path / "config.yaml").write_text("repos: [Eunryong/eval]\n")
+    (tmp_path / "config.yaml").write_text("repos: [Eunryong/eval]\nsync:\n  interval_minutes: 0\n")
     secret = tmp_path / "webhook_secret"
     secret.write_text("api-secret")
     secret.chmod(0o600)

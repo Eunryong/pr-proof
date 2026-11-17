@@ -92,7 +92,12 @@ def build_graph(ctx: FlowContext):
 
     def comment(state: FlowState) -> FlowState:
         job = state["job"]
-        body = report.render_result(state["test_run"], job.head_sha, time.monotonic() - ctx.started)
+        body = report.render_result(
+            state["test_run"],
+            job.head_sha,
+            time.monotonic() - ctx.started,
+            from_sync=job.source == "sync",
+        )
         ctx.comment_id = ctx.github.upsert_comment(job.repo, job.pr_number, body, ctx.comment_id)
         return {"commented": True}
 

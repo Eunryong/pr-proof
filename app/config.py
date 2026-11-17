@@ -22,10 +22,22 @@ class ConfigError(RuntimeError):
     """설정이나 비밀값 파일이 없거나 잘못됐다."""
 
 
+class SyncConfig(BaseModel):
+    interval_minutes: float = 5  # 0이면 동기화 루프를 띄우지 않는다
+    env_error_backoff_minutes: float = 30
+    # .venv 설치(최대 15분) 동안은 생존 확인을 남기지 못하므로 그보다 길게 둔다
+    heartbeat_timeout_minutes: float = 20
+
+
 class PipelineConfig(BaseModel):
     repos: list[str]  # 처리할 리포 허용 목록 "owner/name"
     redis_url: str = "redis://127.0.0.1:6379/0"
     data_dir: Path = Path.home() / ".cache" / "pipeline"  # bare 캐시, worktree, .venv, SQLite
+    sync: SyncConfig = SyncConfig()
+
+    @property
+    def db_path(self) -> Path:
+        return self.data_dir / "pipeline.db"
 
 
 def config_dir() -> Path:

@@ -37,7 +37,7 @@ class Deps:
     def from_config(cls) -> "Deps":
         settings = config.load_config()
         redis = Redis.from_url(settings.redis_url)
-        return cls(Store(settings.data_dir / "pipeline.db", redis), GitHub(), settings)
+        return cls(Store(settings.db_path, redis), GitHub(), settings)
 
 
 def _attempt() -> tuple[int, bool]:
@@ -90,12 +90,10 @@ def process_update(job: PRJob, deps: Deps) -> str:
             )  # fmt: skip
             store.finish_run(run_id, "done", test_status="unrunnable", comment_id=ctx.comment_id)
             return "unrunnable"
-        _report_environment(job, ctx, final, e)
-        store.finish_run(run_id, "env_error", comment_id=ctx.comment_id)
+        _give_up_or_retry(job, ctx, run_id, final, e)
         raise
     except EnvironmentFailure as e:
-        _report_environment(job, ctx, final, e)
-        store.finish_run(run_id, "env_error", comment_id=ctx.comment_id)
+        _give_up_or_retry(job, ctx, run_id, final, e)
         raise
 
     if result.get("stopped"):
@@ -104,6 +102,16 @@ def process_update(job: PRJob, deps: Deps) -> str:
     run = result["test_run"]
     store.finish_run(run_id, "done", test_status=run.status, comment_id=ctx.comment_id)
     return run.status
+
+
+def _give_up_or_retry(
+    job: PRJob, ctx: graph.FlowContext, run_id: int, final: bool, error: Exception
+) -> None:
+    """환경 오류를 기록한다. 마지막 시도면 작업 키를 지워 동기화가 나중에 다시 넣을 수 있게 한다."""
+    _report_environment(job, ctx, final, error)
+    ctx.store.finish_run(run_id, "env_error", comment_id=ctx.comment_id)
+    if final:
+        ctx.store.release(job)  # 지우지 않으면 키 만료(6시간)까지 같은 커밋을 다시 넣지 못한다
 
 
 def _report_environment(job: PRJob, ctx: graph.FlowContext, final: bool, error: Exception) -> None:
