@@ -17,9 +17,27 @@ class SandboxSettings(BaseModel):
     memory_gb: float = Field(default=1, ge=MIN_MEMORY_GB)
 
 
+class ExtensionSettings(BaseModel):
+    """선택 확장 하나 (7단계). 지금은 꺼져 있다는 안내에만 쓴다 (DESIGN.md F11)."""
+
+    model_config = ConfigDict(extra="ignore")
+    enabled: bool = False
+
+
+class Extensions(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    mutation: ExtensionSettings = ExtensionSettings()
+    ai_tests: ExtensionSettings = ExtensionSettings()
+
+
 class RepoConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
     sandbox: SandboxSettings = SandboxSettings()
+    extensions: Extensions = Extensions()
+
+    def extension_enabled(self, name: str) -> bool:
+        settings = getattr(self.extensions, name, None)
+        return bool(settings and settings.enabled)
 
 
 def parse_repo_config(text: str | None) -> tuple[RepoConfig, str | None]:

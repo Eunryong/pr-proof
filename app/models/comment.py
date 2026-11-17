@@ -7,3 +7,5 @@
 from typing import Final
 
 COMMENT_MARKER: Final = "<!-- pr-proof -->"
+# 명령에 답하는 코멘트의 표시. 결과 코멘트를 찾을 때 섞이지 않도록 COMMENT_MARKER를 포함하지 않는다
+REPLY_MARKER: Final = "<!-- pr-proof:reply -->"

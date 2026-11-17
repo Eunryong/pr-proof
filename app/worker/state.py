@@ -7,7 +7,7 @@ from redis import Redis
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from app.models import state_keys
-from app.models.db import Run
+from app.models.db import CommandRecord, Run
 from app.models.job import PRJob
 
 
@@ -77,6 +77,24 @@ class Store:
             run.comment_id = comment_id if comment_id is not None else run.comment_id
             run.finished_at = _now()
             run.heartbeat_at = run.finished_at
+            session.commit()
+
+    def command_handled(self, comment_id: int) -> bool:
+        with Session(self.engine) as session:
+            return session.get(CommandRecord, comment_id) is not None
+
+    def record_command(self, job: PRJob, result: str) -> None:
+        with Session(self.engine) as session:
+            session.merge(
+                CommandRecord(
+                    comment_id=job.comment_id,
+                    repo=job.repo,
+                    pr_number=job.pr_number,
+                    command=job.command or "",
+                    result=result,
+                    handled_at=_now(),
+                )
+            )
             session.commit()
 
     def last_comment_id(self, repo: str, pr_number: int) -> int | None:

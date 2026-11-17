@@ -1,170 +1,35 @@
 """진입점: RQ 워커. `python -m app.worker.main`.
 
-큐의 작업 하나를 handle()이 처리한다. 환경 오류는 PR에 실패로 남기지 않고 예외를 올려
-RQ가 정해진 간격으로 다시 시도하게 한다 (재시도 상한이 있어 무한 반복하지 않는다).
+큐의 작업 하나를 handle()이 종류별로 나눠 처리한다 (update.py, command.py). 환경 오류는 PR에
+실패로 남기지 않고 예외를 올려 RQ가 정해진 간격으로 다시 시도하게 한다 (retry.py, 상한 있음).
 """
 
 import logging
 import sys
-from dataclasses import dataclass
 
 from redis import Redis
-from rq import Queue, SimpleWorker, get_current_job
+from rq import Queue, SimpleWorker
 
 from app import config
 from app.models import state_keys
-from app.models.install import install_failure_outcome
 from app.models.job import PRJob
-from app.sandbox.docker_cli import SandboxError
-from app.sandbox.venv import DependencyInstallError
-from app.worker import graph, preflight, report
-from app.worker.github import GitHub, GitHubError
-from app.worker.repo import GitError
-from app.worker.state import Store
+from app.worker import command, preflight, update
+from app.worker.deps import Deps
 
 log = logging.getLogger(__name__)
-
-EnvironmentFailure = (SandboxError, GitError, GitHubError)
-
-
-@dataclass
-class Deps:
-    store: Store
-    github: GitHub
-    settings: config.PipelineConfig
-
-    @classmethod
-    def from_config(cls) -> "Deps":
-        settings = config.load_config()
-        redis = Redis.from_url(settings.redis_url)
-        return cls(Store(settings.db_path, redis), GitHub(), settings)
-
-
-def _attempt() -> tuple[int, bool]:
-    """(이번 시도 번호, 마지막 시도인지). RQ 밖에서 부르면 (1, True)."""
-    current = get_current_job()
-    if current is None or current.retries_left is None:
-        return 1, True
-    total = len(current.retry_intervals or []) or 0
-    attempt = total - current.retries_left + 1
-    return attempt, current.retries_left == 0
 
 
 def handle(payload: str, deps: Deps | None = None) -> str:
     job = PRJob.model_validate_json(payload)
     deps = deps or Deps.from_config()
     if job.kind == "update":
-        result = process_update(job, deps)
-    elif job.kind == "close":
-        result = "closed"  # 1단계는 작업마다 worktree를 지우므로 정리할 것이 없다
+        result = update.process_update(job, deps)
+    elif job.kind == "command":
+        result = command.process_command(job, deps)
     else:
-        result = "command_not_supported"  # 명령 처리는 2단계 (/recheck, /fix)
+        result = "closed"  # 작업마다 worktree를 지우므로 정리할 것이 없다 (제안 PR 정리는 BACKLOG)
     deps.store.release(job)
     return result
-
-
-def _is_current_head(job: PRJob, deps: Deps, final: bool) -> bool:
-    """GitHub에서 PR의 지금 head를 확인하고 Redis의 최신 head를 그 값으로 바로잡는다.
-
-    웹훅은 순서대로 오지 않을 수 있다. 옛 커밋의 웹훅이 늦게 오면 Redis의 최신 head가 옛 커밋으로
-    덮이고, 그대로 두면 옛 커밋의 결과가 PR에 남는다. 확인에 실패하면 환경 오류로 재시도한다
-    (아직 runs 기록 전이므로 마지막 시도면 작업 키만 지운다).
-    """
-    try:
-        actual = deps.github.pr_head(job.repo, job.pr_number)
-    except GitHubError:
-        if final:
-            deps.store.release(job)
-        raise
-    deps.store.set_latest_head(job.repo, job.pr_number, actual)
-    return actual == job.head_sha
-
-
-def process_update(job: PRJob, deps: Deps) -> str:
-    store, github = deps.store, deps.github
-    attempt, final = _attempt()
-    if not _is_current_head(job, deps, final):
-        return "stale"  # 더 새 커밋이 있다. 그 커밋의 작업(또는 동기화)이 처리한다
-    run_id = store.start_run(job)
-    comment_id = store.last_comment_id(job.repo, job.pr_number)
-    ctx = graph.FlowContext(
-        store=store,
-        github=github,
-        data_dir=deps.settings.data_dir,
-        run_id=run_id,
-        comment_id=comment_id,
-        max_memory_gb=deps.settings.sandbox.max_memory_gb,
-    )
-    try:
-        ctx.comment_id = github.upsert_comment(
-            job.repo, job.pr_number, report.render_progress(job.head_sha, "체크아웃"), comment_id
-        )
-        result = graph.run_flow(job, ctx)
-    except DependencyInstallError as e:
-        if install_failure_outcome(e.kind, attempt) == "unrunnable":
-            body = report.render_install_failure(
-                job.head_sha, e.detail, lint=ctx.lint, base=ctx.base
-            )
-            ctx.comment_id = github.upsert_comment(job.repo, job.pr_number, body, ctx.comment_id)
-            store.finish_run(run_id, "done", test_status="unrunnable", comment_id=ctx.comment_id)
-            return "unrunnable"
-        _give_up_or_retry(job, ctx, run_id, final, e)
-        raise
-    except EnvironmentFailure as e:
-        _give_up_or_retry(job, ctx, run_id, final, e)
-        raise
-    except Exception as e:  # 파이프라인 버그, rq JobTimeoutException(작업 시간 초과)
-        _record_error(job, ctx, run_id, final, e)
-        raise
-
-    if result.get("stopped"):
-        store.finish_run(run_id, "cancelled", comment_id=ctx.comment_id)
-        return "stale"  # 새 커밋의 작업이 코멘트를 이어서 고친다
-    run = result["test_run"]
-    store.finish_run(run_id, "done", test_status=run.status, comment_id=ctx.comment_id)
-    return run.status
-
-
-def _give_up_or_retry(
-    job: PRJob, ctx: graph.FlowContext, run_id: int, final: bool, error: Exception
-) -> None:
-    """환경 오류를 기록한다. 마지막 시도면 작업 키를 지워 동기화가 나중에 다시 넣을 수 있게 한다."""
-    _report_environment(job, ctx, final, error)
-    ctx.store.finish_run(run_id, "env_error", comment_id=ctx.comment_id)
-    if final:
-        ctx.store.release(job)  # 지우지 않으면 키 만료(6시간)까지 같은 커밋을 다시 넣지 못한다
-
-
-def _record_error(
-    job: PRJob, ctx: graph.FlowContext, run_id: int, final: bool, error: Exception
-) -> None:
-    """환경 오류가 아닌 예외를 기록한다.
-
-    runs가 running으로 남으면 동기화가 죽은 워커로 보고 같은 커밋을 계속 다시 넣는다.
-    마지막 시도면 작업 키를 지운다 (동기화는 error를 같은 커밋으로 다시 넣지 않는다).
-    """
-    log.exception("작업 오류 %s#%s: %s", job.repo, job.pr_number, error)
-    try:
-        ctx.comment_id = ctx.github.upsert_comment(
-            job.repo, job.pr_number, report.render_pipeline_error(job.head_sha, final=final),
-            ctx.comment_id,
-        )  # fmt: skip
-    except GitHubError:
-        log.warning("오류 표시를 PR에 남기지 못함")
-    ctx.store.finish_run(run_id, "error", comment_id=ctx.comment_id)
-    if final:
-        ctx.store.release(job)
-
-
-def _report_environment(job: PRJob, ctx: graph.FlowContext, final: bool, error: Exception) -> None:
-    log.warning("환경 오류 %s#%s: %s", job.repo, job.pr_number, error)
-    try:
-        ctx.comment_id = ctx.github.upsert_comment(
-            job.repo, job.pr_number, report.render_environment_wait(job.head_sha, final=final),
-            ctx.comment_id,
-        )  # fmt: skip
-    except GitHubError:
-        log.warning("환경 오류 표시를 PR에 남기지 못함")  # gh 자체가 원인일 수 있다
 
 
 def main() -> int:

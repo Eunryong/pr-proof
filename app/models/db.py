@@ -9,6 +9,17 @@ from sqlmodel import Field, SQLModel
 RunState = Literal["running", "done", "cancelled", "env_error", "error"]
 
 
+class CommandRecord(SQLModel, table=True):
+    """처리한 명령 코멘트. 같은 코멘트에 두 번 답하지 않는다 (DESIGN.md F11)."""
+
+    comment_id: int = Field(primary_key=True)
+    repo: str = Field(index=True)
+    pr_number: int
+    command: str
+    result: str
+    handled_at: datetime
+
+
 class Run(SQLModel, table=True):
     """PR·커밋별 검사 한 번."""
 

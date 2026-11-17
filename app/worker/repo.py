@@ -96,6 +96,15 @@ def read_base_files(worktree: Path, base_sha: str, names: tuple[str, ...]) -> di
     return {name: _git("show", f"{base_sha}:{name}", cwd=worktree) for name in present}
 
 
+def read_base_files_from_cache(
+    data_dir: Path, repo: str, base_sha: str, names: tuple[str, ...], *, url: str | None = None
+) -> dict[str, str]:
+    """worktree 없이 bare 캐시에서 base 커밋의 파일을 읽는다 (명령 처리용)."""
+    bare = ensure_bare(data_dir, repo, url)
+    _git("fetch", "--quiet", "--no-tags", "origin", base_sha, cwd=bare)
+    return read_base_files(bare, base_sha, names)
+
+
 def write_changes_diff(worktree: Path, base_sha: str, head_sha: str) -> Path:
     out = worktree / CHANGES_DIFF
     out.parent.mkdir(exist_ok=True)

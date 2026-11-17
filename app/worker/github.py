@@ -4,14 +4,22 @@ import json
 import os
 import subprocess
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Final
 
-from app.models.comment import COMMENT_MARKER
+from app.models.comment import COMMENT_MARKER, REPLY_MARKER
 
 GH_TIMEOUT: Final = 60
 _ENV_PASSTHROUGH: Final = ("PATH", "HOME", "GH_CONFIG_DIR")
 
 GhRunner = Callable[[list[str], str | None], str]
+
+
+@dataclass(frozen=True)
+class PullRefs:
+    head_sha: str
+    base_sha: str
+    open: bool
 
 
 class GitHubError(RuntimeError):
@@ -47,10 +55,21 @@ class GitHub:
             self._login = self._run(["api", "user", "--jq", ".login"], None).strip()
         return self._login
 
-    def pr_head(self, repo: str, pr_number: int) -> str:
-        """PR의 지금 head SHA."""
-        args = ["api", f"repos/{repo}/pulls/{pr_number}", "--jq", ".head.sha"]
-        return self._run(args, None).strip()
+    def pr_refs(self, repo: str, pr_number: int) -> PullRefs:
+        """PR의 지금 head·base SHA와 열림 여부."""
+        jq = "[.head.sha, .base.sha, .state] | @tsv"
+        out = self._run(["api", f"repos/{repo}/pulls/{pr_number}", "--jq", jq], None)
+        head, base, state = out.strip().split("\t")
+        return PullRefs(head_sha=head, base_sha=base, open=state == "open")
+
+    def reply(self, repo: str, pr_number: int, body: str) -> int:
+        """명령에 답하는 새 코멘트. 결과 코멘트와 따로 단다."""
+        payload = json.dumps({"body": f"{REPLY_MARKER}\n{body}"})
+        out = self._run(
+            ["api", f"repos/{repo}/issues/{pr_number}/comments", "--input", "-", "--jq", ".id"],
+            payload,
+        )
+        return int(out.strip())
 
     def find_comment(self, repo: str, pr_number: int) -> int | None:
         """이 계정이 단, 파이프라인 표시가 있는 코멘트의 ID."""
