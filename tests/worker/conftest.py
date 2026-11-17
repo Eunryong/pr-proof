@@ -37,6 +37,8 @@ def env(tmp_path: Path, monkeypatch):
         yield Checkout(path=path, head_sha=head_sha, base_sha=base_sha, merge_base=base_sha)
 
     monkeypatch.setattr(repo, "checkout", fake_checkout)
+    # 실제 ~/.config/pipeline의 비밀값을 읽지 않게 빈 설정 폴더를 쓴다
+    monkeypatch.setenv(config.CONFIG_DIR_ENV, str(tmp_path / "config"))
     monkeypatch.setattr(base_config, "load", lambda *a, **k: BASE)
     monkeypatch.setattr(
         lint, "run_lint", lambda *a, **k: SkillResult(skill="lint", findings=(VIOLATION,))

@@ -9,6 +9,27 @@ from sqlmodel import Field, SQLModel
 RunState = Literal["running", "done", "cancelled", "env_error", "error"]
 
 
+# open: 열려 있음, merged: 머지됨, superseded: 원본 PR에 새 커밋이 와서 파이프라인이 닫음,
+# rejected: 사람이 머지하지 않고 닫음, closed_with_pr: 원본 PR이 닫혀 파이프라인이 닫음
+ProposalState = Literal["open", "merged", "superseded", "rejected", "closed_with_pr"]
+
+
+class Proposal(SQLModel, table=True):
+    """제안 PR (DESIGN.md F10). 머지 여부는 커밋 메시지가 아니라 이 번호로 GitHub에서 확인한다."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    repo: str = Field(index=True)
+    pr_number: int = Field(index=True)  # 원본 PR
+    skill: str
+    head_sha: str  # 수정안을 만든 원본 PR의 커밋
+    branch: str
+    number: int  # 제안 PR 번호
+    state: str  # ProposalState
+    merge_commit: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
 class CommandRecord(SQLModel, table=True):
     """처리한 명령 코멘트. 같은 코멘트에 두 번 답하지 않는다 (DESIGN.md F11)."""
 

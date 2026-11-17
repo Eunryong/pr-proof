@@ -167,3 +167,13 @@ def test_webhook_and_sync_share_the_filter() -> None:
 
     assert webhook.command_in_comment is comment.command_in_comment
     assert sync.command_in_comment is comment.command_in_comment
+
+
+def test_closed_pr_with_open_proposal_gets_close_job(env) -> None:
+    """close 웹훅을 놓쳐도 열린 제안이 남은 닫힌 PR은 close 작업으로 정리한다."""
+    env["store"].record_proposal("o/r", 7, "lint", HEAD, "pipeline/pr-7-fix-lint", 900)
+    env["store"].record_proposal("o/r", 1, "lint", HEAD, "pipeline/pr-1-fix-lint", 901)
+    result = _sync(env, [_pr(1)])  # 7번은 이제 열린 PR 목록에 없다
+    closes = [j for j in _queued(env) if j.kind == "close"]
+    assert [(j.pr_number, j.source) for j in closes] == [(7, "sync")]
+    assert ("o/r", 7, "closed_pr") in result.enqueued

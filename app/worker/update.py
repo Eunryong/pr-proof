@@ -1,13 +1,15 @@
 """`update` 작업: PR의 한 커밋을 검사하고 코멘트에 결과를 남긴다."""
 
-from typing import Any
+from typing import Any, Final
 
 from app.models.install import install_failure_outcome
 from app.models.job import PRJob
 from app.sandbox.venv import DependencyInstallError
-from app.worker import graph, report, retry
+from app.worker import graph, proposal, report, retry
 from app.worker.deps import Deps
 from app.worker.github import GitHubError
+
+CLOSED_HEAD: Final = "closed"  # PR이 닫혔다는 Redis 최신 head 표시. 어떤 커밋 SHA와도 같지 않다
 
 
 def _is_current_head(job: PRJob, deps: Deps, final: bool) -> bool:
@@ -86,6 +88,9 @@ def process_update(job: PRJob, deps: Deps) -> str:
         ctx.comment_id = github.upsert_comment(
             job.repo, job.pr_number, report.render_progress(job.head_sha, "체크아웃"), comment_id
         )
+        # 이전 커밋의 열린 제안을 정리한다. 머지됐는지도 여기서 알게 된다 (루프 방지에 쓴다)
+        proposal.refresh(store, github, job.repo, job.pr_number)
+        proposal.supersede(store, github, job.repo, job.pr_number, job.head_sha)
         result = graph.run_flow(job, ctx)
     except DependencyInstallError as e:
         if install_failure_outcome(e.kind, attempt) == "unrunnable":
@@ -110,3 +115,20 @@ def process_update(job: PRJob, deps: Deps) -> str:
     run = result["test_run"]
     store.finish_run(run_id, "done", test_status=run.status, comment_id=ctx.comment_id)
     return run.status
+
+
+def process_close(job: PRJob, deps: Deps) -> str:
+    """원본 PR이 닫혔다: 진행 중인 검사를 멈추고, 남은 제안 PR을 닫고 브랜치를 지운다 (F10).
+
+    최신 head를 닫힘 표시로 바꾸면 실행 중인 작업이 10초 안에 낡은 작업으로 보고 멈춘다.
+    다시 열리면(reopened) 웹훅이 최신 head를 새로 적는다.
+    """
+    deps.store.set_latest_head(job.repo, job.pr_number, CLOSED_HEAD)
+    _, final = retry.attempt()
+    try:
+        closed = proposal.close_all(deps.store, deps.github, job.repo, job.pr_number)
+    except Exception:
+        if final:
+            deps.store.release(job)
+        raise
+    return f"closed:{closed}"

@@ -7,7 +7,7 @@ from redis import Redis
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from app.models import state_keys
-from app.models.db import CommandRecord, Run
+from app.models.db import CommandRecord, Proposal, Run
 from app.models.job import PRJob
 
 
@@ -78,6 +78,47 @@ class Store:
             run.comment_id = comment_id if comment_id is not None else run.comment_id
             run.finished_at = _now()
             run.heartbeat_at = run.finished_at
+            session.commit()
+
+    # --- 제안 PR ---
+
+    def record_proposal(
+        self, repo: str, pr_number: int, skill: str, head_sha: str, branch: str, number: int
+    ) -> None:
+        """열린 제안을 기록한다. 같은 스킬의 열린 제안이 있으면 그 기록을 새 커밋·번호로 바꾼다."""
+        now = _now()
+        with Session(self.engine) as session:
+            stmt = select(Proposal).where(
+                Proposal.repo == repo, Proposal.pr_number == pr_number,
+                Proposal.skill == skill, Proposal.state == "open",
+            )  # fmt: skip
+            row = session.exec(stmt).first()
+            if row is None:
+                row = Proposal(
+                    repo=repo, pr_number=pr_number, skill=skill, head_sha=head_sha,
+                    branch=branch, number=number, state="open", created_at=now, updated_at=now,
+                )  # fmt: skip
+            else:
+                row.head_sha, row.number, row.updated_at = head_sha, number, now
+            session.add(row)
+            session.commit()
+
+    def proposals(self, repo: str, pr_number: int, state: str | None = None) -> list[Proposal]:
+        with Session(self.engine) as session:
+            stmt = select(Proposal).where(Proposal.repo == repo, Proposal.pr_number == pr_number)
+            if state is not None:
+                stmt = stmt.where(Proposal.state == state)
+            return list(session.exec(stmt.order_by(Proposal.id)))
+
+    def set_proposal_state(
+        self, proposal_id: int, state: str, merge_commit: str | None = None
+    ) -> None:
+        with Session(self.engine) as session:
+            row = session.get(Proposal, proposal_id)
+            row.state, row.updated_at = state, _now()
+            if merge_commit is not None:
+                row.merge_commit = merge_commit
+            session.add(row)
             session.commit()
 
     def command_handled(self, comment_id: int) -> bool:

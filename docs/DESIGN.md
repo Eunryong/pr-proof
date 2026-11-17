@@ -327,7 +327,10 @@ SKILLS = {"lint": run_lint, "static": run_static, "structure": run_structure}
 | 테스트 제안 (확장, F13) | `tests/` 안만 | `pipeline/pr-<n>-tests` |
 
 - 푸시 조건: F7의 종료 조건, 허용 범위 안의 변경, 개수·크기 상한 이내, 비밀값 검사 통과(보안 절 참고).
-- `[pipeline]` 커밋으로 올리고, 원본 PR 브랜치를 base로 PR을 연다 (`gh pr create`).
+- `[pipeline]` 커밋으로 올리고, 원본 PR 브랜치를 base로 PR을 연다 (`gh api repos/{repo}/pulls`). 같은 브랜치의 열린 제안이 있으면 강제 푸시하고 제목·본문을 고친다.
+- 커밋 작성자는 로그인한 계정 이름과 GitHub noreply 주소(`{id}+{login}@users.noreply.github.com`)다. 사용자 전역 git 설정의 서명·훅은 끈다(`commit.gpgsign=false`, `core.hooksPath=/dev/null`).
+- 포크에서 온 PR은 원본 리포에 base가 될 브랜치가 없어 제안 PR을 열지 않고, 코멘트의 수정 내용만 남긴다.
+- 상한은 바뀐 파일 20개, 바뀐 줄 500줄이다. 비밀값 검사는 diff의 추가된 줄에서 토큰·키 형식(GitHub·Slack·AWS·Anthropic 토큰, 개인키 헤더)과 파이프라인의 웹훅 시크릿을 찾는다. 걸리면 올리지 않고 이유(종류만, 값은 쓰지 않음)를 코멘트에 적는다.
 - **머지 여부는 커밋 메시지가 아니라 GitHub에서 확인한다.** merge commit은 리뷰어 이름의 `Merge pull request ...` 커밋이 되고, squash·rebase 머지는 SHA가 새로 만들어져 메시지나 조상 관계로는 알 수 없다. `proposals`에 저장한 제안 PR 번호로 머지 여부와 머지 커밋 SHA를 조회해(`gh pr view --json state,mergeCommit`) 원본 PR의 head와 비교한다.
 - 커밋할 때는 허용된 경로만 지정해서 스테이징한다. `git add -A`를 쓰지 않는다. `.pipeline-out/` 같은 산출물이 제안 PR에 섞이지 않게 한다.
 - 본문: 해소한 위반과 규칙의 출처, 바꾼 이유, 테스트 결과.
@@ -335,10 +338,10 @@ SKILLS = {"lint": run_lint, "static": run_static, "structure": run_structure}
 
 | 상황 | 처리 |
 | --- | --- |
-| 원본 PR에 새 커밋 | 제안이 여전히 유효하면 유지, 깨지면 닫고 다시 생성 |
+| 원본 PR에 새 커밋 | 이전 커밋의 열린 제안을 닫고 브랜치를 지운다(`superseded`). 새 커밋의 검사가 고칠 위반을 찾으면 다시 제안한다. 옛 제안이 새 커밋에서도 유효한지 판단하려면 새 커밋으로 수정과 검증을 다시 해야 하므로, 유지하지 않고 새로 만든다 |
 | 제안 PR 머지 → 원본에 새 커밋 | head가 제안 PR의 머지 커밋이거나 그 뒤에 새 커밋이 없으면 검사만 다시 하고, 같은 종류의 제안은 다시 만들지 않음 |
-| 원본 PR 머지·종료 | 남은 제안 PR을 닫고 브랜치 삭제 |
-| 작성자가 제안 PR을 닫음 | 같은 커밋에 대해 다시 제안하지 않음. 거절 기록으로 남김 |
+| 원본 PR 머지·종료 | 진행 중인 검사를 멈추고(최신 head를 닫힘 표시로), 남은 제안 PR을 닫고 브랜치 삭제. close 웹훅을 놓쳐도 동기화가 열린 제안이 남은 닫힌 PR에 `close`를 넣는다 |
+| 작성자가 제안 PR을 닫음 | 같은 커밋에 대해 다시 제안하지 않음. 거절 기록으로 남김(`rejected`). 상태는 원본 PR의 다음 검사가 시작할 때 GitHub에서 확인한다 |
 
 ### F11. 수동 명령 (PR 코멘트)
 
@@ -655,6 +658,7 @@ pipeline/
 │   │   ├── fix.py               # 수정안 판정: 범위 검사, 전후 위반 비교, 테스트 비교
 │   │   ├── text_edit.py         # ruff 수정 편집을 텍스트에 적용
 │   │   ├── repo_config.py       # 대상 리포 .pipeline.yaml 스키마
+│   │   ├── proposal.py          # 제안 PR 규칙: 브랜치 이름, 상한, 비밀값 검사, 본문
 │   │   ├── state_keys.py        # Redis 키 형식 (최신 head, 작업 키)
 │   │   └── db.py                # SQLModel 테이블 정의
 │   ├── controllers/             # 웹
@@ -673,6 +677,7 @@ pipeline/
 │   │   ├── update.py            # update 작업: 실제 head 확인 → 검사 흐름 → 결과 기록
 │   │   ├── command.py           # command 작업: /recheck, /fix, 확장 명령
 │   │   ├── retry.py             # 재시도 번호, 환경 오류·일반 오류 기록
+│   │   ├── proposal.py          # 제안 PR: 올리기, 상태 확인, 새 커밋·머지·닫힘 처리
 │   │   ├── graph.py             # 작업 흐름: LangGraph (체크아웃 → 규칙 검사 → 테스트 → 코멘트 → 승인 대기 → 수정·검증), SQLite 체크포인트
 │   │   ├── report.py            # PR 코멘트 마크다운 (결과, 위반과 출처, 수정 제안, 테스트, 비용)
 │   │   ├── state.py             # 처리 기록·생존 확인 쓰기 (SQLite), 최신 head 확인 (Redis)
@@ -764,7 +769,7 @@ worker: python -m app.worker.main
 - [x] worktree에서 `.venv` + pytest 직접 실행 (샌드박스 안), 결과 JSON과 커버리지 파일 남기기
 - [x] PR 코멘트 하나 달고 진행하면서 수정하기 ("테스트:" 줄, 환경 오류는 결과 대신 대기 표시)
 - [x] SQLite `runs`에 결과·상태·생존 확인 시각 저장
-- [x] 동기화(api 안의 루프, 수동 `python -m app.cli sync`): 열린 PR의 head 비교, 죽은 작업 재등록, 끝난 상태별 재등록 규칙 (F2 표). 닫힌 PR 처리는 워커가 `close`를 처리할 때 붙인다 (BACKLOG)
+- [x] 동기화(api 안의 루프, 수동 `python -m app.cli sync`): 열린 PR의 head 비교, 죽은 작업 재등록, 끝난 상태별 재등록 규칙 (F2 표). 닫힌 PR 처리는 2단계 제안 PR과 함께 붙였다
 - [x] 최신 커밋 확인과 정리: 단계 사이, 그리고 `run_in_sandbox()` 실행 중 10초 간격 (Redis 최신 head)
 
 ### 2단계. 컨벤션(lint): 검출 → 수정 → 제안 PR
@@ -782,7 +787,7 @@ worker: python -m app.worker.main
 - [x] SqliteSaver 체크포인트, thread_id `repo#pr#head_sha`, `/fix lint` interrupt·재개 (재개 시 worktree 다시 만들기). 새 검사는 같은 thread의 이전 체크포인트를 지우고 시작, 수정 도중 실패하면 재시도가 수정 단계부터 이어 감. `require_approval: false`면 바로 수정
 - [x] 수정: ruff의 안전한 수정 중 PR이 바꾼 줄의 것만 적용 → 규칙 재검사(새 위반 없음) → 허용 범위 검사 → 샌드박스 테스트 재실행(수정 전과 같은 결과) → 수정안 diff 저장·코멘트
 - [x] 수정: 조건부 `ruff format` (base가 `ruff format --check`를 통과하는 리포에서만)
-- [ ] 제안 PR: 허용 경로만 스테이징, 푸시 전 비밀값 검사, 머지 확인, 상황별 처리, 루프 방지
+- [x] 제안 PR: 허용 경로만 스테이징, 푸시 전 비밀값 검사, 머지 확인, 상황별 처리, 루프 방지
 - [x] flaky 재실행
 - [ ] 평가 케이스: 컨벤션 위반 주입 3–5개와 E2E 테스트
 

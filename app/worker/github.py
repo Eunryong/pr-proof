@@ -20,6 +20,19 @@ class PullRefs:
     head_sha: str
     base_sha: str
     open: bool
+    head_ref: str = ""  # PR 브랜치 이름. 제안 PR의 base가 된다
+    head_repo: str = ""  # PR 브랜치가 있는 리포. 원본 리포와 다르면 포크 PR
+
+
+@dataclass(frozen=True)
+class PullStatus:
+    open: bool
+    merged: bool
+    merge_commit: str | None
+
+
+# 브랜치가 이미 없을 때 GitHub이 돌려주는 실패
+_BRANCH_GONE: Final = ("Not Found", "404", "422", "Reference does not exist")
 
 
 class GitHubError(RuntimeError):
@@ -57,10 +70,78 @@ class GitHub:
 
     def pr_refs(self, repo: str, pr_number: int) -> PullRefs:
         """PR의 지금 head·base SHA와 열림 여부."""
-        jq = "[.head.sha, .base.sha, .state] | @tsv"
+        jq = '[.head.sha, .base.sha, .state, .head.ref, (.head.repo.full_name // "")] | @tsv'
         out = self._run(["api", f"repos/{repo}/pulls/{pr_number}", "--jq", jq], None)
-        head, base, state = out.strip().split("\t")
-        return PullRefs(head_sha=head, base_sha=base, open=state == "open")
+        head, base, state, head_ref, head_repo = (out.rstrip("\n").split("\t") + ["", ""])[:5]
+        return PullRefs(
+            head_sha=head, base_sha=base, open=state == "open", head_ref=head_ref,
+            head_repo=head_repo,
+        )  # fmt: skip
+
+    # --- 제안 PR (DESIGN.md F10) ---
+
+    def identity(self) -> tuple[str, str]:
+        """제안 커밋의 작성자: 로그인한 계정 이름과 GitHub noreply 주소.
+
+        개인 메일 주소를 쓰지 않는다.
+        """
+        out = self._run(["api", "user", "--jq", "[.id, .login] | @tsv"], None)
+        user_id, login = out.strip().split("\t")
+        return login, f"{user_id}+{login}@users.noreply.github.com"
+
+    def open_pr_for_branch(self, repo: str, branch: str) -> int | None:
+        owner = repo.split("/")[0]
+        out = self._run(
+            ["api", f"repos/{repo}/pulls?state=open&head={owner}:{branch}",
+             "--jq", ".[0].number // empty"],
+            None,
+        )  # fmt: skip
+        return int(out.strip()) if out.strip() else None
+
+    def create_pr(self, repo: str, base: str, head: str, title: str, body: str) -> int:
+        payload = json.dumps({"title": title, "head": head, "base": base, "body": body})
+        out = self._run(
+            ["api", "-X", "POST", f"repos/{repo}/pulls", "--input", "-", "--jq", ".number"],
+            payload,
+        )
+        return int(out.strip())
+
+    def update_pr(self, repo: str, number: int, title: str, body: str) -> None:
+        payload = json.dumps({"title": title, "body": body})
+        self._run(
+            ["api", "-X", "PATCH", f"repos/{repo}/pulls/{number}", "--input", "-",
+             "--jq", ".number"],
+            payload,
+        )  # fmt: skip
+
+    def pull_status(self, repo: str, number: int) -> PullStatus:
+        jq = '[.state, .merged, (.merge_commit_sha // "")] | @tsv'
+        out = self._run(["api", f"repos/{repo}/pulls/{number}", "--jq", jq], None)
+        state, merged, commit = (out.rstrip("\n").split("\t") + [""])[:3]
+        return PullStatus(
+            open=state == "open", merged=merged == "true", merge_commit=commit or None
+        )
+
+    def close_pr(self, repo: str, number: int, reason: str) -> None:
+        """이유를 코멘트로 남기고 닫는다."""
+        payload = json.dumps({"body": f"{REPLY_MARKER}\n{reason}"})
+        self._run(
+            ["api", f"repos/{repo}/issues/{number}/comments", "--input", "-", "--jq", ".id"],
+            payload,
+        )
+        self._run(
+            ["api", "-X", "PATCH", f"repos/{repo}/pulls/{number}", "--input", "-",
+             "--jq", ".number"],
+            json.dumps({"state": "closed"}),
+        )  # fmt: skip
+
+    def delete_branch(self, repo: str, branch: str) -> None:
+        """파이프라인 브랜치를 지운다. 이미 없으면 넘어간다."""
+        try:
+            self._run(["api", "-X", "DELETE", f"repos/{repo}/git/refs/heads/{branch}"], None)
+        except GitHubError as e:
+            if not any(code in str(e) for code in _BRANCH_GONE):
+                raise
 
     def reply(self, repo: str, pr_number: int, body: str) -> int:
         """명령에 답하는 새 코멘트. 결과 코멘트와 따로 단다."""

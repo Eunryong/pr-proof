@@ -50,6 +50,12 @@ def run_once(
             log.warning("동기화: %s 조회 실패, 다음 주기에 다시 한다: %s", repo, e)
             result.failed_repos.append(repo)
             continue
+        open_numbers = {pr.number for pr in prs}
+        for number in sorted(history.prs_with_open_proposals(repo) - open_numbers):
+            # 원본 PR이 닫혔는데 close 웹훅을 놓쳤다. 워커가 남은 제안 PR을 닫는다
+            job = PRJob(repo=repo, pr_number=number, kind="close", source="sync")
+            if queue.enqueue(redis, job) == "queued":
+                result.enqueued.append((repo, number, "closed_pr"))
         for pr in prs:
             if pr.head_ref.startswith(PIPELINE_BRANCH_PREFIX):
                 continue
