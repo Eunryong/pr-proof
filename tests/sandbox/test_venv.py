@@ -1,5 +1,6 @@
 """app/sandbox/venv.py 단위 테스트. Docker 없이 돈다."""
 
+import subprocess
 from pathlib import Path
 from typing import Final
 
@@ -7,6 +8,7 @@ import pytest
 
 from app.sandbox import docker_cli, venv
 from app.sandbox.docker_cli import Image, SandboxError
+from app.sandbox.venv import DependencyInstallError
 
 IMAGE: Final = Image(id="sha256:aaa", python_version="3.11.15")
 
@@ -122,6 +124,65 @@ def test_ensure_venv_failure_leaves_no_partial_cache(
         raise SandboxError("pip 실패")
 
     monkeypatch.setattr(docker_cli, "run", fail)
+    with pytest.raises(SandboxError):
+        venv.ensure_venv(repo, IMAGE, cache_dir=tmp_path / "cache")
+    assert list((tmp_path / "cache").iterdir()) == []
+
+
+# --- 설치 실패 분류 -------------------------------------------------------------
+
+OFFLINE: Final = """WARNING: Retrying (Retry(total=4, connect=None, read=None))
+after connection broken by 'NewConnectionError('<pip._vendor.urllib3.connection.HTTPSConnection
+object>: Failed to establish a new connection: [Errno -3] Temporary failure in name resolution')'
+ERROR: Could not find a version that satisfies the requirement pytest==8.3.4 (from versions: none)
+ERROR: No matching distribution found for pytest==8.3.4"""
+
+
+@pytest.mark.parametrize(
+    ("output", "kind"),
+    [
+        (OFFLINE, "network"),  # "No matching distribution"이 함께 나와도 네트워크가 먼저
+        ("ERROR: No matching distribution found for nope==0.0.1", "resolution"),
+        ("ERROR: ResolutionImpossible: for help visit https://pip.pypa.io/...", "resolution"),
+        (
+            "ERROR: Cannot install a and b because these package versions have"
+            " conflicting dependencies.",
+            "resolution",
+        ),
+        ("ERROR: Invalid requirement: 'pytest==='", "resolution"),
+        ("error: subprocess-exited-with-error\nFailed building wheel for psycopg2", "unknown"),
+        ("", "unknown"),
+    ],
+    ids=["offline", "no-match", "resolution-impossible", "conflict", "invalid", "build", "empty"],
+)
+def test_classify_pip_failure(output: str, kind: str) -> None:
+    assert venv.classify_pip_failure(output) == kind
+
+
+def _completed(code: int, stderr: str = "") -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess(args=[], returncode=code, stdout="", stderr=stderr)
+
+
+def test_pip_failure_raises_dependency_error_with_kind(
+    tmp_path: Path, repo: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        docker_cli,
+        "run",
+        lambda *a, **k: _completed(1, "ERROR: No matching distribution found for x"),
+    )
+    with pytest.raises(DependencyInstallError) as info:
+        venv.ensure_venv(repo, IMAGE, cache_dir=tmp_path / "cache")
+    assert info.value.kind == "resolution"
+    assert info.value.cache_key == venv.cache_key(repo, IMAGE)
+    assert list((tmp_path / "cache").iterdir()) == []
+
+
+@pytest.mark.parametrize("code", sorted(docker_cli.DOCKER_FAILED))
+def test_docker_failure_during_install_is_environment_error(
+    tmp_path: Path, repo: Path, monkeypatch, code: int
+) -> None:
+    monkeypatch.setattr(docker_cli, "run", lambda *a, **k: _completed(code, "docker: error"))
     with pytest.raises(SandboxError):
         venv.ensure_venv(repo, IMAGE, cache_dir=tmp_path / "cache")
     assert list((tmp_path / "cache").iterdir()) == []

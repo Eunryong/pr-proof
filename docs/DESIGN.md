@@ -246,7 +246,8 @@ SKILLS = {"lint": run_lint, "static": run_static, "structure": run_structure}
 - 종료 조건: 테스트 통과, 원래 위반 해소, 새 위반 없음.
 - **허용 변경 범위:** 수정안은 위반이 검출된 파일과 그 이동 대상만 바꿀 수 있다. 테스트 파일을 바꾸면 결과를 버린다. 예외는 코드 이동에 따른 import 경로 변경뿐이며, assert와 기대값은 바꿀 수 없다.
 - **범위 검사 방법:** 수정 후 호스트에서 `git status --porcelain=v1 -z --untracked-files=all`로 worktree의 모든 변경을 본다. `git diff`는 추적 중인 파일의 수정만 보여주므로 새 파일, 삭제, 이름 변경을 놓친다. 수정(`M`), 새 파일(`??`, `A`), 삭제(`D`), 이름 변경(`R`, 옛 경로와 새 경로 둘 다)이 모두 허용 목록 안에 있어야 한다. 허용 목록 밖의 변경이 하나라도 있으면 수정안 전체를 버린다.
-- 파이프라인 산출물(`.pipeline-out/`, `.venv` 마운트 지점, 확장의 `mutants/`)만 검사에서 제외한다. 대상 리포의 `.gitignore`에 걸리는 파일은 `--porcelain` 출력에 나오지 않지만, 푸시되지 않아도 검증 실행에 영향을 줄 수 있다(무시된 경로에 둔 `conftest.py`, `sitecustomize.py` 등). 그래서 `--ignored=matching`도 함께 확인해, 위 산출물 외의 무시된 새 파일이 생기면 버린다.
+- 파이프라인 산출물(`.pipeline-out/`, `.venv` 마운트 지점, 확장의 `mutants/`)만 검사에서 제외한다.
+- **무시된 파일:** 대상 리포의 `.gitignore`에 걸리는 파일은 `--porcelain` 출력에 나오지 않지만, 푸시되지 않아도 검증 실행에 영향을 줄 수 있다(무시된 경로에 둔 `conftest.py`, `sitecustomize.py` 등). AI를 실행하기 직전에 `git status --porcelain=v1 -z --ignored=matching --untracked-files=all`로 무시된 파일 목록을 스냅샷으로 남기고, 실행 후 같은 명령의 결과와 비교해 **새로 생긴 무시된 파일**이 있으면 수정안을 버린다. 이미 있던 무시된 파일(빌드 산출물, 로컬 캐시)은 문제 삼지 않는다.
 - `structure`의 자동 수정은 1–2순위 규칙과 3순위 중 import 방향 위반에만 적용한다. 이름 패턴 위반은 알리기만 한다. 추정한 규칙으로 코드를 옮기면 틀렸을 때 비용이 크다.
 
 ### F8. 안전망 (테스트 실행과 변경 라인 커버리지)
@@ -265,7 +266,17 @@ SKILLS = {"lint": run_lint, "static": run_static, "structure": run_structure}
 | 환경 오류 (`SandboxError`) | Docker·설치·컨테이너 문제. PR 코드 탓이 아님 | 결과를 내지 않고 작업을 큐에 되돌림 (F9) | |
 
 - **실행 불가와 환경 오류를 나눈다.** 컨테이너 안에서 pytest가 돌았지만 PR의 conftest나 설정 때문에 결과를 못 낸 것은 `unrunnable`(PR 코드 문제)이다. docker exec 자체가 실패했거나(종료 코드 125·126·127), 결과 파일이 없는데 컨테이너가 이미 죽어 있으면 `SandboxError`(환경 오류)다.
-- **의존성 설치 실패**는 기본적으로 환경 오류다. 다만 같은 의존성 해시로 2회 연속 실패하면 PR의 의존성 파일 문제로 보고 `unrunnable`("의존성을 설치하지 못함")로 표시한다. 그렇지 않으면 없는 패키지를 적은 PR이 큐를 계속 돈다.
+- **의존성 설치 실패**는 pip 출력으로 원인을 나눈다 (`sandbox/venv.py`의 `classify_pip_failure`, 규칙은 `models/install.py`).
+
+  | 원인 | pip 출력의 표지 | 처리 |
+  | --- | --- | --- |
+  | 해석 실패 (PR의 의존성 파일 문제) | `No matching distribution found`, `ResolutionImpossible`, `Could not find a version that satisfies`, `conflicting dependencies`, `Invalid requirement` | 1회에 `unrunnable` ("의존성을 설치하지 못함") |
+  | 네트워크 실패 | `NewConnectionError`, `Temporary failure in name resolution`, `ConnectTimeoutError`, `ReadTimeoutError`, `ProxyError`, `SSLError` 등 | 환경 오류 |
+  | 판단 불가 (빌드 실패 등) | 위 둘 다 없음 | 같은 의존성 해시로 2회 연속 실패하면 `unrunnable`, 그 전에는 환경 오류 |
+
+  네트워크가 끊기면 pip이 `Could not find a version`도 함께 출력하므로 네트워크 표지를 먼저 본다. 설치 컨테이너 자체가 실패하면(종료 코드 125·126·127) pip 출력과 무관하게 환경 오류다. 연속 실패 횟수는 워커가 의존성 캐시 키별로 Redis에 센다.
+- **종료 코드 137 (SIGKILL):** 먼저 취소와 시간 초과인지 본다. 그때는 파이프라인이 컨테이너를 지워서 137이 나올 수 있다. 둘 다 아닐 때만 메모리 한도 초과로 분류한다. 메모리 한도로 컨테이너 자체가 죽은 경우(docker inspect의 `OOMKilled`)도 환경 오류가 아니라 메모리 초과(`unrunnable`)다.
+- **메모리 초과 안내:** 코멘트에 "실행 불가 (메모리 한도 1GB를 넘어 종료됨)"과 함께 "base 브랜치의 `.pipeline.yaml`에서 `sandbox.memory_gb`로 늘릴 수 있다"는 안내를 넣는다. 늘릴 수 있는 상한은 파이프라인 쪽 설정(`sandbox.max_memory_gb`)이 정한다. 설정은 base 브랜치에서 읽으므로 PR이 자기 한도를 올릴 수 없다.
 - **위반 줄의 커버리지:** 샌드박스가 남긴 `coverage.xml`로 위반 줄이 테스트로 실행되는지 본다. 실행되지 않는 줄의 위반은 "테스트가 지나가지 않아 자동 수정 대상 아님"으로 표시하고 알리기만 한다. 고친 뒤 테스트가 통과해도 그 줄의 동작을 확인한 것이 아니기 때문이다.
 - PR 전체의 변경 라인 커버리지(`diff-cover`)는 참고 지표로 코멘트에 적는다. diff-cover는 PR 코드를 실행하지 않으므로 호스트에서 돌린다. 입력은 샌드박스가 남긴 `coverage.xml`과 호스트에서 만든 `changes.diff`다.
 - `coverage.xml`의 경로는 컨테이너 기준(`/work/...`)이 아니라 리포 기준 상대 경로여야 한다. coverage의 `relative_files = true`를 파이프라인 쪽 설정 파일에 두고 `--cov-config`로 넘긴다. 1단계 구현에서는 대상 리포의 coverage 설정을 쓰지 않고 파이프라인 설정(`docker/sandbox/coveragerc`: `relative_files`, `source = .`, `.venv/` 제외)만 쓴다. 기본 `# pragma: no cover`는 그대로 동작한다. 리포 설정의 `omit`·`exclude_lines`를 반영할지는 협업 리포 검증 때 다시 본다.
@@ -371,6 +382,9 @@ SKILLS = {"lint": run_lint, "static": run_static, "structure": run_structure}
 tests:
   runner: pytest
 
+sandbox:
+  memory_gb: 1                 # 테스트 컨테이너 메모리 한도. 파이프라인 쪽 max_memory_gb를 넘을 수 없음
+
 skills:
   enabled: [lint, static, structure]
   fix:
@@ -411,6 +425,8 @@ extensions:                    # 선택 확장 (F13, 7단계). 기본은 모두 
 repos: [owner/name]            # 처리할 리포 허용 목록
 sync:
   interval_minutes: 5
+sandbox:
+  max_memory_gb: 4             # 대상 리포가 sandbox.memory_gb로 올릴 수 있는 상한
 ```
 
 수치는 초깃값이며, 평가 결과(측정 지표 섹션)를 보고 조정한다.
@@ -486,7 +502,7 @@ claude -p "$PROMPT" \
 - 로그인 확인은 `claude auth status`(JSON, `loggedIn`과 `loginExpiresAt`)로 한다. preflight가 만료 시각도 본다.
 - `--max-turns`는 도움말에 없어 쓰지 않는다. 상한은 `--max-budget-usd`로 건다.
 - 확인하지 못한 것: `--restricted`에서 worktree의 `CLAUDE.md`가 프롬프트에 들어가는지. 들어가더라도 경로 제한과 실행 후 diff 검사가 막지만, 3단계에서 다시 확인한다.
-- 실행 후 `git status --porcelain --untracked-files=all`(무시된 파일은 `--ignored=matching`)로 허용 범위(F7) 밖의 변경을 확인해 있으면 버린다. 새 파일, 삭제, 이름 변경도 확인한다.
+- 실행 후 `git status --porcelain --untracked-files=all`로 허용 범위(F7) 밖의 변경을 확인해 있으면 버린다. 새 파일, 삭제, 이름 변경도 확인한다. 무시된 파일은 AI 실행 직전 스냅샷과 비교해 새로 생긴 것만 잡는다.
 - **푸시 전 비밀값 검사:** 제안 PR의 diff에 파이프라인이 가진 비밀값(웹훅 시크릿, Slack URL)이나 토큰·개인키 패턴이 있으면 버리고 운영 알림을 보낸다.
 
 ## 비용 최적화·모델 비교·회귀 테스트
@@ -721,7 +737,8 @@ worker: python -m app.worker.main
 
 메인 흐름(검출 → 승인 → 수정 → 검증 → 제안 PR)을 가장 단순한 스킬로 처음부터 끝까지 완성한다.
 
-- [ ] `.pipeline.yaml`·도구 설정 파일을 base 브랜치에서 읽기
+- [ ] `.pipeline.yaml`·도구 설정 파일을 base 브랜치에서 읽기, `sandbox.memory_gb`(상한 `max_memory_gb`)를 설치·작업 컨테이너에 적용
+- [ ] 의존성 설치 실패 처리: 원인 분류에 따라 실행 불가·환경 오류, 판단 불가는 캐시 키별 연속 실패 횟수(Redis)
 - [ ] `Finding` 인터페이스, ruff로 바뀐 줄의 위반 검출 (`changes.diff`)
 - [ ] PR 코멘트: "테스트:" 줄과 "규칙:" 줄(⚠️/✅), 위반 목록과 출처, 제안 명령
 - [ ] 명령 처리: `/recheck`, `/fix lint`, 꺼진 확장 명령에는 "꺼져 있음" 코멘트
@@ -736,7 +753,7 @@ worker: python -m app.worker.main
 - [ ] 검출: ruff 규칙(매직 값, `global`) + 반복 리터럴·모듈 수준 가변 상태 (semgrep 또는 AST)
 - [ ] 안전망: 위반 줄 커버리지(`coverage.xml`), 참고 지표로 호스트 diff-cover
 - [ ] claude CLI 호출 (권한 제한, cwd 고정, `CLAUDE.md` 주입 여부 확인)
-- [ ] 허용 범위 검사: `git status --porcelain --untracked-files=all` + 무시된 새 파일. 실패 경로 테스트: 새 파일 생성, 테스트 파일 삭제, `.github/` 수정, 허용 밖으로 이름 변경, 무시된 경로에 `conftest.py` 생성
+- [ ] 허용 범위 검사: `git status --porcelain --untracked-files=all`, 무시된 파일은 AI 실행 직전 스냅샷과 비교. 실패 경로 테스트: 새 파일 생성, 테스트 파일 삭제, `.github/` 수정, 허용 밖으로 이름 변경, 무시된 경로에 `conftest.py` 새로 생성. 통과 경로 테스트: 이미 있던 무시된 파일은 문제 삼지 않음
 - [ ] 작성 → 검증 → 재시도 서브그래프 (최대 3회), 가벼운→고성능 라우팅
 - [ ] PR당 예산·비용 기록
 - [ ] 평가 케이스: 하드코딩 값·전역 상태 주입, 테스트가 지나가지 않는 위반, 고치면 테스트가 깨지는 위반

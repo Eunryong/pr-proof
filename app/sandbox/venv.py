@@ -14,6 +14,7 @@ import uuid
 from pathlib import Path
 from typing import Final
 
+from app.models.install import InstallFailureKind
 from app.sandbox import docker_cli
 from app.sandbox.docker_cli import Image
 
@@ -23,6 +24,47 @@ TOOL_REQUIREMENTS: Final = ("pytest-cov==6.0.0", "pytest-json-report==1.5.0")
 INSTALL_TIMEOUT: Final = 900
 # 컨테이너 안 .venv 경로. 스크립트의 인터프리터 경로가 여기에 묶이므로 설치·실행이 같아야 한다.
 VENV_IN_CONTAINER: Final = "/work/.venv"
+
+# pip 출력으로 설치 실패의 원인을 나눈다. 네트워크 실패에서도 "Could not find a version"이
+# 함께 나오므로 네트워크 표지를 먼저 본다.
+NETWORK_MARKERS: Final = (
+    "NewConnectionError",
+    "Failed to establish a new connection",
+    "Temporary failure in name resolution",
+    "Name or service not known",
+    "ConnectTimeoutError",
+    "ReadTimeoutError",
+    "Connection reset by peer",
+    "ProxyError",
+    "SSLError",
+)
+RESOLUTION_MARKERS: Final = (
+    "No matching distribution found",
+    "ResolutionImpossible",
+    "Could not find a version that satisfies the requirement",
+    "conflicting dependencies",
+    "Invalid requirement",
+)
+MAX_DETAIL_CHARS: Final = 2000
+
+
+class DependencyInstallError(Exception):
+    """pip이 의존성을 설치하지 못했다. 처리는 models.install.install_failure_outcome()이 정한다."""
+
+    def __init__(self, kind: InstallFailureKind, cache_key: str, detail: str) -> None:
+        super().__init__(f"의존성 설치 실패 ({kind}): {detail[-500:]}")
+        self.kind: InstallFailureKind = kind
+        self.cache_key = cache_key
+        self.detail = detail
+
+
+def classify_pip_failure(output: str) -> InstallFailureKind:
+    """pip 출력으로 실패 원인을 나눈다."""
+    if any(marker in output for marker in NETWORK_MARKERS):
+        return "network"
+    if any(marker in output for marker in RESOLUTION_MARKERS):
+        return "resolution"
+    return "unknown"
 
 
 def _normalize(name: str) -> str:
@@ -79,6 +121,7 @@ def ensure_venv(
     """캐시 키에 맞는 .venv 경로를 돌려준다. 없으면 설치 컨테이너에서 만든다.
 
     임시 폴더에 설치하고 완료 표시를 남긴 뒤 캐시 경로로 옮겨, 실패한 설치가 캐시에 남지 않게 한다.
+    docker 자체가 실패하면 SandboxError, pip이 실패하면 DependencyInstallError를 올린다.
     """
     key = cache_key(worktree, image)
     target = cache_dir / key
@@ -95,14 +138,21 @@ def ensure_venv(
                 f"python -m venv {VENV_IN_CONTAINER}"
                 f" && {VENV_IN_CONTAINER}/bin/pip install --no-cache-dir " + shlex.join(pip_args)
             )
-            docker_cli.run(
+            proc = docker_cli.run(
                 "run", "--rm", *docker_cli.LIMITS,
                 "--user", docker_cli.user(), "-e", "HOME=/tmp",
                 "-v", f"{deps}:/deps:ro",
                 "-v", f"{build}:{VENV_IN_CONTAINER}",
                 tag, "sh", "-c", script,
-                timeout=INSTALL_TIMEOUT,
+                timeout=INSTALL_TIMEOUT, check=False,
             )  # fmt: skip
+        if proc.returncode in docker_cli.DOCKER_FAILED:
+            raise docker_cli.SandboxError(
+                f"설치 컨테이너 실행 실패 ({proc.returncode}): {proc.stderr.strip()[-500:]}"
+            )
+        if proc.returncode != 0:
+            output = (proc.stdout + proc.stderr)[-MAX_DETAIL_CHARS:]
+            raise DependencyInstallError(classify_pip_failure(output), key, output)
         (build / ".complete").touch()
         try:
             build.rename(target)

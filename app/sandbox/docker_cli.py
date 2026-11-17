@@ -14,8 +14,11 @@ IMAGE: Final = "pipeline-sandbox"
 # 베이스 이미지 Dockerfile과 컨테이너에 읽기 전용으로 넣는 파이프라인 설정(coveragerc)
 IMAGE_DIR: Final = Path(__file__).resolve().parents[2] / "docker" / "sandbox"
 
-# 설치·작업 컨테이너 공통 자원 제한
-LIMITS: Final = ("--memory", "1g", "--cpus", "1", "--pids-limit", "256")
+# 설치·작업 컨테이너 공통 자원 제한. 메모리는 PR 코멘트 안내에도 쓴다
+MEMORY_LIMIT_GB: Final = 1
+LIMITS: Final = ("--memory", f"{MEMORY_LIMIT_GB}g", "--cpus", "1", "--pids-limit", "256")
+# docker 자체가 실패한 종료 코드: 125 docker 오류, 126 실행 불가, 127 명령 없음
+DOCKER_FAILED: Final = frozenset({125, 126, 127})
 
 _ENV_PASSTHROUGH: Final = ("PATH", "HOME", "DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CONFIG")
 
@@ -37,8 +40,8 @@ def minimal_env() -> dict[str, str]:
     return {k: os.environ[k] for k in _ENV_PASSTHROUGH if k in os.environ}
 
 
-def run(*args: str, timeout: float = 120) -> subprocess.CompletedProcess[str]:
-    """`docker <args>`를 실행한다. 실패하면 SandboxError."""
+def run(*args: str, timeout: float = 120, check: bool = True) -> subprocess.CompletedProcess[str]:
+    """`docker <args>`를 실행한다. check면 0이 아닌 종료 코드를 SandboxError로 올린다."""
     try:
         proc = subprocess.run(
             ["docker", *args],
@@ -50,7 +53,7 @@ def run(*args: str, timeout: float = 120) -> subprocess.CompletedProcess[str]:
         )
     except (OSError, subprocess.TimeoutExpired) as e:
         raise SandboxError(f"docker {args[0]} 실행 실패: {e}") from e
-    if proc.returncode != 0:
+    if check and proc.returncode != 0:
         raise SandboxError(
             f"docker {args[0]} 실패 ({proc.returncode}): {proc.stderr.strip()[-2000:]}"
         )
@@ -70,11 +73,17 @@ def ensure_image(tag: str = IMAGE) -> Image:
     return Image(id=info["Id"], python_version=env.get("PYTHON_VERSION", "unknown"))
 
 
-def container_running(name: str) -> bool:
-    """컨테이너가 살아 있는지. docker에 닿지 않아도 False."""
+@dataclass(frozen=True)
+class ContainerState:
+    running: bool
+    oom_killed: bool  # 메모리 한도를 넘어 커널이 컨테이너 프로세스를 죽였는지
+
+
+def container_state(name: str) -> ContainerState | None:
+    """컨테이너 상태. 컨테이너가 없거나 docker에 닿지 않으면 None."""
     try:
         proc = subprocess.run(
-            ["docker", "inspect", "-f", "{{.State.Running}}", name],
+            ["docker", "inspect", "-f", "{{.State.Running}} {{.State.OOMKilled}}", name],
             capture_output=True,
             text=True,
             env=minimal_env(),
@@ -82,8 +91,11 @@ def container_running(name: str) -> bool:
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired):
-        return False
-    return proc.returncode == 0 and proc.stdout.strip() == "true"
+        return None
+    if proc.returncode != 0:
+        return None
+    running, _, oom = proc.stdout.strip().partition(" ")
+    return ContainerState(running=running == "true", oom_killed=oom == "true")
 
 
 def remove_container(name: str) -> None:

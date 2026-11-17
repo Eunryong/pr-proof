@@ -8,6 +8,7 @@ import pytest
 
 from app.sandbox import container, docker_cli, pytest_runner, venv
 from app.sandbox.docker_cli import Image, SandboxError
+from app.sandbox.venv import DependencyInstallError
 
 pytestmark = pytest.mark.docker
 
@@ -89,11 +90,15 @@ def test_container_removed_after_block(worktree: Path, image: Image, venv_cache:
     assert not _exists(name)
 
 
-def test_install_failure_is_environment_error(worktree: Path, image: Image, tmp_path: Path) -> None:
+def test_unknown_package_is_resolution_failure(
+    worktree: Path, image: Image, tmp_path: Path
+) -> None:
+    """실제 pip 출력으로 분류를 확인한다. 없는 패키지는 1회에 PR 문제(resolution)다."""
     (worktree / "requirements.txt").write_text("pr-proof-no-such-package-xyz==0.0.1\n")
     cache = tmp_path / "cache"
-    with pytest.raises(SandboxError):
+    with pytest.raises(DependencyInstallError) as info:
         venv.ensure_venv(worktree, image, cache_dir=cache)
+    assert info.value.kind == "resolution"
     assert list(cache.iterdir()) == []
 
 
@@ -108,3 +113,11 @@ def test_container_gone_is_environment_error(job: str, worktree: Path) -> None:
     docker_cli.remove_container(job)
     with pytest.raises(SandboxError):
         pytest_runner.run_tests(job, worktree)
+
+
+def test_memory_limit_is_unrunnable_not_environment_error(job: str, worktree: Path) -> None:
+    # 페이지를 실제로 쓰도록 b"x" * n을 쓴다 (bytearray(n)은 0 페이지라 메모리가 늘지 않음)
+    hog = 'def test_hog():\n    data = b"x" * (3 * 1024 ** 3)\n    assert data\n'
+    (worktree / "tests" / "test_hog.py").write_text(hog)
+    run = pytest_runner.run_tests(job, worktree)
+    assert run.status == "unrunnable" and run.memory_exceeded

@@ -53,6 +53,8 @@ SUMMARY: Final = ReportSummary(passed=1, total=1)
         (PytestRun(exit_code=1, summary=None), "unrunnable"),
         (PytestRun(exit_code=4, summary=SUMMARY), "unrunnable"),  # 사용법 오류
         (PytestRun(exit_code=137, summary=None), "unrunnable"),  # OOM
+        (PytestRun(exit_code=137, summary=None, cancelled=True), "cancelled"),
+        (PytestRun(exit_code=137, summary=None, timed_out=True), "timeout"),
     ],
 )
 def test_status(run: PytestRun, status: str) -> None:
@@ -88,3 +90,18 @@ def test_unrunnable_reason(run: PytestRun, reason: str | None) -> None:
 )
 def test_fix_permissions_follow_safety_net(run: PytestRun, lint: bool, code: bool) -> None:
     assert (run.allows_lint_fix, run.allows_code_fix) == (lint, code)
+
+
+@pytest.mark.parametrize(
+    ("run", "exceeded"),
+    [
+        (PytestRun(exit_code=137, summary=None), True),
+        (PytestRun(exit_code=1, summary=None, oom_killed=True), True),
+        (PytestRun(exit_code=137, summary=None, cancelled=True), False),  # 파이프라인이 지움
+        (PytestRun(exit_code=137, summary=None, timed_out=True), False),
+        (PytestRun(exit_code=4, summary=None), False),
+    ],
+    ids=["exit-137", "oom-flag", "cancelled", "timed_out", "usage-error"],
+)
+def test_memory_exceeded_checks_cancel_and_timeout_first(run: PytestRun, exceeded: bool) -> None:
+    assert run.memory_exceeded is exceeded

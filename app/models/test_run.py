@@ -57,6 +57,7 @@ class PytestRun:
     coverage_xml: Path | None = None
     timed_out: bool = False
     cancelled: bool = False
+    oom_killed: bool = False  # 컨테이너가 메모리 한도로 죽음 (docker inspect OOMKilled)
     output: str = field(default="", repr=False)
 
     @property
@@ -65,6 +66,7 @@ class PytestRun:
 
     @property
     def status(self) -> RunStatus:
+        # 취소·시간 초과를 먼저 본다. 이때 파이프라인이 컨테이너를 지워 137이 나올 수 있다
         if self.cancelled:
             return "cancelled"
         if self.timed_out:
@@ -82,7 +84,7 @@ class PytestRun:
         """실행 불가일 때 PR 코멘트에 쓸 이유."""
         if self.status != "unrunnable":
             return None
-        if self.exit_code == KILLED_EXIT:
+        if self.memory_exceeded:
             return "메모리 한도를 넘어 종료됨"
         if self.exit_code == PYTEST_INTERNAL_ERROR:
             return "pytest 내부 오류"
@@ -91,6 +93,11 @@ class PytestRun:
         if self.summary is None:
             return "결과 파일 없음 (conftest 등 수집 전 오류)"
         return f"pytest 종료 코드 {self.exit_code}"
+
+    @property
+    def memory_exceeded(self) -> bool:
+        """메모리 한도 초과로 종료됨. 취소·시간 초과가 아닐 때만 137을 메모리 초과로 본다."""
+        return self.status == "unrunnable" and (self.oom_killed or self.exit_code == KILLED_EXIT)
 
     @property
     def allows_lint_fix(self) -> bool:

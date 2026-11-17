@@ -20,7 +20,7 @@ SYMBOLS: Final = ("⚠️", "✅", "❌")
         (PytestRun(exit_code=5, summary=ReportSummary()), "실행된 테스트 없음"),
         (PytestRun(exit_code=124, summary=None, timed_out=True), "시간 초과로 중단"),
         (PytestRun(exit_code=None, summary=None, cancelled=True), "새 커밋이 올라와 중단"),
-        (PytestRun(exit_code=137, summary=None), "실행 불가 (메모리 한도를 넘어 종료됨)"),
+        (PytestRun(exit_code=137, summary=None), "실행 불가 (메모리 한도 1GB를 넘어 종료됨)"),
     ],
     ids=["passed", "failed", "no_tests", "timeout", "cancelled", "unrunnable"],
 )
@@ -71,3 +71,14 @@ def test_unrunnable_shows_output_without_counts() -> None:
 def test_timeout_hides_output() -> None:
     run = PytestRun(exit_code=124, summary=None, timed_out=True, output="x")
     assert "<details>" not in render_test_section(run)
+
+
+def test_memory_exceeded_explains_limit_and_setting() -> None:
+    text = render_test_section(PytestRun(exit_code=137, summary=None), memory_limit_gb=2)
+    assert text.startswith("**테스트:** 실행 불가 (메모리 한도 2GB를 넘어 종료됨)")
+    assert "메모리 한도는 2GB" in text and "`sandbox.memory_gb`" in text
+
+
+def test_timeout_137_has_no_memory_hint() -> None:
+    run = PytestRun(exit_code=137, summary=None, timed_out=True)
+    assert "sandbox.memory_gb" not in render_test_section(run)

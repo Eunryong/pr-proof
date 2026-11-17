@@ -1,6 +1,7 @@
 """app/sandbox/pytest_runner.py 단위 테스트."""
 
 from pathlib import Path
+from typing import Final
 
 import pytest
 
@@ -35,11 +36,21 @@ def test_read_summary_missing_or_broken(tmp_path: Path) -> None:
 # --- 실행 불가(PR 코드 문제)와 환경 오류(SandboxError) 구분 -------------------------
 
 
+RUNNING: Final = docker_cli.ContainerState(running=True, oom_killed=False)
+STOPPED: Final = docker_cli.ContainerState(running=False, oom_killed=False)
+OOM_KILLED: Final = docker_cli.ContainerState(running=False, oom_killed=True)
+
+
 @pytest.fixture
 def fake_run(monkeypatch, tmp_path: Path):
     """run_in_sandbox 대신 정해 둔 결과를 돌려주고, 필요하면 report.json을 남긴다."""
 
-    def install(result: ExecResult, *, report: str | None = None, alive: bool = True) -> Path:
+    def install(
+        result: ExecResult,
+        *,
+        report: str | None = None,
+        state: docker_cli.ContainerState | None = RUNNING,
+    ) -> Path:
         def run(container, argv, **kwargs):
             if report is not None:
                 (tmp_path / pytest_runner.REPORT_FILE).write_text(report)
@@ -47,21 +58,22 @@ def fake_run(monkeypatch, tmp_path: Path):
 
         (tmp_path / pytest_runner.OUT_DIR).mkdir(exist_ok=True)
         monkeypatch.setattr(pytest_runner, "run_in_sandbox", run)
-        monkeypatch.setattr(docker_cli, "container_running", lambda name: alive)
+        monkeypatch.setattr(docker_cli, "container_state", lambda name: state)
         return tmp_path
 
     return install
 
 
-@pytest.mark.parametrize("code", sorted(pytest_runner.DOCKER_EXEC_FAILED))
+@pytest.mark.parametrize("code", sorted(docker_cli.DOCKER_FAILED))
 def test_docker_exec_failure_is_environment_error(fake_run, code: int) -> None:
     worktree = fake_run(ExecResult(returncode=code, stdout="", stderr="exec failed"))
     with pytest.raises(SandboxError, match="docker exec 실패"):
         pytest_runner.run_tests("job-1", worktree)
 
 
-def test_dead_container_without_report_is_environment_error(fake_run) -> None:
-    worktree = fake_run(ExecResult(returncode=1, stdout="", stderr=""), alive=False)
+@pytest.mark.parametrize("state", [STOPPED, None], ids=["stopped", "gone"])
+def test_dead_container_without_report_is_environment_error(fake_run, state) -> None:
+    worktree = fake_run(ExecResult(returncode=1, stdout="", stderr=""), state=state)
     with pytest.raises(SandboxError, match="실행 중이 아니다"):
         pytest_runner.run_tests("job-1", worktree)
 
@@ -73,21 +85,36 @@ def test_live_container_without_report_is_unrunnable(fake_run) -> None:
     assert "ImportError in conftest" in run.output
 
 
-def test_oom_kill_with_live_container_is_unrunnable(fake_run) -> None:
+def test_oom_kill_inside_live_container_is_memory_exceeded(fake_run) -> None:
     worktree = fake_run(ExecResult(returncode=137, stdout="", stderr="Killed"))
     run = pytest_runner.run_tests("job-1", worktree)
-    assert run.unrunnable_reason == "메모리 한도를 넘어 종료됨"
+    assert run.memory_exceeded and not run.oom_killed
+
+
+def test_oom_killed_container_is_unrunnable_not_environment(fake_run) -> None:
+    """메모리 한도로 컨테이너 자체가 죽어도 환경 오류가 아니라 PR 코드 문제다."""
+    worktree = fake_run(ExecResult(returncode=137, stdout="", stderr=""), state=OOM_KILLED)
+    run = pytest_runner.run_tests("job-1", worktree)
+    assert run.status == "unrunnable" and run.oom_killed and run.memory_exceeded
 
 
 def test_failed_tests_with_report_are_not_environment_error(fake_run) -> None:
     report = '{"summary": {"failed": 1, "total": 1}, "tests": []}'
-    worktree = fake_run(ExecResult(returncode=1, stdout="", stderr=""), report=report, alive=False)
+    worktree = fake_run(ExecResult(returncode=1, stdout="", stderr=""), report=report, state=None)
     run = pytest_runner.run_tests("job-1", worktree)  # 결과가 있으면 컨테이너 상태와 무관
     assert run.status == "failed"
 
 
-def test_cancelled_run_is_not_environment_error(fake_run) -> None:
-    worktree = fake_run(
-        ExecResult(returncode=None, stdout="", stderr="", cancelled=True), alive=False
-    )
-    assert pytest_runner.run_tests("job-1", worktree).status == "cancelled"
+@pytest.mark.parametrize(
+    "result",
+    [
+        ExecResult(returncode=None, stdout="", stderr="", cancelled=True),
+        ExecResult(returncode=137, stdout="", stderr="", timed_out=True),
+    ],
+    ids=["cancelled", "timed_out-137"],
+)
+def test_pipeline_removal_is_not_environment_or_memory(fake_run, result) -> None:
+    """취소·시간 초과로 파이프라인이 컨테이너를 지운 경우 137이어도 메모리 초과가 아니다."""
+    worktree = fake_run(result, state=None)
+    run = pytest_runner.run_tests("job-1", worktree)
+    assert run.status in ("cancelled", "timeout") and not run.memory_exceeded
