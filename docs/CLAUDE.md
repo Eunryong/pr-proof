@@ -5,7 +5,7 @@
 ## 지켜야 할 원칙
 
 - 판정(통과·실패, 점수)은 결정적 도구(pytest, diff-cover, mutmut 등)만 낸다. AI 호출 결과로 판정하지 않는다.
-- api(FastAPI), sync, worker는 메모리를 공유하지 않는다. 넘길 값은 `app/jobs.py`의 `PRJob`으로만, 상태는 Redis(임시)·SQLite(영구)에 둔다.
+- api(FastAPI), sync, worker는 메모리를 공유하지 않는다. 넘길 값은 `app/models/job.py`의 `PRJob`으로만, 상태는 Redis(임시)·SQLite(영구)에 둔다.
 - PR에서 온 코드와 AI가 쓴 코드는 Docker 샌드박스에서만 실행한다. 호스트에서 대상 리포의 pytest를 돌리지 않는다.
 - 대상 리포의 설정과 규칙은 PR head가 아니라 base 브랜치에서 읽는다.
 - 비밀값은 코드·환경변수에 넣지 않는다. `app/config.py`의 파일 읽기 함수로만 접근한다.
@@ -28,6 +28,15 @@ pytest                # 파이프라인 자체 테스트
 ```
 
 워커 실행 전 `gh auth login`, `claude` 로그인, Docker 실행이 필요하다. preflight가 확인한다.
+
+## 코드 구조 (MVC)
+
+- `app/models/`: 데이터와 상태, 그 데이터만으로 계산되는 규칙. 외부 호출 없음
+- `app/services/`: 외부 시스템(Docker, git, gh, claude, Redis, SQLite)을 다루고 모델을 돌려준다
+- `app/views/`: 모델을 PR 코멘트·Slack 메시지·API 응답으로 바꾼다. 판정을 새로 내지 않는다
+- `app/controllers/`: 요청 하나를 받아 서비스를 순서대로 부르고 뷰로 출력을 만든다
+- import 방향은 controllers → services·views → models 한쪽이다. `tests/test_layers.py`가 검사한다
+- 진입점(`api.py`, `worker.py`, `sync.py`)은 컨트롤러만 부른다. 테스트는 `tests/` 아래 같은 계층 폴더에 둔다
 
 ## 코드 스타일
 

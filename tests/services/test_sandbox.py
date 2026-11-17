@@ -5,9 +5,10 @@ from pathlib import Path
 
 import pytest
 
-from app import sandbox as sb
+from app.models.sandbox import Image
+from app.services import sandbox as sb
 
-IMAGE = sb.Image(id="sha256:aaa", python_version="3.11.15")
+IMAGE = Image(id="sha256:aaa", python_version="3.11.15")
 
 
 # --- pyproject 의존성 ---------------------------------------------------------
@@ -67,12 +68,12 @@ def test_cache_key_changes_with_dependency_files(repo: Path, change) -> None:
 @pytest.mark.parametrize(
     "image",
     [
-        sb.Image(id="sha256:bbb", python_version="3.11.15"),
-        sb.Image(id="sha256:aaa", python_version="3.11.16"),
+        Image(id="sha256:bbb", python_version="3.11.15"),
+        Image(id="sha256:aaa", python_version="3.11.16"),
     ],
     ids=["image-digest", "python-version"],
 )
-def test_cache_key_changes_with_image(repo: Path, image: sb.Image) -> None:
+def test_cache_key_changes_with_image(repo: Path, image: Image) -> None:
     assert sb.cache_key(repo, image) != sb.cache_key(repo, IMAGE)
 
 
@@ -216,34 +217,3 @@ def test_run_in_sandbox_host_deadline_removes_container(fake_exec, monkeypatch) 
     state = fake_exec(["sleep", "30"])
     r = sb.run_in_sandbox("job-1", ["x"], timeout=0, poll_seconds=0.05)
     assert r.timed_out and not r.cancelled and state["removed"] == ["job-1"]
-
-
-# --- 결과 파싱 ----------------------------------------------------------------
-
-
-def test_parse_report_counts_failures_and_collection_errors() -> None:
-    data = {
-        "summary": {"passed": 2, "failed": 1, "error": 1, "skipped": 1, "total": 5},
-        "tests": [
-            {"nodeid": "tests/test_a.py::test_ok", "outcome": "passed"},
-            {"nodeid": "tests/test_a.py::test_bad", "outcome": "failed"},
-            {"nodeid": "tests/test_a.py::test_fixture", "outcome": "error"},
-            {"nodeid": "tests/test_a.py::test_skip", "outcome": "skipped"},
-        ],
-        "collectors": [
-            {"nodeid": "", "outcome": "passed"},
-            {"nodeid": "tests/test_broken.py", "outcome": "failed"},
-        ],
-    }
-    assert sb.parse_report(data) == (
-        2,
-        1,
-        2,
-        1,
-        5,
-        ("tests/test_a.py::test_bad", "tests/test_a.py::test_fixture", "tests/test_broken.py"),
-    )
-
-
-def test_parse_report_empty() -> None:
-    assert sb.parse_report({}) == (0, 0, 0, 0, 0, ())

@@ -570,31 +570,54 @@ claude -p "$PROMPT" \
 
 **디렉터리 구조**
 
+파이프라인 코드는 MVC로 나눈다. 화면이 없는 백엔드라 각 계층의 역할은 아래와 같다.
+
+| 계층 | 역할 | import 가능 |
+| --- | --- | --- |
+| `models/` | 데이터와 상태, 그 데이터만으로 계산되는 규칙(작업 키, 실행 상태). 외부 호출 없음 | 표준 라이브러리, pydantic |
+| `services/` | 외부 시스템을 다루는 일(Docker, git, gh, claude, Redis, SQLite). 결과를 모델로 돌려준다 | models |
+| `views/` | 모델을 출력 형태(PR 코멘트 마크다운, Slack 메시지, API 응답)로 바꾼다. 판정을 새로 내지 않는다 | models |
+| `controllers/` | 요청 하나(웹훅, 큐 작업, 명령)를 받아 서비스를 순서대로 부르고 뷰로 출력을 만든다 | models, services, views |
+
+진입점(`api.py`, `worker.py`, `sync.py`)은 프로세스를 띄우고 컨트롤러를 부르는 일만 한다. 의존 방향은 `tests/test_layers.py`가 검사한다.
+
 ```
 pipeline/
 ├── app/
-│   ├── api.py          # FastAPI: 웹훅 수신, 서명 검증, 중복 제거, 큐 등록
-│   ├── sync.py         # PR 상태 동기화: GitHub 상태 ↔ 처리 이력 비교, 작업 등록
-│   ├── worker.py       # 큐에서 작업을 꺼내 그래프 실행
-│   ├── graph.py        # LangGraph 노드와 분기, 생성·수정 서브그래프
-│   ├── preflight.py    # 시작 전 점검
-│   ├── jobs.py         # 작업 데이터 계약 (api·sync·worker 공용)
-│   ├── config.py       # 설정 로드, 비밀값 파일 읽기
-│   ├── db.py           # SQLModel 모델
-│   ├── github.py       # fetch_pr, list_open_prs, post_comment, update_comment, open_pr (gh CLI)
-│   ├── repo.py         # bare clone 캐시, worktree
-│   ├── sandbox.py      # .venv 준비와 캐시, run_in_sandbox(), run_tests()
-│   ├── checks/         # diff_coverage, suspicious, mutation
-│   ├── skills/         # lint, static, structure
-│   ├── rules.py        # 구조 규칙 읽기: README 변환, import 그래프, 이름 패턴
-│   ├── ai/             # 모델 백엔드, 프롬프트, 라우팅
-│   ├── memory.py       # 기록 저장과 검색 (SQLite + Chroma)
-│   └── notify.py       # Slack
-├── eval/               # 버그·위반 주입 케이스, 실행 스크립트 (예제 리포는 별도 GitHub 리포, 2단계부터)
-├── sandbox/Dockerfile  # 테스트 샌드박스 베이스 이미지
-├── tests/              # 파이프라인 자체 테스트 (단위·통합·E2E)
-├── docker-compose.yml  # redis, chroma
-└── Procfile            # api, worker, sync
+│   ├── api.py               # 진입점: FastAPI 앱 (uvicorn)
+│   ├── worker.py            # 진입점: RQ 워커
+│   ├── sync.py              # 진입점: PR 상태 동기화 루프
+│   ├── config.py            # 설정 로드, 비밀값 파일 읽기
+│   ├── models/
+│   │   ├── job.py           # PRJob: 작업 데이터 계약 (api·sync·worker 공용)
+│   │   ├── sandbox.py       # Image, ExecResult
+│   │   ├── test_run.py      # PytestRun, ReportSummary, 실행 상태
+│   │   └── db.py            # SQLModel 테이블
+│   ├── services/
+│   │   ├── sandbox.py       # 이미지, .venv 준비와 캐시, run_in_sandbox(), run_tests()
+│   │   ├── repo.py          # bare clone 캐시, worktree, changes.diff
+│   │   ├── github.py        # fetch_pr, list_open_prs, post_comment, update_comment, open_pr (gh CLI)
+│   │   ├── preflight.py     # 시작 전 점검
+│   │   ├── checks/          # diff_coverage, suspicious, mutation
+│   │   ├── skills/          # lint, static, structure
+│   │   ├── rules.py         # 구조 규칙 읽기: README 변환, import 그래프, 이름 패턴
+│   │   ├── ai/              # 모델 백엔드, 프롬프트, 라우팅
+│   │   ├── memory.py        # 기록 저장과 검색 (SQLite + Chroma)
+│   │   └── notify.py        # Slack 전송
+│   ├── views/
+│   │   ├── test_report.py   # 테스트 결과 부분
+│   │   └── pr_comment.py    # PR 코멘트 전체 (판정, 커버리지, 뮤턴트, 위반, 비용)
+│   └── controllers/
+│       ├── test_run.py      # 한 PR의 테스트 실행
+│       ├── webhook.py       # 웹훅 검증 → PRJob → 큐
+│       ├── pr_job.py        # 큐 작업 처리
+│       ├── graph.py         # LangGraph 노드와 분기, 생성·수정 서브그래프
+│       └── pr_sync.py       # GitHub 상태 ↔ 처리 이력 비교, 작업 등록
+├── eval/                    # 버그·위반 주입 케이스, 실행 스크립트 (예제 리포는 별도 GitHub 리포, 2단계부터)
+├── sandbox/                 # 테스트 샌드박스 베이스 이미지(Dockerfile), coverage 설정
+├── tests/                   # 파이프라인 자체 테스트. app/과 같은 계층 폴더로 나눈다
+├── docker-compose.yml       # redis, chroma
+└── Procfile                 # api, worker, sync
 ```
 
 파일은 필요한 단계에서 만든다. `skills/`, `rules.py`는 2·5단계, `memory.py`와 compose의 chroma는 6단계에 추가한다.
@@ -656,7 +679,7 @@ sync:   python -m app.sync
 ### 1단계. 수신 → 샌드박스 테스트 → PR 코멘트, 동기화
 
 - [ ] FastAPI `POST /webhook/github`: 서명 검증, 리포 허용 목록, delivery ID 중복 제거, 큐 등록, 202 응답
-- [ ] `jobs.py` 작업 계약, RQ 워커 진입점, 작업 키 중복 방지
+- [ ] `models/job.py` 작업 계약, RQ 워커 진입점, 작업 키 중복 방지
 - [ ] preflight: gh·claude 로그인, Docker, Redis 확인
 - [ ] bare clone 캐시 + worktree 생성·정리, 호스트에서 `changes.diff` 만들기
 - [x] 샌드박스: 베이스 Dockerfile, 캐시 키(의존성 해시 + 이미지 digest + Python 버전)별 `.venv` 설치와 캐시, 테스트 컨테이너에는 `:ro` 마운트, `run_in_sandbox()`

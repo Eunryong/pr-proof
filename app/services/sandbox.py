@@ -1,4 +1,4 @@
-"""테스트 샌드박스: .venv 준비와 캐시, run_in_sandbox(), run_tests().
+"""테스트 샌드박스 서비스: Docker 이미지, .venv 준비와 캐시, run_in_sandbox(), run_tests().
 
 설계는 docs/DESIGN.md의 F5와 "보안·인증 > 샌드박스"를 따른다.
 PR 코드는 이 모듈이 띄운 컨테이너 안에서만 실행한다. 호스트에서는 docker CLI만 부른다.
@@ -19,11 +19,13 @@ import tomllib
 import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
 from pathlib import Path
 
+from app.models.sandbox import ExecResult, Image
+from app.models.test_run import PytestRun, ReportSummary
+
 IMAGE = "pipeline-sandbox"
-SANDBOX_DIR = Path(__file__).resolve().parent.parent / "sandbox"
+SANDBOX_DIR = Path(__file__).resolve().parents[2] / "sandbox"
 COVERAGERC = SANDBOX_DIR / "coveragerc"
 VENV_CACHE = Path.home() / ".cache" / "pipeline" / "venvs"
 
@@ -45,41 +47,6 @@ _ENV_PASSTHROUGH = ("PATH", "HOME", "DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CON
 
 class SandboxError(RuntimeError):
     """Docker나 .venv 설치가 실패한 환경 오류. PR의 테스트 실패와 구분한다."""
-
-
-@dataclass(frozen=True)
-class Image:
-    id: str
-    python_version: str
-
-
-@dataclass(frozen=True)
-class ExecResult:
-    returncode: int | None  # 취소되면 None
-    stdout: str
-    stderr: str
-    timed_out: bool = False
-    cancelled: bool = False
-
-
-@dataclass(frozen=True)
-class PytestRun:
-    exit_code: int | None
-    passed: int
-    failed: int
-    errors: int
-    skipped: int
-    total: int
-    failed_tests: tuple[str, ...]
-    report_path: Path | None
-    coverage_xml: Path | None
-    timed_out: bool = False
-    cancelled: bool = False
-    output: str = ""
-
-    @property
-    def ok(self) -> bool:
-        return self.exit_code == 0
 
 
 def minimal_env() -> dict[str, str]:
@@ -314,26 +281,6 @@ def pythonpath_for(worktree: Path) -> str:
     return "/work/src:/work" if (worktree / "src").is_dir() else "/work"
 
 
-def parse_report(data: dict) -> tuple[int, int, int, int, int, tuple[str, ...]]:
-    """pytest-json-report 결과에서 (passed, failed, errors, skipped, total, 실패 nodeid)."""
-    summary = data.get("summary", {})
-    failed_ids = [
-        t["nodeid"] for t in data.get("tests", []) if t.get("outcome") in ("failed", "error")
-    ]
-    # 수집 단계 오류(import 실패 등)는 tests가 아니라 collectors에 남는다
-    collect_errors = [
-        c["nodeid"] for c in data.get("collectors", []) if c.get("outcome") == "failed"
-    ]
-    return (
-        summary.get("passed", 0),
-        summary.get("failed", 0),
-        summary.get("error", 0) + len(collect_errors),
-        summary.get("skipped", 0),
-        summary.get("total", 0),
-        tuple(failed_ids + collect_errors),
-    )
-
-
 def run_tests(
     container: str,
     worktree: Path,
@@ -364,24 +311,16 @@ def run_tests(
         poll_seconds=poll_seconds,
     )  # fmt: skip
 
-    counts: tuple[int, int, int, int, int, tuple[str, ...]] = (0, 0, 0, 0, 0, ())
-    report_path: Path | None = None
+    summary: ReportSummary | None = None
     if report.is_file():
         try:
-            counts = parse_report(json.loads(report.read_text()))
-            report_path = report
-        except (json.JSONDecodeError, KeyError, TypeError):
-            report_path = None
-    passed, failed, errors, skipped, total, failed_tests = counts
+            summary = ReportSummary.from_report(json.loads(report.read_text()))
+        except (json.JSONDecodeError, KeyError, TypeError, AttributeError):
+            summary = None
     return PytestRun(
         exit_code=result.returncode,
-        passed=passed,
-        failed=failed,
-        errors=errors,
-        skipped=skipped,
-        total=total,
-        failed_tests=failed_tests,
-        report_path=report_path,
+        summary=summary,
+        report_path=report if summary is not None else None,
         coverage_xml=coverage_xml if coverage_xml.is_file() else None,
         timed_out=result.timed_out,
         cancelled=result.cancelled,
