@@ -57,3 +57,62 @@ def test_real_ruff_in_sandbox_reports_only_changed_lines(worktree: Path) -> None
     assert [(f.file, f.line, f.code) for f in result.findings] == [
         ("orders/lint_case.py", 2, "F401")
     ]
+
+
+def test_apply_safe_fixes_only_on_changed_lines(tmp_path: Path) -> None:
+    from app.models.text_edit import TextEdit
+
+    (tmp_path / "a.py").write_text("import os\nimport sys\n")
+
+    def delete_line(row: int) -> tuple[TextEdit, ...]:
+        return (TextEdit(row, 1, row + 1, 1, ""),)
+
+    run = RuffRun(
+        violations=(
+            RuffViolation("a.py", 1, 1, "F401", "os", delete_line(1)),  # 기존 줄
+            RuffViolation("a.py", 2, 2, "F401", "sys", delete_line(2)),  # PR이 바꾼 줄
+        )
+    )
+    applied, touched = lint.apply_safe_fixes(tmp_path, run, {"a.py": frozenset({2})})
+    assert (applied, touched) == (1, {"a.py"})
+    assert (tmp_path / "a.py").read_text() == "import os\n"  # PR이 안 건드린 줄은 그대로
+
+
+def _git(cwd: Path, *args: str) -> str:
+    import subprocess
+
+    return subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", *args],
+        cwd=cwd, check=True, capture_output=True, text=True,
+    ).stdout.strip()  # fmt: skip
+
+
+@pytest.mark.docker
+def test_real_fix_touches_only_changed_lines(tmp_path: Path) -> None:
+    """base에 이미 있던 위반은 그대로 두고, PR이 추가한 줄의 위반만 고친다.
+
+    한글이 든 줄에서 열 위치(문자 단위)가 맞는지도 본다.
+    """
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    _git(wt, "init", "-q", "-b", "main")
+    (wt / "mod.py").write_text('import os\n\nMSG = "기존"\n')
+    _git(wt, "add", ".")
+    _git(wt, "commit", "-q", "-m", "base")
+    base_sha = _git(wt, "rev-parse", "HEAD")
+    # PR: 안 쓰는 import(안전한 수정), 한글 뒤의 f-string(같은 줄 중간의 안전한 수정),
+    # 안 쓰는 지역 변수(F841, ruff의 수정이 unsafe라 적용하지 않음)
+    (wt / "mod.py").write_text(
+        'import os\nimport sys\n\nMSG = "기존"\nOK = "한글" + f"끝"\n\n\ndef f():\n    unused = 1\n'
+    )
+    base = BaseConfig(
+        repo=RepoConfig(), memory_gb=1, max_memory_gb=4, ruff_config=None, ruff_source="기본"
+    )
+    result = lint.fix_lint(wt, base, base_sha)
+    assert result is not None and result.applied == 2
+    text = (wt / "mod.py").read_text()
+    assert text.startswith("import os\n")  # base에 있던 위반 (F401 os)은 그대로
+    assert "import sys" not in text
+    assert 'OK = "한글" + "끝"\n' in text  # 열 위치가 문자 단위로 맞다
+    assert result.touched_files == ("mod.py",)
+    assert [f.code for f in result.after.findings] == ["F841"]

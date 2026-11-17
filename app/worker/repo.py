@@ -105,6 +105,21 @@ def read_base_files_from_cache(
     return read_base_files(bare, base_sha, names)
 
 
+def working_diff(worktree: Path, base_sha: str) -> str:
+    """base 커밋과 worktree의 지금 파일 사이의 diff. 수정을 적용한 뒤 바뀐 줄을 다시 셀 때 쓴다."""
+    return _git("diff", "--no-color", base_sha, cwd=worktree)
+
+
+def status(worktree: Path) -> str:
+    """새 파일·삭제·이름 변경까지 보이는 변경 목록 (docs/DESIGN.md F7 범위 검사)."""
+    return _git("status", "--porcelain=v1", "-z", "--untracked-files=all", cwd=worktree)
+
+
+def head_diff(worktree: Path) -> str:
+    """체크아웃한 커밋과 worktree 사이의 diff. 수정안 자체다."""
+    return _git("diff", "--no-color", "HEAD", cwd=worktree)
+
+
 def write_changes_diff(worktree: Path, base_sha: str, head_sha: str) -> Path:
     out = worktree / CHANGES_DIFF
     out.parent.mkdir(exist_ok=True)

@@ -16,6 +16,7 @@ class Finding:
     skill: Skill
     source: str  # 규칙의 출처. 예: "pyproject.toml", "기본 규칙"
     code: str = ""  # 도구의 규칙 코드. 예: "F401"
+    fixable: bool = False  # 도구가 동작을 바꾸지 않는 수정을 낼 수 있다 (lint: ruff의 safe fix)
 
 
 @dataclass(frozen=True)
@@ -30,3 +31,7 @@ class SkillResult:
     @property
     def checked(self) -> bool:
         return self.error is None
+
+    @property
+    def fixable_count(self) -> int:
+        return sum(1 for f in self.findings if f.fixable)

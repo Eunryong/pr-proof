@@ -104,13 +104,6 @@ def test_unknown_command_gets_no_reply(env) -> None:
     assert env["gh"].calls == []
 
 
-def test_fix_is_not_recorded_until_supported(env) -> None:
-    from app.worker import main
-
-    assert main.handle(_command("/fix lint"), env["deps"]) == "fix_not_ready"
-    assert not env["deps"].store.command_handled(9)
-
-
 @pytest.mark.parametrize("final", [False, True])
 def test_github_failure_retries_and_releases_on_last(env, final: bool) -> None:
     from app.models import state_keys

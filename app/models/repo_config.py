@@ -17,6 +17,16 @@ class SandboxSettings(BaseModel):
     memory_gb: float = Field(default=1, ge=MIN_MEMORY_GB)
 
 
+class FixSettings(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    require_approval: bool = True  # /fix 승인 후 수정안을 만든다. false면 바로 만든다
+
+
+class SkillsSettings(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    fix: FixSettings = FixSettings()
+
+
 class ExtensionSettings(BaseModel):
     """선택 확장 하나 (7단계). 지금은 꺼져 있다는 안내에만 쓴다 (DESIGN.md F11)."""
 
@@ -33,6 +43,7 @@ class Extensions(BaseModel):
 class RepoConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
     sandbox: SandboxSettings = SandboxSettings()
+    skills: SkillsSettings = SkillsSettings()
     extensions: Extensions = Extensions()
 
     def extension_enabled(self, name: str) -> bool:
