@@ -158,7 +158,7 @@ F1–F5는 수신과 실행 기반(1단계), F6–F10은 검출·안전망·수�
 - 실행 시점: api 시작 시 1회, 이후 5분마다(설정값). FastAPI lifespan에서 백그라운드 루프로 띄우고, `gh` 호출은 스레드에서 실행해 웹훅 응답을 막지 않는다.
 - 수동 실행은 CLI(`python -m app.cli sync`)로 한다. api는 웹훅용 터널로 외부에 열려 있으므로 HTTP 엔드포인트로 만들지 않는다.
 - 서버가 꺼진 동안 커밋이 여러 개 쌓였어도 최신 head만 검사한다.
-- 놓친 명령은 현재 head가 올라온 뒤에 달린 것만 처리한다. 이전 커밋에 대한 `/fix`를 뒤늦게 실행하지 않는다. F1의 작성자 권한 확인을 똑같이 적용한다.
+- 놓친 명령은 현재 head가 올라온 뒤에 달린 것만 처리한다. 이전 커밋에 대한 `/fix`를 뒤늦게 실행하지 않는다. 기준 시각은 head 커밋의 커미터 시각이다(`gh api repos/{repo}/commits/{sha}`). 코멘트 목록은 `?since=`로 줄이되, `since`는 수정 시각 기준이라 작성 시각으로 한 번 더 거른다. 워커가 처리한 코멘트 ID(`commandrecord`)는 넣지 않는다. F1의 작성자 권한 확인을 웹훅과 같은 함수로 적용한다.
 - 동기화로 처리한 검사는 PR 코멘트에 한 줄 남긴다. 예: "동기화로 처리됨 (웹훅 누락)".
 - SQLite가 기준이므로 Redis 큐가 비워져도 다음 동기화가 다시 채운다.
 
@@ -778,7 +778,7 @@ worker: python -m app.worker.main
 - [x] PR 코멘트의 제안 명령 (`· 자동 수정 가능: /fix lint`), 제안하지 않는 이유 (테스트 실패 등)
 - [x] 명령 처리: `/recheck`(PR의 지금 head로 다시 검사), 꺼진 확장 명령에는 "꺼져 있음" 답글, 처리한 코멘트 ID 저장
 - [x] 명령 처리: `/fix lint` (대기 중인 수정이 없으면 답글, 다른 스킬은 미지원 답글)
-- [ ] 동기화: 놓친 명령 보충 (F2). 웹훅과 같은 권한 확인(`author_association`이 OWNER·MEMBER·COLLABORATOR)과 파이프라인 코멘트 제외를 같은 함수로 적용한다
+- [x] 동기화: 놓친 명령 보충 (F2). 웹훅과 같은 권한 확인(`author_association`이 OWNER·MEMBER·COLLABORATOR)과 파이프라인 코멘트 제외를 같은 함수(`models/comment.py`의 `command_in_comment`)로 적용한다
 - [x] SqliteSaver 체크포인트, thread_id `repo#pr#head_sha`, `/fix lint` interrupt·재개 (재개 시 worktree 다시 만들기). 새 검사는 같은 thread의 이전 체크포인트를 지우고 시작, 수정 도중 실패하면 재시도가 수정 단계부터 이어 감. `require_approval: false`면 바로 수정
 - [x] 수정: ruff의 안전한 수정 중 PR이 바꾼 줄의 것만 적용 → 규칙 재검사(새 위반 없음) → 허용 범위 검사 → 샌드박스 테스트 재실행(수정 전과 같은 결과) → 수정안 diff 저장·코멘트
 - [ ] 수정: 조건부 `ruff format` (base가 `ruff format --check`를 통과하는 리포에서만)
