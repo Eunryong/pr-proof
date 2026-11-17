@@ -1,6 +1,6 @@
 from app.models.test_run import PytestRun, ReportSummary
-from app.views import test_report
-from app.views.test_report import render_test_section
+from app.worker import report
+from app.worker.report import render_test_section
 
 
 def test_passed() -> None:
@@ -19,12 +19,12 @@ def test_failed_lists_tests() -> None:
 
 
 def test_long_failure_list_is_truncated() -> None:
-    count = test_report.MAX_LISTED_FAILURES + 3
+    count = report.MAX_LISTED_FAILURES + 3
     ids = tuple(f"tests/test_a.py::test_{i}" for i in range(count))
     run = PytestRun(exit_code=1, summary=ReportSummary(failed=count, total=count, failed_tests=ids))
     text = render_test_section(run)
-    assert f"`tests/test_a.py::test_{test_report.MAX_LISTED_FAILURES - 1}`" in text
-    assert f"`tests/test_a.py::test_{test_report.MAX_LISTED_FAILURES}`" not in text
+    assert f"`tests/test_a.py::test_{report.MAX_LISTED_FAILURES - 1}`" in text
+    assert f"`tests/test_a.py::test_{report.MAX_LISTED_FAILURES}`" not in text
     assert "- 외 3개" in text
 
 

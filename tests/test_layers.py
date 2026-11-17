@@ -1,4 +1,9 @@
-"""MVC 계층 규칙: controllers → services·views → models 한 방향으로만 import한다."""
+"""계층 규칙.
+
+- 웹(api) 쪽은 MVC: controllers → services·views → models
+- 워커: worker → sandbox → models
+- 웹 쪽은 sandbox·worker를 import하지 않는다 (api 프로세스는 PR 코드를 실행하지 않는다)
+"""
 
 import ast
 from collections.abc import Mapping
@@ -15,7 +20,14 @@ ALLOWED: Final[Mapping[str, frozenset[str]]] = {
     "services": frozenset({"models", "services"}),
     "views": frozenset({"models", "views"}),
     "controllers": frozenset({"models", "services", "views", "controllers"}),
+    "sandbox": frozenset({"models", "sandbox"}),
+    "worker": frozenset({"models", "sandbox", "worker"}),
 }
+
+
+def test_every_package_has_rule() -> None:
+    packages = {p.name for p in APP.iterdir() if (p / "__init__.py").is_file()}
+    assert packages == set(ALLOWED)
 
 
 def _app_imports(path: Path) -> set[str]:

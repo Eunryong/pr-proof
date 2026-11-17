@@ -29,14 +29,14 @@ pytest                # 파이프라인 자체 테스트
 
 워커 실행 전 `gh auth login`, `claude` 로그인, Docker 실행이 필요하다. preflight가 확인한다.
 
-## 코드 구조 (MVC)
+## 코드 구조
 
-- `app/models/`: 데이터와 상태, 그 데이터만으로 계산되는 규칙. 외부 호출 없음
-- `app/services/`: 외부 시스템(Docker, git, gh, claude, Redis, SQLite)을 다루고 모델을 돌려준다
-- `app/views/`: 모델을 PR 코멘트·Slack 메시지·API 응답으로 바꾼다. 판정을 새로 내지 않는다
-- `app/controllers/`: 요청 하나를 받아 서비스를 순서대로 부르고 뷰로 출력을 만든다
-- import 방향은 controllers → services·views → models 한쪽이다. `tests/test_layers.py`가 검사한다
-- 진입점(`api.py`, `worker.py`, `sync.py`)은 컨트롤러만 부른다. 테스트는 `tests/` 아래 같은 계층 폴더에 둔다
+- `app/models/`: api와 워커가 같이 쓰는 데이터. 외부 호출 없음
+- `app/controllers/`, `app/services/`, `app/views/`: 웹(api) 쪽 MVC. 웹훅을 받아 큐에 넣기만 한다
+- `app/worker/`: 워커 진입점, 작업 흐름(LangGraph), PR 코멘트, 워커가 쓰는 git·gh 도구
+- `app/sandbox/`: 워커가 쓰는 docker 도구 (`docker_cli`, `venv`, `container`, `pytest_runner`)
+- 웹 쪽은 `worker/`와 `sandbox/`를 import하지 않는다. 의존 방향은 `tests/test_layers.py`가 검사한다
+- 테스트는 `tests/` 아래 같은 이름의 폴더에 둔다
 
 ## 코드 스타일
 

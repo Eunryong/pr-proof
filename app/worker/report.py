@@ -1,4 +1,4 @@
-"""테스트 실행 결과를 PR 코멘트용 마크다운으로 바꾼다. 판정을 새로 내지 않고 모델 값만 보여준다."""
+"""테스트 결과를 PR 코멘트용 마크다운으로 바꾼다. 판정을 새로 내지 않고 모델 값만 보여준다."""
 
 from collections.abc import Mapping
 from typing import Final

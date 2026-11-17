@@ -2,8 +2,9 @@ from pathlib import Path
 
 import pytest
 
-from app.controllers.test_run import run_pr_tests
-from app.services.sandbox import SandboxError
+from app.sandbox import docker_cli
+from app.sandbox.docker_cli import SandboxError
+from app.worker.graph import run_pr_tests
 
 
 @pytest.mark.docker
@@ -15,11 +16,9 @@ def test_runs_eval_repo_tests(worktree: Path, venv_cache: Path) -> None:
 
 
 def test_environment_error_propagates(tmp_path: Path, monkeypatch) -> None:
-    from app.services import sandbox
-
     def no_docker(*args, **kwargs):
         raise SandboxError("docker 없음")
 
-    monkeypatch.setattr(sandbox, "ensure_image", no_docker)
+    monkeypatch.setattr(docker_cli, "ensure_image", no_docker)
     with pytest.raises(SandboxError):
         run_pr_tests(tmp_path, venv_cache=tmp_path / "cache")

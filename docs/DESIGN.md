@@ -184,7 +184,7 @@ F1–F8이 1–3단계(판정까지), F9–F11이 4–5단계(생성·수정·�
 ### F6. 테스트 품질 검사
 
 - **변경 라인 커버리지:** `diff-cover`로 PR에서 바뀐 줄 중 테스트가 지나가지 않은 줄을 찾는다. diff-cover는 PR 코드를 실행하지 않으므로 호스트에서 돌린다. 입력은 샌드박스가 남긴 `coverage.xml`과 호스트에서 만든 `changes.diff`다.
-- `coverage.xml`의 경로는 컨테이너 기준(`/work/...`)이 아니라 리포 기준 상대 경로여야 한다. coverage의 `relative_files = true`를 파이프라인 쪽 설정 파일에 두고 `--cov-config`로 넘긴다. 1단계 구현에서는 대상 리포의 coverage 설정을 쓰지 않고 파이프라인 설정(`sandbox/coveragerc`: `relative_files`, `source = .`, `.venv/` 제외)만 쓴다. 기본 `# pragma: no cover`는 그대로 동작한다. 리포 설정의 `omit`·`exclude_lines`를 반영할지는 협업 리포 검증 때 다시 본다.
+- `coverage.xml`의 경로는 컨테이너 기준(`/work/...`)이 아니라 리포 기준 상대 경로여야 한다. coverage의 `relative_files = true`를 파이프라인 쪽 설정 파일에 두고 `--cov-config`로 넘긴다. 1단계 구현에서는 대상 리포의 coverage 설정을 쓰지 않고 파이프라인 설정(`docker/sandbox/coveragerc`: `relative_files`, `source = .`, `.venv/` 제외)만 쓴다. 기본 `# pragma: no cover`는 그대로 동작한다. 리포 설정의 `omit`·`exclude_lines`를 반영할지는 협업 리포 검증 때 다시 본다.
 - **수상한 테스트 탐지 (정적 검사):** assert가 없거나 `assert True`인 테스트, 테스트 대상 자체를 mock한 테스트, 새로 skip 처리된 테스트, 같은 PR에서 assert를 지운 변경. 이 항목들은 ⚠️ 조건이다.
 - **기대값을 바꾼 변경은 판정에 넣지 않는다.** 기능을 의도적으로 바꾸며 테스트를 갱신하는 정상적인 PR과 구분할 수 없기 때문이다. 코멘트에 "리뷰어 확인 필요"로만 표시한다. assert 삭제는 ⚠️로 둔다. 바뀐 줄 뮤테이션으로는 삭제된 assert를 잡을 수 없다.
 
@@ -433,7 +433,7 @@ docker run -d --name job-<id> --network none \
   --memory 1g --cpus 1 --pids-limit 256 --user "$(id -u):$(id -g)" -e HOME=/tmp \
   -v /tmp/pipeline/pr-<n>:/work -w /work \
   -v ~/.cache/pipeline/venvs/<cache-key>:/work/.venv:ro \
-  -v <pr-proof>/sandbox/coveragerc:/pipeline/coveragerc:ro \
+  -v <pr-proof>/docker/sandbox:/pipeline:ro \
   pipeline-sandbox sleep infinity
 docker exec -e PYTHONPATH=/work job-<id> timeout 600 .venv/bin/pytest \
   -p no:cacheprovider \
@@ -570,55 +570,61 @@ claude -p "$PROMPT" \
 
 **디렉터리 구조**
 
-파이프라인 코드는 MVC로 나눈다. 화면이 없는 백엔드라 각 계층의 역할은 아래와 같다.
+코드는 프로세스 역할에 따라 나눈다. 웹(api)은 요청을 받아 큐에 넣기만 하고 PR 코드를 실행하지 않으므로 MVC로 짜고, 워커와 워커가 쓰는 docker 도구는 따로 둔다.
 
-| 계층 | 역할 | import 가능 |
+| 패키지 | 역할 | import 가능 |
 | --- | --- | --- |
-| `models/` | 데이터와 상태, 그 데이터만으로 계산되는 규칙(작업 키, 실행 상태). 외부 호출 없음 | 표준 라이브러리, pydantic |
-| `services/` | 외부 시스템을 다루는 일(Docker, git, gh, claude, Redis, SQLite). 결과를 모델로 돌려준다 | models |
-| `views/` | 모델을 출력 형태(PR 코멘트 마크다운, Slack 메시지, API 응답)로 바꾼다. 판정을 새로 내지 않는다 | models |
-| `controllers/` | 요청 하나(웹훅, 큐 작업, 명령)를 받아 서비스를 순서대로 부르고 뷰로 출력을 만든다 | models, services, views |
+| `models/` | api와 워커가 같이 쓰는 데이터와, 그 데이터만으로 계산되는 규칙(작업 키, 실행 상태). 외부 호출 없음 | models |
+| `controllers/` | 웹: 요청 하나(웹훅)를 받아 서비스를 부르고 뷰로 응답을 만든다 | models, services, views |
+| `services/` | 웹: 서명 검증, Redis 큐 등록과 중복 제거 | models |
+| `views/` | 웹: 모델을 API 응답으로 바꾼다 | models |
+| `worker/` | 워커: 진입점, 작업 흐름(LangGraph), PR 코멘트 만들기, 워커가 쓰는 git·gh 도구 | models, sandbox |
+| `sandbox/` | 워커가 쓰는 docker 도구. PR 코드는 여기를 거쳐서만 실행한다 | models |
 
-진입점(`api.py`, `worker.py`, `sync.py`)은 프로세스를 띄우고 컨트롤러를 부르는 일만 한다. 의존 방향은 `tests/test_layers.py`가 검사한다.
+웹 쪽(controllers·services·views)은 `worker/`와 `sandbox/`를 import하지 않는다. 의존 방향은 `tests/test_layers.py`가 검사한다.
 
 ```
 pipeline/
 ├── app/
-│   ├── api.py               # 진입점: FastAPI 앱 (uvicorn)
-│   ├── worker.py            # 진입점: RQ 워커
-│   ├── sync.py              # 진입점: PR 상태 동기화 루프
-│   ├── config.py            # 설정 로드, 비밀값 파일 읽기
-│   ├── models/
-│   │   ├── job.py           # PRJob: 작업 데이터 계약 (api·sync·worker 공용)
-│   │   ├── sandbox.py       # Image, ExecResult
-│   │   ├── test_run.py      # PytestRun, ReportSummary, 실행 상태
-│   │   └── db.py            # SQLModel 테이블
+│   ├── api.py                   # 진입점: FastAPI 앱 (uvicorn)
+│   ├── sync.py                  # 진입점: PR 상태 동기화 루프
+│   ├── config.py                # 설정 로드, 비밀값 파일 읽기
+│   ├── models/                  # api·워커 공용 데이터
+│   │   ├── job.py               # PRJob: 작업 데이터 계약
+│   │   ├── test_run.py          # PytestRun, ReportSummary, 실행 상태
+│   │   └── db.py                # SQLModel 테이블
+│   ├── controllers/             # 웹: MVC
+│   │   └── webhook.py           # 웹훅 → PRJob → 큐
 │   ├── services/
-│   │   ├── sandbox.py       # 이미지, .venv 준비와 캐시, run_in_sandbox(), run_tests()
-│   │   ├── repo.py          # bare clone 캐시, worktree, changes.diff
-│   │   ├── github.py        # fetch_pr, list_open_prs, post_comment, update_comment, open_pr (gh CLI)
-│   │   ├── preflight.py     # 시작 전 점검
-│   │   ├── checks/          # diff_coverage, suspicious, mutation
-│   │   ├── skills/          # lint, static, structure
-│   │   ├── rules.py         # 구조 규칙 읽기: README 변환, import 그래프, 이름 패턴
-│   │   ├── ai/              # 모델 백엔드, 프롬프트, 라우팅
-│   │   ├── memory.py        # 기록 저장과 검색 (SQLite + Chroma)
-│   │   └── notify.py        # Slack 전송
+│   │   ├── signature.py         # 웹훅 서명 검증
+│   │   └── queue.py             # 큐 등록, 작업 키 중복 방지
 │   ├── views/
-│   │   ├── test_report.py   # 테스트 결과 부분
-│   │   └── pr_comment.py    # PR 코멘트 전체 (판정, 커버리지, 뮤턴트, 위반, 비용)
-│   └── controllers/
-│       ├── test_run.py      # 한 PR의 테스트 실행
-│       ├── webhook.py       # 웹훅 검증 → PRJob → 큐
-│       ├── pr_job.py        # 큐 작업 처리
-│       ├── graph.py         # LangGraph 노드와 분기, 생성·수정 서브그래프
-│       └── pr_sync.py       # GitHub 상태 ↔ 처리 이력 비교, 작업 등록
-├── eval/                    # 버그·위반 주입 케이스, 실행 스크립트 (예제 리포는 별도 GitHub 리포, 2단계부터)
-├── sandbox/                 # 테스트 샌드박스 베이스 이미지(Dockerfile), coverage 설정
-├── tests/                   # 파이프라인 자체 테스트. app/과 같은 계층 폴더로 나눈다
-├── docker-compose.yml       # redis, chroma
-└── Procfile                 # api, worker, sync
+│   │   └── responses.py         # API 응답
+│   ├── worker/                  # 워커
+│   │   ├── main.py              # 진입점: RQ 워커, preflight
+│   │   ├── graph.py             # 작업 흐름: LangGraph 노드와 분기 (지금은 run_pr_tests())
+│   │   ├── report.py            # PR 코멘트 마크다운 (판정, 테스트, 커버리지, 뮤턴트, 위반, 비용)
+│   │   ├── repo.py              # bare clone 캐시, worktree, changes.diff (git, 호스트)
+│   │   ├── github.py            # fetch_pr, list_open_prs, post_comment, update_comment, open_pr (gh CLI)
+│   │   ├── checks/              # diff_coverage, suspicious, mutation
+│   │   ├── skills/              # lint, static, structure
+│   │   ├── rules.py             # 구조 규칙 읽기: README 변환, import 그래프, 이름 패턴
+│   │   ├── ai/                  # 모델 백엔드, 프롬프트, 라우팅
+│   │   ├── memory.py            # 기록 저장과 검색 (SQLite + Chroma)
+│   │   └── notify.py            # Slack
+│   └── sandbox/                 # 워커가 쓰는 docker 도구
+│       ├── docker_cli.py        # docker 호출, 최소 환경, 자원 제한, 베이스 이미지, SandboxError
+│       ├── venv.py              # 의존성 파일, 캐시 키, .venv 설치와 캐시
+│       ├── container.py         # 작업 컨테이너 띄우기, run_in_sandbox() (취소·타임아웃)
+│       └── pytest_runner.py     # pytest 실행, report.json·coverage.xml 읽기
+├── docker/sandbox/              # 샌드박스 베이스 이미지(Dockerfile), coverage 설정
+├── eval/                        # 버그·위반 주입 케이스, 실행 스크립트 (예제 리포는 별도 GitHub 리포, 2단계부터)
+├── tests/                       # 파이프라인 자체 테스트. app/과 같은 폴더로 나눈다
+├── docker-compose.yml           # redis, chroma
+└── Procfile                     # api, worker, sync
 ```
+
+sync가 쓰는 gh 조회와 DB 접근의 위치는 sync를 만들 때 정한다.
 
 파일은 필요한 단계에서 만든다. `skills/`, `rules.py`는 2·5단계, `memory.py`와 compose의 chroma는 6단계에 추가한다.
 
@@ -659,7 +665,7 @@ docker compose up -d      # redis (6단계부터 chroma)
 
 # Procfile — honcho start
 api:    uvicorn app.api:app --port 8000
-worker: python -m app.worker
+worker: python -m app.worker.main
 sync:   python -m app.sync
 ```
 
