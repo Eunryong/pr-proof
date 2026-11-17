@@ -194,7 +194,13 @@ F1–F8이 1–3단계(판정까지), F9–F11이 4–5단계(생성·수정·�
 - 설정값: `non_draft`(기본) / `every_push`(Draft 포함) / `manual`(`/mutate`만). `manual`에서 뮤테이션 결과가 없는 head는 ✅가 될 수 없다.
 - PR당 뮤턴트 상한(기본 50개)과 뮤턴트별 타임아웃을 둔다.
 - 결과: 뮤테이션 점수(잡은 수 ÷ 전체)와 살아남은 뮤턴트 목록(파일, 줄, 바뀐 내용).
-- 뮤턴트 하나를 지정해 다시 실행할 수 있어야 한다. F9에서 AI 테스트가 목표 뮤턴트를 잡는지 확인하는 데 쓴다. mutmut이 이 두 가지(바뀐 줄 한정, 뮤턴트 지정 실행)를 지원하는지는 0단계 스파이크에서 확인한다.
+- 뮤턴트 하나를 지정해 다시 실행할 수 있어야 한다. F9에서 AI 테스트가 목표 뮤턴트를 잡는지 확인하는 데 쓴다. `mutmut run <뮤턴트 이름>`으로 한다.
+- **0단계 스파이크 결과 (mutmut 3.8.1, `eval/repos/orders`):**
+  - 뮤턴트 지정 실행은 된다. 이름은 `모듈.x_함수__mutmut_N` 형식이고 glob(`모듈.x_함수*`)도 받는다. 지정하지 않은 뮤턴트는 `not checked`로 남는다.
+  - "바뀐 줄만"은 기본 기능이 없다. 다음 순서로 구현한다: ① 매칭되지 않는 이름으로 `mutmut run`을 돌려 뮤턴트만 생성(실행 0개, 종료 코드 1) → ② `mutmut show <이름>`의 diff(함수 기준 줄 번호)와 AST의 함수 시작 줄로 뮤턴트의 실제 줄을 계산 → ③ `changes.diff`의 바뀐 줄에 해당하는 뮤턴트만 골라 상한(50개)까지 이름을 지정해 실행.
+  - 결과는 `mutmut results --all true`와 `mutants/` 아래 `.meta` JSON(뮤턴트별 종료 코드), `mutmut export-cicd-stats`로 읽는다.
+  - 한계: mutmut 3은 함수 안의 코드만 변형한다. 모듈 수준 상수(`SHIPPING_FEE = 3_000` 등)의 변경은 뮤턴트가 나오지 않으므로, 그런 줄은 "뮤테이션 대상 아님"으로 표시하고 변경 라인 커버리지로만 판정한다.
+  - mutmut은 worktree 안에 `mutants/` 폴더를 만든다. git이 필요 없어 컨테이너 안에서 돌릴 수 있다. `mutants/`도 "허용 범위 밖 변경" 검사와 스테이징에서 제외한다.
 
 ### F8. 판정과 PR 코멘트
 
@@ -444,17 +450,22 @@ docker rm -f job-<id>
 
 ```bash
 claude -p "$PROMPT" \
+  --restricted --strict-mcp-config \
   --permission-mode dontAsk \
   --allowedTools "Read,Grep,Glob,Write,Edit" \
-  --max-turns 8 --output-format json
+  --model haiku --max-budget-usd 0.30 --output-format json
 # cwd = PR worktree, Bash·웹 도구 없음
-# 초안. 경로 제한과 프로젝트 설정 차단 옵션은 0단계 스파이크에서 확정한다.
+# 0단계 스파이크에서 확인한 옵션 (claude CLI 2.1.326)
 ```
 
 - 작업 폴더는 PR worktree로 고정한다. 홈 디렉터리에서 실행하지 않는다.
 - **읽기·쓰기를 worktree 안으로 제한한다.** 제한이 없으면 다음 경로가 열린다: PR에 심은 지시문 → `~/.config/pipeline/`이나 `~/.ssh`를 읽음 → 그 내용을 테스트 파일에 씀 → 제안 PR로 GitHub에 올라감.
 - **PR에 들어 있는 `.claude/` 설정(hooks 포함)이 로드되지 않게 한다.**
-- 위 두 가지를 CLI 옵션으로 보장할 수 없으면 claude 호출도 컨테이너 안에서 하는 방안으로 바꾼다.
+- **0단계 스파이크 결과 (claude CLI 2.1.326):** `--restricted`가 위 두 가지를 맡는다. Bash 같은 실행 도구와 WebFetch를 빼고, 파일 도구를 작업 폴더 안으로 제한하고, user·project·local 설정 파일을 읽지 않는다. 실제로 확인한 것: worktree 밖 파일의 Read·Write가 거부됨, worktree 안 `tests/` 쓰기는 됨, worktree의 `.claude/settings.json`에 넣은 hook이 실행되지 않음, Bash 없음.
+- JSON 출력에 `total_cost_usd`, `num_turns`, `permission_denials`(거부된 도구 호출 목록)가 들어 있다. 비용 기록과 "허용 범위 밖 시도" 탐지에 쓴다.
+- 로그인 확인은 `claude auth status`(JSON, `loggedIn`과 `loginExpiresAt`)로 한다. preflight가 만료 시각도 본다.
+- `--max-turns`는 도움말에 없어 쓰지 않는다. 상한은 `--max-budget-usd`로 건다.
+- 확인하지 못한 것: `--restricted`에서 worktree의 `CLAUDE.md`가 프롬프트에 들어가는지. 들어가더라도 경로 제한과 실행 후 diff 검사가 막지만, 4단계에서 다시 확인한다.
 - 실행 후 `git diff`로 허용 범위(F11) 밖의 변경을 확인해 있으면 버린다.
 - **푸시 전 비밀값 검사:** 제안 PR의 diff에 파이프라인이 가진 비밀값(웹훅 시크릿, Slack URL)이나 토큰·개인키 패턴이 있으면 버리고 운영 알림을 보낸다.
 
@@ -469,7 +480,7 @@ claude -p "$PROMPT" \
 3. **범위 축소:** 바뀐 줄의 뮤턴트만, PR당 뮤턴트 상한, 바뀐 코드의 위반만.
 4. **시점 축소:** 뮤테이션은 Draft가 아닐 때만 돌린다.
 5. **재사용:** (소스 해시, 테스트 해시) 결과 캐시. README 규칙은 blob 해시로 캐시해 README가 바뀔 때만 AI를 부른다.
-6. **상한:** PR당 예산(`budget_per_pr_usd`), `--max-turns`, 재시도 3회. 예산을 넘으면 생성을 멈추고 코멘트로 알린다.
+6. **상한:** PR당 예산(`budget_per_pr_usd`), 호출당 `--max-budget-usd`, 재시도 3회. 예산을 넘으면 생성을 멈추고 코멘트로 알린다.
 7. **비용 표시:** PR 코멘트에 AI 호출 횟수와 추정 비용을 남기고 DB에 기록한다.
 8. **백엔드 선택:** 구독 계정(claude CLI 로그인, 개인·로컬 사용), API 키(팀 서버), 로컬 모델(Ollama, 비용 0). 구독 계정을 여러 사람의 자동화에 쓸 때는 약관을 확인한다.
 
@@ -633,10 +644,10 @@ sync:   python -m app.sync
 
 ### 0단계. 준비
 
-- [ ] 파이프라인 리포 생성, 디렉터리 구조·Procfile·docker-compose·pyproject 작성
-- [ ] 스파이크: mutmut으로 바뀐 줄의 뮤턴트만 실행, 뮤턴트 하나를 지정해 재실행. 안 되면 버전 고정 또는 다른 도구
-- [ ] 스파이크: claude CLI의 로그인 확인 명령, 경로 단위 권한 제한, 프로젝트 설정 차단 옵션
-- [ ] `eval/`에 첫 예제 리포 (README에 구조 설명이 있고 폴더 구조가 일관된 작은 Python 프로젝트)
+- [x] 파이프라인 리포 생성, 디렉터리 구조·Procfile·docker-compose·pyproject 작성
+- [x] 스파이크: mutmut으로 바뀐 줄의 뮤턴트만 실행, 뮤턴트 하나를 지정해 재실행 (결과는 F7)
+- [x] 스파이크: claude CLI의 로그인 확인 명령, 경로 단위 권한 제한, 프로젝트 설정 차단 옵션 (결과는 보안·인증)
+- [x] `eval/`에 첫 예제 리포 `eval/repos/orders` (README에 구조 설명이 있고 폴더 구조가 일관된 작은 Python 프로젝트)
 
 ### 1단계. 수신 → 샌드박스 테스트 → PR 코멘트, 동기화
 
@@ -753,8 +764,8 @@ sync:   python -m app.sync
 
 **열린 질문**
 
-- [ ] mutmut이 바뀐 줄 한정과 뮤턴트 지정 실행을 지원하는지 (0단계 스파이크)
-- [ ] claude CLI의 로그인 확인 명령, 경로 제한, 프로젝트 설정 차단 방법 (0단계 스파이크)
+- [x] mutmut이 바뀐 줄 한정과 뮤턴트 지정 실행을 지원하는지: 지정 실행은 지원, 바뀐 줄 한정은 직접 구현 (F7)
+- [x] claude CLI의 로그인 확인 명령, 경로 제한, 프로젝트 설정 차단 방법: `claude auth status`, `--restricted` (보안·인증)
 - [ ] diff coverage·뮤테이션 점수 기준값 (평가 후 결정)
 - [ ] 가벼운·고성능 모델을 구체적으로 무엇으로 할지, 로컬 모델을 포함할지
 - [ ] 반복 리터럴·모듈 수준 가변 상태 검출을 semgrep으로 할지 AST 검사로 직접 쓸지
