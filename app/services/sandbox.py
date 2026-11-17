@@ -20,29 +20,30 @@ import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Final
 
 from app.models.sandbox import ExecResult, Image
 from app.models.test_run import PytestRun, ReportSummary
 
-IMAGE = "pipeline-sandbox"
-SANDBOX_DIR = Path(__file__).resolve().parents[2] / "sandbox"
-COVERAGERC = SANDBOX_DIR / "coveragerc"
-VENV_CACHE = Path.home() / ".cache" / "pipeline" / "venvs"
+IMAGE: Final = "pipeline-sandbox"
+SANDBOX_DIR: Final = Path(__file__).resolve().parents[2] / "sandbox"
+COVERAGERC: Final = SANDBOX_DIR / "coveragerc"
+VENV_CACHE: Final = Path.home() / ".cache" / "pipeline" / "venvs"
 
 # 대상 리포의 의존성과 함께 .venv에 설치하는 검사 도구. pytest 자체는 리포가 고정한 버전을 따른다.
-TOOL_REQUIREMENTS = ("pytest-cov==6.0.0", "pytest-json-report==1.5.0")
+TOOL_REQUIREMENTS: Final = ("pytest-cov==6.0.0", "pytest-json-report==1.5.0")
 
-OUT_DIR = ".pipeline-out"
-POLL_SECONDS = 10.0
-TEST_TIMEOUT = 600
-INSTALL_TIMEOUT = 900
+OUT_DIR: Final = ".pipeline-out"
+POLL_SECONDS: Final = 10.0
+TEST_TIMEOUT: Final = 600
+INSTALL_TIMEOUT: Final = 900
 # docker exec가 `timeout`보다 이만큼 더 걸리면 호스트에서 컨테이너를 지운다.
-HOST_GRACE_SECONDS = 30
-TIMEOUT_EXIT = 124  # coreutils `timeout`의 종료 코드
+HOST_GRACE_SECONDS: Final = 30
+TIMEOUT_EXIT: Final = 124  # coreutils `timeout`의 종료 코드
 
-LIMITS = ("--memory", "1g", "--cpus", "1", "--pids-limit", "256")
+LIMITS: Final = ("--memory", "1g", "--cpus", "1", "--pids-limit", "256")
 
-_ENV_PASSTHROUGH = ("PATH", "HOME", "DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CONFIG")
+_ENV_PASSTHROUGH: Final = ("PATH", "HOME", "DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CONFIG")
 
 
 class SandboxError(RuntimeError):
@@ -223,11 +224,13 @@ def run_in_sandbox(
     timeout: int = TEST_TIMEOUT,
     is_stale: Callable[[], bool] | None = None,
     poll_seconds: float = POLL_SECONDS,
+    host_grace: float = HOST_GRACE_SECONDS,
 ) -> ExecResult:
     """컨테이너 안에서 명령을 실행한다. pytest, mutmut, ruff가 모두 이 함수를 거친다.
 
     끝날 때까지 poll_seconds마다 is_stale()을 확인해, 커밋이 낡았으면 컨테이너를 지우고
-    cancelled로 돌려준다. 컨테이너 안의 `timeout`이 듣지 않으면 호스트에서 지운다.
+    cancelled로 돌려준다. 컨테이너 안의 `timeout`이 timeout + host_grace초 안에 끝내지
+    못하면 호스트에서 지운다.
     """
     cmd = ["docker", "exec"]
     for k, v in (env or {}).items():
@@ -237,7 +240,7 @@ def run_in_sandbox(
     cancelled = timed_out = False
     with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
         proc = subprocess.Popen(cmd, stdout=out, stderr=err, env=minimal_env())
-        deadline = time.monotonic() + timeout + HOST_GRACE_SECONDS
+        deadline = time.monotonic() + timeout + host_grace
         while True:
             try:
                 proc.wait(timeout=poll_seconds)

@@ -1,3 +1,5 @@
+from typing import Final
+
 import pytest
 
 from app.models.test_run import PytestRun, ReportSummary
@@ -35,7 +37,7 @@ def test_summary_of_empty_report() -> None:
     assert ReportSummary.from_report({}) == ReportSummary()
 
 
-SUMMARY = ReportSummary(passed=1, total=1)
+SUMMARY: Final = ReportSummary(passed=1, total=1)
 
 
 @pytest.mark.parametrize(

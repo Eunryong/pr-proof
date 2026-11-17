@@ -1,10 +1,13 @@
 """테스트 실행 결과를 PR 코멘트용 마크다운으로 바꾼다. 판정을 새로 내지 않고 모델 값만 보여준다."""
 
-from app.models.test_run import PytestRun
+from collections.abc import Mapping
+from typing import Final
 
-MAX_LISTED_FAILURES = 10
+from app.models.test_run import PytestRun, RunStatus
 
-_HEADLINES = {
+MAX_LISTED_FAILURES: Final = 10
+
+_HEADLINES: Final[Mapping[RunStatus, str]] = {
     "passed": "테스트 통과",
     "failed": "❌ 테스트 실패",
     "no_tests": "⚠️ 실행된 테스트 없음",

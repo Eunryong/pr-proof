@@ -2,13 +2,14 @@
 
 import subprocess
 from pathlib import Path
+from typing import Final
 
 import pytest
 
 from app.models.sandbox import Image
 from app.services import sandbox as sb
 
-IMAGE = Image(id="sha256:aaa", python_version="3.11.15")
+IMAGE: Final = Image(id="sha256:aaa", python_version="3.11.15")
 
 
 # --- pyproject 의존성 ---------------------------------------------------------
@@ -212,8 +213,7 @@ def test_run_in_sandbox_timeout_exit_code(fake_exec) -> None:
     assert r.timed_out and r.returncode == sb.TIMEOUT_EXIT
 
 
-def test_run_in_sandbox_host_deadline_removes_container(fake_exec, monkeypatch) -> None:
-    monkeypatch.setattr(sb, "HOST_GRACE_SECONDS", 0)
+def test_run_in_sandbox_host_deadline_removes_container(fake_exec) -> None:
     state = fake_exec(["sleep", "30"])
-    r = sb.run_in_sandbox("job-1", ["x"], timeout=0, poll_seconds=0.05)
+    r = sb.run_in_sandbox("job-1", ["x"], timeout=0, poll_seconds=0.05, host_grace=0)
     assert r.timed_out and not r.cancelled and state["removed"] == ["job-1"]

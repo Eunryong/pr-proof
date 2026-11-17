@@ -1,18 +1,20 @@
 """MVC 계층 규칙: controllers → services·views → models 한 방향으로만 import한다."""
 
 import ast
+from collections.abc import Mapping
 from pathlib import Path
+from typing import Final
 
 import pytest
 
-APP = Path(__file__).resolve().parent.parent / "app"
+APP: Final = Path(__file__).resolve().parent.parent / "app"
 
 # 계층별로 import해도 되는 app 내부 계층
-ALLOWED = {
-    "models": {"models"},
-    "services": {"models", "services"},
-    "views": {"models", "views"},
-    "controllers": {"models", "services", "views", "controllers"},
+ALLOWED: Final[Mapping[str, frozenset[str]]] = {
+    "models": frozenset({"models"}),
+    "services": frozenset({"models", "services"}),
+    "views": frozenset({"models", "views"}),
+    "controllers": frozenset({"models", "services", "views", "controllers"}),
 }
 
 

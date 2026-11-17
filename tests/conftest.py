@@ -1,10 +1,11 @@
 import shutil
 import subprocess
 from pathlib import Path
+from typing import Final
 
 import pytest
 
-EVAL_REPO = "Eunryong/eval"
+EVAL_REPO: Final = "Eunryong/eval"
 
 
 def _docker_available() -> bool:

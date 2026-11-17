@@ -2,11 +2,11 @@
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import Final, Literal
 
 # pytest 종료 코드: 0 통과, 1 실패, 2 중단(수집 오류 포함), 5 테스트 없음
-PYTEST_FAILED = (1, 2)
-PYTEST_NO_TESTS = 5
+PYTEST_FAILED: Final = (1, 2)
+PYTEST_NO_TESTS: Final = 5
 
 RunStatus = Literal["passed", "failed", "no_tests", "timeout", "cancelled", "error"]
 
