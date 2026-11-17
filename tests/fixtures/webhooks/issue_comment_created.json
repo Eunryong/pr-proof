@@ -1,0 +1,7 @@
+{
+  "action": "created",
+  "issue": {"number": 1, "pull_request": {"url": "https://api.github.com/repos/Eunryong/eval/pulls/1"}},
+  "comment": {"id": 9001, "body": "/recheck", "author_association": "OWNER", "user": {"login": "Eunryong"}},
+  "repository": {"full_name": "Eunryong/eval"},
+  "sender": {"login": "Eunryong"}
+}

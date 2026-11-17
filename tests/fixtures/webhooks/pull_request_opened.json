@@ -1,0 +1,13 @@
+{
+  "action": "opened",
+  "number": 1,
+  "pull_request": {
+    "number": 1,
+    "draft": false,
+    "head": {"ref": "feature/discount", "sha": "1111111111111111111111111111111111111111"},
+    "base": {"ref": "main", "sha": "2222222222222222222222222222222222222222"},
+    "user": {"login": "Eunryong"}
+  },
+  "repository": {"full_name": "Eunryong/eval"},
+  "sender": {"login": "Eunryong"}
+}

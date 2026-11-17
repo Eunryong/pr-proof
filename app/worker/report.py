@@ -69,3 +69,40 @@ def render_test_section(run: PytestRun, memory_limit_gb: int = MEMORY_LIMIT_GB) 
             "</details>",
         ]
     return "\n".join(lines) + "\n"
+
+
+# --- PR 코멘트 전체 -------------------------------------------------------------
+
+HEADER: Final = "### pr-proof"
+
+
+def _footer(head_sha: str, seconds: float | None = None) -> str:
+    parts = [f"커밋 `{head_sha[:7]}`"]
+    if seconds is not None:
+        parts.append(f"{seconds:.0f}초")
+    return "<sub>" + " · ".join(parts) + "</sub>"
+
+
+def render_progress(head_sha: str, step: str) -> str:
+    return f"{HEADER}\n\n**테스트:** 진행 중 ({step})\n\n{_footer(head_sha)}\n"
+
+
+def render_result(run: PytestRun, head_sha: str, seconds: float) -> str:
+    return f"{HEADER}\n\n{render_test_section(run)}\n{_footer(head_sha, seconds)}\n"
+
+
+def render_install_failure(head_sha: str, detail: str) -> str:
+    return (
+        f"{HEADER}\n\n**테스트:** 실행 불가 (의존성을 설치하지 못함)\n\n"
+        "<details><summary>pip 출력</summary>\n\n```\n"
+        f"{detail[-MAX_OUTPUT_CHARS:]}\n```\n\n</details>\n\n{_footer(head_sha)}\n"
+    )
+
+
+def render_environment_wait(head_sha: str, *, final: bool) -> str:
+    """환경 오류. 실패처럼 보이는 표시를 남기지 않는다 (DESIGN.md F9)."""
+    if final:
+        line = "환경 문제로 검사하지 못함 (다음 커밋에서 다시 검사합니다)"
+    else:
+        line = "환경 문제로 대기 중 (잠시 뒤 다시 시도합니다)"
+    return f"{HEADER}\n\n**테스트:** {line}\n\n{_footer(head_sha)}\n"

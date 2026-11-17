@@ -1,0 +1,90 @@
+"""GitHub 쓰기 (gh CLI): PR 코멘트 하나를 달고 진행하면서 고친다."""
+
+import json
+import os
+import subprocess
+from collections.abc import Callable
+from typing import Final
+
+from app.models.comment import COMMENT_MARKER
+
+GH_TIMEOUT: Final = 60
+_ENV_PASSTHROUGH: Final = ("PATH", "HOME", "GH_CONFIG_DIR")
+
+GhRunner = Callable[[list[str], str | None], str]
+
+
+class GitHubError(RuntimeError):
+    """gh 호출 실패. 로그인 만료·네트워크 문제일 수 있어 환경 오류로 다룬다."""
+
+
+def run_gh(args: list[str], stdin: str | None = None) -> str:
+    env = {k: os.environ[k] for k in _ENV_PASSTHROUGH if k in os.environ}
+    try:
+        proc = subprocess.run(
+            ["gh", *args],
+            input=stdin,
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=GH_TIMEOUT,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise GitHubError(f"gh 실행 실패: {e}") from e
+    if proc.returncode != 0:
+        raise GitHubError(f"gh {' '.join(args[:2])} 실패: {proc.stderr.strip()[-500:]}")
+    return proc.stdout
+
+
+class GitHub:
+    def __init__(self, runner: GhRunner = run_gh) -> None:
+        self._run = runner
+        self._login: str | None = None
+
+    def login(self) -> str:
+        if self._login is None:
+            self._login = self._run(["api", "user", "--jq", ".login"], None).strip()
+        return self._login
+
+    def find_comment(self, repo: str, pr_number: int) -> int | None:
+        """이 계정이 단, 파이프라인 표시가 있는 코멘트의 ID."""
+        jq = f'.[] | select(.body | contains("{COMMENT_MARKER}")) | [.id, .user.login] | @tsv'
+        out = self._run(
+            ["api", "--paginate", f"repos/{repo}/issues/{pr_number}/comments", "--jq", jq], None
+        )
+        me = self.login()
+        for line in out.splitlines():
+            comment_id, _, author = line.partition("\t")
+            if author == me:
+                return int(comment_id)
+        return None
+
+    def upsert_comment(self, repo: str, pr_number: int, body: str, comment_id: int | None) -> int:
+        """코멘트를 고치거나, 없으면 단다. 본문에 파이프라인 표시를 붙인다."""
+        payload = json.dumps({"body": f"{COMMENT_MARKER}\n{body}"})
+        if comment_id is not None and self._patch(repo, comment_id, payload):
+            return comment_id
+        # 저장한 ID가 없거나 코멘트가 지워졌으면 다시 찾고, 그래도 없으면 새로 단다
+        comment_id = self.find_comment(repo, pr_number)
+        if comment_id is not None and self._patch(repo, comment_id, payload):
+            return comment_id
+        out = self._run(
+            ["api", f"repos/{repo}/issues/{pr_number}/comments", "--input", "-", "--jq", ".id"],
+            payload,
+        )
+        return int(out.strip())
+
+    def _patch(self, repo: str, comment_id: int, payload: str) -> bool:
+        """코멘트를 고친다. 코멘트가 없으면(404) False, 다른 실패는 GitHubError."""
+        try:
+            self._run(
+                ["api", "-X", "PATCH", f"repos/{repo}/issues/comments/{comment_id}",
+                 "--input", "-", "--jq", ".id"],
+                payload,
+            )  # fmt: skip
+        except GitHubError as e:
+            if "Not Found" in str(e) or "404" in str(e):
+                return False
+            raise
+        return True

@@ -274,7 +274,7 @@ SKILLS = {"lint": run_lint, "static": run_static, "structure": run_structure}
   | 네트워크 실패 | `NewConnectionError`, `Temporary failure in name resolution`, `ConnectTimeoutError`, `ReadTimeoutError`, `ProxyError`, `SSLError` 등 | 환경 오류 |
   | 판단 불가 (빌드 실패 등) | 위 둘 다 없음 | 같은 의존성 해시로 2회 연속 실패하면 `unrunnable`, 그 전에는 환경 오류 |
 
-  네트워크가 끊기면 pip이 `Could not find a version`도 함께 출력하므로 네트워크 표지를 먼저 본다. 설치 컨테이너 자체가 실패하면(종료 코드 125·126·127) pip 출력과 무관하게 환경 오류다. 연속 실패 횟수는 워커가 의존성 캐시 키별로 Redis에 센다.
+  네트워크가 끊기면 pip이 `Could not find a version`도 함께 출력하므로 네트워크 표지를 먼저 본다. 설치 컨테이너 자체가 실패하면(종료 코드 125·126·127) pip 출력과 무관하게 환경 오류다. 연속 실패 횟수는 같은 작업의 재시도 번호(RQ 재시도)로 센다. 환경 오류는 정해진 간격(60초, 5분, 15분)으로 3회까지 다시 시도하고, 마지막 시도에서도 실패하면 코멘트를 "환경 문제로 검사하지 못함 (다음 커밋에서 다시 검사합니다)"로 바꾼다.
 - **종료 코드 137 (SIGKILL):** 먼저 취소와 시간 초과인지 본다. 그때는 파이프라인이 컨테이너를 지워서 137이 나올 수 있다. 둘 다 아닐 때만 메모리 한도 초과로 분류한다. 메모리 한도로 컨테이너 자체가 죽은 경우(docker inspect의 `OOMKilled`)도 환경 오류가 아니라 메모리 초과(`unrunnable`)다.
 - **메모리 초과 안내:** 코멘트에 "실행 불가 (메모리 한도 1GB를 넘어 종료됨)"과 "메모리 한도는 1GB입니다 (현재 고정)"을 넣는다. 2단계에서 설정을 연결하면 "base 브랜치의 `.pipeline.yaml`에서 `sandbox.memory_gb`로 늘릴 수 있다"는 안내로 바꾼다. 늘릴 수 있는 상한은 파이프라인 쪽 설정(`sandbox.max_memory_gb`)이 정한다. 설정은 base 브랜치에서 읽으므로 PR이 자기 한도를 올릴 수 없다.
 - **위반 줄의 커버리지:** 샌드박스가 남긴 `coverage.xml`로 위반 줄이 테스트로 실행되는지 본다. 실행되지 않는 줄의 위반은 "테스트가 지나가지 않아 자동 수정 대상 아님"으로 표시하고 알리기만 한다. 고친 뒤 테스트가 통과해도 그 줄의 동작을 확인한 것이 아니기 때문이다.
@@ -721,17 +721,17 @@ worker: python -m app.worker.main
 
 ### 1단계. 수신 → 체크아웃 → 샌드박스 테스트 → PR 코멘트, 동기화
 
-- [ ] FastAPI `POST /webhook/github`: 서명 검증, 리포 허용 목록, delivery ID 중복 제거, 큐 등록, 202 응답
-- [ ] `models/job.py` 작업 계약, RQ 워커 진입점, 작업 키 중복 방지
-- [ ] preflight: gh·claude 로그인, Docker, Redis 확인
-- [ ] bare clone 캐시 + worktree 생성·정리, 호스트에서 `changes.diff` 만들기
+- [x] FastAPI `POST /webhook/github`: 서명 검증, 리포 허용 목록, delivery ID 중복 제거, 큐 등록, 202 응답
+- [x] `models/job.py` 작업 계약, RQ 워커 진입점, 작업 키 중복 방지
+- [x] preflight: gh 로그인, Docker, Redis 확인 (claude 로그인 확인은 claude를 쓰는 3단계에서)
+- [x] bare clone 캐시 + worktree 생성·정리, 호스트에서 `changes.diff` 만들기
 - [x] 샌드박스: 베이스 Dockerfile, 캐시 키(의존성 해시 + 이미지 digest + Python 버전)별 `.venv` 설치와 캐시, 테스트 컨테이너에는 `:ro` 마운트, `run_in_sandbox()`
-- [ ] LangGraph 직선 그래프(체크아웃 → 테스트 → 코멘트). 체크포인터 없이 시작
+- [x] LangGraph 직선 그래프(체크아웃 → 테스트 → 코멘트). 체크포인터 없이 시작
 - [x] worktree에서 `.venv` + pytest 직접 실행 (샌드박스 안), 결과 JSON과 커버리지 파일 남기기
-- [ ] PR 코멘트 하나 달고 진행하면서 수정하기 ("테스트:" 줄, 환경 오류는 결과 대신 대기 표시)
-- [ ] SQLite `runs`에 결과·상태·생존 확인 시각 저장
+- [x] PR 코멘트 하나 달고 진행하면서 수정하기 ("테스트:" 줄, 환경 오류는 결과 대신 대기 표시)
+- [x] SQLite `runs`에 결과·상태·생존 확인 시각 저장
 - [ ] 동기화(api 안의 루프): 열린 PR의 head 비교, 닫힌 PR 처리, 죽은 작업 재등록
-- [ ] 최신 커밋 확인과 정리: 단계 사이, 그리고 `run_in_sandbox()` 실행 중 10초 간격 (실행 중 확인과 컨테이너 정리는 구현. Redis 최신 head 연결과 단계 사이 확인이 남음)
+- [x] 최신 커밋 확인과 정리: 단계 사이, 그리고 `run_in_sandbox()` 실행 중 10초 간격 (Redis 최신 head)
 
 ### 2단계. 컨벤션(lint): 검출 → 수정 → 제안 PR
 
