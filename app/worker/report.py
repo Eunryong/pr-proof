@@ -36,11 +36,8 @@ def format_test_line(run: PytestRun, memory_limit_gb: int = MEMORY_LIMIT_GB) -> 
 
 
 def memory_hint(memory_limit_gb: int) -> str:
-    return (
-        f"샌드박스의 메모리 한도는 {memory_limit_gb}GB입니다."
-        " 테스트에 더 필요하면 base 브랜치의 `.pipeline.yaml`에서 `sandbox.memory_gb`로"
-        " 늘릴 수 있습니다 (파이프라인 쪽 상한 안에서)."
-    )
+    # 설정으로 늘리는 안내는 대상 리포 설정을 읽는 2단계에서 붙인다 (DESIGN.md F8)
+    return f"샌드박스의 메모리 한도는 {memory_limit_gb}GB입니다 (현재 고정)."
 
 
 def render_test_section(run: PytestRun, memory_limit_gb: int = MEMORY_LIMIT_GB) -> str:

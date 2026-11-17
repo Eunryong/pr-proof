@@ -25,7 +25,8 @@
 ```
 docker compose up -d  # redis
 honcho start          # api(웹훅 + 동기화 루프), worker
-pytest                # 파이프라인 자체 테스트
+pytest                # 파이프라인 자체 테스트 (Docker 없이)
+pytest -m docker      # 실제 Docker·예제 리포가 필요한 통합 테스트
 ```
 
 워커 실행 전 `gh auth login`, `claude` 로그인, Docker 실행이 필요하다. preflight가 확인한다.
