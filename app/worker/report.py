@@ -159,11 +159,15 @@ def fix_section(fix: FixOutcome) -> list[str]:
             lines[-1] += f" ({fix.detail})"
         return lines
     tests = format_test_line(fix.test_run) if fix.test_run else "확인 안 함"
+    what = f"위반 {fix.fixed}건을 고쳤습니다" if fix.fixed else "포맷만 고쳤습니다"
     lines = [
         "",
-        f"**{fix.skill} 수정안:** 위반 {fix.fixed}건을 고쳤습니다. 고친 뒤 테스트: {tests}."
-        " 제안 PR은 준비 중입니다.",
+        f"**{fix.skill} 수정안:** {what}. 고친 뒤 테스트: {tests}. 제안 PR은 준비 중입니다.",
     ]
+    if fix.formatted_files:
+        lines.append(f"`ruff format`을 PR이 바꾼 파일 {len(fix.formatted_files)}개에 적용했습니다.")
+    elif fix.format_skipped:
+        lines.append(f"`ruff format`은 적용하지 않았습니다 ({fix.format_skipped}).")
     if fix.remaining:
         lines.append(f"자동으로 고치지 못한 위반 {len(fix.remaining)}건은 그대로 남습니다.")
     if fix.patch_path is not None and fix.patch_path.is_file():

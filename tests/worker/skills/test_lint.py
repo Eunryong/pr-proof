@@ -116,3 +116,48 @@ def test_real_fix_touches_only_changed_lines(tmp_path: Path) -> None:
     assert 'OK = "한글" + "끝"\n' in text  # 열 위치가 문자 단위로 맞다
     assert result.touched_files == ("mod.py",)
     assert [f.code for f in result.after.findings] == ["F841"]
+
+
+def _repo_with_pr(tmp_path: Path, base_files: dict[str, str], pr_files: dict[str, str]):
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    _git(wt, "init", "-q", "-b", "main")
+    for name, text in base_files.items():
+        (wt / name).write_text(text)
+    _git(wt, "add", ".")
+    _git(wt, "commit", "-q", "-m", "base")
+    base_sha = _git(wt, "rev-parse", "HEAD")
+    for name, text in pr_files.items():
+        (wt / name).write_text(text)
+    return wt, base_sha
+
+
+DEFAULT_BASE: Final = BaseConfig(
+    repo=RepoConfig(), memory_gb=1, max_memory_gb=4, ruff_config=None, ruff_source="기본"
+)
+
+
+@pytest.mark.docker
+def test_format_applies_when_base_is_formatted(tmp_path: Path) -> None:
+    wt, base_sha = _repo_with_pr(
+        tmp_path, {"mod.py": "X = 1\n"}, {"mod.py": "X = 1\nY = {'a':1}\n"}
+    )
+    result = lint.fix_lint(wt, DEFAULT_BASE, base_sha, base_sha=base_sha)
+    assert result is not None and result.formatted_files == ("mod.py",)
+    assert (wt / "mod.py").read_text() == 'X = 1\nY = {"a": 1}\n'
+    assert result.touched_files == ("mod.py",)
+
+
+@pytest.mark.docker
+def test_format_is_skipped_when_base_is_not_formatted(tmp_path: Path) -> None:
+    """base에 포맷되지 않은 파일이 있으면 PR 파일도 포맷하지 않는다 (diff가 커지는 것을 막음)."""
+    wt, base_sha = _repo_with_pr(
+        tmp_path,
+        {"mod.py": "X = 1\n", "old.py": "Z = {'b':2}\n"},
+        {"mod.py": "X = 1\nY = {'a':1}\n"},
+    )
+    result = lint.fix_lint(wt, DEFAULT_BASE, base_sha, base_sha=base_sha)
+    assert result is not None and result.formatted_files == ()
+    assert result.format_skipped == lint.BASE_NOT_FORMATTED
+    assert "{'a':1}" in (wt / "mod.py").read_text()
+    assert not (tmp_path / f"wt-{base_sha[:8]}").exists()  # base worktree는 지운다

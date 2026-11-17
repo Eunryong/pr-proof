@@ -138,6 +138,21 @@ def write_changes_diff(worktree: Path, merge_base_sha: str, head_sha: str) -> Pa
 
 
 @contextmanager
+def side_worktree(worktree: Path, sha: str) -> Iterator[Path]:
+    """같은 저장소에서 다른 커밋의 worktree를 잠깐 만든다 (base 브랜치의 포맷 확인 등)."""
+    path = worktree.parent / f"{worktree.name}-{sha[:8]}"
+    _git("worktree", "add", "--quiet", "--detach", str(path), sha, cwd=worktree)
+    try:
+        yield path
+    finally:
+        try:
+            _git("worktree", "remove", "--force", str(path), cwd=worktree)
+        except GitError:
+            shutil.rmtree(path, ignore_errors=True)
+            _git("worktree", "prune", cwd=worktree)
+
+
+@contextmanager
 def checkout(
     data_dir: Path,
     repo: str,
