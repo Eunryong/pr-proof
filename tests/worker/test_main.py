@@ -7,9 +7,12 @@ from typing import Final
 
 import fakeredis
 import pytest
+from rq.timeouts import JobTimeoutException
+from sqlmodel import Session, select
 
 from app import config
 from app.models import state_keys
+from app.models.db import Run
 from app.models.finding import Finding, SkillResult
 from app.models.job import PRJob
 from app.models.repo_config import RepoConfig
@@ -18,7 +21,7 @@ from app.sandbox.docker_cli import SandboxError
 from app.sandbox.venv import DependencyInstallError
 from app.worker import base_config, graph, main, repo
 from app.worker.base_config import BaseConfig
-from app.worker.github import GitHub
+from app.worker.github import GitHub, GitHubError
 from app.worker.repo import Checkout
 from app.worker.skills import lint
 from app.worker.state import Store
@@ -97,10 +100,72 @@ def test_job_key_is_released_after_success(env) -> None:
     assert env["redis"].get(state_keys.job(job.dedup_key)) is None
 
 
+def _states(env) -> list[str]:
+    with Session(env["deps"].store.engine) as session:
+        return [r.state for r in session.exec(select(Run)).all()]
+
+
 def test_stale_job_does_nothing(env) -> None:
-    env["redis"].set(state_keys.latest_head("o/r", 1), "c" * 40)
+    env["gh"].head = "c" * 40
     assert main.handle(_payload(), env["deps"]) == "stale"
-    assert env["gh"].calls == []
+    assert env["gh"].kinds() == []  # 코멘트를 건드리지 않는다
+    assert _states(env) == []
+
+
+def test_late_webhook_for_old_commit_restores_latest_head(env) -> None:
+    """새 커밋 c의 웹훅 뒤에 옛 커밋 a의 웹훅이 늦게 와서 Redis가 a로 덮였다."""
+    env["gh"].head = "c" * 40
+    env["redis"].set(state_keys.latest_head("o/r", 1), HEAD)
+    _runner(env, lambda *a, **k: pytest.fail("옛 커밋을 검사하면 안 된다"))
+    assert main.handle(_payload(), env["deps"]) == "stale"
+    assert env["redis"].get(state_keys.latest_head("o/r", 1)).decode() == "c" * 40
+
+
+def test_current_commit_runs_even_if_redis_was_overwritten(env) -> None:
+    """반대 순서: 새 커밋의 작업이 먼저 꺼내졌는데 Redis에는 늦게 온 옛 커밋이 적혀 있다."""
+    env["redis"].set(state_keys.latest_head("o/r", 1), "0" * 40)
+    _runner(env, lambda *a, **k: PASSED)
+    assert main.handle(_payload(), env["deps"]) == "passed"
+    assert env["redis"].get(state_keys.latest_head("o/r", 1)).decode() == HEAD
+
+
+@pytest.mark.parametrize("final", [False, True])
+def test_head_lookup_failure_is_environment_error(env, final: bool) -> None:
+    env["gh"].head_error = "gh: 401"
+    env["monkeypatch"].setattr(main, "_attempt", lambda: (4 if final else 1, final))
+    job = PRJob.model_validate_json(_payload())
+    env["redis"].set(state_keys.job(job.dedup_key), "1")
+    with pytest.raises(GitHubError):
+        main.handle(_payload(), env["deps"])
+    assert _states(env) == []
+    assert (env["redis"].get(state_keys.job(job.dedup_key)) is None) == final
+
+
+@pytest.mark.parametrize(
+    "error", [RuntimeError("버그"), JobTimeoutException("30분 초과")], ids=["bug", "job-timeout"]
+)
+def test_unexpected_error_is_recorded_and_retried(env, error: Exception) -> None:
+    _runner(env, lambda *a, **k: (_ for _ in ()).throw(error))
+    env["monkeypatch"].setattr(main, "_attempt", lambda: (1, False))
+    job = PRJob.model_validate_json(_payload())
+    env["redis"].set(state_keys.job(job.dedup_key), "1")
+    with pytest.raises(type(error)):
+        main.handle(_payload(), env["deps"])
+    assert _states(env) == ["error"]  # running으로 남으면 동기화가 죽은 워커로 보고 계속 넣는다
+    body = _bodies(env["gh"])[-1]
+    assert "파이프라인 오류로 대기 중" in body and "실패" not in body
+    assert env["redis"].get(state_keys.job(job.dedup_key)) is not None  # 재시도 동안 키 유지
+
+
+def test_last_unexpected_error_releases_key(env) -> None:
+    _runner(env, lambda *a, **k: (_ for _ in ()).throw(RuntimeError("버그")))
+    env["monkeypatch"].setattr(main, "_attempt", lambda: (4, True))
+    job = PRJob.model_validate_json(_payload())
+    env["redis"].set(state_keys.job(job.dedup_key), "1")
+    with pytest.raises(RuntimeError):
+        main.handle(_payload(), env["deps"])
+    assert "파이프라인 오류로 검사하지 못함" in _bodies(env["gh"])[-1]
+    assert env["redis"].get(state_keys.job(job.dedup_key)) is None
 
 
 def test_commit_that_goes_stale_during_tests_leaves_no_result(env) -> None:

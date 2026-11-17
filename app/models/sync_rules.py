@@ -37,6 +37,9 @@ def enqueue_reason(
     if any(run.state == "done" for run in runs):
         return None  # 결과가 이미 있다. 새 커밋이 올 때만 검사한다
     last = runs[-1]
+    if last.state == "error":
+        # 파이프라인 버그나 시간 초과는 같은 커밋으로 다시 돌려도 같은 결과다. 새 커밋 때만 검사한다
+        return None
     if last.state == "env_error":
         finished = _utc(last.finished_at or last.heartbeat_at)
         return "env_error_backoff" if now - finished >= env_error_backoff else None

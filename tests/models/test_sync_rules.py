@@ -31,10 +31,13 @@ def _reason(*runs: RunSnapshot):
         ((_run("cancelled", ago=1),), "cancelled"),
         ((_run("done", ago=60), _run("env_error", ago=45)), None),  # done이 하나라도 있으면
         ((_run("env_error", ago=90), _run("running", ago=1, finished=False)), None),
+        ((_run("error", ago=500),), None),  # 파이프라인 오류는 새 커밋 때만
+        ((_run("env_error", ago=90), _run("error", ago=60)), None),
     ],
     ids=[
         "no-record", "done", "env-error-recent", "env-error-old", "running-alive",
         "running-dead", "cancelled", "done-then-env-error", "env-error-then-running",
+        "error", "env-error-then-error",
     ],
 )  # fmt: skip
 def test_enqueue_reason(runs, reason) -> None:

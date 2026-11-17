@@ -29,6 +29,10 @@ class Store:
         latest = self.redis.get(state_keys.latest_head(job.repo, job.pr_number))
         return latest is not None and latest.decode() != job.head_sha
 
+    def set_latest_head(self, repo: str, pr_number: int, head_sha: str) -> None:
+        """웹훅 순서가 뒤집혀 낡은 head가 기록됐을 때 GitHub에서 확인한 값으로 바로잡는다."""
+        self.redis.set(state_keys.latest_head(repo, pr_number), head_sha)
+
     def release(self, job: PRJob) -> None:
         """작업 키를 지워 같은 작업을 다시 등록할 수 있게 한다."""
         self.redis.delete(state_keys.job(job.dedup_key))

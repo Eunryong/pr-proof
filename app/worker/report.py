@@ -213,3 +213,12 @@ def render_environment_wait(head_sha: str, *, final: bool) -> str:
     else:
         line = "환경 문제로 대기 중 (잠시 뒤 다시 시도합니다)"
     return f"{HEADER}\n\n**테스트:** {line}\n\n{_footer(head_sha)}\n"
+
+
+def render_pipeline_error(head_sha: str, *, final: bool) -> str:
+    """환경 오류가 아닌 예외(파이프라인 버그, 작업 시간 초과). PR 코드 탓으로 보이지 않게 쓴다."""
+    if final:
+        line = "파이프라인 오류로 검사하지 못함 (다음 커밋에서 다시 검사합니다)"
+    else:
+        line = "파이프라인 오류로 대기 중 (잠시 뒤 다시 시도합니다)"
+    return f"{HEADER}\n\n**테스트:** {line}\n\n{_footer(head_sha)}\n"
