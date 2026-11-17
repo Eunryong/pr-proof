@@ -45,6 +45,8 @@ def format_test_line(run: PytestRun, memory_gb: float = MEMORY_LIMIT_GB) -> str:
     s = run.summary
     match run.status:
         case "passed":
+            if run.flaky:
+                return f"통과, 불안정한 테스트 {len(run.flaky)}개"
             return f"통과 ({s.total}개)" if s else "통과"
         case "failed":
             if s is None:
@@ -87,10 +89,14 @@ def format_test_details(run: PytestRun, memory_gb: float, max_memory_gb: float) 
             f"전체 {s.total} · 통과 {s.passed} · 실패 {s.failed}"
             f" · 오류 {s.errors} · 건너뜀 {s.skipped}",
         ]
-    if s is not None and s.failed_tests:
+    if run.flaky:
+        lines += ["", "불안정한 테스트 (처음엔 실패, 다시 돌려 통과):"]
+        lines += [f"- `{t}`" for t in run.flaky[:MAX_LISTED_FAILURES]]
+    still_failed = [t for t in (s.failed_tests if s else ()) if t not in run.flaky]
+    if s is not None and still_failed:
         lines += ["", "실패한 테스트:"]
-        lines += [f"- `{t}`" for t in s.failed_tests[:MAX_LISTED_FAILURES]]
-        hidden = len(s.failed_tests) - MAX_LISTED_FAILURES
+        lines += [f"- `{t}`" for t in still_failed[:MAX_LISTED_FAILURES]]
+        hidden = len(still_failed) - MAX_LISTED_FAILURES
         if hidden > 0:
             lines.append(f"- 외 {hidden}개")
     if run.status == "unrunnable" and run.output:

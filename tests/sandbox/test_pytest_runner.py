@@ -1,5 +1,6 @@
 """app/sandbox/pytest_runner.py 단위 테스트."""
 
+import json
 from pathlib import Path
 from typing import Final
 
@@ -118,3 +119,70 @@ def test_pipeline_removal_is_not_environment_or_memory(fake_run, result) -> None
     worktree = fake_run(result, state=None)
     run = pytest_runner.run_tests("job-1", worktree)
     assert run.status in ("cancelled", "timeout") and not run.memory_exceeded
+
+
+# --- flaky 재실행 -------------------------------------------------------------------
+
+FAILED_REPORT: Final = (
+    '{"summary": {"passed": 1, "failed": 1, "total": 2},'
+    ' "tests": [{"nodeid": "tests/test_a.py::test_x", "outcome": "failed"}]}'
+)
+
+
+@pytest.fixture
+def two_runs(monkeypatch, tmp_path: Path):
+    """처음 실행은 실패 보고서를, 재실행은 rerun_outcome의 보고서를 남긴다."""
+    calls: list[list[str]] = []
+
+    def install(rerun_outcome: str | None, *, first=FAILED_REPORT, code: int = 1) -> list:
+        def run(container, argv, **kwargs):
+            calls.append(argv)
+            if len(calls) == 1:
+                (tmp_path / pytest_runner.REPORT_FILE).write_text(first)
+                return ExecResult(returncode=code, stdout="", stderr="")
+            if rerun_outcome is not None:
+                test = {"nodeid": "tests/test_a.py::test_x", "outcome": rerun_outcome}
+                (tmp_path / pytest_runner.RERUN_REPORT_FILE).write_text(
+                    json.dumps({"tests": [test]})
+                )
+            return ExecResult(
+                returncode=0 if rerun_outcome == "passed" else 1, stdout="", stderr=""
+            )
+
+        (tmp_path / pytest_runner.OUT_DIR).mkdir(exist_ok=True)
+        monkeypatch.setattr(pytest_runner, "run_in_sandbox", run)
+        monkeypatch.setattr(docker_cli, "container_state", lambda name: RUNNING)
+        return calls
+
+    return install
+
+
+def test_failed_test_passing_on_rerun_is_flaky(two_runs, tmp_path: Path) -> None:
+    calls = two_runs("passed")
+    run = pytest_runner.run_tests("job-1", tmp_path)
+    assert run.flaky == ("tests/test_a.py::test_x",) and run.status == "passed"
+    assert calls[1][-2:] == ["--", "tests/test_a.py::test_x"]  # 실패한 테스트만
+    assert not any(a.startswith("--cov") for a in calls[1])  # coverage는 처음 실행 것
+
+
+def test_failed_again_stays_failed(two_runs, tmp_path: Path) -> None:
+    two_runs("failed")
+    run = pytest_runner.run_tests("job-1", tmp_path)
+    assert run.flaky == () and run.status == "failed"
+
+
+def test_collection_errors_are_not_rerun(two_runs, tmp_path: Path) -> None:
+    collector = {"nodeid": "tests/x.py", "outcome": "failed"}
+    report = json.dumps({"summary": {"total": 0}, "collectors": [collector]})
+    calls = two_runs("passed", first=report, code=2)
+    pytest_runner.run_tests("job-1", tmp_path)
+    assert len(calls) == 1
+
+
+def test_many_failures_are_not_rerun(two_runs, tmp_path: Path) -> None:
+    n = pytest_runner.MAX_RERUN_TESTS + 1
+    tests = ", ".join(f'{{"nodeid": "t::{i}", "outcome": "failed"}}' for i in range(n))
+    report = f'{{"summary": {{"failed": {n}, "total": {n}}}, "tests": [{tests}]}}'
+    calls = two_runs("passed", first=report)
+    pytest_runner.run_tests("job-1", tmp_path)
+    assert len(calls) == 1

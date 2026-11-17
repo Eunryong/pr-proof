@@ -76,6 +76,9 @@ def test_unrunnable_reason(run: PytestRun, reason: str | None) -> None:
     assert run.unrunnable_reason == reason
 
 
+FLAKY_SUMMARY: Final = ReportSummary(passed=8, failed=1, total=9, failed_tests=("t::a",))
+
+
 @pytest.mark.parametrize(
     ("run", "lint", "code"),
     [
@@ -85,8 +88,9 @@ def test_unrunnable_reason(run: PytestRun, reason: str | None) -> None:
         (PytestRun(exit_code=124, summary=None, timed_out=True), False, False),
         (PytestRun(exit_code=4, summary=None), False, False),
         (PytestRun(exit_code=None, summary=None, cancelled=True), False, False),
+        (PytestRun(exit_code=1, summary=FLAKY_SUMMARY, flaky=("t::a",)), True, False),
     ],
-    ids=["passed", "no_tests", "failed", "timeout", "unrunnable", "cancelled"],
+    ids=["passed", "no_tests", "failed", "timeout", "unrunnable", "cancelled", "flaky"],
 )
 def test_fix_permissions_follow_safety_net(run: PytestRun, lint: bool, code: bool) -> None:
     assert (run.allows_lint_fix, run.allows_code_fix) == (lint, code)
@@ -105,3 +109,19 @@ def test_fix_permissions_follow_safety_net(run: PytestRun, lint: bool, code: boo
 )
 def test_memory_exceeded_checks_cancel_and_timeout_first(run: PytestRun, exceeded: bool) -> None:
     assert run.memory_exceeded is exceeded
+
+
+def test_flaky_status_and_counts() -> None:
+    run = PytestRun(exit_code=1, summary=FLAKY_SUMMARY, flaky=("t::a",))
+    assert run.status == "passed" and run.passed_count == 9
+
+
+def test_partly_flaky_is_still_failed() -> None:
+    summary = ReportSummary(passed=7, failed=2, total=9, failed_tests=("t::a", "t::b"))
+    run = PytestRun(exit_code=1, summary=summary, flaky=("t::a",))
+    assert run.status == "failed" and run.passed_count == 7
+
+
+def test_errors_are_never_flaky() -> None:
+    summary = ReportSummary(passed=8, errors=1, total=9, failed_tests=("t::a",))
+    assert PytestRun(exit_code=1, summary=summary, flaky=("t::a",)).status == "failed"

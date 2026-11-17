@@ -107,10 +107,8 @@ def same_test_result(before: PytestRun, after: PytestRun) -> bool:
         return False
     if before.summary is None or after.summary is None:
         return before.summary is after.summary or after.status == "no_tests"
-    return (before.summary.passed, before.summary.total) == (
-        after.summary.passed,
-        after.summary.total,
-    )
+    # 불안정한 테스트는 재실행에서 통과한 수까지 센다
+    return (before.passed_count, before.summary.total) == (after.passed_count, after.summary.total)
 
 
 FixBlocker = Literal["no_fixable", "tests"]

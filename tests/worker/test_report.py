@@ -182,3 +182,11 @@ def test_install_failure_keeps_rules() -> None:
 def test_environment_wait_shows_no_results() -> None:
     text = report.render_environment_wait(HEAD, final=False)
     assert "**규칙:**" not in text
+
+
+def test_flaky_tests_are_listed_separately() -> None:
+    summary = ReportSummary(passed=8, failed=1, total=9, failed_tests=("t::a",))
+    text = _render(PytestRun(exit_code=1, summary=summary, flaky=("t::a",)))
+    assert "**테스트:** 통과, 불안정한 테스트 1개" in text
+    assert "불안정한 테스트 (처음엔 실패, 다시 돌려 통과):\n- `t::a`" in text
+    assert "실패한 테스트:" not in text
