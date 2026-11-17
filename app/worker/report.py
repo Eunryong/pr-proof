@@ -252,6 +252,11 @@ def _compose(
     lines += details
     lines += rules_details(results)
     lines += extra or []
+    if base is not None and "lint" not in base.repo.skills.enabled:
+        lines += [
+            "",
+            "lint는 이 리포에서 꺼져 있습니다 (base 브랜치 `.pipeline.yaml`의 `skills.enabled`).",
+        ]
     if base is not None and base.problems:
         lines += ["", "설정:"] + [f"- {p}" for p in base.problems]
     lines += ["", _footer(head_sha, seconds, from_sync=from_sync)]

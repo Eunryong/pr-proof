@@ -370,3 +370,16 @@ def test_closing_pr_stops_running_work(fix_env) -> None:
     main.handle(close, fix_env["deps"])
     latest = fix_env["redis"].get(state_keys.latest_head("o/r", 1)).decode()
     assert latest != HEAD  # 실행 중인 작업은 낡은 작업으로 보고 멈춘다
+
+
+def test_lint_disabled_runs_tests_only(fix_env) -> None:
+    repo_config = RepoConfig(skills=SkillsSettings(enabled=[]))
+    base = dataclasses.replace(BASE, repo=repo_config)
+    mp = fix_env["monkeypatch"]
+    mp.setattr(base_config, "load", lambda *a, **k: base)
+    mp.setattr(lint, "run_lint", lambda *a, **k: pytest.fail("lint가 돌면 안 됨"))
+    assert main.handle(_update(), fix_env["deps"]) == "passed"
+    body = bodies(fix_env["gh"])[-1]
+    assert "**테스트:** 통과 (9개)" in body and "**규칙:**" not in body
+    assert "lint는 이 리포에서 꺼져 있습니다" in body
+    assert main.handle(_fix_command(), fix_env["deps"]) == "no_pending_fix"

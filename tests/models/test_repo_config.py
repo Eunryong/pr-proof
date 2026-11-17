@@ -42,3 +42,15 @@ def test_minimum_memory_is_accepted() -> None:
 @pytest.mark.parametrize(("requested", "expected"), [(2, 2), (4, 4), (8, 4)])
 def test_memory_limit_is_capped(requested: float, expected: float) -> None:
     assert memory_limit(requested, 4) == expected
+
+
+def test_skills_enabled_default_and_lint_off() -> None:
+    assert "lint" in parse_repo_config(None)[0].skills.enabled
+    config, problem = parse_repo_config("skills:\n  enabled: []\n")
+    assert config.skills.enabled == [] and problem is None
+
+
+def test_unknown_skill_is_config_problem() -> None:
+    config, problem = parse_repo_config("skills:\n  enabled: [lint, typo]\n")
+    assert "lint" in config.skills.enabled  # 기본값으로 검사한다
+    assert problem is not None and "skills.enabled" in problem

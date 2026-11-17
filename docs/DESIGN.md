@@ -265,6 +265,7 @@ SKILLS = {"lint": run_lint, "static": run_static, "structure": run_structure}
 - **범위 검사 방법:** 수정 후 호스트에서 `git status --porcelain=v1 -z --untracked-files=all`로 worktree의 모든 변경을 본다. `git diff`는 추적 중인 파일의 수정만 보여주므로 새 파일, 삭제, 이름 변경을 놓친다. 수정(`M`), 새 파일(`??`, `A`), 삭제(`D`), 이름 변경(`R`, 옛 경로와 새 경로 둘 다)이 모두 허용 목록 안에 있어야 한다. 허용 목록 밖의 변경이 하나라도 있으면 수정안 전체를 버린다.
 - 파이프라인 산출물(`.pipeline-out/`, `.venv` 마운트 지점, 확장의 `mutants/`)만 검사에서 제외한다.
 - **무시된 파일:** 대상 리포의 `.gitignore`에 걸리는 파일은 `--porcelain` 출력에 나오지 않지만, 푸시되지 않아도 검증 실행에 영향을 줄 수 있다(무시된 경로에 둔 `conftest.py`, `sitecustomize.py` 등). AI를 실행하기 직전에 `git status --porcelain=v1 -z --ignored=matching --untracked-files=all`로 무시된 파일 목록을 스냅샷으로 남기고, 실행 후 같은 명령의 결과와 비교해 **새로 생긴 무시된 파일**이 있으면 수정안을 버린다. 이미 있던 무시된 파일(빌드 산출물, 로컬 캐시)은 문제 삼지 않는다.
+- **I001(import 정렬):** 허용한다. 수정이 import 블록 전체를 다시 정렬해 블록 안의 기존 줄 순서가 바뀔 수 있지만, 위반 범위에 PR이 바꾼 줄이 있을 때만 고치고 ruff도 안전한 수정으로 분류한다. 제안 PR 본문에 "import 블록 전체를 다시 정렬했다"를 적는다. `ruff format`을 적용했을 때도 파일 전체에 적용했다고 적는다. 둘 다 없을 때만 "PR이 건드리지 않은 줄은 바꾸지 않았다"고 쓴다.
 - `structure`의 자동 수정은 1–2순위 규칙과 3순위 중 import 방향 위반에만 적용한다. 이름 패턴 위반은 알리기만 한다. 추정한 규칙으로 코드를 옮기면 틀렸을 때 비용이 크다.
 
 ### F8. 안전망 (테스트 실행과 변경 라인 커버리지)
@@ -789,6 +790,7 @@ worker: python -m app.worker.main
 - [x] 수정: 조건부 `ruff format` (base가 `ruff format --check`를 통과하는 리포에서만)
 - [x] 제안 PR: 허용 경로만 스테이징, 푸시 전 비밀값 검사, 머지 확인, 상황별 처리, 루프 방지
 - [x] flaky 재실행
+- [x] `.pipeline.yaml`의 `skills.enabled`: lint를 빼면 규칙 줄 없이 테스트만 보여주고 수정을 제안하지 않는다
 - [x] 평가 케이스: 컨벤션 위반 주입 5개(`eval/lint/*.yaml`)와 E2E 테스트(`tests/e2e/test_lint_cases.py`: 로컬 git 원격 + 실제 ruff·샌드박스, GitHub만 가짜, 제안 브랜치 실제 푸시)
 
 ### 3단계. 정적변수(static): 검출 → 안전망 → AI 수정

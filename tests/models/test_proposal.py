@@ -63,5 +63,21 @@ def test_fixed_codes_and_body() -> None:
     body = proposal.body(3, "lint", "a" * 40, codes, "pyproject.toml", "통과 (9개)", 1)
     assert body.startswith(proposal.PROPOSAL_MARKER)
     assert "`F401` 2건" in body and "ruff (pyproject.toml)" in body
-    assert "`ruff format`: PR이 바꾼 파일 1개" in body
+    assert "`ruff format`은 PR이 바꾼 파일 1개의 전체에 적용했습니다." in body
+    assert "PR이 건드리지 않은 줄은 바꾸지 않았습니다" not in body  # 포맷하면 사실이 아니다
     assert proposal.title(3, "lint", 0) == "[pipeline] #3 lint 포맷 정리"
+
+
+def _body(codes: dict[str, int], formatted: int = 0) -> str:
+    return proposal.body(1, "lint", "a" * 40, Counter(codes), "x", "통과 (9개)", formatted)
+
+
+def test_body_says_untouched_lines_only_when_true() -> None:
+    assert "PR이 건드리지 않은 줄은 바꾸지 않았습니다." in _body({"F401": 1})
+
+
+def test_body_mentions_import_block_rewrite_for_i001() -> None:
+    """I001은 블록 전체를 다시 정렬하므로 "건드리지 않은 줄은 그대로"라고 쓰면 사실과 다르다."""
+    body = _body({"F401": 1, "I001": 1})
+    assert "`I001`(import 정렬)는 import 블록 전체를 다시 정렬했습니다." in body
+    assert "PR이 건드리지 않은 줄은 바꾸지 않았습니다" not in body

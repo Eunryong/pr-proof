@@ -24,6 +24,8 @@ SECRET_PATTERNS: Final = (
     re.compile(r"sk-ant-[A-Za-z0-9_-]{20,}"),
 )
 MIN_LITERAL_SECRET: Final = 8  # 너무 짧은 값은 흔한 문자열과 겹친다
+# 위반 범위(블록 전체)를 다시 쓰는 규칙. PR이 블록의 한 줄만 바꿔도 기존 줄 순서가 바뀔 수 있다
+BLOCK_REWRITE_CODES: Final = frozenset({"I001"})
 
 
 def branch_name(pr_number: int, skill: str) -> str:
@@ -107,11 +109,21 @@ def body(
         lines.append(
             "고친 위반: " + ", ".join(f"`{code}` {n}건" for code, n in sorted(codes.items()))
         )
+    lines.append(f"적용한 규칙: ruff ({source}). ruff의 안전한 수정만 썼습니다.")
+    rewrote = sorted(BLOCK_REWRITE_CODES & set(codes))
+    if rewrote:
+        lines.append(
+            f"{', '.join(f'`{c}`' for c in rewrote)}(import 정렬)는 import 블록 전체를 다시 "
+            "정렬했습니다. 블록 안의 기존 줄 순서가 바뀌었을 수 있습니다."
+        )
     if formatted:
-        lines.append(f"`ruff format`: PR이 바꾼 파일 {formatted}개")
+        lines.append(
+            f"`ruff format`은 PR이 바꾼 파일 {formatted}개의 전체에 적용했습니다. "
+            "base 브랜치가 이미 포맷돼 있어 기존 줄은 대부분 그대로입니다."
+        )
+    if not rewrote and not formatted:
+        lines.append("PR이 건드리지 않은 줄은 바꾸지 않았습니다.")
     lines += [
-        f"적용한 규칙: ruff ({source}). ruff의 안전한 수정만 썼고, "
-        "PR이 건드리지 않은 줄은 바꾸지 않았습니다.",
         f"고친 뒤 테스트: {tests} (수정 전과 같은 결과)",
         "",
         f"머지하면 #{pr_number}의 브랜치에 들어갑니다. 원하지 않으면 닫아 주세요. "

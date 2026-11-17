@@ -154,6 +154,8 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
 
     def lint_step(state: FlowState) -> FlowState:
         job = state["job"]
+        if "lint" not in ctx.base.repo.skills.enabled:
+            return {}  # base의 .pipeline.yaml에서 껐다. 규칙 줄 없이 테스트만 보여준다
         progress(job, "규칙 검사")
         result = (ctx.run_lint or lint.run_lint)(
             ctx.worktree, ctx.base, job_id=f"{ctx.run_id}", is_stale=is_stale_for(job)
@@ -187,7 +189,7 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
             state["test_run"],
             job.head_sha,
             time.monotonic() - ctx.started,
-            lint=state["lint"],
+            lint=state.get("lint"),
             base=ctx.base,
             proposal=proposal_state(state),
             from_sync=job.source == "sync",
