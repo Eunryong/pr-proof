@@ -1,0 +1,12 @@
+name: fstring-after-korean
+description: 한글 문자열 뒤, 같은 줄 중간의 안전한 수정(F541 자리표시자 없는 f-string). 열 위치가 문자 단위로 맞아야 한다.
+pr:
+  - file: orders/services/pricing.py
+    append: "\nNOTICE = \"무료 배송 기준: \" + f\"5만원\"\n"
+expect:
+  findings: [F541]
+  proposal: approval
+  fix: ready
+  remaining: []
+  file: orders/services/pricing.py
+  contains: ["NOTICE = \"무료 배송 기준: \" + \"5만원\"\n"]

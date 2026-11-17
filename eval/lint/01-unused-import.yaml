@@ -1,0 +1,13 @@
+name: unused-import
+description: PR이 추가한 안 쓰는 import(F401)를 고친다. 고치고 나면 파일이 base와 같다.
+pr:
+  - file: orders/services/pricing.py
+    find: "from orders.models.order import Order\n"
+    replace: "import os\n\nfrom orders.models.order import Order\n"
+expect:
+  findings: [F401]
+  proposal: approval
+  fix: ready
+  remaining: []
+  file: orders/services/pricing.py
+  same_as_base: true

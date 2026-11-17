@@ -1,0 +1,12 @@
+name: failing-tests-block-fix
+description: 고칠 수 있는 위반이 있어도 테스트가 실패하면 안전망이 없으므로 수정을 제안하지 않는다. 위반은 그대로 보여준다.
+pr:
+  - file: orders/services/pricing.py
+    find: "from orders.models.order import Order\n"
+    replace: "import os\n\nfrom orders.models.order import Order\n"
+  - file: orders/services/pricing.py
+    find: "FREE_SHIPPING_MIN = 50_000"
+    replace: "FREE_SHIPPING_MIN = 1"
+expect:
+  findings: [F401]
+  proposal: tests

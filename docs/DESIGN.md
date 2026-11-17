@@ -789,7 +789,7 @@ worker: python -m app.worker.main
 - [x] 수정: 조건부 `ruff format` (base가 `ruff format --check`를 통과하는 리포에서만)
 - [x] 제안 PR: 허용 경로만 스테이징, 푸시 전 비밀값 검사, 머지 확인, 상황별 처리, 루프 방지
 - [x] flaky 재실행
-- [ ] 평가 케이스: 컨벤션 위반 주입 3–5개와 E2E 테스트
+- [x] 평가 케이스: 컨벤션 위반 주입 5개(`eval/lint/*.yaml`)와 E2E 테스트(`tests/e2e/test_lint_cases.py`: 로컬 git 원격 + 실제 ruff·샌드박스, GitHub만 가짜, 제안 브랜치 실제 푸시)
 
 ### 3단계. 정적변수(static): 검출 → 안전망 → AI 수정
 

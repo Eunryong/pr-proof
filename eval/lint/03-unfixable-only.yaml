@@ -1,0 +1,8 @@
+name: unfixable-only
+description: 자동 수정이 없는 위반(F821 정의되지 않은 이름)은 알리기만 하고 /fix lint를 제안하지 않는다.
+pr:
+  - file: orders/services/pricing.py
+    append: "\n\ndef _later() -> int:\n    return undefined_rate\n"
+expect:
+  findings: [F821]
+  proposal: no_fixable

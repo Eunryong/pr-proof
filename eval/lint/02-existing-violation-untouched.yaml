@@ -1,0 +1,18 @@
+name: existing-violation-untouched
+description: base에 이미 있던 위반(import sys)은 PR 작성자의 것이 아니므로 찾지도 고치지도 않는다. PR이 추가한 import json만 고친다.
+base:
+  - file: orders/api/handlers.py
+    prepend: "import sys\n\n"
+pr:
+  - file: orders/api/handlers.py
+    find: "import sys\n\n"
+    replace: "import json\nimport sys\n\n"
+expect:
+  findings: [F401]
+  proposal: approval
+  fix: ready
+  remaining: []
+  file: orders/api/handlers.py
+  contains: ["import sys\n"]
+  not_contains: ["import json"]
+  same_as_base: true
