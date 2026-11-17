@@ -44,8 +44,10 @@ BACKLOG.md 형식:
 ## 실행
 
 ```
-docker compose up -d  # redis
-honcho start          # api(웹훅 + 동기화 루프), worker
+docker compose up -d       # redis
+source .venv/bin/activate  # Procfile의 python·uvicorn은 venv에서 찾는다
+cp .env.example .env       # 처음 한 번. API_PORT 등 로컬 실행 설정 (비밀값은 넣지 않음)
+honcho start               # api(웹훅 + 동기화 루프), worker
 pytest                # 파이프라인 자체 테스트 (Docker 없이)
 pytest -m docker      # 실제 Docker·예제 리포가 필요한 통합 테스트
 ```

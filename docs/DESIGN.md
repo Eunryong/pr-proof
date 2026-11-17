@@ -142,6 +142,18 @@ F1–F5는 수신과 실행 기반(1단계), F6–F10은 검출·안전망·수�
 | PR 코멘트의 명령 ↔ 처리한 코멘트 ID | `command` 등록 |
 | "실행 중"으로 남았는데 워커 생존 확인이 끊긴 작업 | 다시 등록 |
 
+**끝난 상태별 재등록 규칙.** 재시도 횟수(환경 오류 3회, 원인을 알 수 없는 설치 실패 2회)는 작업 하나 안에서만 센다. 동기화가 같은 커밋으로 새 작업을 넣으면 횟수가 0부터 다시 시작하므로, `runs`의 끝난 상태를 보고 다시 넣을지 정한다. 그렇지 않으면 Docker가 꺼진 동안 같은 커밋이 5분마다 다시 돌아 재시도가 끝없이 반복된다.
+
+| 같은 head의 마지막 `runs` 상태 | 동기화가 같은 head를 다시 넣나 |
+| --- | --- |
+| `done` (테스트 통과·실패·실행 불가, 의존성 해석 실패 포함) | 넣지 않는다. 새 커밋이 올 때만 검사한다 |
+| `env_error` (재시도를 모두 씀) | 마지막 시도가 끝난 지 30분이 지났을 때만 넣는다 (`sync.env_error_backoff_minutes`) |
+| `running`인데 생존 확인이 끊김 (기본 10분) | 넣는다 |
+| `cancelled` (더 새 커밋이 있어 멈춤) | 그 head가 다시 최신이고 `done`이 없을 때만 넣는다 |
+| 기록 없음 | 넣는다 |
+
+`env_error`의 간격은 동기화 주기(5분)보다 길어야 한다. 환경 확인(preflight)은 워커가 하므로, 웹 쪽 동기화는 시간 간격으로만 판단한다.
+
 - 실행 시점: api 시작 시 1회, 이후 5분마다(설정값). FastAPI lifespan에서 백그라운드 루프로 띄우고, `gh` 호출은 스레드에서 실행해 웹훅 응답을 막지 않는다.
 - 수동 실행은 CLI(`python -m app.cli sync`)로 한다. api는 웹훅용 터널로 외부에 열려 있으므로 HTTP 엔드포인트로 만들지 않는다.
 - 서버가 꺼진 동안 커밋이 여러 개 쌓였어도 최신 head만 검사한다.
@@ -425,6 +437,8 @@ extensions:                    # 선택 확장 (F13, 7단계). 기본은 모두 
 repos: [owner/name]            # 처리할 리포 허용 목록
 sync:
   interval_minutes: 5
+  env_error_backoff_minutes: 30   # 재시도를 다 쓴 환경 오류를 다시 넣기까지의 간격
+  heartbeat_timeout_minutes: 10   # 생존 확인이 이만큼 끊기면 실행 중 작업을 다시 넣는다
 sandbox:
   max_memory_gb: 4             # 대상 리포가 sandbox.memory_gb로 올릴 수 있는 상한
 ```
@@ -702,7 +716,7 @@ class PRJob(BaseModel):
 docker compose up -d      # redis (5단계부터 chroma)
 
 # Procfile — honcho start
-api:    uvicorn app.api:app --port 8000
+api:    uvicorn app.api:app --port ${API_PORT:-8000}   # 포트는 .env의 API_PORT
 worker: python -m app.worker.main
 ```
 
@@ -730,7 +744,7 @@ worker: python -m app.worker.main
 - [x] worktree에서 `.venv` + pytest 직접 실행 (샌드박스 안), 결과 JSON과 커버리지 파일 남기기
 - [x] PR 코멘트 하나 달고 진행하면서 수정하기 ("테스트:" 줄, 환경 오류는 결과 대신 대기 표시)
 - [x] SQLite `runs`에 결과·상태·생존 확인 시각 저장
-- [ ] 동기화(api 안의 루프): 열린 PR의 head 비교, 닫힌 PR 처리, 죽은 작업 재등록
+- [ ] 동기화(api 안의 루프): 열린 PR의 head 비교, 닫힌 PR 처리, 죽은 작업 재등록, 끝난 상태별 재등록 규칙 (F2 표)
 - [x] 최신 커밋 확인과 정리: 단계 사이, 그리고 `run_in_sandbox()` 실행 중 10초 간격 (Redis 최신 head)
 
 ### 2단계. 컨벤션(lint): 검출 → 수정 → 제안 PR
