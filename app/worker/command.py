@@ -64,6 +64,8 @@ def process_command(job: PRJob, deps: Deps) -> str:
         return "duplicate"
     parsed = parse_command(job.command)
     if parsed.name == "unknown":
+        # 답하지 않지만 처리한 것으로 적는다. 적지 않으면 동기화가 주기마다 다시 넣는다
+        deps.store.record_command(job, "unknown_command")
         return "unknown_command"
     _, final = retry.attempt()
     try:
@@ -76,8 +78,11 @@ def process_command(job: PRJob, deps: Deps) -> str:
             result = _fix(job, deps, parsed.word, parsed.arg, _target(job, refs))
         else:
             result = _extension(job, deps, parsed.word, parsed.arg, refs.base_sha)
-    except Exception:  # 환경 오류든 버그든 마지막 시도면 키를 지운다. 재시도는 RQ가 한다
+    except Exception:  # 환경 오류든 버그든 재시도는 RQ가 한다
         if final:
+            # 마지막 시도면 실패로 적고 키를 지운다. 적지 않으면 동기화가 주기마다 다시 넣는다.
+            # 다시 하려면 명령을 새로 단다 (update의 error와 같은 규칙)
+            deps.store.record_command(job, "error")
             deps.store.release(job)
         raise
     deps.store.record_command(job, result)

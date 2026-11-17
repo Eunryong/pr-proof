@@ -115,7 +115,8 @@ def test_github_failure_retries_and_releases_on_last(env, final: bool) -> None:
     env["redis"].set(state_keys.job(job.dedup_key), "1")
     with pytest.raises(GitHubError):
         main.handle(_command("/mutate"), env["deps"])
-    assert not env["deps"].store.command_handled(9)
+    # 마지막 시도면 실패로 적는다. 적지 않으면 동기화가 주기마다 다시 넣는다
+    assert env["deps"].store.command_handled(9) == final
     assert (env["redis"].get(state_keys.job(job.dedup_key)) is None) == final
 
 

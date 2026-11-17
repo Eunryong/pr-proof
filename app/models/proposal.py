@@ -23,6 +23,7 @@ SECRET_PATTERNS: Final = (
     re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
     re.compile(r"sk-ant-[A-Za-z0-9_-]{20,}"),
 )
+SECRET_BLOCKED: Final = "비밀값으로 보이는 내용이 있음"
 MIN_LITERAL_SECRET: Final = 8  # 너무 짧은 값은 흔한 문자열과 겹친다
 # 위반 범위(블록 전체)를 다시 쓰는 규칙. PR이 블록의 한 줄만 바꿔도 기존 줄 순서가 바뀔 수 있다
 BLOCK_REWRITE_CODES: Final = frozenset({"I001"})
@@ -75,7 +76,7 @@ def push_blocker(patch: str, files: Sequence[str], literals: Iterable[str] = ())
         return f"바뀐 줄이 {lines}줄로 상한({MAX_CHANGED_LINES}줄)을 넘음"
     kind = find_secret(patch, literals)
     if kind is not None:
-        return f"비밀값으로 보이는 내용이 있음 ({kind})"
+        return f"{SECRET_BLOCKED} ({kind})"
     return None
 
 
@@ -140,3 +141,8 @@ class ProposalResult:
     url: str = ""
     reason: str = ""
     updated: bool = False  # 같은 브랜치의 열린 제안을 새 커밋으로 바꿈
+
+    @property
+    def secret_blocked(self) -> bool:
+        """비밀값 때문에 막았다. 수정 내용도 코멘트에 싣지 않는다."""
+        return self.reason.startswith(SECRET_BLOCKED)

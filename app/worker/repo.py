@@ -111,12 +111,20 @@ def merge_base(worktree: Path, base_sha: str, head_sha: str) -> str:
     return _git("merge-base", base_sha, head_sha, cwd=worktree).strip()
 
 
+# 사용자 전역 git 설정이 diff 형식(접두사, 경로 표기, 외부 diff 도구)을 바꾸지 않게 한다.
+# models.diff가 `+++ b/<경로>` 형식을 읽는다
+_DIFF: Final = (
+    "-c", "diff.noprefix=false", "-c", "diff.mnemonicPrefix=false", "-c", "diff.relative=false",
+    "-c", "core.quotePath=false", "diff", "--no-color", "--no-ext-diff",
+)  # fmt: skip
+
+
 def working_diff(worktree: Path, merge_base_sha: str) -> str:
     """갈라진 커밋과 worktree의 지금 파일 사이의 diff. 수정을 적용한 뒤 바뀐 줄을 다시 셀 때 쓴다.
 
     base 브랜치의 지금 커밋과 비교하면, PR이 갈라진 뒤 base에서 바뀐 줄까지 PR의 변경으로 잡힌다.
     """
-    return _git("diff", "--no-color", merge_base_sha, cwd=worktree)
+    return _git(*_DIFF, merge_base_sha, cwd=worktree)
 
 
 def status(worktree: Path) -> str:
@@ -126,7 +134,7 @@ def status(worktree: Path) -> str:
 
 def head_diff(worktree: Path) -> str:
     """체크아웃한 커밋과 worktree 사이의 diff. 수정안 자체다."""
-    return _git("diff", "--no-color", "HEAD", cwd=worktree)
+    return _git(*_DIFF, "HEAD", cwd=worktree)
 
 
 # 사용자 전역 git 설정의 서명·훅이 파이프라인 커밋에 끼어들지 않게 한다
@@ -158,7 +166,7 @@ def write_changes_diff(worktree: Path, merge_base_sha: str, head_sha: str) -> Pa
     """PR이 바꾼 내용 (`git diff base...head`와 같다). 수정 후 다시 셀 때와 같은 기준을 쓴다."""
     out = worktree / CHANGES_DIFF
     out.parent.mkdir(exist_ok=True)
-    out.write_text(_git("diff", "--no-color", merge_base_sha, head_sha, cwd=worktree))
+    out.write_text(_git(*_DIFF, merge_base_sha, head_sha, cwd=worktree))
     return out
 
 

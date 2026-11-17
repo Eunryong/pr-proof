@@ -3,15 +3,28 @@
 위반은 PR이 바꾼 줄에 걸린 것만 다룬다. 기존 코드의 위반은 PR 작성자의 책임이 아니다.
 """
 
+import codecs
 import re
 from collections.abc import Mapping
 from typing import Final
 
 _HUNK: Final = re.compile(r"^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
-_NEW_FILE_PREFIX: Final = "+++ b/"
+_NEW_FILE_HEADER: Final = "+++ "
 _DELETED: Final = "+++ /dev/null"
 
 ChangedLines = Mapping[str, frozenset[int]]
+
+
+def _new_path(header: str) -> str | None:
+    """`+++ b/<경로>` 헤더의 경로. 형식이 다르면 None.
+
+    git은 공백이 든 경로 뒤에 탭을 붙이고, 특수 문자가 든 경로는 `"b/\\353..."`처럼 C 형식으로
+    감싼다 (core.quotePath). 그대로 읽으면 그 파일의 바뀐 줄이 빠져 위반이 보이지 않는다.
+    """
+    raw = header[len(_NEW_FILE_HEADER) :].removesuffix("\t")
+    if raw.startswith('"') and raw.endswith('"') and len(raw) >= 2:
+        raw = codecs.escape_decode(raw[1:-1].encode())[0].decode("utf-8", "surrogateescape")
+    return raw.removeprefix("b/") if raw.startswith("b/") else None
 
 
 def added_lines(diff: str) -> ChangedLines:
@@ -45,8 +58,8 @@ def added_lines(diff: str) -> ChangedLines:
             current = None
         elif raw == _DELETED:
             current = None
-        elif raw.startswith(_NEW_FILE_PREFIX):
-            current = raw[len(_NEW_FILE_PREFIX) :]
+        elif raw.startswith(_NEW_FILE_HEADER):
+            current = _new_path(raw)
         elif match := _HUNK.match(raw):
             old_count, new_start, new_count = match.groups()
             old_left = int(old_count) if old_count is not None else 1

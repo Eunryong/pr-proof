@@ -211,6 +211,53 @@ def test_failed_fix_can_be_retried(fix_env) -> None:
     assert main.handle(_fix_command(), fix_env["deps"]) == "fix:ready"  # RQ 재시도
 
 
+def test_failed_proposal_can_be_retried(fix_env) -> None:
+    """제안 PR을 만들다 실패해도(푸시 뒤 네트워크 오류 등) 다음 시도가 수정부터 다시 한다."""
+    from app.worker import proposal, retry
+    from app.worker.github import GitHubError
+
+    main.handle(_update(), fix_env["deps"])
+    real_open = proposal.open_proposal
+    calls = {"n": 0}
+
+    def flaky_open(*a, **k):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise GitHubError("pulls 생성 실패")
+        return real_open(*a, **k)
+
+    fix_env["monkeypatch"].setattr(proposal, "open_proposal", flaky_open)
+    fix_env["monkeypatch"].setattr(retry, "attempt", lambda: (1, False))
+    with pytest.raises(GitHubError):
+        main.handle(_fix_command(), fix_env["deps"])
+    assert main.handle(_fix_command(), fix_env["deps"]) == "fix:ready"  # RQ 재시도
+    assert len(fix_env["gh"].pulls) == 1
+    assert fix_env["state"]["fix_calls"] == 2  # worktree가 없어 수정부터 다시 했다
+
+
+def test_command_failing_every_retry_is_recorded(fix_env) -> None:
+    """마지막 재시도까지 실패한 명령은 기록한다. 기록하지 않으면 동기화가 주기마다 다시 넣는다."""
+    from app.sandbox.docker_cli import SandboxError
+    from app.worker import retry
+
+    main.handle(_update(), fix_env["deps"])
+
+    def broken_fix(*a, **k):
+        raise SandboxError("docker 중단")
+
+    fix_env["monkeypatch"].setattr(lint, "fix_lint", broken_fix)
+    fix_env["monkeypatch"].setattr(retry, "attempt", lambda: (3, True))
+    with pytest.raises(SandboxError):
+        main.handle(_fix_command(), fix_env["deps"])
+    assert fix_env["deps"].store.command_handled(77)
+
+
+def test_unknown_command_is_recorded_without_reply(fix_env) -> None:
+    assert main.handle(_fix_command(90, "/cc @someone"), fix_env["deps"]) == "unknown_command"
+    assert fix_env["deps"].store.command_handled(90)  # 동기화가 다시 넣지 않는다
+    assert _replies(fix_env["gh"]) == []
+
+
 def test_format_only_fix_is_ready(fix_env) -> None:
     fix_env["monkeypatch"].setattr(
         lint, "fix_lint",
@@ -369,6 +416,7 @@ def test_closing_original_pr_closes_proposals(fix_env) -> None:
         repo="o/r", pr_number=1, kind="close", head_sha=HEAD, base_sha="b" * 40,
         source="webhook",
     ).model_dump_json()  # fmt: skip
+    fix_env["gh"].state = "closed"
     assert main.handle(close, fix_env["deps"]) == "closed:1"
     assert fix_env["gh"].pulls[number]["state"] == "closed"
     assert fix_env["gh"].deleted_branches == ["pipeline/pr-1-fix-lint"]
@@ -382,9 +430,26 @@ def test_closing_pr_stops_running_work(fix_env) -> None:
         repo="o/r", pr_number=1, kind="close", head_sha=HEAD, base_sha="b" * 40,
         source="webhook",
     ).model_dump_json()  # fmt: skip
+    fix_env["gh"].state = "closed"
     main.handle(close, fix_env["deps"])
     latest = fix_env["redis"].get(state_keys.latest_head("o/r", 1)).decode()
     assert latest != HEAD  # 실행 중인 작업은 낡은 작업으로 보고 멈춘다
+
+
+def test_close_job_for_open_pr_does_nothing(fix_env) -> None:
+    """closed 웹훅이 reopened보다 늦게 오거나 동기화 목록에서 빠져도 열린 PR은 그대로 둔다."""
+    from app.models import state_keys
+
+    _open_and_fix(fix_env)
+    (number,) = fix_env["gh"].pulls
+    close = PRJob(
+        repo="o/r", pr_number=1, kind="close", head_sha=HEAD, base_sha="b" * 40,
+        source="sync",
+    ).model_dump_json()  # fmt: skip
+    assert main.handle(close, fix_env["deps"]) == "still_open"
+    assert fix_env["gh"].pulls[number]["state"] == "open"
+    assert fix_env["deps"].store.proposals("o/r", 1)[0].state == "open"
+    assert fix_env["redis"].get(state_keys.latest_head("o/r", 1)).decode() == HEAD
 
 
 def test_lint_disabled_runs_tests_only(fix_env) -> None:

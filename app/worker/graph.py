@@ -42,6 +42,8 @@ CHECKPOINT_DB: Final = "checkpoints.db"
 FIX_DIR: Final = "fixes"
 AWAIT_FIX: Final = "await_fix"
 FIX: Final = "fix"
+PROPOSE: Final = "propose"
+FIX_COMMENT: Final = "fix_comment"
 # 체크포인트에서 되살릴 수 있는 상태 타입 (나머지는 langgraph가 막는다)
 _STATE_TYPES: Final = (
     ("app.models.job", "PRJob"),
@@ -320,17 +322,17 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
     graph.add_node("comment", comment)
     graph.add_node(AWAIT_FIX, await_fix)
     graph.add_node(FIX, fix)
-    graph.add_node("propose", propose)
-    graph.add_node("fix_comment", fix_comment)
+    graph.add_node(PROPOSE, propose)
+    graph.add_node(FIX_COMMENT, fix_comment)
     graph.add_edge(START, "checkout")
     graph.add_conditional_edges("checkout", route, {"next": "lint", "stop": END})
     graph.add_conditional_edges("lint", route, {"next": "test", "stop": END})
     graph.add_conditional_edges("test", route, {"next": "comment", "stop": END})
     graph.add_conditional_edges("comment", after_comment, [AWAIT_FIX, FIX, END])
     graph.add_edge(AWAIT_FIX, FIX)
-    graph.add_conditional_edges(FIX, route, {"next": "propose", "stop": END})
-    graph.add_conditional_edges("propose", route, {"next": "fix_comment", "stop": END})
-    graph.add_edge("fix_comment", END)
+    graph.add_conditional_edges(FIX, route, {"next": PROPOSE, "stop": END})
+    graph.add_conditional_edges(PROPOSE, route, {"next": FIX_COMMENT, "stop": END})
+    graph.add_edge(FIX_COMMENT, END)
     return graph.compile(checkpointer=checkpointer)
 
 
@@ -349,16 +351,19 @@ def run_flow(job: PRJob, ctx: FlowContext) -> FlowState:
     return result
 
 
-PendingFix = Literal["awaiting", "interrupted_fix"]
+PendingFix = Literal["awaiting", "interrupted_fix", "interrupted_after_fix"]
 
 
 def pending_fix(job: PRJob, ctx: FlowContext, saver: SqliteSaver) -> PendingFix | None:
-    """이 커밋에 재개할 수정이 있는지. 승인 대기 중이거나, 수정 도중 실패해 다시 시도할 수 있다."""
+    """이 커밋에 재개할 수정이 있는지. 승인 대기 중이거나, 수정·제안·수정 코멘트 도중 실패해
+    다시 시도할 수 있다."""
     snapshot = build_graph(ctx, saver).get_state(thread_config(job))
     if AWAIT_FIX in snapshot.next and snapshot.interrupts:
         return "awaiting"
     if FIX in snapshot.next:
         return "interrupted_fix"
+    if PROPOSE in snapshot.next or FIX_COMMENT in snapshot.next:
+        return "interrupted_after_fix"
     return None
 
 
@@ -375,8 +380,14 @@ def resume_fix(job: PRJob, ctx: FlowContext, approval: dict[str, Any]) -> FlowSt
         if pending is None:
             return None
         graph = build_graph(ctx, saver)
+        config = thread_config(job)
+        if pending == "interrupted_after_fix":
+            # 제안 PR이나 수정 코멘트를 쓰다 실패했다. 수정한 worktree는 이미 지워졌으므로
+            # 수정 단계부터 다시 한다. 같은 커밋이라 같은 수정안이 나오고, 이미 연 제안 PR은
+            # 같은 브랜치라 새로 만들지 않고 갱신한다
+            config = graph.update_state(config, None, as_node=AWAIT_FIX)
         command = Command(resume=approval) if pending == "awaiting" else None
-        result = graph.invoke(command, thread_config(job))
+        result = graph.invoke(command, config)
     if "fix" not in result:
         result.setdefault("stopped", "stale")
     return result

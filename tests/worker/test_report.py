@@ -190,3 +190,33 @@ def test_flaky_tests_are_listed_separately() -> None:
     assert "**테스트:** 통과, 불안정한 테스트 1개" in text
     assert "불안정한 테스트 (처음엔 실패, 다시 돌려 통과):\n- `t::a`" in text
     assert "실패한 테스트:" not in text
+
+
+def test_code_fence_outgrows_backticks_in_text() -> None:
+    assert report.code_fence("plain") == "```"
+    assert report.code_fence('x = """\n```py\n"""') == "````"
+
+
+def _ready_fix(tmp_path, patch: str):
+    from app.models.fix import FixOutcome
+
+    path = tmp_path / "fix.patch"
+    path.write_text(patch)
+    return FixOutcome(skill="lint", status="ready", fixed=1, patch_path=path)
+
+
+def test_patch_with_backticks_keeps_fence_closed(tmp_path) -> None:
+    lines = report.fix_section(_ready_fix(tmp_path, '-"""\n-```\n+x\n'))
+    text = "\n".join(lines)
+    assert "````diff" in text and text.rstrip().endswith("````\n\n</details>".rstrip())
+
+
+def test_secret_blocked_proposal_hides_patch(tmp_path) -> None:
+    from app.models.proposal import ProposalResult, push_blocker
+
+    reason = push_blocker("+token = ghp_" + "a" * 36 + "\n", ["a.py"])
+    result = ProposalResult(reason=reason)
+    assert result.secret_blocked
+    text = "\n".join(report.fix_section(_ready_fix(tmp_path, "+token\n"), result))
+    assert "제안 PR을 만들지 않았습니다 (비밀값으로 보이는 내용이 있음" in text
+    assert "수정 내용" not in text

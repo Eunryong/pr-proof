@@ -1,5 +1,7 @@
 from typing import Final
 
+import pytest
+
 from app.models.diff import added_lines, touches
 
 MODIFY: Final = """\
@@ -133,3 +135,25 @@ def test_touches_range() -> None:
 
 def test_touches_end_before_start_uses_start() -> None:
     assert touches({"a.py": frozenset({5})}, "a.py", 5, 1)
+
+
+def _one_line(header: str) -> str:
+    return f"diff --git x y\n--- /dev/null\n{header}\n@@ -0,0 +1 @@\n+import os\n"
+
+
+@pytest.mark.parametrize(
+    ("header", "path"),
+    [
+        ('+++ "b/\\353\\252\\250\\353\\223\\210.py"', "모듈.py"),  # core.quotePath=true
+        ("+++ b/모듈.py", "모듈.py"),  # core.quotePath=false
+        ("+++ b/my file.py\t", "my file.py"),  # 공백이 든 경로 뒤의 탭
+        ('+++ "b/say \\"hi\\".py"', 'say "hi".py'),
+    ],
+    ids=["quoted-utf8", "unquoted-utf8", "space-tab", "escaped-quote"],
+)
+def test_special_paths_are_read(header: str, path: str) -> None:
+    assert added_lines(_one_line(header)) == {path: frozenset({1})}
+
+
+def test_unknown_prefix_is_skipped_not_misnamed() -> None:
+    assert added_lines(_one_line("+++ w/orders/a.py")) == {}

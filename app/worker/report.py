@@ -4,6 +4,7 @@
 ⚠️는 "위반 있음"이라는 뜻으로만 쓴다 (docs/DESIGN.md F9). 그 아래에 상세를 붙인다.
 """
 
+import re
 from collections import Counter
 from collections.abc import Mapping
 from typing import Final, Literal
@@ -198,13 +199,22 @@ def fix_section(fix: FixOutcome, result: ProposalResult | None = None) -> list[s
         lines.append(f"`ruff format`은 적용하지 않았습니다 ({fix.format_skipped}).")
     if fix.remaining:
         lines.append(f"자동으로 고치지 못한 위반 {len(fix.remaining)}건은 그대로 남습니다.")
+    if result is not None and result.secret_blocked:
+        return lines  # 비밀값으로 보이는 줄을 코멘트에 옮기지 않는다
     if fix.patch_path is not None and fix.patch_path.is_file():
         patch = fix.patch_path.read_text()
         if len(patch) > MAX_PATCH_CHARS:
             patch = patch[:MAX_PATCH_CHARS] + "\n… (생략)"
-        lines += ["", "<details><summary>수정 내용</summary>", "", "```diff", patch, "```", "",
+        fence = code_fence(patch)
+        lines += ["", "<details><summary>수정 내용</summary>", "", f"{fence}diff", patch, fence, "",
                   "</details>"]  # fmt: skip
     return lines
+
+
+def code_fence(text: str) -> str:
+    """text 안의 어떤 백틱 줄보다 긴 코드 울타리. 본문의 ```가 블록을 일찍 닫지 않게 한다."""
+    longest = max((len(m) for m in re.findall(r"`+", text)), default=0)
+    return "`" * max(3, longest + 1)
 
 
 def rules_details(results: list[SkillResult]) -> list[str]:
@@ -234,7 +244,8 @@ HEADER: Final = "### pr-proof"
 
 
 def _details(summary: str, text: str) -> list[str]:
-    return ["", f"<details><summary>{summary}</summary>", "", "```", text, "```", "", "</details>"]
+    fence = code_fence(text)
+    return ["", f"<details><summary>{summary}</summary>", "", fence, text, fence, "", "</details>"]
 
 
 def _footer(head_sha: str, seconds: float | None = None, *, from_sync: bool = False) -> str:
