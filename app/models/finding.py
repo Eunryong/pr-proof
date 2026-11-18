@@ -17,6 +17,9 @@ class Finding:
     source: str  # 규칙의 출처. 예: "pyproject.toml", "기본 규칙"
     code: str = ""  # 도구의 규칙 코드. 예: "F401"
     fixable: bool = False  # 도구가 동작을 바꾸지 않는 수정을 낼 수 있다 (lint: ruff의 safe fix)
+    # 위반 줄이 테스트로 실행되는지 (DESIGN.md F8). None은 모름(재지 않음·coverage.xml 없음).
+    # lint는 동작을 바꾸지 않아 쓰지 않는다. 채우는 곳은 app/models/coverage.py의 mark_covered
+    covered: bool | None = None
 
 
 @dataclass(frozen=True)

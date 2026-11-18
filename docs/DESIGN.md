@@ -233,7 +233,7 @@ class Finding:
     message: str
     skill: str
     source: str        # 규칙의 출처. 예: "pyproject.toml", "README 3절", "base import 그래프"
-    covered: bool      # 위반 줄이 테스트로 실행되는지 (F8). 자동 수정 대상 여부
+    covered: bool | None = None  # 위반 줄이 테스트로 실행되는지 (F8). None은 모름. lint는 쓰지 않는다
 
 def run_skill(ctx: JobContext) -> list[Finding]: ...
 
@@ -297,7 +297,14 @@ SKILLS = {"lint": run_lint, "static": run_static, "structure": run_structure}
 - **종료 코드 137 (SIGKILL):** 먼저 취소와 시간 초과인지 본다. 그때는 파이프라인이 컨테이너를 지워서 137이 나올 수 있다. 둘 다 아닐 때만 메모리 한도 초과로 분류한다. 메모리 한도로 컨테이너 자체가 죽은 경우(docker inspect의 `OOMKilled`)도 환경 오류가 아니라 메모리 초과(`unrunnable`)다.
 - **메모리 초과 안내:** 코멘트에 "실행 불가 (메모리 한도 1GB를 넘어 종료됨)"과 "base 브랜치의 `.pipeline.yaml`에서 `sandbox.memory_gb`로 4GB까지 늘릴 수 있습니다"를 넣는다. 이미 상한이면 늘릴 수 있다는 말 대신 상한임을 적는다. `.pipeline.yaml`을 읽지 못하면 기본값(1GB)으로 검사하고 이유를 코멘트의 "설정:"에 적는다. 늘릴 수 있는 상한은 파이프라인 쪽 설정(`sandbox.max_memory_gb`)이 정한다. 설정은 base 브랜치에서 읽으므로 PR이 자기 한도를 올릴 수 없다.
 - **위반 줄의 커버리지:** 샌드박스가 남긴 `coverage.xml`로 위반 줄이 테스트로 실행되는지 본다. 실행되지 않는 줄의 위반은 "테스트가 지나가지 않아 자동 수정 대상 아님"으로 표시하고 알리기만 한다. 고친 뒤 테스트가 통과해도 그 줄의 동작을 확인한 것이 아니기 때문이다.
+  - **읽기 (`worker/coverage.py`, 규칙은 `models/coverage.py`):** `coverage.xml`은 PR 코드가 도는 샌드박스에서 만들어지므로 믿지 않는 입력이다. 호스트에서 일반 파일만 읽고(심볼릭 링크·FIFO·장치 거부, `O_NOFOLLOW`·`O_NONBLOCK`), 20MB를 넘으면 읽지 않는다. 파서는 `defusedxml`이고 DTD·엔티티·외부 참조를 거부한다. 루트가 `coverage`가 아니거나, `class`에 `filename`이 없거나, `line`의 `number`(1 이상)·`hits`(0 이상)가 정수가 아니면 파일 전체를 "모름"으로 본다. 같은 파일의 `class`가 여럿이면 합친다.
+  - **`Finding.covered`:** `True`(실행됨), `False`(실행 안 됨), `None`(모름, 기본값). `coverage.xml`이 없거나 깨졌으면 모두 `None`이다. `coverage.xml`에 없는 파일은 테스트가 import하지 않은 것이므로 `False`다.
+  - **줄 대응 규칙:** coverage.py는 실행 단위(문장의 첫 줄, 데코레이터 줄)만 센다. 위반 줄이 센 줄이면 그 결과를 쓴다. 아니면 그 파일의 소스를 `ast`로 파싱해(실행하지 않음) 그 줄을 감싸는 가장 안쪽 문장을 찾고, 여러 줄 문장의 이어지는 줄과 복합문의 머리(여러 줄 `if (...)`, 데코레이터·`def` 머리)는 그 문장의 첫 줄(데코레이터 줄, 문장 줄 순서로 처음 센 줄)의 결과를 쓴다. 복합문 몸통 사이의 빈 줄·주석, `else:`·`except:` 줄, `# pragma: no cover`로 빠진 문장, 소스를 읽지 못하거나 파싱하지 못한 경우는 `False`다. 확실하지 않으면 자동 수정에서 빼는 쪽을 고른다. 소스는 worktree 안의 일반 파일만, 2MB까지 UTF-8로 읽는다.
+  - **제안 조건 (`code_fix_gate`):** 위 표대로 테스트 상태가 `passed`이고 flaky가 없을 때만 `static`·`structure` 수정을 제안한다(막히면 이유를 돌려준다). 그때 자동 수정 대상은 `covered is True`인 위반이고, `False`는 "테스트가 지나가지 않아 자동 수정 대상 아님", `None`은 "커버리지를 알 수 없어 자동 수정 대상 아님"으로 나눠 돌려준다. `require_covered=False`면 커버리지와 관계없이 그 스킬의 위반 전체가 대상이다. `lint`는 이 조건을 쓰지 않는다(`PytestRun.allows_lint_fix`).
+  - **위조 가능성:** PR 코드가 `coverage.xml`을 바꿔 덮이지 않은 줄을 덮였다고 보이게 할 수 있다. 영향은 그 PR 자신에 대한 수정 제안뿐이고, 수정안은 다시 테스트로 검증하고 승인을 거치므로 받아들인다.
 - PR 전체의 변경 라인 커버리지(`diff-cover`)는 참고 지표로 코멘트에 적는다. diff-cover는 PR 코드를 실행하지 않으므로 호스트에서 돌린다. 입력은 샌드박스가 남긴 `coverage.xml`과 호스트에서 만든 `changes.diff`다.
+  - **실행 (`worker/coverage.diff_coverage`):** `coverage.xml`을 먼저 위의 안전한 파서로 검사해 통과한 것만 넘긴다(diff-cover는 표준 `ElementTree`로 읽는다). 두 입력을 임시 폴더에 복사하고 그 안에 빈 git 저장소를 만들어 실행한다. diff-cover가 부르는 `git rev-parse --show-toplevel`이 PR worktree가 아니라 그 임시 저장소를 보게 하기 위해서다. 환경은 `PATH`와 임시 `HOME`, `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null`만 넘기고, `python -I`(작업 폴더·`PYTHONPATH` import 안 함)로 `--diff-file`·`--format json`을 써서 60초 제한으로 돌린다.
+  - **결과:** 비율(소수 둘째 자리), 바뀐 줄 중 coverage가 센 줄 수, 그중 실행되지 않은 줄 수. 센 줄이 하나도 없거나(문서·테스트에 안 잡히는 파일만 바꿈), 입력이 없거나 깨졌거나, diff-cover가 실패·시간 초과하면 `None`(코멘트에 적지 않음)이다. coverage.xml에 없는 파일의 바뀐 줄은 diff-cover 규칙대로 세지 않는다(위반 줄 판정에서는 `False`와 다르다).
 - `coverage.xml`의 경로는 컨테이너 기준(`/work/...`)이 아니라 리포 기준 상대 경로여야 한다. coverage의 `relative_files = true`를 파이프라인 쪽 설정 파일에 두고 `--cov-config`로 넘긴다. 1단계 구현에서는 대상 리포의 coverage 설정을 쓰지 않고 파이프라인 설정(`docker/sandbox/coveragerc`: `relative_files`, `source = .`, `.venv/` 제외)만 쓴다. 기본 `# pragma: no cover`는 그대로 동작한다. 리포 설정의 `omit`·`exclude_lines`를 반영할지는 협업 리포 검증 때 다시 본다.
 - 실패한 테스트는 한 번 재실행한다. 재실행에서 통과하면 flaky로 표시한다. 테스트 실패(종료 코드 1)일 때만, 실패한 테스트 ID만 지정해 같은 컨테이너에서 다시 돌린다. 수집 오류·테스트 오류(setup 등)는 다시 돌려도 같으므로 하지 않고, 실패가 20개를 넘으면 불안정이 아니라 실제 실패로 본다. coverage는 처음 실행 것을 쓴다. 실패한 테스트가 모두 재실행에서 통과하면 상태는 `passed`(테스트 줄 "통과, 불안정한 테스트 N개")이고, `lint` 제안은 되지만 `static`·`structure` 제안은 막는다. 수정 전후 비교는 재실행에서 통과한 수까지 센 통과 수로 한다.
 
@@ -659,6 +666,7 @@ pipeline/
 │   │   ├── test_run.py          # PytestRun, ReportSummary, 실행 상태
 │   │   ├── diff.py              # changes.diff에서 바뀐 줄 읽기
 │   │   ├── finding.py           # Finding, SkillResult
+│   │   ├── coverage.py          # coverage.xml 파싱, 위반 줄 covered 표시, static·structure 제안 조건
 │   │   ├── fix.py               # 수정안 판정: 범위 검사, 전후 위반 비교, 테스트 비교
 │   │   ├── text_edit.py         # ruff 수정 편집을 텍스트에 적용
 │   │   ├── repo_config.py       # 대상 리포 .pipeline.yaml 스키마
@@ -689,7 +697,7 @@ pipeline/
 │   │   ├── github.py            # GitHub 쓰기: post_comment, update_comment, open_pr (gh CLI)
 │   │   ├── base_config.py       # base 브랜치의 .pipeline.yaml·ruff 설정 읽기
 │   │   ├── skills/              # lint(ruff, 바뀐 줄만), static, structure: 검출과 수정
-│   │   ├── safety.py            # 안전망: 위반 줄 커버리지, diff-cover
+│   │   ├── coverage.py          # 안전망 입력 읽기(coverage.xml·소스, 링크·FIFO 거부), 호스트 diff-cover
 │   │   ├── extensions/          # 선택 확장: suspicious, mutation, ai_tests (7단계)
 │   │   ├── rules.py             # 구조 규칙 읽기: README 변환, import 그래프, 이름 패턴
 │   │   ├── ai/                  # 모델 백엔드, 프롬프트, 라우팅
