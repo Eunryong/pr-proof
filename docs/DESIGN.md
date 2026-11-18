@@ -136,7 +136,7 @@
 
 지금 구현을 그대로 쓴다. 규칙은 v1 F1–F3과 같고 요점만 옮긴다.
 
-- **웹훅 (v1 F1):** `POST /webhook/github` 하나. `X-Hub-Signature-256` HMAC 검증, `X-GitHub-Delivery` ID로 재전송 제거, 허용 목록의 저장소만, 큐에 넣고 바로 202. api는 GitHub을 조회하지 않는다. `pull_request` 이벤트는 작성자를 `may_run`에 기본 목록을 넣어 확인하고, 통과하지 못하면 검사 작업 대신 승인 안내 작업을 넣는다(8.6). base의 설정에 따른 최종 판단은 워커가 한다. `issue_comment`는 `created`이고, 파이프라인 자신의 코멘트가 아니고, 작성자의 `author_association`이 OWNER·MEMBER·COLLABORATOR인 것만 받는다.
+- **웹훅 (v1 F1):** `POST /webhook/github` 하나. `X-Hub-Signature-256` HMAC 검증, `X-GitHub-Delivery` ID로 재전송 제거, 허용 목록의 저장소만, 큐에 넣고 바로 202. api는 GitHub을 조회하지 않는다. PR 작성자의 `author_association`과 로그인 이름은 판단 없이 `PRJob`에 실어 넘긴다. 외부 작성자의 PR을 돌릴지는 워커가 정한다(8.6). `issue_comment`는 `created`이고, 파이프라인 자신의 코멘트가 아니고, 작성자의 `author_association`이 OWNER·MEMBER·COLLABORATOR인 것만 받는다.
 - **동기화 (v1 F2):** api 시작 시 한 번, 이후 5분마다. GitHub의 PR 상태와 SQLite의 처리 이력을 비교해 차이를 작업으로 넣는다.
 
   | 비교 | 차이가 있으면 |
@@ -1001,38 +1001,32 @@ class Record:
 - 승인 기록(저장소, PR, 커밋의 전체 해시, 승인자, 코멘트 ID, 시각)은 SQLite의 `approvals`에 남긴다. 워커가 승인 명령을 처리할 때 쓴다.
 - 신뢰되지 않은 사람의 명령(`/recheck`, `/fix`)은 지금처럼 무시한다(4.1).
 
-**판단은 함수 하나**
+**판단은 워커 한 곳, 함수 하나**
 
 ```python
 # app/models/access.py. 외부 호출 없음
 def may_run(
-    author_association: str | None,
+    author_association: str | None,    # PRJob에 실려 온 PR 작성자의 값. 없으면 신뢰되지 않음
     author_login: str | None,
-    head_sha: str,
-    access: AccessSettings,            # api는 기본 목록, 워커는 base .pipeline.yaml의 access
-    approved_shas: Collection[str],    # 이 PR에서 승인된 커밋
+    head_sha: str,                     # 워커가 GitHub에서 읽은 지금의 head
+    access: AccessSettings,            # base .pipeline.yaml의 access
+    approved_shas: Collection[str],    # approvals에 있는 이 PR의 승인된 커밋
 ) -> Allowed | NeedsApproval: ...
 ```
 
-웹훅, 새 커밋, 동기화, 워커가 모두 이 함수를 쓴다. 한쪽만 다른 기준을 쓰면 그쪽이 구멍이 된다(명령 권한의 `command_in_comment`와 같은 이유).
-
-**두 곳에서 확인한다**
-
-1. **api (웹훅·동기화).** 큐에 넣기 전에 `may_run`으로 거른다. 이때 `access`는 **기본 목록(OWNER·MEMBER·COLLABORATOR, 봇 없음)** 이다. api는 base의 설정을 조회하지 않는다. "웹훅에서 api는 GitHub을 조회하지 않는다"(4.1)를 그대로 지킨다. 통과하지 못한 PR은 검사 작업 대신 **승인 안내 작업**(`kind: notice`)만 넣는다. 승인 여부는 `approvals`를 읽어 안다.
-2. **워커.** 모든 작업의 시작에서, PR의 코드를 체크아웃하기 전에 base의 `.pipeline.yaml`로 다시 확인한다. `access`는 bare 캐시의 base 커밋에서 읽는다(코드를 실행하지 않고 파일만 읽는다). base 설정을 아는 것은 워커뿐이므로 워커의 판단이 최종이다.
-   - **검사 작업인데 통과하지 못하면** PR의 코드에 아무것도 하지 않고 끝낸다. 체크아웃, 컨테이너, 모델 호출이 없다. 막은 사실은 `runs`에 남기고, 승인 안내가 아직 없으면 안내만 남긴다(base의 `access.trusted`가 기본 목록보다 좁아 api가 통과시킨 경우다).
-   - **승인 안내 작업인데 실행해도 되는 PR이면** 안내 대신 검사 작업으로 바꿔 그대로 검사한다(base의 `access.trusted`가 더 넓거나 작성자가 `access.bots`에 있는 경우다). 안내 코멘트는 달지 않는다.
-   - **승인 안내 작업이고 통과하지 못하면** 안내 코멘트만 남긴다.
-
-워커의 확인은 작업의 종류와 들어온 경로를 가리지 않는다. 웹훅, 동기화 루프, CLI 동기화, 재등록, 중단된 작업의 재개, `/fix`가 모두 같은 지점을 지난다. PR이 닫힐 때의 정리 작업만 확인 없이 돈다(코드를 실행하지 않는다).
+- **api는 판단하지 않는다.** 웹훅과 동기화는 PR 작성자의 `author_association`과 로그인 이름을 `PRJob`에 실어 넘기기만 한다. 명령 작업에는 코멘트 작성자의 값도 싣는다. api는 base 설정을 조회하지 않고, "웹훅에서 api는 GitHub을 조회하지 않는다"(4.1)를 그대로 지킨다. 신뢰되지 않은 PR도 다른 PR과 같은 작업으로 큐에 들어간다.
+- **워커가 모든 작업의 시작에서, PR의 코드를 체크아웃하기 전에 `may_run`으로 판단한다.** base의 `.pipeline.yaml`(bare 캐시의 base 커밋에서 파일만 읽는다), `approvals`의 승인 기록, GitHub에서 읽은 지금의 head를 본다.
+- **통과하지 못하면 승인 안내 코멘트만 달고 끝낸다.** 체크아웃, 컨테이너, 모델 호출이 없다. 막은 사실은 `runs`에 남긴다.
+- 워커의 확인은 작업의 종류와 들어온 경로를 가리지 않는다. 웹훅, 동기화 루프, CLI 동기화, 재등록, 중단된 작업의 재개, `/fix`가 모두 같은 지점을 지난다. 판단하는 곳이 하나라 경로마다 기준이 달라질 수 없다. PR이 닫힐 때의 정리 작업만 확인 없이 돈다(코드를 실행하지 않는다).
+- `PRJob`에 `author_association`이 없는 작업(예전 형식, 값을 채우지 못한 경로)은 신뢰되지 않은 것으로 본다.
 
 **승인 안내**
 
 - PR에 코멘트 한 줄만 남긴다: "외부 작성자의 PR이라 검사하지 않았습니다. 저장소 멤버가 코드를 확인한 뒤 `/recheck abc1234`를 달면 이 커밋을 검사합니다." `abc1234`는 지금 head의 짧은 해시다. 검사 결과, 규칙 목록, 다른 안내는 넣지 않는다.
 - 파이프라인의 결과 코멘트와 같은 표식을 쓰는 코멘트 하나를 고쳐 쓴다. 새 커밋이 와도 한 줄이고 해시만 바뀐다. 승인되어 검사가 돌면 결과 코멘트로 바뀐다.
-- 안내 작업은 PR의 내용을 읽지 않는다. 작성자가 고를 수 있는 글(제목, 브랜치 이름)을 코멘트에 넣지 않는다.
+- 안내를 달 때 PR의 내용을 읽지 않는다. 작성자가 고를 수 있는 글(제목, 브랜치 이름)을 코멘트에 넣지 않는다.
 
-**테스트로 확인할 것.** `may_run`의 모든 `author_association` 값과 모르는 값, 봇, 승인된 커밋과 다른 커밋. 커밋을 적지 않은 `/recheck`, 지금 head와 다른 커밋을 적은 `/recheck`, 짧은 해시가 7자 미만인 경우는 실행되지 않는다. 워커가 승인 안내 작업을 base 설정에 따라 검사 작업으로 바꾸는 경우와 검사 작업을 막는 경우. 그리고 워커 확인을 반드시 지나는지: 웹훅, 동기화 루프, CLI 동기화, 재등록, 재개, `/fix`의 각 경로로 신뢰되지 않은 PR의 작업을 넣었을 때 체크아웃·샌드박스·모델 호출이 한 번도 불리지 않는다. 승인된 커밋 뒤에 새 커밋이 오면 다시 막힌다.
+**테스트로 확인할 것.** `may_run`의 모든 `author_association` 값과 모르는 값·빈 값, 봇, 승인된 커밋과 다른 커밋. 커밋을 적지 않은 `/recheck`, 지금 head와 다른 커밋을 적은 `/recheck`, 짧은 해시가 7자 미만인 경우는 실행되지 않는다. 그리고 워커 확인을 반드시 지나는지: 웹훅, 동기화 루프, CLI 동기화, 재등록, 재개, `/fix`의 각 경로로 신뢰되지 않은 PR의 작업을 넣었을 때 체크아웃·샌드박스·모델 호출이 한 번도 불리지 않고 안내 코멘트만 남는다. 승인된 커밋 뒤에 새 커밋이 오면 다시 막힌다. api가 `author_association`을 싣지 않은 작업은 막힌다.
 
 ## 9. 비용 관리
 
@@ -1422,7 +1416,7 @@ rag:
 
 1단계의 확인이 끝나면 2단계에 들어가기 전에 아래를 한다. 2단계부터 수정안 PR이 문서 규칙에서도 나오므로, 그 전에 누구의 PR을 돌릴지와 범위·경로 규칙의 빈 곳을 막는다.
 
-- [ ] **외부 작성자 PR 가드레일 (8.6):** `models/access.py`의 `may_run`, `access.trusted`·`access.bots`, `approvals` 테이블, api의 선별과 승인 안내 작업, 워커의 체크아웃 전 확인, 승인 안내 코멘트 한 줄. 웹훅·동기화 루프·CLI 동기화·재등록·재개·`/fix` 경로가 모두 워커 확인을 지나는지 테스트한다
+- [ ] **외부 작성자 PR 가드레일 (8.6):** `models/access.py`의 `may_run`, `access.trusted`·`access.bots`, `approvals` 테이블, `PRJob`에 `author_association` 싣기(api는 판단하지 않음), 워커의 체크아웃 전 확인, 커밋을 적은 `/recheck <커밋>` 승인, 승인 안내 코멘트 한 줄. 웹훅·동기화 루프·CLI 동기화·재등록·재개·`/fix` 경로가 모두 워커 확인을 지나는지 테스트한다
 - [ ] 경로 패턴 검사기 종류 `path-pattern` (BACKLOG)
 - [ ] 범위 추정의 허용 조건을 효과 확인으로 (BACKLOG)
 
