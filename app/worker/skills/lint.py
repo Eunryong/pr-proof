@@ -101,7 +101,7 @@ def apply_safe_fixes(
 def fix_lint(
     worktree: Path,
     base: BaseConfig,
-    base_sha: str,
+    merge_base: str,
     *,
     job_id: str | None = None,
     is_stale: Callable[[], bool] | None = None,
@@ -110,12 +110,13 @@ def fix_lint(
     """ruff가 낸 안전한 수정 중 PR이 바꾼 줄의 것만 적용하고, 고친 뒤 다시 검사한다.
 
     `ruff check --fix`를 쓰지 않는다. 파일 전체를 고쳐 PR이 건드리지 않은 줄까지 바뀐다.
-    회차마다 base와의 diff로 바뀐 줄을 다시 센다 (수정으로 줄 번호가 밀린다). 새 커밋이 오면 None.
+    회차마다 갈라진 커밋(merge_base)과의 diff로 바뀐 줄을 다시 센다 (수정으로 줄 번호가 밀린다).
+    새 커밋이 오면 None.
     """
     applied, touched = 0, set()
     with container.running(worktree, None, job_id=job_id and f"{job_id}-fix") as name:
         for round_no in range(max_rounds + 1):
-            changed = added_lines(repo.working_diff(worktree, base_sha))
+            changed = added_lines(repo.working_diff(worktree, merge_base))
             files = changed_python_files(worktree, changed)
             run = ruff_runner.run_ruff(name, files, base.ruff_config, is_stale=is_stale)
             if run.cancelled:

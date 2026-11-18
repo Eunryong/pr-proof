@@ -91,6 +91,7 @@ class FlowContext:
     started: float = field(default_factory=time.monotonic)
     stack: ExitStack = field(default_factory=ExitStack)
     worktree: Path | None = None
+    merge_base: str | None = None  # PR이 바꾼 줄을 셀 기준 (repo.Checkout.merge_base)
     base: BaseConfig | None = None
     # 의존성 설치가 실패해도(그래프 밖 예외) 코멘트에 규칙 결과를 쓰려고 여기에도 둔다
     lint: SkillResult | None = None
@@ -120,6 +121,7 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
             repo.checkout(ctx.data_dir, job.repo, job.pr_number, job.head_sha, job.base_sha)
         )
         ctx.worktree = co.path
+        ctx.merge_base = co.merge_base
         ctx.base = base_config.load(co.path, job.base_sha, ctx.max_memory_gb)
 
     def progress(job: PRJob, step: str) -> None:
@@ -207,7 +209,7 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
             enter_checkout(job)
         progress(job, "lint 수정")
         result = (ctx.fix_lint or lint.fix_lint)(
-            ctx.worktree, ctx.base, job.base_sha, job_id=f"{ctx.run_id}",
+            ctx.worktree, ctx.base, ctx.merge_base, job_id=f"{ctx.run_id}",
             is_stale=is_stale_for(job),
         )  # fmt: skip
         if result is None:
