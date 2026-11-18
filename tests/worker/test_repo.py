@@ -170,3 +170,34 @@ def test_commit_ignores_user_hooks(tmp_path: Path, remote: dict, monkeypatch) ->
         (co.path / "app.py").write_text("X = 3\n")
         repo.commit_and_push(co.path, ["app.py"], "m", "pipeline/x", ("me", "me@example.com"))
     assert not marker.exists()
+
+
+def _redirect_git(worktree: Path, marker: Path) -> None:
+    """샌드박스의 PR 코드나 AI가 하는 일: `.git`을 자기 저장소로 바꾸고 fsmonitor를 심는다."""
+    evil = worktree / ".evil"
+    _git(worktree.parent, "init", "-q", str(evil))
+    with (evil / ".git" / "config").open("a") as f:
+        f.write(f'[core]\n\tfsmonitor = "touch {marker}; false"\n\tworktree = ../..\n')
+    (worktree / ".git").write_text("gitdir: .evil/.git\n")
+
+
+def test_rewritten_dot_git_is_not_used(tmp_path: Path, remote: dict) -> None:
+    """worktree 안의 `.git`을 바꿔도 호스트 git은 만들 때 적어 둔 저장소를 쓴다."""
+    data, marker = tmp_path / "data", tmp_path / "PWNED"
+    with repo.checkout(data, "o/r", 1, remote["head"], remote["base"], url=remote["url"]) as co:
+        _redirect_git(co.path, marker)
+        assert "new.py" not in repo.head_diff(co.path)  # 원래 저장소의 HEAD와 비교한다
+        repo.status(co.path)
+        repo.working_diff(co.path, co.merge_base)
+        with repo.side_worktree(co.path, remote["base"]) as side:
+            assert (side / "app.py").read_text() == "X = 1\n"
+    assert not marker.exists()
+    assert not list((data / "worktrees").glob(".*.gitdir"))  # 기록은 worktree와 함께 지운다
+
+
+def test_worktree_without_record_is_refused(tmp_path: Path) -> None:
+    path = tmp_path / "wt"
+    path.mkdir()
+    _git(path, "init", "-q")
+    with pytest.raises(GitError, match="저장소 기록"):
+        repo.status(path)

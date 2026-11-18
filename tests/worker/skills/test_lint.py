@@ -7,6 +7,7 @@ import pytest
 
 from app.models.repo_config import RepoConfig
 from app.sandbox.ruff_runner import RuffRun, RuffViolation
+from app.worker import repo
 from app.worker.base_config import BaseConfig
 from app.worker.repo import CHANGES_DIFF
 from app.worker.skills import lint
@@ -97,6 +98,7 @@ def test_real_fix_touches_only_changed_lines(tmp_path: Path) -> None:
     wt = tmp_path / "wt"
     wt.mkdir()
     _git(wt, "init", "-q", "-b", "main")
+    repo.record_git_dir(wt)
     (wt / "mod.py").write_text('import os\n\nMSG = "기존"\n')
     _git(wt, "add", ".")
     _git(wt, "commit", "-q", "-m", "base")
@@ -123,6 +125,7 @@ def _repo_with_pr(tmp_path: Path, base_files: dict[str, str], pr_files: dict[str
     wt = tmp_path / "wt"
     wt.mkdir()
     _git(wt, "init", "-q", "-b", "main")
+    repo.record_git_dir(wt)
     for name, text in base_files.items():
         (wt / name).write_text(text)
     _git(wt, "add", ".")

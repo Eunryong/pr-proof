@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from app.models.scope import AI_POLICY, LINT_POLICY
+from app.worker import repo
 from app.worker.scope import check_scope, snapshot_ignored
 
 
@@ -23,6 +24,7 @@ def wt(tmp_path: Path) -> Path:
     path = tmp_path / "wt"
     path.mkdir()
     _git(path, "init", "-q", "-b", "main")
+    repo.record_git_dir(path)  # 파이프라인의 worktree처럼 저장소 경로를 밖에 적는다
     files = {
         ".gitignore": "build/\n*.log\n",
         "src/app.py": "X = 1\n",

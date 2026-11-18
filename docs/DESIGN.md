@@ -179,6 +179,8 @@ F1–F5는 수신과 실행 기반(1단계), F6–F10은 검출·안전망·수�
 - 리포마다 처음 한 번만 `git clone --bare`로 코드를 캐시한다.
 - PR마다 `git fetch origin pull/<n>/head` 후 `git worktree add`로 별도 폴더를 만든다.
 - **git 명령은 호스트에서만 실행한다.** worktree의 `.git`은 호스트의 bare 저장소 경로를 가리키는 파일이라, `/work`만 마운트된 컨테이너 안에서는 git이 동작하지 않는다. 워커가 호스트에서 `git merge-base base head`로 PR 브랜치가 갈라진 커밋을 구하고, 그 커밋과 head의 diff(`git diff base...head`와 같음)를 `.pipeline-out/changes.diff`로 저장한다. base 브랜치가 앞서 나가도 main에서 바뀐 줄이 PR의 변경으로 잡히지 않는다. 설정과 규칙은 갈라진 커밋이 아니라 base 브랜치의 지금 커밋에서 읽는다. diff가 필요한 도구(바뀐 줄의 위반 검출, diff-cover, 확장의 바뀐 줄 뮤테이션)는 이 파일을 입력으로 받는다.
+- **worktree 안의 `.git`은 믿지 않는다.** 샌드박스는 worktree를 쓰기 가능으로 마운트하고, 3단계의 AI는 호스트에서 worktree 파일을 고친다. PR 코드나 지시문에 넘어간 AI가 `.git`을 worktree 안에 만든 저장소로 바꾸면, 그 저장소 설정(`core.fsmonitor`, 필터 드라이버, `core.sshCommand` 등)으로 다음 호스트 git 명령(수정안 diff, 범위 검사, 제안 PR 커밋·푸시)이 호스트에서 임의 명령을 실행한다. 그래서 `git worktree add` 직후, 그 안에서 아무것도 실행하기 전에 저장소 경로를 worktree 밖의 기록 파일(`<worktree 옆>/.<이름>.gitdir`)에 적고, worktree에서 도는 git은 모두 그 경로를 `--git-dir`·`--work-tree`로 넘긴다. 기록이 없으면 git을 실행하지 않는다. 기록은 worktree와 함께 지운다.
+- `changes.diff`도 worktree 안에 있어 테스트가 돈 뒤에는 PR 코드가 바꿨을 수 있다. 이 파일은 테스트 전에 도는 단계(규칙 검출)만 읽는다. 테스트 뒤에 바뀐 줄이 필요하면 git으로 다시 센다.
 - 작업이 끝나면 worktree를 지운다. 인증은 `gh auth setup-git`으로 gh 로그인을 재사용한다.
 - interrupt로 멈췄다가 재개할 때는 worktree를 다시 만든다. 그래프 상태에는 경로가 아니라 데이터(위반 목록, 커버 여부, 테스트 결과)만 넣는다.
 

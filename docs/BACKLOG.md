@@ -32,3 +32,9 @@
 - [ ] (2단계 코드 검증) `controllers/webhook.py`의 `PIPELINE_BRANCH_PREFIX`가 `models/proposal.py`의 `BRANCH_PREFIX`와 값이 중복된다 — 지금은 같은 값이라 동작 차이 없음. models 쪽 상수 하나로 합치기 / 3단계 작업 중 해당 파일을 고칠 때
 - [ ] (2단계 코드 검증) `update.resume_fix`의 `DependencyInstallError`·`EnvironmentFailure` except 두 개가 같은 처리를 한다 — 동작 차이 없음. 하나로 합치기 / 3단계 작업 중 해당 파일을 고칠 때
 - [ ] (2단계 코드 검증) 워커가 작업마다 `Deps.from_config()`로 설정 읽기·DB 엔진·Redis 연결을 새로 만든다 — 작업당 수 ms 수준이고 결과에 영향 없음. 워커 시작 때 한 번 만들어 넘기기 / 6단계(운영)
+- [ ] (3단계 static) `STATIC-REPEAT` 메시지에 반복 횟수와 다른 위치가 없다 (수정 전후 비교가 줄 번호에 흔들리지 않게 뺌) — 코멘트는 맞고 정보가 적을 뿐 / 6단계 평가 때 메시지 형식 재검토
+- [ ] (3단계 static·범위 검사) 테스트 파일을 고정 패턴(`tests/`·`test/` 아래, `test_*.py`, `*_test.py`, `conftest.py`)으로만 판단한다. 리포의 `testpaths` 등을 읽지 않는다 — 특이한 테스트 배치에서만 틀림 / 협업 리포 검증 때
+- [ ] (3단계 범위 검사) 허용 목록 안의 설정 파일(`pyproject.toml` 등)을 바꾸면 pytest 설정(`addopts`, `testpaths`)이 바뀔 수 있다. 지금은 수정 전후 테스트 결과 비교만 잡는다 — static 수정이 설정 파일을 허용 목록에 넣을 때 다시 본다 / 3단계 AI 수정 연결 때
+- [ ] (3단계 안전망) `.pipeline-out/`의 `report.json` 등 PR 코드가 쓸 수 있는 산출물을 기존 코드는 일반 `open`으로 읽는다 (심볼릭 링크·FIFO 거부 없음). 결과 파일을 FIFO로 바꾸면 워커가 멈출 수 있다 — 작업 시간 제한(RQ)이 끊고, 코멘트에 틀린 결과는 나오지 않음 / 3단계 그래프 연결 때 `read_regular_file`로 바꾸기
+- [ ] (3단계 안전망) PR 코드가 `coverage.xml`을 고쳐 지나가지 않는 줄을 지나가는 것처럼 보이게 할 수 있다 — 영향은 같은 PR의 수정 제안뿐이고 그 수정도 테스트 재실행과 승인을 거침 / 6단계 평가 때 재검토
+- [ ] (3단계 범위 검사) PR에 원래 있던 심볼릭 링크 폴더를 통해 worktree 밖에 쓰면 `git status`에 나오지 않는다 — claude CLI의 `--restricted` 경로 제한이 막는다 / 3단계 AI 수정 연결 때 확인
