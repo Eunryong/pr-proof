@@ -867,7 +867,7 @@ worker: python -m app.worker.main
 - [x] PR당 예산·비용 기록
 - [x] AI가 쓴 변경 설명(제안 PR 제목·본문·커밋 메시지, 수정 코멘트)을 diff와 같은 비밀값 검사(`find_secret`)로 확인하고, 걸리면 제안 전체를 올리지 않음 (F10)
 - [x] 평가 케이스: 하드코딩 값·전역 상태 주입, 테스트가 지나가지 않는 위반, 고치면 테스트가 깨지는 위반, 테스트 실패 시 제안 안 함 (`eval/static/*.yaml` 5개, `tests/e2e/test_static_cases.py`. AI는 케이스의 편집으로 대신하고, `PR_PROOF_REAL_AI=1`이면 실제 claude를 부른다)
-- [ ] eval 리포에서 실제 GitHub으로 `/fix static`까지 끝까지 확인 (운영)
+- [x] eval 리포에서 실제 GitHub으로 `/fix static`까지 끝까지 확인 (운영). 2026-11-18 eval #7(매직 값 50) → `/fix static` → haiku 1회 $0.0021, 재검사·테스트 9개 통과 → 제안 PR #8
 
 ### 4단계. 파일 구조(structure): 규칙 읽기 → 검출 → AI 수정
 
