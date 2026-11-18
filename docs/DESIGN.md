@@ -263,9 +263,26 @@ SKILLS = {"lint": run_lint, "static": run_static, "structure": run_structure}
 - `ruff format`은 base 브랜치에서 `ruff format --check`가 통과하는 리포에서만, PR이 바꾼 파일에 적용한다. base가 포맷돼 있지 않으면 PR이 건드리지 않은 줄까지 diff가 커지므로 format을 뺀다. 확인은 base 커밋의 임시 worktree에서 base의 ruff 설정으로 `ruff format --check .`을 돌린다. 포맷은 안전한 수정 편집을 적용한 뒤 PR이 바꾼 파일에 한 번 하고, 규칙 검사를 다시 한다. 포맷하지 않은 이유는 코멘트에 적는다.
 - 종료 조건: 테스트 통과, 원래 위반 해소, 새 위반 없음.
 - **허용 변경 범위:** 수정안은 위반이 검출된 파일과 그 이동 대상만 바꿀 수 있다. 테스트 파일을 바꾸면 결과를 버린다. 예외는 코드 이동에 따른 import 경로 변경뿐이며, assert와 기대값은 바꿀 수 없다.
-- **범위 검사 방법:** 수정 후 호스트에서 `git status --porcelain=v1 -z --untracked-files=all`로 worktree의 모든 변경을 본다. `git diff`는 추적 중인 파일의 수정만 보여주므로 새 파일, 삭제, 이름 변경을 놓친다. 수정(`M`), 새 파일(`??`, `A`), 삭제(`D`), 이름 변경(`R`, 옛 경로와 새 경로 둘 다)이 모두 허용 목록 안에 있어야 한다. 허용 목록 밖의 변경이 하나라도 있으면 수정안 전체를 버린다.
-- 파이프라인 산출물(`.pipeline-out/`, `.venv` 마운트 지점, 확장의 `mutants/`)만 검사에서 제외한다.
-- **무시된 파일:** 대상 리포의 `.gitignore`에 걸리는 파일은 `--porcelain` 출력에 나오지 않지만, 푸시되지 않아도 검증 실행에 영향을 줄 수 있다(무시된 경로에 둔 `conftest.py`, `sitecustomize.py` 등). AI를 실행하기 직전에 `git status --porcelain=v1 -z --ignored=matching --untracked-files=all`로 무시된 파일 목록을 스냅샷으로 남기고, 실행 후 같은 명령의 결과와 비교해 **새로 생긴 무시된 파일**이 있으면 수정안을 버린다. 이미 있던 무시된 파일(빌드 산출물, 로컬 캐시)은 문제 삼지 않는다.
+- **범위 검사 방법:** 수정 후 호스트에서 `git status --porcelain=v1 -z --untracked-files=all`로 worktree의 모든 변경을 본다. `git diff`는 추적 중인 파일의 수정만 보여주므로 새 파일, 삭제, 이름 변경을 놓친다. 수정(`M`), 새 파일(`??`, `A`), 삭제(`D`), 이름 변경·복사(`R`·`C`, 옛 경로와 새 경로 둘 다)가 모두 허용 목록 안에 있어야 한다. 허용 목록 밖의 변경이 하나라도 있으면 수정안 전체를 버리고, 버린 경로를 모두 이유와 함께 코멘트에 적는다. 판정은 `models/scope.py`(`judge_scope`), git 실행은 `worker/scope.py`(`snapshot_ignored`, `check_scope`)가 한다. lint도 같은 판정을 쓴다.
+  - git 출력 고정: `-z`라 경로를 따옴표·이스케이프 없이 읽는다(공백·유니코드·줄바꿈 경로). `core.quotePath=false`, `core.excludesFile=/dev/null`(사용자 전역 무시 파일을 보지 않고 리포의 `.gitignore`만 본다), `core.fsmonitor=false`, `core.untrackedCache=false`, `status.renames=true`, `--ignore-submodules=none`.
+  - 허용 규칙은 수정 방식마다 다르다 (`ScopePolicy`).
+
+    | | `lint` (`LINT_POLICY`) | AI 수정 (`AI_POLICY`) |
+    | --- | --- | --- |
+    | 허용 파일의 수정 | O | O |
+    | 허용 파일의 새로 만들기·삭제·이름 변경 | X (lint는 파일을 만들거나 지울 이유가 없다) | O (structure의 이동·분리, 다 옮긴 파일 삭제) |
+    | 테스트 파일 | 허용 파일이면 수정 O (테스트 파일의 lint 위반도 고친다. 결과는 테스트 비교로 검증) | 허용 목록에 있어도 X |
+    | `.github/` | 허용 목록에 있을 때만 | 허용 목록에 있어도 X |
+    | 종류 변경(`T`: 일반 파일 ↔ 심볼릭 링크·서브모듈), 병합 충돌 상태(`UU` 등) | X | X |
+    | 바뀐 경로가 지금 심볼릭 링크 | (보지 않음. 수정만 허락하므로 새 링크는 이미 막힌다) | X (링크는 worktree 밖을 가리킬 수 있다) |
+    | 새로 생긴 무시된 파일 | (보지 않음. lint는 AI를 쓰지 않는다) | X |
+
+  - **테스트 파일의 정의** (경로만 보고 정한다. 리포의 `testpaths` 설정은 보지 않는다): `tests/`·`test/` 폴더 아래의 모든 파일(어느 깊이든, 데이터·픽스처 포함), 이름이 `test_*.py`, `*_test.py`, `conftest.py`인 파일.
+  - 테스트 파일 예외(코드 이동에 따른 import 경로 변경)는 `ScopePolicy.test_files_allowed`로 경로를 넘긴다. 기본은 비어 있고, 바뀐 내용이 import 줄뿐인지의 확인은 4단계 structure가 만든다.
+  - 안쪽 git 리포(`?? dir/`)는 허용 목록에 없으므로 버린다.
+- 파이프라인 산출물(`.pipeline-out/`, `.venv` 마운트 지점, 확장의 `mutants/`)만 검사에서 제외한다. 이름 변경은 옛 경로와 새 경로가 모두 산출물일 때만 제외한다.
+- **무시된 파일:** 대상 리포의 `.gitignore`에 걸리는 파일은 `--porcelain` 출력에 나오지 않지만, 푸시되지 않아도 검증 실행에 영향을 줄 수 있다(무시된 경로에 둔 `conftest.py`, `sitecustomize.py` 등). AI를 처음 실행하기 직전에 `git status --porcelain=v1 -z --ignored=traditional --untracked-files=all`로 무시된 파일(`!!`) 목록을 스냅샷으로 남기고, AI 실행이 끝날 때마다 샌드박스에서 코드를 실행하기 전에 같은 명령의 결과와 비교해 **새로 생긴 무시된 파일**이 있으면 수정안을 버린다. 이미 있던 무시된 파일(빌드 산출물, 로컬 캐시)은 내용이 바뀌어도 문제 삼지 않는다. 재시도 사이에 스냅샷을 다시 찍지 않는다(이전 회차에 생긴 파일이 '이미 있던 파일'이 되지 않게).
+  - `--ignored=matching`이 아니라 `traditional`을 쓴다. `matching`은 무시된 폴더를 `!! build/` 한 줄로만 보여줘, 이미 있던 무시된 폴더 안에 새로 만든 `build/conftest.py`를 놓친다. `traditional`은 `--untracked-files=all`과 함께 쓰면 폴더 안의 파일을 하나씩 낸다.
 - **I001(import 정렬):** 허용한다. 수정이 import 블록 전체를 다시 정렬해 블록 안의 기존 줄 순서가 바뀔 수 있지만, 위반 범위에 PR이 바꾼 줄이 있을 때만 고치고 ruff도 안전한 수정으로 분류한다. 제안 PR 본문에 "import 블록 전체를 다시 정렬했다"를 적는다. `ruff format`을 적용했을 때도 파일 전체에 적용했다고 적는다. 둘 다 없을 때만 "PR이 건드리지 않은 줄은 바꾸지 않았다"고 쓴다.
 - `structure`의 자동 수정은 1–2순위 규칙과 3순위 중 import 방향 위반에만 적용한다. 이름 패턴 위반은 알리기만 한다. 추정한 규칙으로 코드를 옮기면 틀렸을 때 비용이 크다.
 
@@ -532,7 +549,7 @@ claude -p "$PROMPT" \
 - 로그인 확인은 `claude auth status`(JSON, `loggedIn`과 `loginExpiresAt`)로 한다. preflight가 만료 시각도 본다.
 - `--max-turns`는 도움말에 없어 쓰지 않는다. 상한은 `--max-budget-usd`로 건다.
 - 확인하지 못한 것: `--restricted`에서 worktree의 `CLAUDE.md`가 프롬프트에 들어가는지. 들어가더라도 경로 제한과 실행 후 diff 검사가 막지만, 3단계에서 다시 확인한다.
-- 실행 후 `git status --porcelain --untracked-files=all`로 허용 범위(F7) 밖의 변경을 확인해 있으면 버린다. 새 파일, 삭제, 이름 변경도 확인한다. 무시된 파일은 AI 실행 직전 스냅샷과 비교해 새로 생긴 것만 잡는다.
+- 실행 후 `git status --porcelain=v1 -z --untracked-files=all`로 허용 범위(F7) 밖의 변경을 확인해 있으면 버린다. 새 파일, 삭제, 이름 변경, 심볼릭 링크도 확인한다. 무시된 파일은 AI 실행 직전 스냅샷(`--ignored=traditional`)과 비교해 새로 생긴 것만 잡는다 (F7 범위 검사 방법·무시된 파일).
 - **푸시 전 비밀값 검사:** 제안 PR의 diff에 파이프라인이 가진 비밀값(웹훅 시크릿, Slack URL)이나 토큰·개인키 패턴이 있으면 버리고 운영 알림을 보낸다.
 
 ## 비용 최적화·모델 비교·회귀 테스트

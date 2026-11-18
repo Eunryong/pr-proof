@@ -127,9 +127,29 @@ def working_diff(worktree: Path, merge_base_sha: str) -> str:
     return _git(*_DIFF, merge_base_sha, cwd=worktree)
 
 
+# 범위 검사용 status. 사용자·리포 git 설정이 결과를 바꾸거나 외부 프로그램을 부르지 않게 한다.
+# 전역 무시 파일은 끈다 (리포의 .gitignore만 본다). fsmonitor·untracked 캐시는 결과가 오래될 수
+# 있고 fsmonitor는 외부 명령을 부를 수 있다
+_STATUS: Final = (
+    "-c", "core.quotePath=false", "-c", "core.excludesFile=/dev/null", "-c", "core.fsmonitor=false",
+    "-c", "core.untrackedCache=false", "-c", "status.renames=true",
+    "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none",
+)  # fmt: skip
+
+
 def status(worktree: Path) -> str:
     """새 파일·삭제·이름 변경까지 보이는 변경 목록 (docs/DESIGN.md F7 범위 검사)."""
-    return _git("status", "--porcelain=v1", "-z", "--untracked-files=all", cwd=worktree)
+    return _git(*_STATUS, cwd=worktree)
+
+
+def ignored_status(worktree: Path) -> str:
+    """무시된 파일을 하나씩 보여주는 status (`!!`). F7 무시된 파일 스냅샷용.
+
+    `--ignored=matching`은 무시된 폴더를 `!! build/` 한 줄로만 보여줘, 이미 있던 무시된 폴더 안에
+    새로 만든 `build/conftest.py`를 놓친다. `traditional`은 `--untracked-files=all`과 함께 쓰면
+    무시된 폴더 안의 파일을 하나씩 낸다.
+    """
+    return _git(*_STATUS, "--ignored=traditional", cwd=worktree)
 
 
 def head_diff(worktree: Path) -> str:

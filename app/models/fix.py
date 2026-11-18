@@ -4,9 +4,11 @@ from collections import Counter
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final, Literal
+from typing import Literal
 
 from app.models.finding import Finding, SkillResult
+from app.models.scope import LINT_POLICY, StatusEntry, judge_scope
+from app.models.scope import parse_porcelain as parse_porcelain  # 기존 호출처(graph)용 재공개
 from app.models.test_run import PytestRun
 
 FixStatus = Literal[
@@ -17,18 +19,6 @@ FixStatus = Literal[
     "tests_changed",  # 고친 뒤 테스트 결과가 고치기 전과 다르다
     "unchecked",  # 고친 뒤 규칙 검사를 하지 못했다
 ]
-
-# 수정 전후 비교에서 빼는 파이프라인 산출물
-PIPELINE_OUTPUTS: Final = (".pipeline-out/",)
-
-
-@dataclass(frozen=True)
-class StatusEntry:
-    """`git status --porcelain=v1 -z` 한 줄. 이름 변경이면 orig_path가 있다."""
-
-    code: str  # XY 두 글자. 예: " M", "??", "R "
-    path: str
-    orig_path: str | None = None
 
 
 @dataclass(frozen=True)
@@ -49,40 +39,9 @@ class FixOutcome:
         return self.status == "ready"
 
 
-def parse_porcelain(output: str) -> list[StatusEntry]:
-    """`git status --porcelain=v1 -z` 출력. 이름 변경·복사는 다음 항목이 옛 경로다."""
-    parts = output.split("\0")
-    entries: list[StatusEntry] = []
-    i = 0
-    while i < len(parts):
-        item = parts[i]
-        i += 1
-        if len(item) < 4:
-            continue
-        code, path = item[:2], item[3:]
-        orig = None
-        if code[0] in "RC" or code[1] in "RC":
-            orig = parts[i] if i < len(parts) else None
-            i += 1
-        entries.append(StatusEntry(code=code, path=path, orig_path=orig))
-    return entries
-
-
 def out_of_scope(entries: Iterable[StatusEntry], allowed: Iterable[str]) -> list[str]:
-    """허용 목록 밖의 변경. 수정(M)만 허용 파일에 허락하고, 새 파일·삭제·이름 변경은 모두 밖이다.
-
-    lint 수정은 위반이 있는 파일의 내용만 바꾼다. 파일을 만들거나 지울 이유가 없다.
-    """
-    allowed_set = set(allowed)
-    bad = []
-    for e in entries:
-        paths = [e.path] + ([e.orig_path] if e.orig_path else [])
-        if all(p.startswith(PIPELINE_OUTPUTS) for p in paths):
-            continue
-        modified_only = set(e.code.strip()) == {"M"}
-        if not modified_only or e.path not in allowed_set:
-            bad.append(f"{e.code.strip()} {e.path}")
-    return bad
+    """lint 수정의 허용 범위 밖 변경 ("XY 경로" 목록). LINT_POLICY로 판정한다."""
+    return [v.label for v in judge_scope(entries, allowed, LINT_POLICY).violations]
 
 
 def _key(f: Finding) -> tuple[str, str, str]:
