@@ -12,7 +12,7 @@ from typing import Final
 
 from app.models.checker_authoring import Checked, RuleCheck, Unchecked
 from app.models.diff import ChangedLines, touches
-from app.models.rule import in_scope
+from app.models.rule import applies_to
 from app.models.violation import Violation, violation_id
 from app.sandbox import toolcache
 from app.sandbox.checker_runner import Failed, Invalid, Match
@@ -51,7 +51,7 @@ def detect(
         rule, checker = check.rule, check.checker
         files = [
             f for f in sorted(changed)
-            if f.endswith(PYTHON_SUFFIXES) and in_scope(rule.scope, f)
+            if f.endswith(PYTHON_SUFFIXES) and applies_to(rule, f)
             and repo.worktree_file(worktree, f) is not None
         ]  # fmt: skip
         if not files:

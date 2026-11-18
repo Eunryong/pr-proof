@@ -52,6 +52,10 @@ class Rule:
     check: CheckMethod
     fix: Literal["mechanical", "model", "none"]
     examples: tuple[Example, ...] = ()
+    # 문서가 범위를 밝히지 않은 규칙에서 모델이 뺀 경로 glob과 그 이유 (4.3). 좁히기만 한다:
+    # 빼는 목록이라 범위를 넓힐 수 없다. 문서가 범위를 밝힌 규칙에는 비어 있다
+    exclude: tuple[str, ...] = ()
+    exclude_reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -102,6 +106,11 @@ def rule_id(doc_path: str, quote: str) -> str:
     stem = _NOT_ALNUM.sub("-", PurePosixPath(doc_path).stem.lower()).strip("-") or "doc"
     digest = hashlib.sha256(normalize(quote).encode()).hexdigest()[:8]
     return f"R-{stem}-{digest}"
+
+
+def applies_to(rule: Rule, path: str) -> bool:
+    """규칙이 path(저장소 기준)에 적용되는지: 적용 범위 안이고 추정으로 뺀 경로가 아니다."""
+    return in_scope(rule.scope, path) and not (rule.exclude and in_scope(rule.exclude, path))
 
 
 def in_scope(scope: tuple[str, ...], path: str) -> bool:

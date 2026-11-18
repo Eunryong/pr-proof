@@ -52,11 +52,41 @@ def test_only_given_files_are_scanned(repo: Path, tool_dir: Path) -> None:
     assert run == Ran(())
 
 
-def test_repo_sgconfig_cannot_hide_matches(repo: Path, tool_dir: Path) -> None:
-    (repo / "sgconfig.yml").write_text('languageGlobs:\n  html: ["*.py"]\n')
-    run = checker_runner.run_checker("ast-grep", PRINT_RULE, repo, ["orders/bad.py"],
-                                     tool_dir=tool_dir)  # fmt: skip
-    assert isinstance(run, Ran) and [m.line for m in run.matches] == [2]
+HIDE_PYTHON: Final = 'languageGlobs:\n  html: ["*.py"]\n'
+# PR이 넣을 수 있는 ast-grep 설정. 파일 경로 → 내용
+PLANTED_CONFIGS: Final = {
+    "sgconfig at the root hides python": {"sgconfig.yml": HIDE_PYTHON},
+    "sgconfig in the scanned folder": {"orders/sgconfig.yml": HIDE_PYTHON},
+    "sgconfig with its own rule folder": {
+        "sgconfig.yml": "ruleDirs:\n  - .ast-grep/rules\n",
+        ".ast-grep/rules/extra.yml": (
+            "id: planted\nlanguage: python\nseverity: error\nmessage: planted\n"
+            "rule:\n  pattern: logger.info($$$A)\n"
+        ),
+    },
+    "ast-grep folder alone": {
+        ".ast-grep/sgconfig.yml": HIDE_PYTHON,
+        ".ast-grep/rules/off.yml": (
+            "id: no-print\nlanguage: python\nseverity: off\nmessage: x\n"
+            "rule:\n  pattern: print($$$ARGS)\n"
+        ),
+    },
+    "ignore file": {".gitignore": "orders/\n", ".ignore": "orders/\n", ".sgignore": "*.py\n"},
+}
+
+
+@pytest.mark.parametrize("planted", PLANTED_CONFIGS.values(), ids=PLANTED_CONFIGS.keys())
+def test_config_planted_by_the_pr_does_not_change_the_result(
+    repo: Path, tool_dir: Path, planted: dict[str, str]
+) -> None:
+    files = ["orders/bad.py", "orders/good.py"]
+    before = checker_runner.run_checker("ast-grep", PRINT_RULE, repo, files, tool_dir=tool_dir)
+    for rel, content in planted.items():
+        (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        (repo / rel).write_text(content)
+    after = checker_runner.run_checker("ast-grep", PRINT_RULE, repo, files, tool_dir=tool_dir)
+    assert before == Ran((Match("orders/bad.py", 2, 2, "print를 쓰지 않는다"),))
+    assert after == before
 
 
 def test_invalid_rule_returns_engine_message(repo: Path, tool_dir: Path) -> None:

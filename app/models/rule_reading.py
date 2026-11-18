@@ -122,7 +122,12 @@ SYSTEM_PROMPT: Final = """\
 - section: 그 문장이 든 절의 제목들을 " > "로 잇는다. 예: "코드 규칙 > 출력". 문서 맨 위의 제목
   (문서 이름인 # 제목)은 넣지 않는다.
 - scope: 문서가 규칙의 적용 범위(경로)를 밝혔으면 저장소 루트 기준 glob으로 옮긴다.
-  예: "orders/models/**". 밝히지 않았으면 빈 목록.
+  예: "orders/models/**". 밝히지 않았으면 빈 목록. 문서에 없는 범위를 지어내 넣지 않는다.
+- scope_exclude: 문서가 범위를 밝히지 않은 규칙(scope가 빈 목록)에서만 쓴다. 문서의 다른 내용
+  (폴더 구조, 규칙이 놓인 절, 예시)으로 보아 규칙이 겨냥하지 않는 것이 분명한 경로가 있으면 glob으로
+  적어 뺀다. 예: 운영 코드의 규칙에서 "tests/**". 범위를 좁히는 데만 쓴다. 확실하지 않으면 빈
+  목록으로 둔다. scope가 있는 규칙에서는 빈 목록.
+- scope_reason: scope_exclude를 적었으면 왜 빼는지 한 문장으로. 아니면 빈 문자열.
 - examples: 문서에 그 규칙의 지키는 예나 어기는 예 코드 블록이 있으면 블록 내용을 그대로 옮긴다
   (``` 줄은 뺀다). violates는 어기는 예면 true. lines는 어기는 예에서 규칙을 어긴 줄 번호
   (블록의 첫 줄이 1)이고 지키는 예는 빈 목록. 문서에 없는 예는 만들지 않는다.
@@ -149,6 +154,8 @@ ANSWER_SCHEMA: Final[Mapping[str, object]] = {
                     "section",
                     "quote",
                     "scope",
+                    "scope_exclude",
+                    "scope_reason",
                     "examples",
                     "check",
                     "reason",
@@ -159,6 +166,8 @@ ANSWER_SCHEMA: Final[Mapping[str, object]] = {
                     "section": {"type": "string"},
                     "quote": {"type": "string"},
                     "scope": {"type": "array", "items": {"type": "string"}},
+                    "scope_exclude": {"type": "array", "items": {"type": "string"}},
+                    "scope_reason": {"type": "string"},
                     "examples": {
                         "type": "array",
                         "items": {
@@ -226,6 +235,8 @@ class AnswerRule(BaseModel):
     section: str
     quote: str
     scope: list[str] = []
+    scope_exclude: list[str] = []
+    scope_reason: str = ""
     examples: list[AnswerExample] = []
     check: Literal["checker", "model", "none"]
     reason: str = ""
@@ -330,6 +341,27 @@ def _locate(doc: _IndexedDocument, section: str, quote: str) -> Section | None:
     return None
 
 
+def _inferred_exclude(raw: "AnswerRule", scope_stated: bool) -> tuple[tuple[str, ...], str]:
+    """모델이 추정으로 뺀 경로와 이유. 받아들이는 조건을 하나라도 어기면 빼지 않는다 (4.3).
+
+    문서가 범위를 밝힌 규칙은 그 범위를 그대로 쓴다. 이유가 없거나 glob 형식이 틀린 추정은
+    버린다. 버리면 범위가 넓은 쪽(저장소 전체)으로 남는다.
+    """
+    exclude, reason = tuple(raw.scope_exclude), raw.scope_reason.strip()
+    if scope_stated or not exclude or not reason:
+        return (), ""
+    if not all(_valid_glob(p) and _starts_with_a_folder(p) for p in exclude):
+        return (), ""
+    return exclude, reason
+
+
+def _starts_with_a_folder(pattern: str) -> bool:
+    """첫 마디가 글자 그대로의 폴더 이름인지. `**`나 `*.py`처럼 저장소 전체를 뺄 수 있는 glob을
+    막는다 (추정으로 규칙을 통째로 끄지 못하게)."""
+    first, _, rest = pattern.partition("/")
+    return bool(rest) and not (set("*?[") & set(first))
+
+
 def _valid_glob(pattern: str) -> bool:
     return (
         bool(pattern)
@@ -384,6 +416,7 @@ def verify_rules(
         scope = tuple(raw.scope)
         if not all(_valid_glob(p) for p in scope):
             scope = ()  # 형식이 틀린 적용 범위는 저장소 전체로 둔다 (4.3)
+        exclude, exclude_reason = _inferred_exclude(raw, bool(raw.scope))
         document = indexed.document
         rule = Rule(
             id=rule_id(document.path, raw.quote),
@@ -394,6 +427,8 @@ def verify_rules(
             check=CheckMethod(kind=raw.check, reason=raw.reason if raw.check != "checker" else ""),
             fix=raw.fix,
             examples=_examples(raw.examples, indexed.flat),
+            exclude=exclude,
+            exclude_reason=exclude_reason,
         )
         rules.setdefault(rule.id, rule)
     return tuple(rules.values()), tuple(dropped)

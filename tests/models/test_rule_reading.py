@@ -1,9 +1,10 @@
+import dataclasses
 from pathlib import Path
 from typing import Final
 
 import pytest
 
-from app.models.rule import RuleSource, rule_id
+from app.models.rule import RuleSource, applies_to, rule_id
 from app.models.rule_reading import (
     Answer,
     Document,
@@ -288,3 +289,45 @@ def test_apply_disabled() -> None:
     off = rules[0].id
     assert apply_disabled(rules, [off, "PLR2004"]) == (rules[1],)
     assert apply_disabled(rules, []) == rules
+
+
+# --- 범위 추정: 좁히기만 ---
+
+
+def test_scopeless_rule_may_be_narrowed_with_a_reason() -> None:
+    rules, _ = _verify(
+        {"section": "출력", "quote": PRINT_RULE, "scope_exclude": ["tests/**"],
+         "scope_reason": "운영 코드의 규칙이고 tests는 구조 절에 테스트 폴더로 나온다"}
+    )  # fmt: skip
+    rule = rules[0]
+    assert (rule.scope, rule.exclude) == ((), ("tests/**",))
+    assert rule.exclude_reason.startswith("운영 코드의 규칙")
+    assert applies_to(rule, "orders/services/pricing.py")
+    assert not applies_to(rule, "tests/test_pricing.py")
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        {"scope": ["orders/**"], "scope_exclude": ["orders/api/**"], "scope_reason": "이유"},
+        {"scope_exclude": ["tests/**"], "scope_reason": "  "},
+        {"scope_exclude": ["**"], "scope_reason": "이유"},
+        {"scope_exclude": ["*.py"], "scope_reason": "이유"},
+        {"scope_exclude": ["**/*.py"], "scope_reason": "이유"},
+        {"scope_exclude": ["tests"], "scope_reason": "이유"},
+        {"scope_exclude": ["tests/**", "../x/**"], "scope_reason": "이유"},
+    ],
+)
+def test_inferred_exclusion_is_dropped_when_it_is_not_a_plain_narrowing(answer: dict) -> None:
+    rules, dropped = _verify({"section": "출력", "quote": PRINT_RULE, **answer})
+    assert not dropped  # 규칙은 남고 추정만 버린다
+    assert (rules[0].exclude, rules[0].exclude_reason) == ((), "")
+
+
+def test_exclusion_can_only_remove_paths_from_the_stated_scope() -> None:
+    rules, _ = _verify({"section": "출력", "quote": PRINT_RULE, "scope": ["orders/**"]})
+    narrowed = dataclasses.replace(rules[0], exclude=("orders/api/**",), exclude_reason="x")
+    paths = ["orders/a.py", "orders/api/h.py", "tests/t.py", "x.py"]
+    before = {p for p in paths if applies_to(rules[0], p)}
+    after = {p for p in paths if applies_to(narrowed, p)}
+    assert after < before and after == {"orders/a.py"}
