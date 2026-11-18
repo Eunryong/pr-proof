@@ -1,19 +1,32 @@
-"""테스트 결과를 PR 코멘트용 마크다운으로 바꾼다. 판정을 새로 내지 않고 모델 값만 보여준다.
+"""결과를 PR 코멘트용 마크다운으로 바꾼다. 판정을 새로 내지 않고 모델 값만 보여준다.
 
-코멘트 맨 위는 "테스트:" 줄과 "규칙:" 줄이다. 테스트는 글자로만 쓰고, ⚠️/✅는 규칙 줄에만 쓴다
-(docs/DESIGN.md F9). 규칙 줄은 2단계(lint 검출)에서 붙는다.
+코멘트 맨 위는 "테스트:" 줄과 "규칙:" 줄이다. 테스트는 글자로만 쓰고, ⚠️/✅는 규칙 줄에만 쓰며
+⚠️는 "위반 있음"이라는 뜻으로만 쓴다 (docs/DESIGN.md F9). 그 아래에 상세를 붙인다.
 """
 
+from collections import Counter
 from typing import Final
 
+from app.models.finding import SkillResult
 from app.models.test_run import PytestRun
 from app.sandbox.docker_cli import MEMORY_LIMIT_GB
+from app.worker.base_config import PIPELINE_YAML, BaseConfig
 
 MAX_LISTED_FAILURES: Final = 10
+MAX_LISTED_FINDINGS: Final = 30
 MAX_OUTPUT_CHARS: Final = 1500
+VIOLATION: Final = "⚠️"
+CLEAN: Final = "✅"
 
 
-def format_test_line(run: PytestRun, memory_limit_gb: int = MEMORY_LIMIT_GB) -> str:
+def _gb(value: float) -> str:
+    return f"{value:g}GB"
+
+
+# --- 테스트 ---------------------------------------------------------------------
+
+
+def format_test_line(run: PytestRun, memory_gb: float = MEMORY_LIMIT_GB) -> str:
     """'테스트:' 줄의 글자 표시. 기호를 쓰지 않는다."""
     s = run.summary
     match run.status:
@@ -31,19 +44,28 @@ def format_test_line(run: PytestRun, memory_limit_gb: int = MEMORY_LIMIT_GB) -> 
             return "새 커밋이 올라와 중단"
         case "unrunnable":
             if run.memory_exceeded:
-                return f"실행 불가 (메모리 한도 {memory_limit_gb}GB를 넘어 종료됨)"
+                return f"실행 불가 (메모리 한도 {_gb(memory_gb)}를 넘어 종료됨)"
             return f"실행 불가 ({run.unrunnable_reason})"
 
 
-def memory_hint(memory_limit_gb: int) -> str:
-    # 설정으로 늘리는 안내는 대상 리포 설정을 읽는 2단계에서 붙인다 (DESIGN.md F8)
-    return f"샌드박스의 메모리 한도는 {memory_limit_gb}GB입니다 (현재 고정)."
+def memory_hint(memory_gb: float, max_memory_gb: float) -> str:
+    """메모리 초과 안내. 한도는 base 브랜치의 설정에서만 바꿀 수 있다 (DESIGN.md F8)."""
+    if memory_gb >= max_memory_gb:
+        return (
+            f"샌드박스의 메모리 한도는 {_gb(memory_gb)}이며, "
+            f"이 파이프라인이 허용하는 상한({_gb(max_memory_gb)})입니다."
+        )
+    return (
+        f"샌드박스의 메모리 한도는 {_gb(memory_gb)}입니다. base 브랜치의 `{PIPELINE_YAML}`에서 "
+        f"`sandbox.memory_gb`로 {_gb(max_memory_gb)}까지 늘릴 수 있습니다."
+    )
 
 
-def render_test_section(run: PytestRun, memory_limit_gb: int = MEMORY_LIMIT_GB) -> str:
-    lines = [f"**테스트:** {format_test_line(run, memory_limit_gb)}"]
+def format_test_details(run: PytestRun, memory_gb: float, max_memory_gb: float) -> list[str]:
+    """'테스트:' 줄 아래에 붙는 상세 줄들. 비어 있을 수 있다."""
+    lines: list[str] = []
     if run.memory_exceeded:
-        lines += ["", memory_hint(memory_limit_gb)]
+        lines += ["", memory_hint(memory_gb, max_memory_gb)]
     s = run.summary
     if s is not None and s.total:
         lines += [
@@ -58,22 +80,60 @@ def render_test_section(run: PytestRun, memory_limit_gb: int = MEMORY_LIMIT_GB) 
         if hidden > 0:
             lines.append(f"- 외 {hidden}개")
     if run.status == "unrunnable" and run.output:
-        lines += [
-            "",
-            "<details><summary>출력</summary>",
-            "",
-            "```",
-            run.output[-MAX_OUTPUT_CHARS:],
-            "```",
-            "",
-            "</details>",
-        ]
-    return "\n".join(lines) + "\n"
+        lines += _details("출력", run.output[-MAX_OUTPUT_CHARS:])
+    return lines
+
+
+# --- 규칙 -----------------------------------------------------------------------
+
+
+def format_rules_line(results: list[SkillResult]) -> str:
+    """'규칙:' 줄. ⚠️는 위반이 있을 때만, 검사하지 못한 스킬은 글자로 적는다."""
+    findings = [f for r in results for f in r.findings]
+    unchecked = [r.skill for r in results if not r.checked]
+    if findings:
+        counts = Counter(f.skill for f in findings)
+        by_skill = ", ".join(f"{skill} {n}" for skill, n in counts.items())
+        line = f"{VIOLATION} 위반 {len(findings)}건 ({by_skill})"
+    elif unchecked:
+        line = "검사하지 못함"
+    else:
+        line = f"{CLEAN} 위반 없음"
+    if unchecked and findings:
+        line += f" · 검사하지 못함: {', '.join(unchecked)}"
+    elif unchecked:
+        line += f" ({', '.join(unchecked)})"
+    return line
+
+
+def rules_details(results: list[SkillResult]) -> list[str]:
+    lines: list[str] = []
+    for r in results:
+        if r.error is not None:
+            lines += ["", f"{r.skill}: 검사하지 못함 ({r.error})"]
+            continue
+        if r.findings:
+            lines += ["", f"{r.skill} 위반:"]
+            lines += [
+                f"- `{f.file}:{f.line}` `{f.code}` {f.message}"
+                for f in r.findings[:MAX_LISTED_FINDINGS]
+            ]
+            hidden = len(r.findings) - MAX_LISTED_FINDINGS
+            if hidden > 0:
+                lines.append(f"- 외 {hidden}건")
+    sources = [f"ruff ({r.source})" for r in results if r.skill == "lint" and r.source]
+    if sources:
+        lines += ["", f"적용한 규칙: {', '.join(sources)} · PR이 바꾼 줄만 검사"]
+    return lines
 
 
 # --- PR 코멘트 전체 -------------------------------------------------------------
 
 HEADER: Final = "### pr-proof"
+
+
+def _details(summary: str, text: str) -> list[str]:
+    return ["", f"<details><summary>{summary}</summary>", "", "```", text, "```", "", "</details>"]
 
 
 def _footer(head_sha: str, seconds: float | None = None, *, from_sync: bool = False) -> str:
@@ -85,20 +145,64 @@ def _footer(head_sha: str, seconds: float | None = None, *, from_sync: bool = Fa
     return "<sub>" + " · ".join(parts) + "</sub>"
 
 
+def _compose(
+    test_line: str,
+    details: list[str],
+    head_sha: str,
+    *,
+    lint: SkillResult | None,
+    base: BaseConfig | None,
+    seconds: float | None = None,
+    from_sync: bool = False,
+) -> str:
+    results = [lint] if lint is not None else []
+    lines = [HEADER, "", f"**테스트:** {test_line}"]
+    if results:
+        lines.append(f"**규칙:** {format_rules_line(results)}")
+    lines += details
+    lines += rules_details(results)
+    if base is not None and base.problems:
+        lines += ["", "설정:"] + [f"- {p}" for p in base.problems]
+    lines += ["", _footer(head_sha, seconds, from_sync=from_sync)]
+    return "\n".join(lines) + "\n"
+
+
 def render_progress(head_sha: str, step: str) -> str:
     return f"{HEADER}\n\n**테스트:** 진행 중 ({step})\n\n{_footer(head_sha)}\n"
 
 
-def render_result(run: PytestRun, head_sha: str, seconds: float, *, from_sync: bool = False) -> str:
-    footer = _footer(head_sha, seconds, from_sync=from_sync)
-    return f"{HEADER}\n\n{render_test_section(run)}\n{footer}\n"
+def render_result(
+    run: PytestRun,
+    head_sha: str,
+    seconds: float,
+    *,
+    lint: SkillResult | None = None,
+    base: BaseConfig | None = None,
+    from_sync: bool = False,
+) -> str:
+    memory_gb = base.memory_gb if base else MEMORY_LIMIT_GB
+    max_memory_gb = base.max_memory_gb if base else MEMORY_LIMIT_GB
+    return _compose(
+        format_test_line(run, memory_gb),
+        format_test_details(run, memory_gb, max_memory_gb),
+        head_sha,
+        lint=lint,
+        base=base,
+        seconds=seconds,
+        from_sync=from_sync,
+    )
 
 
-def render_install_failure(head_sha: str, detail: str) -> str:
-    return (
-        f"{HEADER}\n\n**테스트:** 실행 불가 (의존성을 설치하지 못함)\n\n"
-        "<details><summary>pip 출력</summary>\n\n```\n"
-        f"{detail[-MAX_OUTPUT_CHARS:]}\n```\n\n</details>\n\n{_footer(head_sha)}\n"
+def render_install_failure(
+    head_sha: str, detail: str, *, lint: SkillResult | None = None, base: BaseConfig | None = None
+) -> str:
+    """의존성 설치 실패. 규칙 검사는 설치와 따로 돌므로 결과가 있으면 같이 보여준다."""
+    return _compose(
+        "실행 불가 (의존성을 설치하지 못함)",
+        _details("pip 출력", detail[-MAX_OUTPUT_CHARS:]),
+        head_sha,
+        lint=lint,
+        base=base,
     )
 
 

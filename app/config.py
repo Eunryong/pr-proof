@@ -29,11 +29,17 @@ class SyncConfig(BaseModel):
     heartbeat_timeout_minutes: float = 20
 
 
+class SandboxConfig(BaseModel):
+    # 대상 리포가 .pipeline.yaml의 sandbox.memory_gb로 올릴 수 있는 상한
+    max_memory_gb: float = 4
+
+
 class PipelineConfig(BaseModel):
     repos: list[str]  # 처리할 리포 허용 목록 "owner/name"
     redis_url: str = "redis://127.0.0.1:6379/0"
     data_dir: Path = Path.home() / ".cache" / "pipeline"  # bare 캐시, worktree, .venv, SQLite
     sync: SyncConfig = SyncConfig()
+    sandbox: SandboxConfig = SandboxConfig()
 
     @property
     def db_path(self) -> Path:

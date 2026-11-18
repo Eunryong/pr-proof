@@ -116,7 +116,12 @@ def write_deps(worktree: Path, dest: Path) -> list[str]:
 
 
 def ensure_venv(
-    worktree: Path, image: Image, cache_dir: Path = VENV_CACHE, tag: str = docker_cli.IMAGE
+    worktree: Path,
+    image: Image,
+    cache_dir: Path = VENV_CACHE,
+    tag: str = docker_cli.IMAGE,
+    *,
+    memory_gb: float = docker_cli.MEMORY_LIMIT_GB,
 ) -> Path:
     """캐시 키에 맞는 .venv 경로를 돌려준다. 없으면 설치 컨테이너에서 만든다.
 
@@ -139,7 +144,7 @@ def ensure_venv(
                 f" && {VENV_IN_CONTAINER}/bin/pip install --no-cache-dir " + shlex.join(pip_args)
             )
             proc = docker_cli.run(
-                "run", "--rm", *docker_cli.LIMITS,
+                "run", "--rm", *docker_cli.limits(memory_gb),
                 "--user", docker_cli.user(), "-e", "HOME=/tmp",
                 "-v", f"{deps}:/deps:ro",
                 "-v", f"{build}:{VENV_IN_CONTAINER}",

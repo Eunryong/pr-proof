@@ -1,0 +1,54 @@
+"""대상 리포의 `.pipeline.yaml` (base 브랜치에서 읽음, docs/DESIGN.md 설정).
+
+지금 단계에서 쓰는 항목만 정의한다. 다른 항목은 무시한다 (스키마 초안의 나머지는 그 단계에서).
+"""
+
+from typing import Final
+
+import yaml
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
+# docker가 받는 최소 메모리보다 넉넉히 크게. 너무 작으면 컨테이너가 뜨지 않아 환경 오류로 보인다
+MIN_MEMORY_GB: Final = 0.5
+
+
+class SandboxSettings(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    memory_gb: float = Field(default=1, ge=MIN_MEMORY_GB)
+
+
+class RepoConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    sandbox: SandboxSettings = SandboxSettings()
+
+
+def parse_repo_config(text: str | None) -> tuple[RepoConfig, str | None]:
+    """(설정, 문제). 파일이 없으면 기본값. 읽지 못하면 기본값과 그 이유를 돌려준다.
+
+    설정 오류로 작업을 멈추지 않는다. 기본값으로 검사하고 코멘트에 이유를 적는다.
+    """
+    if text is None:
+        return RepoConfig(), None
+    try:
+        data = yaml.safe_load(text)
+    except yaml.YAMLError as e:
+        return RepoConfig(), f"YAML 형식 오류 ({_first_line(str(e))})"
+    if data is None:
+        return RepoConfig(), None
+    if not isinstance(data, dict):
+        return RepoConfig(), "최상위가 매핑이 아님"
+    try:
+        return RepoConfig.model_validate(data), None
+    except ValidationError as e:
+        errors = e.errors()
+        where = ".".join(str(p) for p in errors[0]["loc"])
+        return RepoConfig(), f"`{where}` 값 오류 ({errors[0]['msg']})"
+
+
+def memory_limit(requested_gb: float, max_gb: float) -> float:
+    """리포가 요청한 메모리 한도. 파이프라인 쪽 상한을 넘으면 상한으로 줄인다."""
+    return min(requested_gb, max_gb)
+
+
+def _first_line(text: str) -> str:
+    return text.strip().splitlines()[0] if text.strip() else text

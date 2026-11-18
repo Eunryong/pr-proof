@@ -76,6 +76,7 @@ def process_update(job: PRJob, deps: Deps) -> str:
         data_dir=deps.settings.data_dir,
         run_id=run_id,
         comment_id=comment_id,
+        max_memory_gb=deps.settings.sandbox.max_memory_gb,
     )
     try:
         ctx.comment_id = github.upsert_comment(
@@ -84,10 +85,10 @@ def process_update(job: PRJob, deps: Deps) -> str:
         result = graph.run_flow(job, ctx)
     except DependencyInstallError as e:
         if install_failure_outcome(e.kind, attempt) == "unrunnable":
-            ctx.comment_id = github.upsert_comment(
-                job.repo, job.pr_number, report.render_install_failure(job.head_sha, e.detail),
-                ctx.comment_id,
-            )  # fmt: skip
+            body = report.render_install_failure(
+                job.head_sha, e.detail, lint=ctx.lint, base=ctx.base
+            )
+            ctx.comment_id = github.upsert_comment(job.repo, job.pr_number, body, ctx.comment_id)
             store.finish_run(run_id, "done", test_status="unrunnable", comment_id=ctx.comment_id)
             return "unrunnable"
         _give_up_or_retry(job, ctx, run_id, final, e)
