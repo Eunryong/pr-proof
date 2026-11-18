@@ -4,6 +4,7 @@ from typing import Any, Final
 
 from app.models.install import install_failure_outcome
 from app.models.job import PRJob
+from app.sandbox import docker_cli
 from app.sandbox.venv import DependencyInstallError
 from app.worker import graph, proposal, report, retry
 from app.worker.deps import Deps
@@ -37,6 +38,10 @@ def _context(deps: Deps, run_id: int, comment_id: int | None) -> graph.FlowConte
         run_id=run_id,
         comment_id=comment_id,
         max_memory_gb=deps.settings.sandbox.max_memory_gb,
+        sandbox_names=docker_cli.Names(
+            image=deps.settings.sandbox.image,
+            container_prefix=deps.settings.sandbox.container_prefix,
+        ),
     )
 
 

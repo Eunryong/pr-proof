@@ -5,11 +5,12 @@ import pytest
 from app.sandbox import docker_cli
 from app.sandbox.docker_cli import SandboxError
 from app.worker.graph import run_pr_tests
+from tests.sandbox_names import TEST_NAMES
 
 
 @pytest.mark.docker
 def test_runs_eval_repo_tests(worktree: Path, venv_cache: Path) -> None:
-    run = run_pr_tests(worktree, venv_cache=venv_cache)
+    run = run_pr_tests(worktree, venv_cache=venv_cache, names=TEST_NAMES)
     assert run.status == "passed"
     assert run.summary.total == 9
     assert run.coverage_xml is not None

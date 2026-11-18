@@ -491,21 +491,22 @@ sandbox:
 **도입 이유:** PR의 테스트 코드와 `conftest.py`는 pytest가 그대로 실행한다. 호스트에서 돌리면 PR을 올릴 수 있는 사람이 gh·claude 로그인이 있는 계정에서 코드를 실행하게 된다. 이후 단계에서는 AI가 고친 코드(무한 루프, 메모리 폭주 가능)도 사람 확인 없이 실행된다.
 
 ```bash
-docker run -d --name job-<id> --network none \
+docker run -d --name pr-proof-job-<id> --network none \
   --memory 1g --cpus 1 --pids-limit 256 --user "$(id -u):$(id -g)" -e HOME=/tmp \
   -v /tmp/pipeline/pr-<n>:/work -w /work \
   -v ~/.cache/pipeline/venvs/<cache-key>:/work/.venv:ro \
   -v <pr-proof>/docker/sandbox:/pipeline:ro \
   pipeline-sandbox sleep infinity
-docker exec -e PYTHONPATH=/work job-<id> timeout 600 .venv/bin/pytest \
+docker exec -e PYTHONPATH=/work pr-proof-job-<id> timeout 600 .venv/bin/pytest \
   -p no:cacheprovider \
   --json-report --json-report-file=.pipeline-out/report.json \
   --cov --cov-config=/pipeline/coveragerc \
   --cov-report=xml:.pipeline-out/coverage.xml
-docker rm -f job-<id>
+docker rm -f pr-proof-job-<id>
 ```
 
 - 작업당 컨테이너 하나, 명령은 `docker exec`로 넣는다.
+- 이미지 태그(`pipeline-sandbox`)와 컨테이너 이름 접두어(`pr-proof-job`)는 파이프라인 설정(`sandbox.image`, `sandbox.container_prefix`)에서 바꿀 수 있다. `pytest -m docker`는 운영과 같은 Docker를 쓰므로 `pipeline-sandbox-test`, `pr-proof-test`를 쓴다. 같으면 테스트가 운영 이미지를 개발 중인 Dockerfile로 다시 빌드하고, runs ID가 같은 운영 컨테이너를 지울 수 있다. Redis는 `fakeredis`, 데이터·.venv 캐시·설정은 임시 경로를 쓴다.
 - 컨테이너는 호스트 사용자의 UID·GID로 실행한다. 고정 UID(1000)는 Linux에서 호스트 UID가 다르면 `.pipeline-out/`에 쓰지 못한다. 컨테이너에 없는 UID라 홈 디렉터리가 없으므로 `HOME=/tmp`를 준다.
 - 이미지는 Python과 검사 도구만 든 베이스 이미지 하나다. 대상 리포의 의존성은 이미지가 아니라 `.venv`에 설치하고, 캐시 키별로 보관해 테스트 컨테이너에는 읽기 전용으로 마운트한다 (F5). 설치는 네트워크를 쓰지만 컨테이너 안에서 일어나고 비밀값이 없다.
 - 비밀값은 샌드박스에 절대 넣지 않는다.

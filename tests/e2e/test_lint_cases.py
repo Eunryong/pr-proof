@@ -23,6 +23,7 @@ from app.worker import main, repo
 from app.worker.deps import Deps
 from app.worker.github import GitHub
 from app.worker.state import Store
+from tests.sandbox_names import TEST_NAMES
 
 from ..worker.test_github import FakeGh
 
@@ -113,7 +114,13 @@ def test_lint_case(case_path: Path, eval_repo: Path, shared_venvs: Path, tmp_pat
     deps = Deps(
         store=Store(data / "pipeline.db", redis),
         github=GitHub(gh),
-        settings=config.PipelineConfig(repos=[REPO], data_dir=data),
+        settings=config.PipelineConfig(
+            repos=[REPO],
+            data_dir=data,
+            sandbox=config.SandboxConfig(
+                image=TEST_NAMES.image, container_prefix=TEST_NAMES.container_prefix
+            ),
+        ),
     )
     update = PRJob(
         repo=REPO, pr_number=1, kind="update", head_sha=remote["head"], base_sha=remote["base"],

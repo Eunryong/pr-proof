@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Final
 
 IMAGE: Final = "pipeline-sandbox"
+# 작업 컨테이너 이름 접두어. 이름 뒤에는 runs ID가 붙는다
+CONTAINER_PREFIX: Final = "pr-proof-job"
 # 베이스 이미지 Dockerfile과 컨테이너에 읽기 전용으로 넣는 파이프라인 설정(coveragerc)
 IMAGE_DIR: Final = Path(__file__).resolve().parents[2] / "docker" / "sandbox"
 
@@ -68,6 +70,21 @@ def run(*args: str, timeout: float = 120, check: bool = True) -> subprocess.Comp
 def user() -> str:
     """컨테이너를 호스트 사용자의 UID·GID로 실행한다 (.pipeline-out/ 쓰기 권한)."""
     return f"{os.getuid()}:{os.getgid()}"
+
+
+@dataclass(frozen=True)
+class Names:
+    """이미지 태그와 작업 컨테이너 이름 접두어.
+
+    테스트는 운영과 다른 값을 넘긴다. 같으면 테스트가 운영 이미지를 개발 중인 Dockerfile로 다시
+    빌드하고, 같은 이름의 운영 컨테이너를 지울 수 있다.
+    """
+
+    image: str = IMAGE
+    container_prefix: str = CONTAINER_PREFIX
+
+
+DEFAULT_NAMES: Final = Names()  # 운영 기본값
 
 
 def ensure_image(tag: str = IMAGE) -> Image:

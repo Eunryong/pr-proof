@@ -39,3 +39,21 @@ def test_bad_secret_is_rejected(tmp_path: Path, mode: int, content: str, message
 def test_missing_secret(tmp_path: Path) -> None:
     with pytest.raises(config.ConfigError, match="없다"):
         config.read_secret("webhook_secret", tmp_path)
+
+
+def test_sandbox_name_defaults_match_docker_cli() -> None:
+    from app.sandbox import docker_cli
+
+    sandbox = config.SandboxConfig()
+    assert (sandbox.image, sandbox.container_prefix) == (
+        docker_cli.IMAGE,
+        docker_cli.CONTAINER_PREFIX,
+    )
+
+
+def test_test_names_differ_from_production() -> None:
+    from app.sandbox import docker_cli
+    from tests.sandbox_names import TEST_NAMES
+
+    assert TEST_NAMES.image != docker_cli.IMAGE
+    assert not TEST_NAMES.container_prefix.startswith(docker_cli.CONTAINER_PREFIX)

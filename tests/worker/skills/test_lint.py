@@ -10,6 +10,7 @@ from app.sandbox.ruff_runner import RuffRun, RuffViolation
 from app.worker.base_config import BaseConfig
 from app.worker.repo import CHANGES_DIFF
 from app.worker.skills import lint
+from tests.sandbox_names import TEST_NAMES
 
 
 def _v(file: str, line: int, end: int | None = None) -> RuffViolation:
@@ -52,7 +53,7 @@ def test_real_ruff_in_sandbox_reports_only_changed_lines(worktree: Path) -> None
     base = BaseConfig(
         repo=RepoConfig(), memory_gb=1, max_memory_gb=4, ruff_config=None, ruff_source="기본"
     )
-    result = lint.run_lint(worktree, base)
+    result = lint.run_lint(worktree, base, names=TEST_NAMES)
     assert result is not None and result.checked
     assert [(f.file, f.line, f.code) for f in result.findings] == [
         ("orders/lint_case.py", 2, "F401")
@@ -108,7 +109,7 @@ def test_real_fix_touches_only_changed_lines(tmp_path: Path) -> None:
     base = BaseConfig(
         repo=RepoConfig(), memory_gb=1, max_memory_gb=4, ruff_config=None, ruff_source="기본"
     )
-    result = lint.fix_lint(wt, base, base_sha)
+    result = lint.fix_lint(wt, base, base_sha, names=TEST_NAMES)
     assert result is not None and result.applied == 2
     text = (wt / "mod.py").read_text()
     assert text.startswith("import os\n")  # base에 있던 위반 (F401 os)은 그대로
@@ -142,7 +143,7 @@ def test_format_applies_when_base_is_formatted(tmp_path: Path) -> None:
     wt, base_sha = _repo_with_pr(
         tmp_path, {"mod.py": "X = 1\n"}, {"mod.py": "X = 1\nY = {'a':1}\n"}
     )
-    result = lint.fix_lint(wt, DEFAULT_BASE, base_sha, base_sha=base_sha)
+    result = lint.fix_lint(wt, DEFAULT_BASE, base_sha, base_sha=base_sha, names=TEST_NAMES)
     assert result is not None and result.formatted_files == ("mod.py",)
     assert (wt / "mod.py").read_text() == 'X = 1\nY = {"a": 1}\n'
     assert result.touched_files == ("mod.py",)
@@ -156,7 +157,7 @@ def test_format_is_skipped_when_base_is_not_formatted(tmp_path: Path) -> None:
         {"mod.py": "X = 1\n", "old.py": "Z = {'b':2}\n"},
         {"mod.py": "X = 1\nY = {'a':1}\n"},
     )
-    result = lint.fix_lint(wt, DEFAULT_BASE, base_sha, base_sha=base_sha)
+    result = lint.fix_lint(wt, DEFAULT_BASE, base_sha, base_sha=base_sha, names=TEST_NAMES)
     assert result is not None and result.formatted_files == ()
     assert result.format_skipped == lint.BASE_NOT_FORMATTED
     assert "{'a':1}" in (wt / "mod.py").read_text()

@@ -63,15 +63,20 @@ def run_pr_tests(
     is_stale: Callable[[], bool] | None = None,
     venv_cache: Path = venv.VENV_CACHE,
     memory_gb: float = docker_cli.MEMORY_LIMIT_GB,
+    names: docker_cli.Names = docker_cli.DEFAULT_NAMES,
 ) -> PytestRun:
     """테스트 단계: 이미지 준비 → .venv 준비 → 작업 컨테이너에서 pytest → 결과.
 
     Docker 실패는 docker_cli.SandboxError(환경 오류), pip 실패는 venv.DependencyInstallError로
     올라간다. 처리는 worker/update.py가 정한다.
     """
-    image = docker_cli.ensure_image()
-    venv_dir = venv.ensure_venv(worktree, image, cache_dir=venv_cache, memory_gb=memory_gb)
-    with container.running(worktree, venv_dir, job_id=job_id, memory_gb=memory_gb) as name:
+    image = docker_cli.ensure_image(names.image)
+    venv_dir = venv.ensure_venv(
+        worktree, image, cache_dir=venv_cache, tag=names.image, memory_gb=memory_gb
+    )
+    with container.running(
+        worktree, venv_dir, job_id=job_id, memory_gb=memory_gb, names=names
+    ) as name:
         return pytest_runner.run_tests(name, worktree, is_stale=is_stale)
 
 
@@ -93,6 +98,7 @@ class FlowContext:
     run_id: int
     comment_id: int | None
     max_memory_gb: float
+    sandbox_names: docker_cli.Names = docker_cli.DEFAULT_NAMES
     started: float = field(default_factory=time.monotonic)
     stack: ExitStack = field(default_factory=ExitStack)
     worktree: Path | None = None
@@ -148,6 +154,7 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
             is_stale=is_stale_for(job),
             venv_cache=ctx.data_dir / "venvs",
             memory_gb=ctx.base.memory_gb,
+            names=ctx.sandbox_names,
         )
 
     def checkout(state: FlowState) -> FlowState:
@@ -160,8 +167,9 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
             return {}  # base의 .pipeline.yaml에서 껐다. 규칙 줄 없이 테스트만 보여준다
         progress(job, "규칙 검사")
         result = (ctx.run_lint or lint.run_lint)(
-            ctx.worktree, ctx.base, job_id=f"{ctx.run_id}", is_stale=is_stale_for(job)
-        )
+            ctx.worktree, ctx.base, job_id=f"{ctx.run_id}", is_stale=is_stale_for(job),
+            names=ctx.sandbox_names,
+        )  # fmt: skip
         if result is None:
             return {"stopped": "cancelled"}
         ctx.lint = result
@@ -225,7 +233,7 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
         progress(job, "lint 수정")
         result = (ctx.fix_lint or lint.fix_lint)(
             ctx.worktree, ctx.base, ctx.merge_base, base_sha=job.base_sha, job_id=f"{ctx.run_id}",
-            is_stale=is_stale_for(job),
+            is_stale=is_stale_for(job), names=ctx.sandbox_names,
         )  # fmt: skip
         if result is None:
             return {"stopped": "cancelled"}

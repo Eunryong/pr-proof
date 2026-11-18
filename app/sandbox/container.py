@@ -47,14 +47,14 @@ def running(
     *,
     job_id: str | None = None,
     memory_gb: float = docker_cli.MEMORY_LIMIT_GB,
-    tag: str = docker_cli.IMAGE,
+    names: docker_cli.Names = docker_cli.DEFAULT_NAMES,
 ) -> Iterator[str]:
     """작업 컨테이너를 띄우고 이름을 돌려준다. 블록을 나가면 지운다.
 
     네트워크 없음, 자원 제한, 호스트 UID·GID. .venv와 파이프라인 설정은 읽기 전용.
     venv가 None이면 .venv 없이 띄운다 (이미지에 든 ruff만 쓰는 규칙 검사).
     """
-    name = f"job-{job_id or uuid.uuid4().hex[:12]}"
+    name = f"{names.container_prefix}-{job_id or uuid.uuid4().hex[:12]}"
     (worktree / OUT_DIR).mkdir(exist_ok=True)
     venv_mount = ("-v", f"{venv.resolve()}:{VENV_IN_CONTAINER}:ro") if venv is not None else ()
     docker_cli.run(
@@ -63,7 +63,7 @@ def running(
         "-v", f"{worktree.resolve()}:{WORKDIR}", "-w", WORKDIR,
         *venv_mount,
         "-v", f"{docker_cli.IMAGE_DIR}:{PIPELINE_DIR}:ro",
-        tag, "sleep", "infinity",
+        names.image, "sleep", "infinity",
     )  # fmt: skip
     try:
         yield name

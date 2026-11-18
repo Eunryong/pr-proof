@@ -52,6 +52,7 @@ def run_lint(
     *,
     job_id: str | None = None,
     is_stale: Callable[[], bool] | None = None,
+    names: docker_cli.Names = docker_cli.DEFAULT_NAMES,
 ) -> SkillResult | None:
     """.venv 없는 컨테이너에서 ruff를 돌린다. 새 커밋이 와서 중단되면 None.
 
@@ -61,8 +62,8 @@ def run_lint(
     files = changed_python_files(worktree, changed)
     if not files:
         return SkillResult(skill="lint", source=base.ruff_source)
-    docker_cli.ensure_image()
-    with container.running(worktree, None, job_id=job_id and f"{job_id}-lint") as name:
+    docker_cli.ensure_image(names.image)
+    with container.running(worktree, None, job_id=job_id and f"{job_id}-lint", names=names) as name:
         run = ruff_runner.run_ruff(name, files, base.ruff_config, is_stale=is_stale)
     if run.cancelled:
         return None
@@ -111,6 +112,7 @@ def base_is_formatted(
     *,
     job_id: str | None = None,
     is_stale: Callable[[], bool] | None = None,
+    names: docker_cli.Names = docker_cli.DEFAULT_NAMES,
 ) -> FormatResult | None:
     """base 브랜치 전체가 `ruff format --check`를 통과하는지 (DESIGN.md F7).
 
@@ -121,7 +123,9 @@ def base_is_formatted(
             target = base_tree / base.ruff_config
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes((worktree / base.ruff_config).read_bytes())
-        with container.running(base_tree, None, job_id=job_id and f"{job_id}-fmt") as name:
+        with container.running(
+            base_tree, None, job_id=job_id and f"{job_id}-fmt", names=names
+        ) as name:
             return ruff_runner.run_format(
                 name, ["."], base.ruff_config, check=True, is_stale=is_stale
             )
@@ -140,6 +144,7 @@ def fix_lint(
     job_id: str | None = None,
     is_stale: Callable[[], bool] | None = None,
     max_rounds: int = MAX_FIX_ROUNDS,
+    names: docker_cli.Names = docker_cli.DEFAULT_NAMES,
 ) -> LintFix | None:
     """ruff가 낸 안전한 수정 중 PR이 바꾼 줄의 것만 적용하고, 조건이 맞으면 포맷한 뒤 다시 검사한다.
 
@@ -153,7 +158,7 @@ def fix_lint(
         format_skipped = "포맷 확인 안 함"
     else:
         formatted_base = base_is_formatted(
-            worktree, base, base_sha, job_id=job_id, is_stale=is_stale
+            worktree, base, base_sha, job_id=job_id, is_stale=is_stale, names=names
         )
         if formatted_base is None:
             return None
@@ -161,7 +166,7 @@ def fix_lint(
             format_skipped = BASE_NOT_FORMATTED if formatted_base is False else formatted_base
     applied, touched = 0, set()
     formatted: list[str] = []
-    with container.running(worktree, None, job_id=job_id and f"{job_id}-fix") as name:
+    with container.running(worktree, None, job_id=job_id and f"{job_id}-fix", names=names) as name:
         for round_no in range(max_rounds + 1):
             changed = added_lines(repo.working_diff(worktree, merge_base))
             files = changed_python_files(worktree, changed)
