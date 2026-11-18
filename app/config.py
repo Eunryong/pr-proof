@@ -38,12 +38,25 @@ class SandboxConfig(BaseModel):
     container_prefix: str = "pr-proof-job"
 
 
+class CallMaxima(BaseModel):
+    """리포의 `.pipeline.yaml`이 `model.calls`로 정할 수 있는 각 값의 최댓값 (DESIGN.md 10절)."""
+
+    max_pr_max: int = 500
+    max_ruleset_max: int = 300
+    max_repo_daily: int = 2000
+
+
+class ModelConfig(BaseModel):
+    calls: CallMaxima = CallMaxima()
+
+
 class PipelineConfig(BaseModel):
     repos: list[str]  # 처리할 리포 허용 목록 "owner/name"
     redis_url: str = "redis://127.0.0.1:6379/0"
     data_dir: Path = Path.home() / ".cache" / "pipeline"  # bare 캐시, worktree, .venv, SQLite
     sync: SyncConfig = SyncConfig()
     sandbox: SandboxConfig = SandboxConfig()
+    model: ModelConfig = ModelConfig()
 
     @property
     def db_path(self) -> Path:

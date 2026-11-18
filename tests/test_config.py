@@ -57,3 +57,11 @@ def test_test_names_differ_from_production() -> None:
 
     assert TEST_NAMES.image != docker_cli.IMAGE
     assert not TEST_NAMES.container_prefix.startswith(docker_cli.CONTAINER_PREFIX)
+
+
+def test_call_maxima_default_and_override(tmp_path: Path) -> None:
+    (tmp_path / "config.yaml").write_text("repos: [o/r]\n")
+    assert config.load_config(tmp_path).model.calls.max_repo_daily == 2000
+    (tmp_path / "config.yaml").write_text("repos: [o/r]\nmodel:\n  calls:\n    max_pr_max: 7\n")
+    calls = config.load_config(tmp_path).model.calls
+    assert (calls.max_pr_max, calls.max_ruleset_max) == (7, 300)

@@ -5,10 +5,20 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from redis import Redis
+from sqlalchemy import func
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from app.models import state_keys
-from app.models.db import AICall, CommandRecord, Proposal, ProposalTarget, Run
+from app.models.call_budget import RulesetScope, Scope, Spent
+from app.models.db import (
+    AICall,
+    CommandRecord,
+    ModelCacheEntry,
+    ModelCall,
+    Proposal,
+    ProposalTarget,
+    Run,
+)
 from app.models.job import PRJob
 from app.models.rejection import RejectionKey
 
@@ -171,6 +181,69 @@ class Store:
                 AICall.repo == repo, AICall.pr_number == pr_number
             )
             return float(sum(session.exec(stmt).all()))
+
+    # --- 모델 호출 (ai_calls, model_cache) ---
+
+    def add_model_call(self, call: ModelCall) -> int:
+        with Session(self.engine) as session:
+            session.add(call)
+            session.commit()
+            return call.id
+
+    def finish_model_call(
+        self,
+        call_id: int,
+        *,
+        ok: bool,
+        error: str | None,
+        model_id: str,
+        input_tokens: int | None,
+        output_tokens: int | None,
+        permission_denials: int,
+    ) -> None:
+        with Session(self.engine) as session:
+            row = session.get(ModelCall, call_id)
+            row.ok, row.error, row.model_id = ok, error, model_id
+            row.input_tokens, row.output_tokens = input_tokens, output_tokens
+            row.permission_denials = permission_denials
+            session.add(row)
+            session.commit()
+
+    def calls_spent(self, repo: str, pr_number: int, scope: Scope, since: datetime) -> Spent:
+        """상한에서 센 값. 규칙 묶음 상한은 그 묶음 키의 호출을 PR과 무관하게, PR 상한은 그 PR의
+        나머지 호출을 모든 커밋에 걸쳐, 하루 상한은 since 이후 저장소 전체를 센다."""
+        total = select(func.coalesce(func.sum(ModelCall.counted), 0)).where(ModelCall.repo == repo)
+        if isinstance(scope, RulesetScope):
+            in_scope = total.where(ModelCall.ruleset_key == scope.key)
+        else:
+            in_scope = total.where(
+                ModelCall.pr_number == pr_number, ModelCall.ruleset_key.is_(None)
+            )
+        with Session(self.engine) as session:
+            return Spent(
+                scope=int(session.exec(in_scope).one()),
+                repo_daily=int(session.exec(total.where(ModelCall.created_at >= since)).one()),
+            )
+
+    def model_calls(self, repo: str, pr_number: int) -> list[ModelCall]:
+        with Session(self.engine) as session:
+            stmt = select(ModelCall).where(ModelCall.repo == repo, ModelCall.pr_number == pr_number)
+            return list(session.exec(stmt.order_by(ModelCall.id)))
+
+    def cached_result(self, key: str) -> ModelCacheEntry | None:
+        with Session(self.engine) as session:
+            return session.get(ModelCacheEntry, key)
+
+    def save_result(self, key: str, *, stage: str, model: str, prompt_version: str,
+                    result_json: str) -> None:  # fmt: skip
+        """같은 키가 있으면 덮어쓴다. 같은 입력의 결과라 어느 쪽을 남겨도 된다."""
+        entry = ModelCacheEntry(
+            key=key, stage=stage, model=model, prompt_version=prompt_version,
+            result_json=result_json, created_at=_now(),
+        )  # fmt: skip
+        with Session(self.engine) as session:
+            session.merge(entry)
+            session.commit()
 
     def command_handled(self, comment_id: int) -> bool:
         with Session(self.engine) as session:

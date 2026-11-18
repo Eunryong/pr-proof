@@ -22,9 +22,10 @@ from typing import Annotated, Any, Final, Literal, TypedDict
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
+from app.models.call_budget import Tier
+
 log = logging.getLogger(__name__)
 
-Tier = Literal["light", "heavy"]
 Outcome = Literal["accepted", "exhausted", "budget", "dropped"]
 AttemptResult = Literal["accepted", "rejected", "dropped", "write_failed"]
 

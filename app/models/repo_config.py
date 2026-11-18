@@ -38,13 +38,29 @@ class StaticSettings(BaseModel):
     min_repeats: int | None = Field(default=None, ge=2)
 
 
+class CallSettings(BaseModel):
+    """모델 호출 수 상한 (docs/DESIGN.md 9.2, 10절 `model.calls`). 판단은 models/call_budget.py.
+
+    `pr_base`·`per_violation`은 위반 수에 비례하는 PR 상한을 넣는 4단계에 읽는다. 그때까지
+    PR 상한은 `pr_max`다.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+    pr_max: int = Field(default=150, ge=0)
+    ruleset_base: int = Field(default=10, ge=0)
+    per_rule: int = Field(default=4, ge=0)
+    ruleset_max: int = Field(default=100, ge=0)
+    repo_daily: int = Field(default=500, ge=0)
+
+
 class ModelSettings(BaseModel):
-    """AI 수정에 쓸 모델과 PR당 예산 (DESIGN.md 비용 최적화). 백엔드는 claude CLI만 있다."""
+    """모델과 호출 상한. 백엔드는 claude CLI만 있다."""
 
     model_config = ConfigDict(extra="ignore")
     light: str = Field(default="haiku", pattern=MODEL_NAME_PATTERN)
     heavy: str = Field(default="sonnet", pattern=MODEL_NAME_PATTERN)
-    budget_per_pr_usd: float = Field(default=0.5, ge=0)
+    budget_per_pr_usd: float = Field(default=0.5, ge=0)  # v1 수정 경로. 2단계에 calls로 옮긴다
+    calls: CallSettings = CallSettings()
 
 
 class SkillsSettings(BaseModel):
@@ -106,6 +122,19 @@ def parse_repo_config(text: str | None) -> tuple[RepoConfig, str | None]:
 def memory_limit(requested_gb: float, max_gb: float) -> float:
     """리포가 요청한 메모리 한도. 파이프라인 쪽 상한을 넘으면 상한으로 줄인다."""
     return min(requested_gb, max_gb)
+
+
+def call_limits(
+    requested: CallSettings, *, max_pr_max: int, max_ruleset_max: int, max_repo_daily: int
+) -> CallSettings:
+    """리포가 요청한 호출 상한. 파이프라인 쪽 최댓값을 넘는 값은 그 값으로 줄인다 (9.2)."""
+    return requested.model_copy(
+        update={
+            "pr_max": min(requested.pr_max, max_pr_max),
+            "ruleset_max": min(requested.ruleset_max, max_ruleset_max),
+            "repo_daily": min(requested.repo_daily, max_repo_daily),
+        }
+    )
 
 
 def _first_line(text: str) -> str:
