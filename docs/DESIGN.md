@@ -344,7 +344,11 @@ SKILLS = {"lint": run_lint, "static": run_static, "structure": run_structure}
 - `/fix <lint|static|structure>`: 멈춰 있는 수정 단계를 승인하고 재개
 - 확장(F13): `/mutate`, `/generate-tests`
 
-명령은 F1의 작성자 권한 조건을 통과한 것만 처리하고, 처리한 코멘트 ID를 저장한다.
+명령은 F1의 작성자 권한 조건을 통과한 것만 처리하고, 처리한 코멘트 ID를 저장한다 (`commandrecord` 테이블).
+
+- 명령에 대한 답(꺼져 있음 등)은 결과 코멘트와 따로 새 코멘트로 단다. 답글에는 `<!-- pr-proof:reply -->` 표시를 붙여, 결과 코멘트를 찾을 때 섞이지 않게 한다.
+- 모르는 `/` 명령에는 답하지 않는다. `/cc`처럼 다른 도구의 관례일 수 있다.
+- 닫힌 PR의 명령은 처리하지 않는다.
 
 확장 명령이 이 리포에서 꺼져 있으면(`.pipeline.yaml`의 `extensions.<이름>.enabled: false`, 기본값) 실행하지 않고 "`/mutate`는 이 리포에서 꺼져 있습니다 (`extensions.mutation.enabled`)" 같은 코멘트를 남긴다. 조용히 무시하면 명령을 단 사람은 처리 중인지 알 수 없다. 이 경우에도 코멘트 ID를 저장해 같은 안내를 두 번 달지 않는다.
 
@@ -660,7 +664,11 @@ pipeline/
 │   ├── views/                   # 웹
 │   │   └── responses.py         # API 응답
 │   ├── worker/                  # 워커
-│   │   ├── main.py              # 진입점: RQ 워커, preflight
+│   │   ├── main.py              # 진입점: RQ 워커, preflight, 작업 종류별 분기
+│   │   ├── deps.py              # 작업이 쓰는 의존 객체 (Store, GitHub, 설정)
+│   │   ├── update.py            # update 작업: 실제 head 확인 → 검사 흐름 → 결과 기록
+│   │   ├── command.py           # command 작업: /recheck, /fix, 확장 명령
+│   │   ├── retry.py             # 재시도 번호, 환경 오류·일반 오류 기록
 │   │   ├── graph.py             # 작업 흐름: LangGraph 노드와 분기 (체크아웃 → 규칙 검사 → 테스트 → 코멘트)
 │   │   ├── report.py            # PR 코멘트 마크다운 (결과, 위반과 출처, 수정 제안, 테스트, 비용)
 │   │   ├── state.py             # 처리 기록·생존 확인 쓰기 (SQLite), 최신 head 확인 (Redis)
@@ -764,7 +772,8 @@ worker: python -m app.worker.main
 - [x] `Finding` 인터페이스, ruff로 바뀐 줄의 위반 검출 (`changes.diff`). ruff는 베이스 이미지에 넣고 `.venv` 없는 컨테이너에서 설치보다 먼저 돌린다 (설치가 실패해도 규칙 결과를 보여줌)
 - [x] PR 코멘트: "테스트:" 줄과 "규칙:" 줄(⚠️/✅, 검사하지 못하면 기호 없이 글자), 위반 목록과 출처
 - [ ] PR 코멘트의 제안 명령 (`/fix lint`): 명령 처리와 함께
-- [ ] 명령 처리: `/recheck`, `/fix lint`, 꺼진 확장 명령에는 "꺼져 있음" 코멘트
+- [x] 명령 처리: `/recheck`(PR의 지금 head로 다시 검사), 꺼진 확장 명령에는 "꺼져 있음" 답글, 처리한 코멘트 ID 저장
+- [ ] 명령 처리: `/fix lint` (체크포인트·재개와 함께)
 - [ ] SqliteSaver 체크포인트, thread_id `repo#pr#head_sha`, `/fix lint` interrupt·재개 (재개 시 worktree 다시 만들기)
 - [ ] 수정: `ruff check --fix`(안전한 수정만), 조건부 `ruff format` → 샌드박스 테스트 재실행 → 위반 0 확인
 - [ ] 제안 PR: 허용 경로만 스테이징, 푸시 전 비밀값 검사, 머지 확인, 상황별 처리, 루프 방지
