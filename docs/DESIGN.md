@@ -297,7 +297,7 @@ SKILLS = {"lint": run_lint, "static": run_static, "structure": run_structure}
 - **위반 줄의 커버리지:** 샌드박스가 남긴 `coverage.xml`로 위반 줄이 테스트로 실행되는지 본다. 실행되지 않는 줄의 위반은 "테스트가 지나가지 않아 자동 수정 대상 아님"으로 표시하고 알리기만 한다. 고친 뒤 테스트가 통과해도 그 줄의 동작을 확인한 것이 아니기 때문이다.
 - PR 전체의 변경 라인 커버리지(`diff-cover`)는 참고 지표로 코멘트에 적는다. diff-cover는 PR 코드를 실행하지 않으므로 호스트에서 돌린다. 입력은 샌드박스가 남긴 `coverage.xml`과 호스트에서 만든 `changes.diff`다.
 - `coverage.xml`의 경로는 컨테이너 기준(`/work/...`)이 아니라 리포 기준 상대 경로여야 한다. coverage의 `relative_files = true`를 파이프라인 쪽 설정 파일에 두고 `--cov-config`로 넘긴다. 1단계 구현에서는 대상 리포의 coverage 설정을 쓰지 않고 파이프라인 설정(`docker/sandbox/coveragerc`: `relative_files`, `source = .`, `.venv/` 제외)만 쓴다. 기본 `# pragma: no cover`는 그대로 동작한다. 리포 설정의 `omit`·`exclude_lines`를 반영할지는 협업 리포 검증 때 다시 본다.
-- 실패한 테스트는 한 번 재실행한다. 재실행에서 통과하면 flaky로 표시한다.
+- 실패한 테스트는 한 번 재실행한다. 재실행에서 통과하면 flaky로 표시한다. 테스트 실패(종료 코드 1)일 때만, 실패한 테스트 ID만 지정해 같은 컨테이너에서 다시 돌린다. 수집 오류·테스트 오류(setup 등)는 다시 돌려도 같으므로 하지 않고, 실패가 20개를 넘으면 불안정이 아니라 실제 실패로 본다. coverage는 처음 실행 것을 쓴다. 실패한 테스트가 모두 재실행에서 통과하면 상태는 `passed`(테스트 줄 "통과, 불안정한 테스트 N개")이고, `lint` 제안은 되지만 `static`·`structure` 제안은 막는다. 수정 전후 비교는 재실행에서 통과한 수까지 센 통과 수로 한다.
 
 ### F9. 결과와 PR 코멘트
 
@@ -783,7 +783,7 @@ worker: python -m app.worker.main
 - [x] 수정: ruff의 안전한 수정 중 PR이 바꾼 줄의 것만 적용 → 규칙 재검사(새 위반 없음) → 허용 범위 검사 → 샌드박스 테스트 재실행(수정 전과 같은 결과) → 수정안 diff 저장·코멘트
 - [ ] 수정: 조건부 `ruff format` (base가 `ruff format --check`를 통과하는 리포에서만)
 - [ ] 제안 PR: 허용 경로만 스테이징, 푸시 전 비밀값 검사, 머지 확인, 상황별 처리, 루프 방지
-- [ ] flaky 재실행
+- [x] flaky 재실행
 - [ ] 평가 케이스: 컨벤션 위반 주입 3–5개와 E2E 테스트
 
 ### 3단계. 정적변수(static): 검출 → 안전망 → AI 수정

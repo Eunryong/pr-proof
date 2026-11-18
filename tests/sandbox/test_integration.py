@@ -121,3 +121,18 @@ def test_memory_limit_is_unrunnable_not_environment_error(job: str, worktree: Pa
     (worktree / "tests" / "test_hog.py").write_text(hog)
     run = pytest_runner.run_tests(job, worktree)
     assert run.status == "unrunnable" and run.memory_exceeded
+
+
+def test_flaky_test_passes_on_rerun(job: str, worktree: Path) -> None:
+    """처음엔 실패하고 두 번째엔 통과하는 테스트. 표시 파일은 컨테이너의 /tmp에 둔다."""
+    (worktree / "tests" / "test_flaky.py").write_text(
+        "from pathlib import Path\n\n\n"
+        "def test_sometimes():\n"
+        "    marker = Path('/tmp/flaky-marker')\n"
+        "    if not marker.exists():\n"
+        "        marker.write_text('x')\n"
+        "        raise AssertionError('first run fails')\n"
+    )
+    run = pytest_runner.run_tests(job, worktree)
+    assert run.flaky == ("tests/test_flaky.py::test_sometimes",)
+    assert run.status == "passed" and not run.allows_code_fix and run.allows_lint_fix

@@ -5,7 +5,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Final
 
-from app.models.test_run import PytestRun, ReportSummary
+from app.models.test_run import PYTEST_TESTS_FAILED, PytestRun, ReportSummary
 from app.sandbox import docker_cli
 from app.sandbox.container import (
     DEFAULT_TIMEOUT,
@@ -17,6 +17,9 @@ from app.sandbox.container import (
 )
 
 REPORT_FILE: Final = f"{OUT_DIR}/report.json"
+RERUN_REPORT_FILE: Final = f"{OUT_DIR}/rerun.json"
+# 이보다 많이 실패하면 불안정이 아니라 실제 실패로 보고 다시 돌리지 않는다
+MAX_RERUN_TESTS: Final = 20
 COVERAGE_XML: Final = f"{OUT_DIR}/coverage.xml"
 # coverage.xml 경로를 리포 기준 상대 경로로 남기는 파이프라인 쪽 설정 (docker/sandbox/coveragerc)
 COVERAGERC: Final = f"{PIPELINE_DIR}/coveragerc"
@@ -36,6 +39,23 @@ def pytest_argv() -> list[str]:
         "--cov", f"--cov-config={COVERAGERC}",
         f"--cov-report=xml:{COVERAGE_XML}",
     ]  # fmt: skip
+
+
+def rerun_argv(node_ids: list[str]) -> list[str]:
+    """실패한 테스트만 한 번 더. coverage는 처음 실행 것을 쓰므로 다시 만들지 않는다."""
+    return [
+        ".venv/bin/pytest", "-p", "no:cacheprovider",
+        "--json-report", f"--json-report-file={RERUN_REPORT_FILE}",
+        "--", *node_ids,
+    ]  # fmt: skip
+
+
+def passed_ids(report: Path) -> set[str]:
+    try:
+        data = json.loads(report.read_text())
+        return {t["nodeid"] for t in data.get("tests", []) if t.get("outcome") == "passed"}
+    except (OSError, json.JSONDecodeError, KeyError, TypeError, AttributeError):
+        return set()
 
 
 def read_summary(report: Path) -> ReportSummary | None:
@@ -72,7 +92,9 @@ def run_tests(
     )
     summary = read_summary(report)
     oom_killed = _check_environment(container, result, has_report=summary is not None)
+    flaky = _rerun_failed(container, worktree, result, summary, timeout, is_stale, poll_seconds)
     return PytestRun(
+        flaky=flaky,
         exit_code=result.returncode,
         summary=summary,
         report_path=report if summary is not None else None,
@@ -82,6 +104,40 @@ def run_tests(
         oom_killed=oom_killed,
         output=(result.stdout + result.stderr)[-MAX_OUTPUT_CHARS:],
     )
+
+
+def _rerun_failed(
+    container: str,
+    worktree: Path,
+    result: ExecResult,
+    summary: ReportSummary | None,
+    timeout: int,
+    is_stale: Callable[[], bool] | None,
+    poll_seconds: float,
+) -> tuple[str, ...]:
+    """실패한 테스트를 한 번 다시 돌려, 통과한 것(flaky)을 돌려준다 (DESIGN.md F8).
+
+    테스트 실패(종료 코드 1)일 때만 한다. 수집 오류·테스트 오류는 다시 돌려도 같으므로 하지 않는다.
+    """
+    if result.returncode != PYTEST_TESTS_FAILED or summary is None or summary.errors:
+        return ()
+    failed = list(summary.failed_tests)
+    if not failed or len(failed) > MAX_RERUN_TESTS:
+        return ()
+    rerun_report = worktree / RERUN_REPORT_FILE
+    rerun_report.unlink(missing_ok=True)
+    rerun = run_in_sandbox(
+        container,
+        rerun_argv(failed),
+        env={"PYTHONPATH": pythonpath_for(worktree), "PYTHONDONTWRITEBYTECODE": "1"},
+        timeout=timeout,
+        is_stale=is_stale,
+        poll_seconds=poll_seconds,
+    )
+    if rerun.cancelled or rerun.timed_out or rerun.returncode in docker_cli.DOCKER_FAILED:
+        return ()  # 처음 결과(실패)를 그대로 쓴다
+    passed = passed_ids(rerun_report)
+    return tuple(t for t in failed if t in passed)
 
 
 def _check_environment(container: str, result: ExecResult, *, has_report: bool) -> bool:
