@@ -80,6 +80,17 @@ def test_ruleset_cap_is_per_key_and_shared_across_prs(store: Store) -> None:
     assert _budget(store, pr=1, pr_max=1).decide(PrScope(), "light") == Allowed(1)
 
 
+def test_ruleset_cap_is_a_rolling_24_hours(store: Store) -> None:
+    clock, scope = Clock(T0), RulesetScope("key-a", rule_count=1)
+    settings = {"ruleset_base": 2, "per_rule": 1, "clock": clock}
+    _spend(_budget(store, pr=1, **settings), scope, 3)
+    assert _budget(store, pr=2, **settings).decide(scope, "light") == Denied("ruleset", 3, 3, 1)
+    clock.at = T0 + timedelta(hours=23, minutes=59)
+    assert isinstance(_budget(store, pr=2, **settings).decide(scope, "light"), Denied)
+    clock.at = T0 + timedelta(hours=24, minutes=1)
+    assert _budget(store, pr=2, **settings).decide(scope, "light") == Allowed(1)
+
+
 def test_repo_daily_cap_is_a_rolling_24_hours(store: Store) -> None:
     clock = Clock(T0)
     _spend(_budget(store, pr=1, clock=clock, repo_daily=3), PrScope(), 3)

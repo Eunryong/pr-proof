@@ -55,7 +55,8 @@ class CallLimits:
 
 @dataclass(frozen=True)
 class Spent:
-    """지금까지 센 값. scope는 그 PR 또는 규칙 묶음에서, repo_daily는 최근 24시간 저장소에서."""
+    """지금까지 센 값. scope는 그 PR(전체 기간) 또는 규칙 묶음(최근 24시간)에서, repo_daily는 최근
+    24시간 저장소에서."""
 
     scope: int
     repo_daily: int

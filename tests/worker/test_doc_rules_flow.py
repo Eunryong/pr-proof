@@ -6,14 +6,17 @@
 import subprocess
 from collections.abc import Sequence
 from dataclasses import replace
+from datetime import timedelta
 from pathlib import Path
 from typing import Final
 
 import pytest
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
+from sqlmodel import Session, select
 
 from app.models import rule_reading, state_keys
 from app.models.checker import CheckerKind
+from app.models.db import ModelCall
 from app.models.doc_rules import (
     CallUsage,
     Found,
@@ -348,6 +351,14 @@ THREE_RULES: Final = (
 )
 
 
+def _age_model_calls(env, hours: int) -> None:
+    with Session(env["deps"].store.engine) as session:
+        for row in session.exec(select(ModelCall)):
+            row.created_at -= timedelta(hours=hours)
+            session.add(row)
+        session.commit()
+
+
 def test_ruleset_cap_stops_authoring_and_next_check_continues(doc_env, tmp_path: Path) -> None:
     quotes = [line[2:] for line in THREE_RULES.splitlines()]
     model = use_model(doc_env, FakeModel(rule_answer(*(print_rule(quote=q) for q in quotes))))
@@ -358,8 +369,15 @@ def test_ruleset_cap_stops_authoring_and_next_check_continues(doc_env, tmp_path:
     assert "모델 호출 상한에 걸려 처리하지 못함: 검사기 작성 1개 규칙" in _last_comment(doc_env)
     assert "남은 규칙부터 이어서 합니다" in _last_comment(doc_env)
 
-    # 운영자가 상한을 올리면 다음 검사는 남은 규칙만 작성한다 (작성한 둘은 저장된 것을 쓴다)
-    use_config(doc_env, RepoConfig(model=ModelSettings(calls=CallSettings(ruleset_max=4))))
+    # 같은 날의 다음 검사는 같은 상한에 다시 걸린다
+    found = check(doc_env, tmp_path, {**BASE_FILES, "README.md": readme}, PR_FILES, pr_number=3)[
+        "doc_rules"
+    ]
+    assert [o.kind for o in found.outcomes if isinstance(o, RuleUnchecked)] == ["cap"]
+    assert [kind for kind, _ in model.prompts] == ["rules", "checker", "checker"]
+
+    # 24시간이 지나면 상한을 올리지 않아도 남은 규칙만 작성한다 (작성한 둘은 저장된 것을 쓴다)
+    _age_model_calls(doc_env, hours=25)
     found = check(doc_env, tmp_path, {**BASE_FILES, "README.md": readme}, PR_FILES, pr_number=2)[
         "doc_rules"
     ]
