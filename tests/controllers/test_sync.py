@@ -10,7 +10,7 @@ from app import config
 from app.controllers import sync
 from app.models import state_keys
 from app.models.job import PRJob
-from app.services.github import GitHubReadError, OpenPR
+from app.services.github import GitHubReadError, OpenPR, PRComment
 from app.services.history import History
 from app.worker.state import Store
 
@@ -39,10 +39,20 @@ def _job(head: str = HEAD) -> PRJob:
     )
 
 
-def _sync(env, prs, now=None):
+HEAD_TIME: Final = "2026-11-17T10:00:00Z"
+
+
+def _comment(cid: int, body: str, assoc: str = "MEMBER", at: str = "2026-11-17T10:05:00Z"):
+    return PRComment(id=cid, author_association=assoc, created_at=at, body=body)
+
+
+def _sync(env, prs, now=None, comments=()):
     return sync.run_once(
-        env["settings"], env["redis"], env["history"], list_prs=lambda repo: prs, now=now
-    )
+        env["settings"], env["redis"], env["history"], list_prs=lambda repo: prs,
+        head_time=lambda repo, sha: HEAD_TIME,
+        list_comments=lambda repo, n, since: [c for c in comments if c.created_at >= since],
+        now=now,
+    )  # fmt: skip
 
 
 def _queued(env) -> list[PRJob]:
@@ -97,3 +107,63 @@ def test_github_failure_skips_repo_without_raising(env) -> None:
 
     result = sync.run_once(env["settings"], env["redis"], env["history"], list_prs=broken)
     assert result.failed_repos == ["o/r"] and result.enqueued == []
+
+
+# --- 놓친 명령 ---------------------------------------------------------------------
+
+
+def _commands(env) -> list[PRJob]:
+    return [j for j in _queued(env) if j.kind == "command"]
+
+
+def test_missed_command_is_queued(env) -> None:
+    result = _sync(env, [_pr()], comments=[_comment(5, "/recheck\n설명")])
+    (job,) = _commands(env)
+    assert (job.command, job.comment_id, job.source) == ("/recheck", 5, "sync")
+    assert ("o/r", 1, "missed_command") in result.enqueued
+
+
+@pytest.mark.parametrize(
+    "comment",
+    [
+        _comment(6, "/fix lint", assoc="CONTRIBUTOR"),
+        _comment(7, "/fix lint", assoc="NONE"),
+        _comment(8, "<!-- pr-proof -->\n/recheck"),
+        _comment(9, "<!-- pr-proof:reply -->\n> /mutate"),
+        _comment(10, "LGTM"),
+        _comment(11, "/fix lint", at="2026-11-17T09:59:59Z"),  # 지금 head보다 먼저 단 명령
+    ],
+    ids=["contributor", "none", "own-result", "own-reply", "not-command", "before-head"],
+)
+def test_missed_command_filters_like_webhook(env, comment) -> None:
+    _sync(env, [_pr()], comments=[comment])
+    assert _commands(env) == []
+
+
+def test_handled_command_is_not_queued_again(env) -> None:
+    command = PRJob(
+        repo="o/r", pr_number=1, kind="command", command="/recheck", comment_id=5, source="webhook"
+    )
+    env["store"].record_command(command, "recheck:passed")
+    _sync(env, [_pr()], comments=[_comment(5, "/recheck")])
+    assert _commands(env) == []
+
+
+def test_comment_lookup_failure_still_syncs_heads(env) -> None:
+    def broken(repo, n, since):
+        raise GitHubReadError("502")
+
+    sync.run_once(
+        env["settings"], env["redis"], env["history"], list_prs=lambda repo: [_pr()],
+        head_time=lambda repo, sha: HEAD_TIME, list_comments=broken,
+    )  # fmt: skip
+    assert [j.kind for j in _queued(env)] == ["update"]
+
+
+def test_webhook_and_sync_share_the_filter() -> None:
+    """권한 확인이 한쪽에만 있으면 그쪽이 구멍이 된다. 같은 함수를 쓰는지 본다."""
+    from app.controllers import webhook
+    from app.models import comment
+
+    assert webhook.command_in_comment is comment.command_in_comment
+    assert sync.command_in_comment is comment.command_in_comment

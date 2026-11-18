@@ -1,7 +1,8 @@
 """동기화 한 번: 열린 PR의 head ↔ 처리 기록 비교 → 빠진 것만 PRJob → 큐 (docs/DESIGN.md F2).
 
 웹훅을 놓쳤을 때(로컬 서버가 꺼져 있던 동안 등) 보충한다. 다시 넣을지는 models.sync_rules가 정한다.
-닫힌 PR 처리와 놓친 명령 보충은 워커가 그 작업을 처리하게 될 때 붙인다 (docs/BACKLOG.md).
+놓친 명령은 현재 head 커밋 뒤에 달린 것 중 워커가 처리하지 않은 것만 넣는다. 권한 확인은
+웹훅과 같은 함수(models.comment.command_in_comment)로 한다.
 """
 
 import logging
@@ -13,6 +14,7 @@ from redis import Redis
 
 from app.config import PipelineConfig
 from app.controllers.webhook import PIPELINE_BRANCH_PREFIX
+from app.models.comment import command_in_comment
 from app.models.job import PRJob
 from app.models.sync_rules import EnqueueReason, enqueue_reason
 from app.services import github, queue
@@ -23,7 +25,7 @@ log = logging.getLogger(__name__)
 
 @dataclass
 class SyncResult:
-    enqueued: list[tuple[str, int, EnqueueReason]] = field(default_factory=list)
+    enqueued: list[tuple[str, int, EnqueueReason | str]] = field(default_factory=list)
     failed_repos: list[str] = field(default_factory=list)
 
 
@@ -33,6 +35,8 @@ def run_once(
     history: History,
     *,
     list_prs: Callable[[str], list[github.OpenPR]] = github.list_open_prs,
+    head_time: Callable[[str, str], str] = github.head_commit_time,
+    list_comments: Callable[[str, int, str], list[github.PRComment]] = github.list_comments_since,
     now: datetime | None = None,
 ) -> SyncResult:
     now = now or datetime.now(UTC)
@@ -49,6 +53,10 @@ def run_once(
         for pr in prs:
             if pr.head_ref.startswith(PIPELINE_BRANCH_PREFIX):
                 continue
+            try:
+                _missed_commands(repo, pr, redis, history, result, head_time, list_comments)
+            except github.GitHubReadError as e:
+                log.warning("동기화: %s#%s 명령 조회 실패: %s", repo, pr.number, e)
             runs = history.runs_for(repo, pr.number, pr.head_sha)
             reason = enqueue_reason(
                 runs, now, env_error_backoff=backoff, heartbeat_timeout=heartbeat_timeout
@@ -68,3 +76,34 @@ def run_once(
             if queue.enqueue(redis, job) == "queued":
                 result.enqueued.append((repo, pr.number, reason))
     return result
+
+
+def _missed_commands(
+    repo: str,
+    pr: github.OpenPR,
+    redis: Redis,
+    history: History,
+    result: SyncResult,
+    head_time: Callable[[str, str], str],
+    list_comments: Callable[[str, int, str], list[github.PRComment]],
+) -> None:
+    """현재 head 뒤에 달린, 아직 처리하지 않은 명령을 넣는다.
+
+    이전 커밋에 단 /fix를 뒤늦게 실행하지 않는다.
+    """
+    since = head_time(repo, pr.head_sha)
+    handled = history.handled_command_ids(repo, pr.number)
+    for comment in list_comments(repo, pr.number, since):
+        command, _ = command_in_comment(comment.body, comment.author_association)
+        if command is None or comment.id in handled:
+            continue
+        job = PRJob(
+            repo=repo,
+            pr_number=pr.number,
+            kind="command",
+            command=command,
+            comment_id=comment.id,
+            source="sync",
+        )
+        if queue.enqueue(redis, job) == "queued":
+            result.enqueued.append((repo, pr.number, "missed_command"))

@@ -5,13 +5,12 @@ from typing import Any, Final
 
 from redis import Redis
 
-from app.models.comment import COMMENT_MARKER
+from app.models.comment import command_in_comment
 from app.models.job import PRJob
 from app.services import queue, signature
 from app.views import responses
 
 UPDATE_ACTIONS: Final = frozenset({"opened", "reopened", "synchronize", "ready_for_review"})
-TRUSTED_AUTHORS: Final = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
 PIPELINE_BRANCH_PREFIX: Final = "pipeline/"
 
 
@@ -51,22 +50,18 @@ def parse_event(
 
     if event == "issue_comment":
         comment, issue = payload["comment"], payload["issue"]
-        body = (comment.get("body") or "").strip()
         if action != "created":
             return Ignored(f"처리하지 않는 동작: issue_comment.{action}")
         if "pull_request" not in issue:
             return Ignored("PR이 아닌 이슈의 코멘트")
-        if COMMENT_MARKER in body:
-            return Ignored("파이프라인 자신의 코멘트")
-        if not body.startswith("/"):
-            return Ignored("명령이 아닌 코멘트")
-        if comment.get("author_association") not in TRUSTED_AUTHORS:
-            return Ignored("명령 권한 없음")
+        command, reason = command_in_comment(comment.get("body"), comment.get("author_association"))
+        if command is None:
+            return Ignored(reason)
         return PRJob(
             repo=repo,
             pr_number=issue["number"],
             kind="command",
-            command=body.splitlines()[0],
+            command=command,
             comment_id=comment["id"],
             source="webhook",
             delivery_id=delivery_id,

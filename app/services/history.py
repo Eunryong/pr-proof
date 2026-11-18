@@ -2,9 +2,10 @@
 
 from pathlib import Path
 
+from sqlalchemy.exc import OperationalError
 from sqlmodel import Session, create_engine, select
 
-from app.models.db import Run
+from app.models.db import CommandRecord, Run
 from app.models.sync_rules import RunSnapshot
 
 
@@ -27,3 +28,16 @@ class History:
                 RunSnapshot(state=r.state, heartbeat_at=r.heartbeat_at, finished_at=r.finished_at)
                 for r in session.exec(stmt)
             ]
+
+    def handled_command_ids(self, repo: str, pr_number: int) -> set[int]:
+        """워커가 처리한 명령 코멘트 ID. 테이블이 아직 없으면 빈 집합."""
+        if not self.db_path.is_file():
+            return set()
+        with Session(self.engine) as session:
+            stmt = select(CommandRecord.comment_id).where(
+                CommandRecord.repo == repo, CommandRecord.pr_number == pr_number
+            )
+            try:
+                return set(session.exec(stmt))
+            except OperationalError:
+                return set()
