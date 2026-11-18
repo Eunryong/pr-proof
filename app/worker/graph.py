@@ -17,6 +17,7 @@
 멈춰 있던 그래프는 따로 지우지 않아도 쓰이지 않는다. 재개할 때 worktree는 다시 만든다 (F7).
 """
 
+import json
 import logging
 import sqlite3
 import time
@@ -443,6 +444,11 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
                     model=model, attempt=attempt, ok=result.ok,
                     error=str(result.error) if result.error else None, cost_usd=result.cost_usd,
                     charged_usd=charged, permission_denials=len(result.permission_denials),
+                    unexpected_tools=(
+                        json.dumps(dict(result.unexpected_tools)) if result.unexpected_tools
+                        else None
+                    ),
+                    detail=result.detail or None,
                 )
             )  # fmt: skip
 

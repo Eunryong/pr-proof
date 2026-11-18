@@ -6,6 +6,7 @@
 """
 
 import json
+import logging
 import os
 import subprocess
 import tempfile
@@ -66,6 +67,9 @@ _INPUT_TOKEN_KEYS: Final = (
 )
 
 
+log = logging.getLogger(__name__)
+
+
 class AIErrorKind(StrEnum):
     TIMEOUT = "timeout"
     LAUNCH = "launch"  # claude를 실행하지 못함 (명령 없음, worktree 없음)
@@ -98,6 +102,9 @@ class ClaudeResult:
     permission_denials: tuple[PermissionDenial, ...]
     text: str
     detail: str = ""
+    # 모델이 부르려 한, 허용 목록 밖 도구의 (이름, 횟수). 목록에 없는 도구는 CLI가 "없는 도구"로
+    # 답해 permission_denials에 잡히지 않으므로 스트림의 tool_use에서 센다
+    unexpected_tools: tuple[tuple[str, int], ...] = ()
 
 
 # 표준 출력 한 줄 → 호출을 중단할 이유. 계속해도 되면 None
@@ -148,7 +155,11 @@ def tool_list_problem(event: Mapping[str, object], shape: CallShape) -> str | No
     if seen == expected:
         return None
     extra, missing = sorted(seen - expected), sorted(expected - seen)
-    return f"도구 목록이 기대와 다름: 더 있음 {extra}, 없음 {missing}"
+    version = event.get("claude_code_version")
+    return (
+        f"도구 목록이 기대와 다름: 더 있음 {extra}, 없음 {missing} "
+        f"(claude CLI {version if isinstance(version, str) else '버전 모름'})"
+    )
 
 
 def _init_event(line: str) -> dict | None:
@@ -232,10 +243,14 @@ def run_claude(
     except subprocess.TimeoutExpired:
         return _failure(AIErrorKind.TIMEOUT, f"{timeout:g}초 안에 끝나지 않음")
     except ToolListMismatch as e:
+        log.error("claude 수정 호출을 중단함: %s", e)
         return _failure(AIErrorKind.TOOLS, str(e))
     except OSError as e:
         return _failure(AIErrorKind.LAUNCH, str(e))
-    return parse_output(proc.stdout, proc.returncode, proc.stderr)
+    result = parse_output(proc.stdout, proc.returncode, proc.stderr)
+    if result.error == AIErrorKind.TOOLS:
+        log.error("claude 수정 호출의 도구 목록 확인 실패: %s", result.detail)
+    return result
 
 
 @dataclass(frozen=True)
@@ -284,6 +299,7 @@ def run_structured(
     except subprocess.TimeoutExpired:
         return _structured_failure(AIErrorKind.TIMEOUT, f"{timeout:g}초 안에 끝나지 않음")
     except ToolListMismatch as e:
+        log.error("claude 도구 없는 호출을 중단함: %s", e)
         return _structured_failure(AIErrorKind.TOOLS, str(e))
     except OSError as e:
         return _structured_failure(AIErrorKind.LAUNCH, str(e))
@@ -306,6 +322,7 @@ def parse_output(stdout: str, returncode: int, stderr: str = "") -> ClaudeResult
         permission_denials=_denials(data.get("permission_denials")),
         text=text if isinstance(text, str) else "",
         detail=detail,
+        unexpected_tools=_unexpected_tools(stdout, "file_tools"),
     )
 
 
@@ -355,6 +372,22 @@ def _events(stdout: str) -> tuple[dict | None, dict | None]:
         elif event.get("type") == "result":
             result = event
     return init, result
+
+
+def _unexpected_tools(stdout: str, shape: CallShape) -> tuple[tuple[str, int], ...]:
+    """assistant 메시지의 tool_use 중 이 모양의 목록에 없는 이름과 횟수 (이름순)."""
+    counts: dict[str, int] = {}
+    for line in stdout.splitlines():
+        event = _json_object(line)
+        message = event.get("message") if event and event.get("type") == "assistant" else None
+        content = message.get("content") if isinstance(message, dict) else None
+        for block in content if isinstance(content, list) else ():
+            if not isinstance(block, dict) or block.get("type") != "tool_use":
+                continue
+            name = str(block.get("name", ""))
+            if name not in _SHAPE_TOOLS[shape]:
+                counts[name] = counts.get(name, 0) + 1
+    return tuple(sorted(counts.items()))
 
 
 def _checked_status(

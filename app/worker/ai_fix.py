@@ -171,6 +171,11 @@ def code_fix(
                     len(result.permission_denials),
                     ", ".join(d.tool_name for d in result.permission_denials),
                 )
+            if result.unexpected_tools:
+                log.warning(
+                    "AI가 목록에 없는 도구를 부르려 함: %s",
+                    ", ".join(f"{name} {count}회" for name, count in result.unexpected_tools),
+                )
             problem = environment_problem(result)
             if problem is not None:
                 raise AIEnvironmentError(problem)

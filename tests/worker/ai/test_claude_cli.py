@@ -416,3 +416,29 @@ def test_real_runner_returns_output_and_times_out(tmp_path: Path) -> None:
     slow = _fake_claude(tmp_path, "import time\ntime.sleep(30)\n")
     with pytest.raises(subprocess.TimeoutExpired):
         ai._run(slow, "", tmp_path, dict(os.environ), 0.5, lambda line: None)
+
+
+def _tool_use(*names: str) -> dict:
+    content = [{"type": "tool_use", "name": n, "input": {}} for n in names]
+    return {"type": "assistant", "message": {"content": [{"type": "text", "text": "x"}, *content]}}
+
+
+def test_tool_use_outside_the_list_is_counted_by_name() -> None:
+    init = {"type": "system", "subtype": "init", "tools": FILE_TOOLS}
+    result = {"type": "result", "subtype": "success", "is_error": False}
+    events = [init, _tool_use("Read", "Bash"), _tool_use("Edit"), _tool_use("Bash", "WebSearch")]
+    stdout = "".join(json.dumps(e) + "\n" for e in [*events, result])
+    parsed = ai.parse_output(stdout, 0)
+    assert parsed.ok  # 없는 도구를 부른 시도는 CLI가 거절한다. 호출은 실패가 아니다
+    assert parsed.unexpected_tools == (("Bash", 2), ("WebSearch", 1))
+    assert ai.parse_output(_output(), 0).unexpected_tools == ()
+
+
+def test_mismatch_detail_names_extra_tools_and_cli_version() -> None:
+    init = {
+        "type": "system", "subtype": "init", "claude_code_version": "2.1.327",
+        "tools": [*FILE_TOOLS, "WebSearch", "Task"],
+    }  # fmt: skip
+    result = _run(FakeRunner(json.dumps(init) + "\n"))
+    assert result.error == AIErrorKind.TOOLS
+    assert "['Task', 'WebSearch']" in result.detail and "claude CLI 2.1.327" in result.detail
