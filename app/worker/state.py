@@ -17,6 +17,7 @@ from app.models.db import (
     ModelCall,
     Proposal,
     ProposalTarget,
+    RulesetEntry,
     Run,
 )
 from app.models.job import PRJob
@@ -243,6 +244,16 @@ class Store:
         )  # fmt: skip
         with Session(self.engine) as session:
             session.merge(entry)
+            session.commit()
+
+    def saved_ruleset(self, key: str) -> str | None:
+        with Session(self.engine) as session:
+            row = session.get(RulesetEntry, key)
+            return row.ruleset_json if row is not None else None
+
+    def save_ruleset(self, key: str, ruleset_json: str) -> None:
+        with Session(self.engine) as session:
+            session.merge(RulesetEntry(key=key, ruleset_json=ruleset_json, created_at=_now()))
             session.commit()
 
     def command_handled(self, comment_id: int) -> bool:

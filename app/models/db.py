@@ -132,3 +132,16 @@ class ModelCall(SQLModel, table=True):
     output_tokens: int | None = None
     permission_denials: int = 0
     created_at: datetime = Field(index=True)
+
+
+class RulesetEntry(SQLModel, table=True):
+    """규칙 묶음의 캐시 키 → 원문 확인을 거친 규칙 묶음 JSON (DESIGN.md 4.3, 7.8).
+
+    `rules.disabled`는 적용하기 전의 묶음이다. 끈 규칙은 쓸 때 뺀다.
+    """
+
+    __tablename__ = "rulesets"
+
+    key: str = Field(primary_key=True)
+    ruleset_json: str
+    created_at: datetime
