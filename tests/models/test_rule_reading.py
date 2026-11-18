@@ -11,6 +11,7 @@ from app.models.rule_reading import (
     apply_disabled,
     build_prompt,
     parse_answer,
+    prompt_version,
     ruleset_key,
     select_documents,
     verify_rules,
@@ -67,6 +68,15 @@ def test_oversized_document_does_not_block_later_small_ones() -> None:
 def test_duplicate_paths_are_read_once() -> None:
     picked = select_documents(["README.md", "README.md"], {"README.md": _entry("README.md")})
     assert len(picked.to_read) == 1
+
+
+def test_prompt_version_changes_with_any_prompt_part() -> None:
+    schema = {"type": "object"}
+    version = prompt_version("지시", schema, "틀")
+    assert version == prompt_version("지시", {"type": "object"}, "틀")
+    assert version != prompt_version("지시.", schema, "틀")
+    assert version != prompt_version("지시", {"type": "array"}, "틀")
+    assert version != prompt_version("지시", schema, "틀 ")
 
 
 def test_ruleset_key_changes_with_sources_and_model() -> None:

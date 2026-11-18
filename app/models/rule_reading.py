@@ -15,7 +15,7 @@ from typing import Final, Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from app.models.cache_key import model_cache_key
+from app.models.cache_key import model_cache_key, text_hash
 from app.models.rule import (
     CheckMethod,
     DroppedRule,
@@ -29,8 +29,6 @@ from app.models.rule import (
 
 # 문서 고르기와 원문 확인의 버전. 이 파일의 결정적 처리를 바꾸면 올린다 (캐시 키에 들어간다)
 READER_VERSION: Final = "1"
-# 프롬프트나 스키마를 바꾸면 올린다 (캐시 키에 들어간다)
-PROMPT_VERSION: Final = "1"
 # 한 번에 읽는 문서 합계의 상한 (약 10만 토큰). 넘는 문서는 읽지 않고 이유를 남긴다
 MAX_DOCS_BYTES: Final = 400_000
 # 정리한 뒤 이보다 짧은 인용은 어느 문서에나 있을 수 있어 근거가 되지 못한다
@@ -200,6 +198,16 @@ def build_prompt(documents: Sequence[Document]) -> str:
         for d in documents
     ]
     return head + "".join(blocks)
+
+
+def prompt_version(system_prompt: str, schema: Mapping[str, object], user_frame: str) -> str:
+    """프롬프트 글과 스키마의 해시. 손으로 올리는 번호는 고치고도 잊을 수 있어 내용에서 만든다."""
+    schema_text = json.dumps(schema, sort_keys=True, ensure_ascii=False)
+    return text_hash("\0".join((system_prompt, schema_text, user_frame)))[:12]
+
+
+# 캐시 키에 들어간다. 프롬프트나 스키마를 한 글자라도 바꾸면 달라져 규칙을 다시 읽는다
+PROMPT_VERSION: Final = prompt_version(SYSTEM_PROMPT, ANSWER_SCHEMA, build_prompt(()))
 
 
 # --- 답 읽기 ---
