@@ -208,6 +208,14 @@ F1–F5는 수신과 실행 기반(1단계), F6–F10은 검출·안전망·수�
 
 "무차별 정적변수"는 하드코딩된 리터럴(매직 넘버, 반복되는 문자열)과 남용된 전역·모듈 수준 가변 상태를 모두 가리킨다.
 
+**`static` 검출 규칙** (`app/worker/skills/static.py`, `static_rules.py`). 모든 위반은 `severity: warning`, `fixable: false`(수정은 AI, F7)이고 PR이 바꾼 줄에 걸린 것만 남긴다.
+
+- **검사 대상:** PR이 바꾼 `.py` 파일 중 테스트 파일이 아닌 것. 테스트 파일(`test_*.py`, `*_test.py`, `conftest.py`, `test/`·`tests/` 폴더 아래)의 리터럴은 기대값이고 AI 수정이 테스트 파일을 바꿀 수 없으므로(F7) 검사하지 않는다. `.pyi`도 뺀다. 대상 리포의 ruff 설정이 exclude한 파일(생성 코드 등)은 `ruff check --show-files --force-exclude`로 걸러 AST 검사에서도 뺀다.
+- **ruff 규칙:** `PLR2004`(비교의 매직 값), `PLW0603`(`global` 문). 컨테이너에서 lint와 같은 방식으로 돌리되 규칙은 파이프라인이 `--select`로 정한다. 명령줄 `--select`는 base 설정의 `select`·`extend-select`·`ignore`를 대신하므로 대상 리포가 이 규칙을 켜지 않았어도 검사한다. 대신 base 설정의 `per-file-ignores`, `exclude`, `# noqa`, 규칙 옵션(`lint.pylint.allow-magic-value-types` 등)은 그대로 따른다. 팀이 특정 경로나 줄에서 일부러 끈 것은 존중하고, 규칙 자체를 끄려면 `.pipeline.yaml`의 `skills.enabled`에서 `static`을 뺀다. 문법 오류 등 다른 코드는 lint가 알리므로 버린다. ruff가 검사하지 못하면 static 결과 전체가 "검사하지 못함"이다. 출처는 "기본 규칙".
+- **반복 리터럴 (`STATIC-REPEAT`):** 같은 리터럴(타입과 값이 같은 문자열·bytes·숫자, `-5`처럼 부호 붙은 숫자 포함)이 파일 안에서 `skills.static.min_repeats`(기본 3, 2 미만은 오류)번 이상 나오고, 그중 하나라도 PR이 바꾼 줄에 있으면 리터럴마다 하나, PR이 바꾼 첫 줄에 단다. 세지 않는 것: 독스트링과 식으로만 쓰인 문자열, 타입 주석과 `Literal[...]`(첨자 전체), 대문자 이름 상수의 정의 값(`TIMEOUT: Final = 30`의 30), `__all__`, dict 리터럴의 키, 첨자(`data["id"]`, `row[2]`), f-string 안, `None`·`True`·`False`·`...`, `0`·`1`·`-1`, 2자 미만 문자열(`""`, `","`, `"\n"`), `"__main__"`. 메시지에는 줄 번호와 횟수를 넣지 않는다(수정 전후 비교에서 줄이 밀려도 같은 위반). 출처는 `.pipeline.yaml`에 값이 있으면 `.pipeline.yaml`, 없으면 "기본 규칙".
+- **모듈 수준 가변 상태 (`STATIC-MUTABLE`):** 모듈 최상위(if·try·with 블록 포함)에서 가변 값(list·dict·set 리터럴과 컴프리헨션, `list()`·`dict()`·`set()`·`bytearray()`·`defaultdict()`·`OrderedDict()`·`Counter()`·`deque()`·`ChainMap()` 호출)을 받은 이름을 **함수 안에서 바꿀 때만** 위반이다. 바꾸는 것: 바꾸는 메서드 호출(`append`·`update`·`setdefault`·`pop`·`clear` 등), 첨자 대입·증분 대입·삭제, `global` 선언 뒤 다시 대입. 함수의 인자·지역 대입·import·바깥 함수의 지역 이름이 같은 이름을 가리면 세지 않는다. 모듈 최상위에서 채우는 초기화와 읽기만 하는 상수 dict(`Final[Mapping]` 등)는 위반이 아니다. 대상 리포가 상수로 쓰는 값까지 문제 삼지 않기 위해서다. 이름마다 하나, 정의 줄과 바꾸는 줄 중 PR이 바꾼 첫 줄에 단다. 출처는 "기본 규칙".
+- AST 검사는 호스트에서 `ast.parse`로 읽기만 한다(PR 코드를 실행하지 않는다). 읽거나 파싱하지 못한 파일은 건너뛴다(문법 오류는 lint가 알린다).
+
 **구조 규칙은 대상 리포에서 읽는다.** MVC 같은 특정 패턴을 강제하지 않는다. 대상 리포의 README와 실제 파일 구조가 기준이다.
 
 | 순위 | 출처 | 얻는 규칙 | 방법 |
