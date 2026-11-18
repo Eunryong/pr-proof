@@ -10,6 +10,7 @@ from typing import Final, Literal
 
 from app.models.finding import SkillResult
 from app.models.fix import FixBlocker, FixOutcome
+from app.models.proposal import ProposalResult
 from app.models.test_run import PytestRun
 from app.sandbox.docker_cli import MEMORY_LIMIT_GB
 from app.worker.base_config import PIPELINE_YAML, BaseConfig
@@ -20,7 +21,8 @@ MAX_OUTPUT_CHARS: Final = 1500
 MAX_PATCH_CHARS: Final = 6000
 
 # 코멘트 node가 정하는 수정 제안 상태: 승인 대기, 승인 없이 바로 수정, 또는 제안하지 않는 이유
-Proposal = Literal["approval", "auto"] | FixBlocker
+# merged: 제안을 머지해 생긴 커밋, rejected: 이 커밋의 제안이 거절됨 (다시 제안하지 않음)
+Proposal = Literal["approval", "auto", "merged", "rejected"] | FixBlocker
 FIX_COMMAND: Final = "/fix lint"
 _FIX_STATUS_TEXT: Final[Mapping[str, str]] = {
     "nothing_fixed": "적용할 수 있는 수정이 없음",
@@ -136,6 +138,10 @@ def proposal_suffix(proposal: Proposal | None) -> str:
 
 
 def proposal_details(proposal: Proposal | None, run: PytestRun) -> list[str]:
+    if proposal == "merged":
+        return ["", "이 커밋은 lint 제안 PR을 머지한 결과라 같은 제안을 다시 만들지 않습니다."]
+    if proposal == "rejected":
+        return ["", "이 커밋의 lint 제안 PR이 머지되지 않고 닫혀 다시 제안하지 않습니다."]
     if proposal == "tests":
         return [
             "",
@@ -150,7 +156,16 @@ def proposal_details(proposal: Proposal | None, run: PytestRun) -> list[str]:
     return []
 
 
-def fix_section(fix: FixOutcome) -> list[str]:
+def proposal_line(result: ProposalResult | None) -> str:
+    if result is None:
+        return ""
+    if result.number is not None:
+        verb = "갱신했습니다" if result.updated else "열었습니다"
+        return f" 제안 PR #{result.number}을 {verb}."
+    return f" 제안 PR을 만들지 않았습니다 ({result.reason})."
+
+
+def fix_section(fix: FixOutcome, result: ProposalResult | None = None) -> list[str]:
     """수정안 결과. 버린 수정안은 이유만 적는다."""
     if not fix.ready:
         reason = _FIX_STATUS_TEXT.get(fix.status, fix.status)
@@ -162,7 +177,7 @@ def fix_section(fix: FixOutcome) -> list[str]:
     what = f"위반 {fix.fixed}건을 고쳤습니다" if fix.fixed else "포맷만 고쳤습니다"
     lines = [
         "",
-        f"**{fix.skill} 수정안:** {what}. 고친 뒤 테스트: {tests}. 제안 PR은 준비 중입니다.",
+        f"**{fix.skill} 수정안:** {what}. 고친 뒤 테스트: {tests}.{proposal_line(result)}",
     ]
     if fix.formatted_files:
         lines.append(f"`ruff format`을 PR이 바꾼 파일 {len(fix.formatted_files)}개에 적용했습니다.")
@@ -256,11 +271,15 @@ def render_result(
     base: BaseConfig | None = None,
     proposal: Proposal | None = None,
     fix: FixOutcome | None = None,
+    proposal_result: ProposalResult | None = None,
     from_sync: bool = False,
 ) -> str:
     memory_gb = base.memory_gb if base else MEMORY_LIMIT_GB
     max_memory_gb = base.max_memory_gb if base else MEMORY_LIMIT_GB
-    extra = fix_section(fix) if fix is not None else proposal_details(proposal, run)
+    if fix is not None:
+        extra = fix_section(fix, proposal_result)
+    else:
+        extra = proposal_details(proposal, run)
     return _compose(
         format_test_line(run, memory_gb),
         format_test_details(run, memory_gb, max_memory_gb),

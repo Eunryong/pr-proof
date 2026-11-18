@@ -132,3 +132,41 @@ def test_base_ahead_counts_only_pr_lines(tmp_path: Path, main_change: dict[str, 
         assert added_lines(repo.working_diff(co.path, co.merge_base)) == pr_only
         # 고치기 전 동작: base의 지금 커밋과 비교하면 main의 변경이 섞인다
         assert added_lines(repo.working_diff(co.path, co.base_sha)) != pr_only
+
+
+def test_commit_and_push_stages_only_allowed_paths(tmp_path: Path, remote: dict) -> None:
+    data = tmp_path / "data"
+    with repo.checkout(data, "o/r", 1, remote["head"], remote["base"], url=remote["url"]) as co:
+        (co.path / "app.py").write_text("X = 3\n")  # 허용: 위반을 고친 파일
+        (co.path / "new.py").write_text("Y = 4\n")  # 바뀌었지만 허용 목록에 없음
+        (co.path / "stray.txt").write_text("test output\n")  # 테스트가 남긴 파일
+        sha = repo.commit_and_push(
+            co.path, ["app.py"], "[pipeline] lint", "pipeline/pr-1-fix-lint",
+            ("me", "42+me@users.noreply.github.com"),
+        )  # fmt: skip
+    pushed = _git(Path(remote["url"]), "rev-parse", "refs/heads/pipeline/pr-1-fix-lint")
+    assert pushed == sha
+    files = _git(Path(remote["url"]), "show", "--name-only", "--format=", sha).split()
+    assert files == ["app.py"]  # .pipeline-out, 다른 파일은 섞이지 않는다
+    author = _git(Path(remote["url"]), "show", "-s", "--format=%an <%ae>", sha)
+    assert author == "me <42+me@users.noreply.github.com>"
+    parent = _git(Path(remote["url"]), "rev-parse", f"{sha}^")
+    assert parent == remote["head"]  # 원본 PR의 커밋 위에 쌓인다
+
+
+def test_commit_ignores_user_hooks(tmp_path: Path, remote: dict, monkeypatch) -> None:
+    """사용자 전역 설정의 훅이 파이프라인 커밋에서 돌지 않는다."""
+    hooks = tmp_path / "hooks"
+    hooks.mkdir()
+    marker = tmp_path / "hook-ran"
+    (hooks / "pre-commit").write_text(f"#!/bin/sh\ntouch {marker}\nexit 1\n")
+    (hooks / "pre-commit").chmod(0o755)
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".gitconfig").write_text(f"[core]\n\thooksPath = {hooks}\n")
+    monkeypatch.setenv("HOME", str(home))
+    data = tmp_path / "data"
+    with repo.checkout(data, "o/r", 1, remote["head"], remote["base"], url=remote["url"]) as co:
+        (co.path / "app.py").write_text("X = 3\n")
+        repo.commit_and_push(co.path, ["app.py"], "m", "pipeline/x", ("me", "me@example.com"))
+    assert not marker.exists()

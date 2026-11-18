@@ -8,7 +8,7 @@ import os
 import shutil
 import subprocess
 import uuid
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -127,6 +127,31 @@ def status(worktree: Path) -> str:
 def head_diff(worktree: Path) -> str:
     """체크아웃한 커밋과 worktree 사이의 diff. 수정안 자체다."""
     return _git("diff", "--no-color", "HEAD", cwd=worktree)
+
+
+# 사용자 전역 git 설정의 서명·훅이 파이프라인 커밋에 끼어들지 않게 한다
+_COMMIT_SAFETY: Final = ("-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null")
+
+
+def commit_and_push(
+    worktree: Path,
+    paths: Sequence[str],
+    message: str,
+    branch: str,
+    author: tuple[str, str],
+) -> str:
+    """허용된 경로만 스테이징해 커밋하고 파이프라인 브랜치로 강제 푸시한다. 커밋 SHA를 돌려준다.
+
+    `git add -A`를 쓰지 않는다. `.pipeline-out/`이나 테스트 산출물이 섞이지 않게 한다 (F10).
+    """
+    name, email = author
+    _git("add", "--", *paths, cwd=worktree)
+    _git(*_COMMIT_SAFETY, "-c", f"user.name={name}", "-c", f"user.email={email}",
+         "commit", "-q", "-m", message, cwd=worktree)  # fmt: skip
+    sha = _git("rev-parse", "HEAD", cwd=worktree).strip()
+    _git(*_COMMIT_SAFETY, "push", "--quiet", "--force", "origin", f"HEAD:refs/heads/{branch}",
+         cwd=worktree)  # fmt: skip
+    return sha
 
 
 def write_changes_diff(worktree: Path, merge_base_sha: str, head_sha: str) -> Path:

@@ -27,9 +27,10 @@ from app.models import fix as fix_rules
 from app.models.finding import SkillResult
 from app.models.fix import FixOutcome
 from app.models.job import PRJob
+from app.models.proposal import ProposalResult
 from app.models.test_run import PytestRun
 from app.sandbox import container, docker_cli, pytest_runner, venv
-from app.worker import base_config, repo, report
+from app.worker import base_config, proposal, repo, report
 from app.worker.base_config import BaseConfig
 from app.worker.github import GitHub
 from app.worker.skills import lint
@@ -49,6 +50,7 @@ _STATE_TYPES: Final = (
     ("app.models.test_run", "PytestRun"),
     ("app.models.test_run", "ReportSummary"),
     ("app.models.fix", "FixOutcome"),
+    ("app.models.proposal", "ProposalResult"),
 )
 
 
@@ -77,6 +79,7 @@ class FlowState(TypedDict, total=False):
     test_run: PytestRun
     commented: bool
     fix: FixOutcome
+    proposal: ProposalResult
     stopped: Literal["stale", "cancelled"]
 
 
@@ -166,10 +169,16 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
         run = tests_for(job)
         return {"test_run": run, **({"stopped": "cancelled"} if run.cancelled else {})}
 
-    def proposal(state: FlowState) -> report.Proposal:
+    def proposal_state(state: FlowState) -> report.Proposal:
         blocker = fix_rules.lint_fix_blocker(state.get("lint"), state["test_run"])
         if blocker is not None:
             return blocker
+        job = state["job"]
+        history = proposal.blocked_by_history(
+            ctx.store, job.repo, job.pr_number, "lint", job.head_sha
+        )
+        if history:
+            return history  # 제안을 머지해 생긴 커밋이거나, 이 커밋의 제안이 거절됐다
         return "approval" if ctx.base.repo.skills.fix.require_approval else "auto"
 
     def comment(state: FlowState) -> FlowState:
@@ -180,7 +189,7 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
             time.monotonic() - ctx.started,
             lint=state["lint"],
             base=ctx.base,
-            proposal=proposal(state),
+            proposal=proposal_state(state),
             from_sync=job.source == "sync",
         )
         ctx.comment_id = ctx.github.upsert_comment(job.repo, job.pr_number, body, ctx.comment_id)
@@ -189,7 +198,7 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
     def after_comment(state: FlowState) -> str:
         if ctx.store.is_stale(state["job"]):
             return END
-        match proposal(state):
+        match proposal_state(state):
             case "approval":
                 return AWAIT_FIX
             case "auto":
@@ -269,6 +278,17 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
         path.write_text(patch)
         return path
 
+    def propose(state: FlowState) -> FlowState:
+        """검증을 통과한 수정안만 제안 PR로 올린다 (F10)."""
+        if not state["fix"].ready:
+            return {}
+        job = state["job"]
+        progress(job, "제안 PR")
+        result = proposal.open_proposal(
+            job, ctx.worktree, ctx.store, ctx.github, state["fix"], state["lint"]
+        )
+        return {"proposal": result}
+
     def fix_comment(state: FlowState) -> FlowState:
         job = state["job"]
         body = report.render_result(
@@ -278,6 +298,7 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
             lint=state["lint"],
             base=ctx.base,
             fix=state["fix"],
+            proposal_result=state.get("proposal"),
             from_sync=job.source == "sync",
         )
         ctx.comment_id = ctx.github.upsert_comment(job.repo, job.pr_number, body, ctx.comment_id)
@@ -295,6 +316,7 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
     graph.add_node("comment", comment)
     graph.add_node(AWAIT_FIX, await_fix)
     graph.add_node(FIX, fix)
+    graph.add_node("propose", propose)
     graph.add_node("fix_comment", fix_comment)
     graph.add_edge(START, "checkout")
     graph.add_conditional_edges("checkout", route, {"next": "lint", "stop": END})
@@ -302,7 +324,8 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
     graph.add_conditional_edges("test", route, {"next": "comment", "stop": END})
     graph.add_conditional_edges("comment", after_comment, [AWAIT_FIX, FIX, END])
     graph.add_edge(AWAIT_FIX, FIX)
-    graph.add_conditional_edges(FIX, route, {"next": "fix_comment", "stop": END})
+    graph.add_conditional_edges(FIX, route, {"next": "propose", "stop": END})
+    graph.add_conditional_edges("propose", route, {"next": "fix_comment", "stop": END})
     graph.add_edge("fix_comment", END)
     return graph.compile(checkpointer=checkpointer)
 

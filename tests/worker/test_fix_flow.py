@@ -50,6 +50,16 @@ def fix_env(env):
         return LintFix(after=after, applied=1, touched_files=("a.py",))
 
     mp.setattr(lint, "fix_lint", fake_fix)
+    pushes: list[dict] = []
+
+    def fake_push(worktree, paths, message, branch, author):
+        pushes.append(
+            {"paths": list(paths), "branch": branch, "author": author, "message": message}
+        )
+        return "f" * 40
+
+    mp.setattr(repo, "commit_and_push", fake_push)
+    state["pushes"] = pushes
     mp.setattr(repo, "status", lambda wt: state["status"])
     mp.setattr(repo, "head_diff", lambda wt: "-import sys\n")
     use_runner(env, lambda *a, **k: PASSED)
@@ -230,3 +240,133 @@ def test_format_skip_reason_is_shown(fix_env) -> None:
         f"`ruff format`은 적용하지 않았습니다 ({lint.BASE_NOT_FORMATTED})"
         in bodies(fix_env["gh"])[-1]
     )
+
+
+# --- 제안 PR (F10) -------------------------------------------------------------------
+
+
+def _open_and_fix(env, comment_id: int = 77) -> str:
+    main.handle(_update(), env["deps"])
+    return main.handle(_fix_command(comment_id), env["deps"])
+
+
+def test_ready_fix_opens_proposal_pr(fix_env) -> None:
+    assert _open_and_fix(fix_env) == "fix:ready"
+    gh, (push,) = fix_env["gh"], fix_env["state"]["pushes"]
+    assert push["paths"] == ["a.py"] and push["branch"] == "pipeline/pr-1-fix-lint"
+    assert push["author"] == ("me", "42+me@users.noreply.github.com")  # 개인 메일을 쓰지 않는다
+    ((number, pull),) = gh.pulls.items()
+    assert (pull["base"], pull["head"]) == ("feature", "pipeline/pr-1-fix-lint")
+    assert pull["title"] == "[pipeline] #1 lint 위반 1건 수정"
+    assert "고친 위반: `F401` 1건" in pull["body"]
+    assert f"제안 PR #{number}을 열었습니다." in bodies(gh)[-1]
+    (record,) = fix_env["deps"].store.proposals("o/r", 1)
+    assert (record.number, record.state, record.head_sha) == (number, "open", HEAD)
+
+
+def test_fork_pr_gets_no_proposal(fix_env) -> None:
+    fix_env["gh"].head_repo = "someone/r"
+    _open_and_fix(fix_env)
+    assert fix_env["state"]["pushes"] == [] and fix_env["gh"].pulls == {}
+    assert "제안 PR을 만들지 않았습니다 (포크에서 온 PR이라" in bodies(fix_env["gh"])[-1]
+
+
+def test_secret_in_fix_blocks_push(fix_env) -> None:
+    fix_env["monkeypatch"].setattr(
+        repo, "head_diff", lambda wt: "+TOKEN = 'ghp_" + "a" * 36 + "'\n"
+    )
+    _open_and_fix(fix_env)
+    assert fix_env["state"]["pushes"] == []
+    body = bodies(fix_env["gh"])[-1]
+    assert "비밀값으로 보이는 내용이 있음 (토큰·키 형식)" in body
+    assert "ghp_" not in body.split("<details>")[0]  # 이유에 값 자체는 쓰지 않는다
+
+
+def test_pipeline_secret_literal_blocks_push(fix_env, tmp_path) -> None:
+    secret_dir = tmp_path / "config"
+    secret_dir.mkdir(exist_ok=True)
+    (secret_dir / "webhook_secret").write_text("s3cret-webhook-value\n")
+    (secret_dir / "webhook_secret").chmod(0o600)
+    fix_env["monkeypatch"].setattr(repo, "head_diff", lambda wt: "+X = 's3cret-webhook-value'\n")
+    _open_and_fix(fix_env)
+    assert fix_env["state"]["pushes"] == []
+    assert "비밀값으로 보이는 내용이 있음 (파이프라인 비밀값)" in bodies(fix_env["gh"])[-1]
+
+
+def test_new_commit_supersedes_open_proposal(fix_env) -> None:
+    _open_and_fix(fix_env)
+    (number,) = fix_env["gh"].pulls
+    fix_env["gh"].head = "c" * 40  # 원본 PR에 새 커밋
+    update = PRJob(
+        repo="o/r", pr_number=1, kind="update", head_sha="c" * 40, base_sha="b" * 40,
+        source="webhook",
+    ).model_dump_json()  # fmt: skip
+    main.handle(update, fix_env["deps"])
+    assert fix_env["gh"].pulls[number]["state"] == "closed"
+    assert fix_env["gh"].deleted_branches == ["pipeline/pr-1-fix-lint"]
+    (record,) = fix_env["deps"].store.proposals("o/r", 1)
+    assert record.state == "superseded"
+
+
+def test_merged_proposal_does_not_loop(fix_env) -> None:
+    """제안을 머지해 생긴 커밋에는 같은 스킬의 제안을 다시 만들지 않는다."""
+    _open_and_fix(fix_env)
+    (number,) = fix_env["gh"].pulls
+    merge = "d" * 40
+    fix_env["gh"].pulls[number].update(state="closed", merged=True, merge_commit=merge)
+    fix_env["gh"].head = merge
+    update = PRJob(
+        repo="o/r", pr_number=1, kind="update", head_sha=merge, base_sha="b" * 40,
+        source="webhook",
+    ).model_dump_json()  # fmt: skip
+    main.handle(update, fix_env["deps"])
+    body = bodies(fix_env["gh"])[-1]
+    assert "자동 수정 가능" not in body
+    assert "lint 제안 PR을 머지한 결과라 같은 제안을 다시 만들지 않습니다" in body
+    (record,) = fix_env["deps"].store.proposals("o/r", 1)
+    assert (record.state, record.merge_commit) == ("merged", merge)
+
+
+def test_rejected_proposal_is_not_offered_again_for_same_commit(fix_env) -> None:
+    _open_and_fix(fix_env)
+    (number,) = fix_env["gh"].pulls
+    fix_env["gh"].pulls[number]["state"] = "closed"  # 작성자가 닫음
+    main.handle(_fix_command(80, "/recheck"), fix_env["deps"])
+    body = bodies(fix_env["gh"])[-1]
+    assert "자동 수정 가능" not in body
+    assert "머지되지 않고 닫혀 다시 제안하지 않습니다" in body
+    assert fix_env["deps"].store.proposals("o/r", 1)[0].state == "rejected"
+
+
+def test_second_fix_on_same_commit_updates_proposal(fix_env) -> None:
+    _open_and_fix(fix_env, 77)
+    main.handle(_fix_command(80, "/recheck"), fix_env["deps"])
+    assert main.handle(_fix_command(81), fix_env["deps"]) == "fix:ready"
+    assert len(fix_env["gh"].pulls) == 1  # 같은 브랜치의 열린 제안을 갱신
+    assert "을 갱신했습니다." in bodies(fix_env["gh"])[-1]
+    assert len(fix_env["deps"].store.proposals("o/r", 1)) == 1
+
+
+def test_closing_original_pr_closes_proposals(fix_env) -> None:
+    _open_and_fix(fix_env)
+    (number,) = fix_env["gh"].pulls
+    close = PRJob(
+        repo="o/r", pr_number=1, kind="close", head_sha=HEAD, base_sha="b" * 40,
+        source="webhook",
+    ).model_dump_json()  # fmt: skip
+    assert main.handle(close, fix_env["deps"]) == "closed:1"
+    assert fix_env["gh"].pulls[number]["state"] == "closed"
+    assert fix_env["gh"].deleted_branches == ["pipeline/pr-1-fix-lint"]
+    assert fix_env["deps"].store.proposals("o/r", 1)[0].state == "closed_with_pr"
+
+
+def test_closing_pr_stops_running_work(fix_env) -> None:
+    from app.models import state_keys
+
+    close = PRJob(
+        repo="o/r", pr_number=1, kind="close", head_sha=HEAD, base_sha="b" * 40,
+        source="webhook",
+    ).model_dump_json()  # fmt: skip
+    main.handle(close, fix_env["deps"])
+    latest = fix_env["redis"].get(state_keys.latest_head("o/r", 1)).decode()
+    assert latest != HEAD  # 실행 중인 작업은 낡은 작업으로 보고 멈춘다

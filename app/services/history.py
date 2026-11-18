@@ -5,7 +5,7 @@ from pathlib import Path
 from sqlalchemy.exc import OperationalError
 from sqlmodel import Session, create_engine, select
 
-from app.models.db import CommandRecord, Run
+from app.models.db import CommandRecord, Proposal, Run
 from app.models.sync_rules import RunSnapshot
 
 
@@ -37,6 +37,20 @@ class History:
             stmt = select(CommandRecord.comment_id).where(
                 CommandRecord.repo == repo, CommandRecord.pr_number == pr_number
             )
+            try:
+                return set(session.exec(stmt))
+            except OperationalError:
+                return set()
+
+    def prs_with_open_proposals(self, repo: str) -> set[int]:
+        """열린 제안 PR이 남아 있는 원본 PR 번호.
+
+        원본이 닫혔는데 close 웹훅을 놓쳤는지 볼 때 쓴다.
+        """
+        if not self.db_path.is_file():
+            return set()
+        with Session(self.engine) as session:
+            stmt = select(Proposal.pr_number).where(Proposal.repo == repo, Proposal.state == "open")
             try:
                 return set(session.exec(stmt))
             except OperationalError:

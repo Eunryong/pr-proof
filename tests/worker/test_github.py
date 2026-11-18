@@ -7,6 +7,8 @@ from app.worker.github import GitHub, GitHubError
 
 
 class FakeGh:
+    """gh 대역. 원본 PR(#1)의 코멘트와 제안 PR(900번대)을 흉내 낸다."""
+
     def __init__(
         self,
         comments: str = "",
@@ -20,16 +22,47 @@ class FakeGh:
         self.head = head  # PR의 지금 head·base (pr_refs)
         self.base = base
         self.state = "open"
+        self.head_ref = "feature"
+        self.head_repo = "o/r"
         self.head_error: str | None = None
+        # 제안 PR: 번호 → {"state", "merged", "merge_commit", "title", "body", "head", "base"}
+        self.pulls: dict[int, dict] = {}
+        self.deleted_branches: list[str] = []
 
     def __call__(self, args: list[str], stdin: str | None) -> str:
         self.calls.append((args, stdin))
+        path = args[1] if len(args) > 1 and not args[1].startswith("-") else ""
+        method = args[args.index("-X") + 1] if "-X" in args else "GET"
+        if "-X" in args:
+            path = args[args.index("-X") + 2]
         if args[:2] == ["api", "user"]:
-            return "me\n"
+            return "42\tme\n" if "[.id, .login] | @tsv" in args else "me\n"
         if _is_head_lookup(args):
             if self.head_error:
                 raise GitHubError(self.head_error)
-            return f"{self.head}\t{self.base}\t{self.state}\n"
+            return f"{self.head}\t{self.base}\t{self.state}\t{self.head_ref}\t{self.head_repo}\n"
+        if path.startswith("repos/o/r/pulls?"):
+            branch = path.split("head=o:")[1]
+            found = [
+                n for n, p in self.pulls.items() if p["head"] == branch and p["state"] == "open"
+            ]
+            return f"{found[0]}\n" if found else ""
+        if path == "repos/o/r/pulls" and method == "POST":
+            number = 900 + len(self.pulls)
+            data = json.loads(stdin)
+            self.pulls[number] = data | {"state": "open", "merged": False, "merge_commit": ""}
+            return f"{number}\n"
+        if path.startswith("repos/o/r/pulls/") and "/pulls/1" != path[-8:]:
+            number = int(path.rsplit("/", 1)[1])
+            pull = self.pulls[number]
+            if method == "PATCH":
+                pull.update(json.loads(stdin))
+                return f"{number}\n"
+            merged = "true" if pull["merged"] else "false"
+            return f"{pull['state']}\t{merged}\t{pull['merge_commit']}\n"
+        if method == "DELETE":
+            self.deleted_branches.append(path.split("refs/heads/")[1])
+            return ""
         if "--paginate" in args:
             return self.comments
         if "PATCH" in args:
@@ -39,13 +72,18 @@ class FakeGh:
         return "555\n"  # 새 코멘트 ID
 
     def kinds(self) -> list[str]:
-        return ["patch" if "PATCH" in a else "find" if "--paginate" in a else "create"
-                for a, _ in self.calls
-                if a[:2] != ["api", "user"] and not _is_head_lookup(a)]  # fmt: skip
+        """원본 PR(#1)의 결과 코멘트에 대한 호출만."""
+        out = []
+        for a, _ in self.calls:
+            joined = " ".join(a)
+            if "issues/1/comments" not in joined and "issues/comments/" not in joined:
+                continue
+            out.append("patch" if "PATCH" in a else "find" if "--paginate" in a else "create")
+        return out
 
 
 def _is_head_lookup(args: list[str]) -> bool:
-    return len(args) > 1 and "/pulls/" in args[1]
+    return len(args) > 1 and "/pulls/" in args[1] and any(".head.sha" in a for a in args)
 
 
 def is_reply(stdin: str | None) -> bool:

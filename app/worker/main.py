@@ -27,7 +27,7 @@ def handle(payload: str, deps: Deps | None = None) -> str:
     elif job.kind == "command":
         result = command.process_command(job, deps)
     else:
-        result = "closed"  # 작업마다 worktree를 지우므로 정리할 것이 없다 (제안 PR 정리는 BACKLOG)
+        result = update.process_close(job, deps)
     deps.store.release(job)
     return result
 
