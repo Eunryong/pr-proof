@@ -40,8 +40,8 @@ _FIX_STATUS_TEXT: Final[Mapping[str, str]] = {
     "secret": "수정안을 버림: 비밀값으로 보이는 내용이 있음",
     "refused": "AI를 실행하지 않음",
 }
-_UNCOVERED: Final = "테스트가 지나가지 않아 자동 수정 대상 아님"
-_UNKNOWN: Final = "커버리지를 알 수 없어 자동 수정 대상 아님"
+_UNCOVERED_SHORT: Final = "테스트가 지나가지 않음"
+_UNKNOWN_SHORT: Final = "커버리지를 알 수 없음"
 VIOLATION: Final = "⚠️"
 CLEAN: Final = "✅"
 
@@ -213,18 +213,28 @@ def proposal_details(
     return []
 
 
-def gate_details(gate: FixGate | None) -> list[str]:
-    """자동 수정 대상이 아닌 위반과 그 이유 (DESIGN.md F8·F9)."""
+def gate_details(gate: FixGate | None, skill: str = "static") -> list[str]:
+    """자동 수정 대상이 아닌 위반은 이유별 개수만, 대신 수정이 실제로 고칠 위반을 적는다 (F8·F9).
+
+    위반 목록은 위에 이미 있으므로 같은 위반을 다시 나열하지 않는다. 대상이 전부면 따로 적지 않는다.
+    """
     if gate is None or not gate.allowed:
         return []
-    items = [(f, _UNCOVERED) for f in gate.uncovered] + [(f, _UNKNOWN) for f in gate.unknown]
-    if not items:
+    reasons = [(len(gate.uncovered), _UNCOVERED_SHORT), (len(gate.unknown), _UNKNOWN_SHORT)]
+    skipped = sum(n for n, _ in reasons)
+    if not skipped:
         return []
-    lines = ["", "자동 수정 대상이 아닌 위반:"]
-    lines += [f"- `{f.file}:{f.line}` `{f.code}` {why}" for f, why in items[:MAX_LISTED_FINDINGS]]
-    hidden = len(items) - MAX_LISTED_FINDINGS
-    if hidden > 0:
-        lines.append(f"- 외 {hidden}건")
+    by_reason = ", ".join(f"{why} {n}건" for n, why in reasons if n)
+    lines = ["", f"자동 수정 대상이 아닌 위반 {skipped}건: {by_reason}"]
+    if gate.fixable:
+        lines += ["", f"`{fix_command(skill)}`이 고칠 위반 {len(gate.fixable)}건:"]
+        lines += [
+            f"- `{f.file}:{f.line}` `{f.code}` {f.message}"
+            for f in gate.fixable[:MAX_LISTED_FINDINGS]
+        ]
+        hidden = len(gate.fixable) - MAX_LISTED_FINDINGS
+        if hidden > 0:
+            lines.append(f"- 외 {hidden}건")
     return lines
 
 

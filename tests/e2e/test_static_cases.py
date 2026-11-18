@@ -35,7 +35,7 @@ REAL_AI_ENV: Final = "PR_PROOF_REAL_AI"
 
 
 def _finding_codes(body: str) -> list[str]:
-    """코멘트의 "<스킬> 위반:" 목록의 규칙 코드. 자동 수정 대상이 아닌 위반 목록은 세지 않는다."""
+    """코멘트의 "<스킬> 위반:" 목록의 규칙 코드. "/fix …이 고칠 위반" 목록은 세지 않는다."""
     codes, listing = [], False
     for line in body.splitlines():
         if line.endswith(" 위반:") and not line.startswith("자동 수정"):
@@ -116,7 +116,7 @@ def test_static_case(case_path: Path, eval_repo: Path, shared_venvs: Path, tmp_p
             assert rules.endswith("자동 수정 가능: `/fix static`"), rules
         case "uncovered":
             assert status == "passed" and "`/fix static`" not in rules
-            assert "테스트가 지나가지 않아 자동 수정 대상 아님" in body
+            assert "자동 수정 대상이 아닌 위반 1건: 테스트가 지나가지 않음 1건" in body
         case "tests":
             assert status == "failed" and "`/fix static`" not in rules
             assert "static 자동 수정을 제안하지 않습니다 (테스트가 실패함)" in body

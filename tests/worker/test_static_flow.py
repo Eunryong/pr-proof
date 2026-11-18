@@ -78,10 +78,10 @@ def test_static_violations_are_shown_and_offered(static_env) -> None:
         in body
     )
     assert "- `src/app.py:3` `PLR2004` Magic value `3`" in body
-    assert (
-        "자동 수정 대상이 아닌 위반:\n- `src/app.py:7` `STATIC-REPEAT` 테스트가 지나가지 않아"
-        in body
-    )
+    # 대상이 아닌 위반은 이유별 개수만, 고칠 위반은 목록으로 (같은 위반을 두 번 적지 않는다)
+    assert "자동 수정 대상이 아닌 위반 1건: 테스트가 지나가지 않음 1건" in body
+    assert "`/fix static`이 고칠 위반 1건:\n- `src/app.py:3` `PLR2004` Magic value `3`" in body
+    assert body.count("STATIC-REPEAT") == 1
     assert "AI가 테스트가 지나가는 static 위반 1건을 고치고" in body
     assert "정적변수 (기본 규칙)" in body
     assert update.has_pending_fix(_target(), static_env["deps"], "static")
@@ -122,7 +122,9 @@ def test_uncovered_only_is_not_offered(static_env) -> None:
     )
     main.handle(_update(), static_env["deps"])
     body = bodies(static_env["gh"])[-1]
-    assert "`/fix static`" not in body and "테스트가 지나가지 않아 자동 수정 대상 아님" in body
+    assert "`/fix static`" not in body
+    assert "자동 수정 대상이 아닌 위반 1건: 테스트가 지나가지 않음 1건" in body
+    assert "이 고칠 위반" not in body  # 고칠 위반이 없으면 목록도 없다
     assert not update.has_pending_fix(_target(), static_env["deps"], "static")
     assert main.handle(_fix_command(77, "/fix static"), static_env["deps"]) == "no_pending_fix"
     assert "승인을 기다리는 static 수정이 없습니다" in _replies(static_env["gh"])[-1]

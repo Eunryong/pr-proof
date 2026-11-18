@@ -198,7 +198,7 @@ def test_real_static_in_sandbox(tmp_path: Path) -> None:
                 "    global COUNT",
                 "    COUNT = 5",
                 "    if a > 42:",
-                '        return "ab"',
+                '        return g("ab")',  # 인자 자리라 센다 (return 값 자리만이면 세지 않는다)
                 '    return "ab" + "ab"',
             ],
             "legacy/old.py": ["def g(a):", "    return a > 42"],
