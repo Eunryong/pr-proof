@@ -1,0 +1,34 @@
+name: print-in-orders
+description: >-
+  "`orders/` 아래 모듈은 `print`를 쓰지 않는다." 규칙. PR이 orders/services에 넣은 print는 잡히고,
+  orders/ 밖(scripts/)의 print는 잡히지 않는다. 같은 base의 두 번째 PR은 규칙 읽기와 검사기 작성의
+  모델 호출이 0이다.
+pr:
+  - file: orders/services/pricing.py
+    find: "def discount(order: Order) -> int:\n"
+    replace: "def discount(order: Order) -> int:\n    print(\"coupon\", order.coupon_percent)\n"
+  - file: scripts/report.py
+    create: "def main():\n    print(\"report\")\n"
+model:
+  rules:
+    - section: 코드 규칙 > 출력
+      quote: "`orders/` 아래 모듈은 `print`를 쓰지 않는다."
+      scope: ["orders/**"]
+      checker:
+        body: |
+          id: no-print
+          language: python
+          severity: error
+          message: orders/ 아래 모듈은 print를 쓰지 않는다
+          rule:
+            pattern: print($$$ARGS)
+        examples:
+          - {code: "print(1)\n", violates: true, lines: [1]}
+          - {code: "def f(o):\n    print('o', o)\n", violates: true, lines: [2]}
+          - {code: "logger.info('x')\n", violates: false, lines: []}
+          - {code: "pprint_name = 1\n", violates: false, lines: []}
+expect:
+  violations: ["orders/services/pricing.py:13"]
+  not_flagged: ["scripts/report.py:2"]
+  contains: ["출처: `README.md > 코드 규칙 > 출력`"]
+  second_pr_without_calls: true

@@ -25,7 +25,7 @@ from app.models.doc_rules import (
 from app.models.job import PRJob
 from app.models.repo_config import CallSettings, ModelSettings, RepoConfig, RulesSettings
 from app.models.rule import CheckMethod, Rule, RuleSource, rule_id
-from app.sandbox import checker_runner
+from app.sandbox import checker_runner, toolcache
 from app.sandbox.checker_runner import CheckerRun, Match, Ran
 from app.sandbox.docker_cli import SandboxError
 from app.sandbox.venv import DependencyInstallError
@@ -37,6 +37,7 @@ from .helpers import BASE, PASSED, bodies, use_runner
 
 REAL_CHECKOUT: Final = repo.checkout
 REAL_ENTRIES: Final = repo.list_base_entries
+REAL_SANDBOX_FOR: Final = doc_rules.sandbox_for
 PRINT_RULE: Final = "`orders/` 아래 모듈은 `print`를 쓰지 않는다."
 README: Final = f"# demo\n\n## 코드 규칙\n\n### 출력\n\n- {PRINT_RULE}\n"
 SECTION: Final = "코드 규칙 > 출력"
@@ -385,3 +386,47 @@ def test_source_only_dependency_makes_tests_unrunnable_and_keeps_rules(doc_env, 
     assert ("**테스트:** 실행 불가 (의존성을 설치하지 못함: 소스 배포본만 있는 패키지 `docopt`. "
             "wheel만 설치합니다)") in body  # fmt: skip
     assert "**문서 규칙:** ⚠️ 위반 1건 (규칙 1개)" in body and "```yaml" in body
+
+
+@pytest.mark.parametrize(
+    ("base", "answer"),
+    [
+        ({"orders/a.py": "x = 1\n"}, rule_answer()),
+        (BASE_FILES, rule_answer(print_rule(check="none", reason="사람이 판단할 규칙"))),
+    ],
+    ids=["no-rule-documents", "no-rule-needs-a-checker"],
+)
+def test_ast_grep_is_not_fetched_without_rules_that_need_a_checker(
+    doc_env, tmp_path: Path, base: dict, answer: StructuredResult
+) -> None:
+    doc_env["monkeypatch"].setattr(doc_rules, "sandbox_for", REAL_SANDBOX_FOR)
+    doc_env["monkeypatch"].setattr(
+        toolcache, "ensure", lambda *a, **k: pytest.fail("ast-grep을 받으면 안 된다")
+    )
+    use_model(doc_env, FakeModel(answer))
+    state = check(doc_env, tmp_path, base, PR_FILES)
+    assert not isinstance(state["doc_rules"], NotRun)
+
+
+def test_changed_sentence_on_base_reauthors_only_that_rule(doc_env, tmp_path: Path) -> None:
+    quotes = [line[2:] for line in THREE_RULES.splitlines()][:2]
+    readme = f"# demo\n\n## 코드 규칙\n\n### 출력\n\n- {quotes[0]}\n- {quotes[1]}\n"
+    model = use_model(doc_env, FakeModel(rule_answer(*(print_rule(quote=q) for q in quotes))))
+    check(doc_env, tmp_path, {**BASE_FILES, "README.md": readme}, PR_FILES)
+
+    edited = quotes[1].replace("`pprint`도", "`pprint`와 `pp`도")
+    model.rules = rule_answer(print_rule(quote=quotes[0]), print_rule(quote=edited))
+    readme = readme.replace(quotes[1], edited)
+    found = check(doc_env, tmp_path, {**BASE_FILES, "README.md": readme}, PR_FILES, pr_number=2)[
+        "doc_rules"
+    ]
+    assert [kind for kind, _ in model.prompts] == [
+        "rules",
+        "checker",
+        "checker",
+        "rules",
+        "checker",
+    ]
+    (checker_prompt,) = [p for kind, p in model.prompts[3:] if kind == "checker"]
+    assert edited in checker_prompt
+    assert [o.checker.cached for o in found.outcomes] == [True, False]
