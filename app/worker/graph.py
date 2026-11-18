@@ -408,6 +408,8 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
             fixes=state.get("fixes"),
             proposal_results=state.get("proposals"),
             from_sync=job.source == "sync",
+            doc_rules=state.get("doc_rules"),
+            checkers=doc_rules.shown_checkers(state.get("doc_rules"), ctx.store),
         )
 
     def comment(state: FlowState) -> FlowState:

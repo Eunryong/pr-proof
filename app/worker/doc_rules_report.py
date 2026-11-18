@@ -1,0 +1,281 @@
+"""결과 코멘트의 "문서 규칙" 절 (docs/DESIGN.md 4.9, 9.4, 13절 1단계). 판정을 새로 내지 않는다.
+
+`DocRules` 값 하나와, 위반을 찾은 검사기의 본문(`checkers` 테이블에서 읽은 것)만 받는다. 규칙의
+인용, 문서의 절 이름, 파일 경로, 검사기 본문과 예시, 실패 이유는 모두 믿지 않는 글이라 코드
+스팬이나 코드 울타리 안에만 넣는다 (worker/markdown.py).
+"""
+
+from collections import Counter
+from collections.abc import Mapping, Sequence
+from typing import Final
+
+from app.models.checker import Checker
+from app.models.doc_rules import (
+    CallUsage,
+    DocRules,
+    Found,
+    NoRuleDocs,
+    NoRulesFound,
+    NotRun,
+    RuleChecked,
+    RuleOutcome,
+    RuleUnchecked,
+)
+from app.models.rule import Rule
+from app.worker.markdown import code_fence, inline_code
+
+TITLE: Final = "**문서 규칙:**"
+VIOLATION: Final = "⚠️"
+CLEAN: Final = "✅"
+NO_RULES: Final = "규칙을 찾지 못해 규칙 검사를 하지 않음"
+HOW_TO_WRITE: Final = (
+    "규칙 문서(기본은 `README.md`, `CONTRIBUTING.md`)에 `## 코드 규칙` 같은 절을 두고 규칙을 "
+    "한 문장씩 적으면 다음 검사부터 그 규칙으로 검사합니다. "
+    '예: "`orders/` 아래 모듈은 `print`를 쓰지 않는다." '
+    "다른 문서에 적었으면 base 브랜치 `.pipeline.yaml`의 `rules.docs`에 그 경로를 적으세요."
+)
+HOW_TO_CORRECT: Final = (
+    "규칙 해석이 틀렸으면 README의 그 문장을 고치거나 "
+    "`.pipeline.yaml`의 `rules.disabled`에 규칙 id를 적으세요."
+)
+MAX_LISTED_VIOLATIONS: Final = 30
+MAX_LISTED_RULES: Final = 60
+MAX_CHECKER_DETAILS: Final = 10
+MAX_BODY_CHARS: Final = 4000
+MAX_QUOTE_CHARS: Final = 500
+MAX_DETAIL_CHARS: Final = 300
+# 절 전체의 상한. GitHub 코멘트 한도(65536자)에서 v1 절(패치 6000자 둘 포함)을 빼고도 남게
+MAX_SECTION_CHARS: Final = 30_000
+OMITTED: Final = "… (코멘트 길이 제한으로 나머지를 생략)"
+
+_UNCHECKED_TEXT: Final[Mapping[str, str]] = {
+    "not_code": "검사 대상 아님",
+    "no_checker": "읽었지만 아직 검사하지 못함",
+    "cap": "호출 상한에 걸려 이번에 처리하지 못함",
+    "model_failed": "검사하지 못함 (모델 호출 실패)",
+    "tool_unavailable": "검사하지 못함 (도구 준비 실패)",
+    "run_failed": "검사하지 못함 (검사기 실행 실패)",
+}
+_FAILED_KINDS: Final = frozenset({"model_failed", "tool_unavailable", "run_failed"})
+
+
+def section(result: DocRules | None, checkers: Mapping[str, Checker]) -> list[str]:
+    """ "문서 규칙" 절의 줄들. checkers는 위반을 찾은 검사기의 {CheckerRef.key: 검사기}다."""
+    match result:
+        case None:
+            return []
+        case NotRun(reason=reason):
+            return ["", f"{TITLE} 검사하지 못함 ({inline_code(reason, MAX_DETAIL_CHARS)})"]
+        case NoRuleDocs(unread=unread):
+            lines = ["", f"{TITLE} {NO_RULES}", "", HOW_TO_WRITE]
+            if unread:
+                lines += ["", "읽지 못한 규칙 문서:"]
+                lines += [f"- {inline_code(d.path)}: {inline_code(d.reason)}" for d in unread]
+            return lines
+        case NoRulesFound():
+            return ["", f"{TITLE} {NO_RULES}", "", HOW_TO_WRITE]
+        case Found():
+            return _found(result, checkers)
+
+
+def _found(found: Found, checkers: Mapping[str, Checker]) -> list[str]:
+    head = ["", f"{TITLE} {_title_line(found)}"]
+    tail = ["", usage_line(found.usage), "", HOW_TO_CORRECT]
+    blocks = [
+        _violations(found),
+        _not_checkable(found.outcomes),
+        _failed(found.outcomes),
+        _capped(found.outcomes),
+        _checker_details(found, checkers),
+        _read_rules(found),
+    ]
+    budget = MAX_SECTION_CHARS - _size(head) - _size(tail)
+    return head + _fit(blocks, budget) + tail
+
+
+def _title_line(found: Found) -> str:
+    checked = sum(1 for o in found.outcomes if isinstance(o, RuleChecked))
+    unchecked = len(found.outcomes) - checked
+    if found.violations:
+        rules = len({v.rule_id for v in found.violations})
+        line = f"{VIOLATION} 위반 {len(found.violations)}건 (규칙 {rules}개)"
+    elif checked:
+        line = f"{CLEAN} 위반 없음 (규칙 {checked}개 검사)"
+    else:
+        line = f"검사한 규칙 없음 (읽은 규칙 {len(found.outcomes)}개)"
+    if unchecked and (found.violations or checked):
+        line += f" · 검사하지 못한 규칙 {unchecked}개"
+    if found.disabled:
+        line += f" · `rules.disabled`로 끈 규칙 {found.disabled}개"
+    return line
+
+
+def usage_line(usage: CallUsage) -> str:
+    """이번 검사의 모델 호출 (9.4). 달러는 쓰지 않는다 (구독 로그인)."""
+    line = f"모델 호출 {usage.calls}회 / 상한 {usage.limit}회 (규칙 읽기와 검사기 작성)"
+    if usage.models:
+        line += f" · {', '.join(inline_code(m, 80) for m in usage.models)}"
+    line += f" · 저장된 결과 {usage.cache_hits}건 사용"
+    if usage.calls:
+        line += f" · 토큰 입력 {usage.input_tokens}, 출력 {usage.output_tokens}"
+    return line
+
+
+def _source(rule: Rule) -> str:
+    source = rule.source
+    where = f"{source.file} > {source.section}" if source.section else source.file
+    return inline_code(where, 200)
+
+
+def _quote(rule: Rule) -> str:
+    return inline_code(rule.text, MAX_QUOTE_CHARS)
+
+
+def _how_checked(outcome: RuleOutcome) -> str:
+    if isinstance(outcome, RuleChecked):
+        ref = outcome.checker
+        saved = ", 저장된 것" if ref.cached else ""
+        return f"검사기 `{ref.id[:8]}` ({ref.kind}{saved})"
+    return _UNCHECKED_TEXT[outcome.kind]
+
+
+def _violations(found: Found) -> list[str]:
+    if not found.violations:
+        return []
+    by_rule = {o.rule.id: o for o in found.outcomes}
+    lines = ["", "위반:"]
+    for v in found.violations[:MAX_LISTED_VIOLATIONS]:
+        outcome = by_rule[v.rule_id]
+        lines += [
+            f"- {inline_code(f'{v.file}:{v.line}', 200)} `{v.rule_id}` {_quote(outcome.rule)}",
+            f"  출처: {_source(outcome.rule)} · {_how_checked(outcome)}",
+        ]
+    hidden = len(found.violations) - MAX_LISTED_VIOLATIONS
+    if hidden > 0:
+        lines.append(f"- 외 {hidden}건")
+    return lines
+
+
+def _rule_lines(outcomes: Sequence[RuleUnchecked], *, detail: bool) -> list[str]:
+    lines = []
+    for o in outcomes:
+        line = f"- `{o.rule.id}` {_quote(o.rule)}"
+        if detail and o.detail:
+            line += f" · {inline_code(o.detail, MAX_DETAIL_CHARS)}"
+        lines.append(line)
+    return lines
+
+
+def _unchecked(outcomes: Sequence[RuleOutcome], kinds: frozenset[str]) -> list[RuleUnchecked]:
+    return [o for o in outcomes if isinstance(o, RuleUnchecked) and o.kind in kinds]
+
+
+def _not_checkable(outcomes: Sequence[RuleOutcome]) -> list[str]:
+    rules = _unchecked(outcomes, frozenset({"no_checker"}))
+    if not rules:
+        return []
+    head = f"읽었지만 아직 검사하지 못하는 규칙 {len(rules)}개 (예시를 통과하는 검사기가 없음):"
+    return ["", head, *_rule_lines(rules, detail=True)]
+
+
+def _failed(outcomes: Sequence[RuleOutcome]) -> list[str]:
+    rules = _unchecked(outcomes, _FAILED_KINDS)
+    if not rules:
+        return []
+    counts = Counter(_UNCHECKED_TEXT[o.kind] for o in rules)
+    why = ", ".join(f"{text} {n}개" for text, n in counts.items())
+    return ["", f"이번 검사에서 검사하지 못한 규칙 {len(rules)}개 ({why}):",
+            *_rule_lines(rules, detail=True)]  # fmt: skip
+
+
+def _capped(outcomes: Sequence[RuleOutcome]) -> list[str]:
+    rules = _unchecked(outcomes, frozenset({"cap"}))
+    if not rules:
+        return []
+    return [
+        "",
+        f"모델 호출 상한에 걸려 처리하지 못함: 검사기 작성 {len(rules)}개 규칙 "
+        f"({inline_code(rules[0].detail, MAX_DETAIL_CHARS)}). "
+        "다음 검사(새 커밋이나 `/recheck`)가 남은 규칙부터 이어서 합니다.",
+    ]
+
+
+def _checker_details(found: Found, checkers: Mapping[str, Checker]) -> list[str]:
+    """이번 검사에서 위반을 찾은 검사기의 본문과 모델이 쓴 예시 (접힘)."""
+    found_by = {v.rule_id for v in found.violations}
+    shown = [
+        o for o in found.outcomes
+        if isinstance(o, RuleChecked) and o.rule.id in found_by and o.checker.key in checkers
+    ]  # fmt: skip
+    lines: list[str] = []
+    for o in shown[:MAX_CHECKER_DETAILS]:
+        checker = checkers[o.checker.key]
+        lines += _checker_block(o.rule, checker)
+    return lines
+
+
+def _checker_block(rule: Rule, checker: Checker) -> list[str]:
+    body = checker.body.rstrip("\n")
+    if len(body) > MAX_BODY_CHARS:
+        body = body[:MAX_BODY_CHARS] + "\n… (생략)"
+    language = "yaml" if checker.kind == "ast-grep" else "python"
+    fence = code_fence(body)
+    lines = [
+        "",
+        f"<details><summary>모델이 쓴 검사기 <code>{checker.id[:8]}</code> ({checker.kind}), "
+        f"규칙 <code>{rule.id}</code></summary>",
+        "",
+    ]
+    if checker.model:
+        lines += [f"작성한 모델: {inline_code(checker.model, 80)}", ""]
+    lines += [
+        f"{fence}{language}",
+        body,
+        fence,
+    ]
+    by_model = [e for e in checker.examples if e.written_by == "model"]
+    from_doc = len(checker.examples) - len(by_model)
+    lines += ["", f"예시: 문서 {from_doc}개, 모델이 쓴 것 {len(by_model)}개"]
+    for e in by_model:
+        kind = f"위반 (줄 {', '.join(map(str, e.expect_lines))})" if e.expect_lines else "정상"
+        example_fence = code_fence(e.code)
+        lines += ["", f"모델이 쓴 예시, {kind}:", "", f"{example_fence}python", e.code.rstrip("\n"),
+                  example_fence]  # fmt: skip
+    return [*lines, "", "</details>"]
+
+
+def _read_rules(found: Found) -> list[str]:
+    if not found.outcomes:
+        return []
+    lines = ["", f"<details><summary>읽은 규칙 {len(found.outcomes)}개</summary>", ""]
+    for o in found.outcomes[:MAX_LISTED_RULES]:
+        rule = o.rule
+        scope = ", ".join(inline_code(p, 100) for p in rule.scope) if rule.scope else "저장소 전체"
+        lines += [
+            f"- `{rule.id}` {_quote(rule)}",
+            f"  출처: {_source(rule)} · 범위: {scope} · 확인: {_how_checked(o)}",
+        ]
+        if rule.exclude:
+            globs = ", ".join(inline_code(p, 100) for p in rule.exclude)
+            line = f"  범위 추정: {globs} 제외 (문서에 범위 없음)"
+            if rule.exclude_reason:
+                line += f" · {inline_code(rule.exclude_reason, MAX_DETAIL_CHARS)}"
+            lines.append(line)
+    hidden = len(found.outcomes) - MAX_LISTED_RULES
+    if hidden > 0:
+        lines.append(f"- 외 {hidden}개")
+    return [*lines, "", "</details>"]
+
+
+def _size(lines: Sequence[str]) -> int:
+    return sum(len(line) + 1 for line in lines)
+
+
+def _fit(blocks: Sequence[list[str]], budget: int) -> list[str]:
+    """앞의 블록부터 budget 안에 드는 것만 넣는다. 넘치면 생략 표시를 남기고 멈춘다."""
+    out: list[str] = []
+    for block in blocks:
+        if _size(out) + _size(block) > budget:
+            return [*out, "", OMITTED]
+        out += block
+    return out

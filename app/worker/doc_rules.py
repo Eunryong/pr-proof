@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from app.models.call_budget import RulesetScope, limits_for
+from app.models.checker import Checker
 from app.models.checker_authoring import (
     Checked,
     RuleCheck,
@@ -139,6 +140,20 @@ def _saved_check(outcome: RuleOutcome, store: Store) -> RuleCheck:
     if entry is None or entry.checker_json is None:
         return Unchecked(outcome.rule, "run_failed", "저장한 검사기를 찾지 못함")
     return Checked(outcome.rule, checker_from_json(entry.checker_json), outcome.checker.cached)
+
+
+def shown_checkers(result: DocRules | None, store: Store) -> dict[str, Checker]:
+    """코멘트에 본문을 보일 검사기: 이번 검사에서 위반을 찾은 것 (4.9). {CheckerRef.key: 검사기}."""
+    if not isinstance(result, Found):
+        return {}
+    found_by = {v.rule_id for v in result.violations}
+    out = {}
+    for o in result.outcomes:
+        if isinstance(o, RuleChecked) and o.rule.id in found_by:
+            entry = store.saved_checker(o.checker.key)
+            if entry is not None and entry.checker_json is not None:
+                out[o.checker.key] = checker_from_json(entry.checker_json)
+    return out
 
 
 def last_call_id(store: Store, repo: str, pr_number: int) -> int:

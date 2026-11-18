@@ -32,7 +32,7 @@ from app.worker import base_config, doc_rules, graph, repo, update
 from app.worker.ai import claude_cli
 from app.worker.ai.claude_cli import AIErrorKind, StructuredResult
 
-from .helpers import BASE, PASSED, use_runner
+from .helpers import BASE, PASSED, bodies, use_runner
 
 REAL_CHECKOUT: Final = repo.checkout
 REAL_ENTRIES: Final = repo.list_base_entries
@@ -307,3 +307,60 @@ def test_doc_rules_state_survives_checkpoint() -> None:
     restored = serde.loads_typed(serde.dumps_typed({"doc_rules": found}))["doc_rules"]
     (outcome,) = restored.outcomes
     assert isinstance(outcome.rule.source, RuleSource) and outcome.rule.exclude == ["tests/**"]
+
+
+def _last_comment(env) -> str:
+    return bodies(env["gh"])[-1]
+
+
+def test_comment_shows_rules_violations_and_checker(doc_env, tmp_path: Path) -> None:
+    use_model(doc_env, FakeModel(rule_answer(print_rule())))
+    check(doc_env, tmp_path, BASE_FILES, PR_FILES)
+    body = _last_comment(doc_env)
+    assert "**문서 규칙:** ⚠️ 위반 1건 (규칙 1개)" in body
+    rid = rule_id("README.md", PRINT_RULE)
+    assert f"- `orders/a.py:2` `{rid}` `` {PRINT_RULE} ``" in body
+    assert "  출처: `README.md > 코드 규칙 > 출력` · 검사기 `" in body
+    assert (
+        "<details><summary>모델이 쓴 검사기 <code>" in body and "```yaml\ngrep:print(\n```" in body
+    )
+    assert "예시: 문서 0개, 모델이 쓴 것 4개" in body and "모델이 쓴 예시, 위반 (줄 1):" in body
+    assert "<details><summary>읽은 규칙 1개</summary>" in body
+    assert "모델 호출 2회 / 상한 14회 (규칙 읽기와 검사기 작성)" in body
+    assert "`rules.disabled`에 규칙 id를 적으세요." in body
+    assert "**규칙:** ⚠️ 위반 1건 (lint 1)" in body  # v1 절은 그대로
+
+
+def test_comment_for_base_without_rules_explains_how_to_write_them(doc_env, tmp_path) -> None:
+    use_model(doc_env, FakeModel(rule_answer()))
+    check(doc_env, tmp_path, {"orders/a.py": "x = 1\n"}, PR_FILES)
+    body = _last_comment(doc_env)
+    assert "**문서 규칙:** 규칙을 찾지 못해 규칙 검사를 하지 않음" in body
+    assert "`## 코드 규칙` 같은 절을 두고 규칙을 한 문장씩 적으면" in body
+
+
+THREE_RULES: Final = (
+    "- `orders/` 아래 모듈은 `print`를 쓰지 않는다.\n"
+    "- `orders/` 아래 모듈은 `pprint`도 쓰지 않는다.\n"
+    "- `orders/` 아래 모듈은 `breakpoint`를 남기지 않는다.\n"
+)
+
+
+def test_ruleset_cap_stops_authoring_and_next_check_continues(doc_env, tmp_path: Path) -> None:
+    quotes = [line[2:] for line in THREE_RULES.splitlines()]
+    model = use_model(doc_env, FakeModel(rule_answer(*(print_rule(quote=q) for q in quotes))))
+    readme = f"# demo\n\n## 코드 규칙\n\n### 출력\n\n{THREE_RULES}"
+    use_config(doc_env, RepoConfig(model=ModelSettings(calls=CallSettings(ruleset_max=3))))
+    found = check(doc_env, tmp_path, {**BASE_FILES, "README.md": readme}, PR_FILES)["doc_rules"]
+    assert [o.kind for o in found.outcomes if isinstance(o, RuleUnchecked)] == ["cap"]
+    assert "모델 호출 상한에 걸려 처리하지 못함: 검사기 작성 1개 규칙" in _last_comment(doc_env)
+    assert "남은 규칙부터 이어서 합니다" in _last_comment(doc_env)
+
+    # 운영자가 상한을 올리면 다음 검사는 남은 규칙만 작성한다 (작성한 둘은 저장된 것을 쓴다)
+    use_config(doc_env, RepoConfig(model=ModelSettings(calls=CallSettings(ruleset_max=4))))
+    found = check(doc_env, tmp_path, {**BASE_FILES, "README.md": readme}, PR_FILES, pr_number=2)[
+        "doc_rules"
+    ]
+    assert all(isinstance(o, RuleChecked) for o in found.outcomes)
+    assert [kind for kind, _ in model.prompts] == ["rules", "checker", "checker", "checker"]
+    assert found.usage.calls == 1 and found.usage.cache_hits == 3
