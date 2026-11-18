@@ -367,7 +367,7 @@ SKILLS = {"lint": run_lint, "static": run_static, "structure": run_structure}
 - `[pipeline]` 커밋으로 올리고, 원본 PR 브랜치를 base로 PR을 연다 (`gh api repos/{repo}/pulls`). 같은 브랜치의 열린 제안이 있으면 강제 푸시하고 제목·본문을 고친다.
 - 커밋 작성자는 로그인한 계정 이름과 GitHub noreply 주소(`{id}+{login}@users.noreply.github.com`)다. 사용자 전역 git 설정의 서명·훅은 끈다(`commit.gpgsign=false`, `core.hooksPath=/dev/null`).
 - 포크에서 온 PR은 원본 리포에 base가 될 브랜치가 없어 제안 PR을 열지 않고, 코멘트의 수정 내용만 남긴다.
-- 상한은 바뀐 파일 20개, 바뀐 줄 500줄이다. 비밀값 검사는 diff의 추가된 줄에서 토큰·키 형식(GitHub·Slack·AWS·Anthropic 토큰, 개인키 헤더)과 파이프라인의 웹훅 시크릿을 찾는다. 걸리면 올리지 않고 이유(종류만, 값은 쓰지 않음)를 코멘트에 적는다.
+- 상한은 바뀐 파일 20개, 바뀐 줄 500줄이다. 비밀값 검사는 diff의 추가된 줄에서 토큰·키 형식(GitHub·Slack·AWS·Anthropic 토큰, 개인키 헤더)과 파이프라인의 웹훅 시크릿을 찾는다. 걸리면 올리지 않고 이유(종류만, 값은 쓰지 않음)를 코멘트에 적는다. 3단계부터 AI가 쓴 텍스트(변경 설명)도 같은 검사(`models/proposal.py`의 `find_secret`, 같은 패턴과 파이프라인 비밀값)를 거친다. 검사 대상은 제안 PR의 제목·본문·커밋 메시지와 수정 코멘트에 들어가는 AI 텍스트 전부다. 설명에서 걸리면 diff가 깨끗해도 제안 전체를 올리지 않는다. AI가 비밀값을 읽었다는 뜻이라 수정안도 믿을 수 없다.
 - **머지 여부는 커밋 메시지가 아니라 GitHub에서 확인한다.** merge commit은 리뷰어 이름의 `Merge pull request ...` 커밋이 되고, squash·rebase 머지는 SHA가 새로 만들어져 메시지나 조상 관계로는 알 수 없다. `proposals`에 저장한 제안 PR 번호로 머지 여부와 머지 커밋 SHA를 조회해(`gh pr view --json state,mergeCommit`) 원본 PR의 head와 비교한다.
 - 커밋할 때는 허용된 경로만 지정해서 스테이징한다. `git add -A`를 쓰지 않는다. `.pipeline-out/` 같은 산출물이 제안 PR에 섞이지 않게 한다.
 - 본문: 해소한 위반과 규칙의 출처, 바꾼 이유, 테스트 결과.
@@ -576,7 +576,7 @@ echo "$PROMPT" | claude -p \
 - 그래도 PR의 `CLAUDE.md`는 worktree 안의 파일이라 AI가 Read로 읽을 수 있다. 이 경우 다른 PR 파일에 심은 지시문과 같고, 막는 것은 경로 제한(밖을 읽지 못함)과 실행 후 허용 범위 검사(밖에 쓴 것을 버림)다. 지시문이 바꿀 수 있는 것은 허용 범위 안의 수정 내용뿐이고 그것은 결정적 검증과 리뷰어 승인을 거친다. CLI가 바뀌어 `CLAUDE.md`를 읽게 되면 `--safe-mode`(CLAUDE.md·skills·hooks 등 사용자 설정을 끔, 로그인은 그대로)를 더하는 것을 검토한다. 지금은 확인하지 않은 옵션이라 넣지 않는다. `--bare`는 OAuth 로그인을 읽지 않아 쓸 수 없다.
 - 예산 초과 시의 JSON(`subtype`)은 실제로 확인하지 않았다. `subtype`에 `budget`이 들어 있으면 `budget`으로 본다.
 - 실행 후 `git status --porcelain=v1 -z --untracked-files=all`로 허용 범위(F7) 밖의 변경을 확인해 있으면 버린다. 새 파일, 삭제, 이름 변경, 심볼릭 링크도 확인한다. 무시된 파일은 AI 실행 직전 스냅샷(`--ignored=traditional`)과 비교해 새로 생긴 것만 잡는다 (F7 범위 검사 방법·무시된 파일).
-- **푸시 전 비밀값 검사:** 제안 PR의 diff에 파이프라인이 가진 비밀값(웹훅 시크릿, Slack URL)이나 토큰·개인키 패턴이 있으면 버리고 운영 알림을 보낸다.
+- **푸시 전 비밀값 검사:** 제안 PR의 diff에 파이프라인이 가진 비밀값(웹훅 시크릿, Slack URL)이나 토큰·개인키 패턴이 있으면 버리고 운영 알림을 보낸다. AI의 응답 텍스트(`ClaudeResult.text`)에서 뽑은 변경 설명도 GitHub에 올리기 전에 같은 검사를 거친다 (F10). diff만 보면, 지시문에 넘어간 AI가 읽은 값을 파일이 아니라 설명에 실어 PR 본문이나 코멘트로 내보내는 경로가 남는다.
 
 ## 비용 최적화·모델 비교·회귀 테스트
 
@@ -848,6 +848,7 @@ worker: python -m app.worker.main
 - [ ] 허용 범위 검사: `git status --porcelain --untracked-files=all`, 무시된 파일은 AI 실행 직전 스냅샷과 비교. 실패 경로 테스트: 새 파일 생성, 테스트 파일 삭제, `.github/` 수정, 허용 밖으로 이름 변경, 무시된 경로에 `conftest.py` 새로 생성. 통과 경로 테스트: 이미 있던 무시된 파일은 문제 삼지 않음
 - [ ] 작성 → 검증 → 재시도 서브그래프 (최대 3회), 가벼운→고성능 라우팅
 - [ ] PR당 예산·비용 기록
+- [ ] AI가 쓴 변경 설명(제안 PR 제목·본문·커밋 메시지, 수정 코멘트)을 diff와 같은 비밀값 검사(`find_secret`)로 확인하고, 걸리면 제안 전체를 올리지 않음 (F10)
 - [ ] 평가 케이스: 하드코딩 값·전역 상태 주입, 테스트가 지나가지 않는 위반, 고치면 테스트가 깨지는 위반
 
 ### 4단계. 파일 구조(structure): 규칙 읽기 → 검출 → AI 수정
