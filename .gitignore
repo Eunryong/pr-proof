@@ -13,3 +13,4 @@ mutants/
 *.sqlite3
 .env
 .DS_Store
+*.egg-info/
