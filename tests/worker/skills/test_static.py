@@ -222,3 +222,18 @@ def test_real_static_in_sandbox(tmp_path: Path) -> None:
         ("app/mod.py", 7, "PLR2004"),
         ("app/mod.py", 8, static_rules.REPEAT_CODE),
     ]
+
+
+def test_symlinked_files_are_not_read(tmp_path: Path) -> None:
+    """PR의 링크를 따라가 worktree 밖 파일의 리터럴을 코멘트에 싣지 않는다."""
+    wt, outside = tmp_path / "wt", tmp_path / "outside"
+    wt.mkdir()
+    outside.mkdir()
+    secret = outside / "secret.py"
+    secret.write_text('A = "s3cr3t"\nB = "s3cr3t"\nC = "s3cr3t"\n')
+    (wt / "link.py").symlink_to(secret)
+    (wt / "pkg").symlink_to(outside, target_is_directory=True)
+    changed = {"link.py": frozenset({1, 2, 3}), "pkg/secret.py": frozenset({1, 2, 3})}
+    assert static.static_files(wt, changed) == []
+    findings = static.ast_findings(wt, ["link.py", "pkg/secret.py"], changed)
+    assert findings == ()

@@ -91,6 +91,25 @@ def _tree_git(worktree: Path, *args: str) -> str:
     return _git(f"--git-dir={git_dir}", f"--work-tree={worktree}", *args, cwd=worktree)
 
 
+def worktree_file(worktree: Path, rel: str) -> Path | None:
+    """호스트에서 읽고 써도 되는 worktree 안의 일반 파일이면 그 경로, 아니면 None.
+
+    PR(과 샌드박스에서 돈 PR 코드)이 심볼릭 링크를 넣을 수 있다. 호스트에서 링크를 따라가면
+    worktree 밖 파일(`~/.ssh` 등)을 읽거나 고친다. 링크 자체는 건너뛰고, 상위 폴더가 링크라
+    실제 위치가 worktree 밖이면 거부한다.
+    """
+    path = worktree / rel
+    if path.is_symlink():
+        return None
+    try:
+        real = path.resolve(strict=True)
+    except (OSError, RuntimeError):  # 없음, 링크 순환
+        return None
+    if not real.is_relative_to(worktree.resolve()) or not real.is_file():
+        return None
+    return path
+
+
 def remote_url(repo: str) -> str:
     return f"https://github.com/{repo}.git"
 

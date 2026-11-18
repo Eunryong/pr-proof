@@ -14,6 +14,7 @@ from typing import Final
 from app.models.diff import ChangedLines, added_lines, touches
 from app.models.finding import Finding, SkillResult
 from app.sandbox import container, docker_cli, ruff_runner
+from app.worker import repo
 from app.worker.base_config import RUFF_DEFAULT_SOURCE, BaseConfig
 from app.worker.repo import CHANGES_DIFF
 from app.worker.skills import static_rules
@@ -32,7 +33,7 @@ def static_files(worktree: Path, changed: ChangedLines) -> list[str]:
         for f in changed
         if f.endswith(STATIC_SUFFIX)
         and not static_rules.is_test_file(f)
-        and (worktree / f).is_file()
+        and repo.worktree_file(worktree, f)
     )
 
 
@@ -69,8 +70,13 @@ def ast_findings(
     """반복 리터럴·모듈 수준 가변 상태. 읽거나 파싱하지 못한 파일은 건너뛴다."""
     findings: list[Finding] = []
     for file in files:
+        path = repo.worktree_file(
+            worktree, file
+        )  # 링크를 따라가 밖의 파일 내용을 코멘트에 싣지 않는다
+        if path is None:
+            continue
         try:
-            source = (worktree / file).read_text(encoding="utf-8")
+            source = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
         tree = static_rules.parse(source)
