@@ -7,9 +7,11 @@ import pytest
 
 from app.models.repo_config import RepoConfig
 from app.sandbox.ruff_runner import RuffRun, RuffViolation
+from app.worker import repo
 from app.worker.base_config import BaseConfig
 from app.worker.repo import CHANGES_DIFF
 from app.worker.skills import lint
+from tests.sandbox_names import TEST_NAMES
 
 
 def _v(file: str, line: int, end: int | None = None) -> RuffViolation:
@@ -52,7 +54,7 @@ def test_real_ruff_in_sandbox_reports_only_changed_lines(worktree: Path) -> None
     base = BaseConfig(
         repo=RepoConfig(), memory_gb=1, max_memory_gb=4, ruff_config=None, ruff_source="기본"
     )
-    result = lint.run_lint(worktree, base)
+    result = lint.run_lint(worktree, base, names=TEST_NAMES)
     assert result is not None and result.checked
     assert [(f.file, f.line, f.code) for f in result.findings] == [
         ("orders/lint_case.py", 2, "F401")
@@ -78,6 +80,52 @@ def test_apply_safe_fixes_only_on_changed_lines(tmp_path: Path) -> None:
     assert (tmp_path / "a.py").read_text() == "import os\n"  # PR이 안 건드린 줄은 그대로
 
 
+def _outside_and_links(tmp_path: Path) -> tuple[Path, Path]:
+    """worktree 밖 파일, 그 파일을 가리키는 링크(`link.py`), 밖 폴더를 가리키는 링크(`pkg/`)."""
+    wt, outside = tmp_path / "wt", tmp_path / "outside"
+    wt.mkdir()
+    outside.mkdir()
+    secret = outside / "secret.py"
+    secret.write_text("import os\n")
+    (wt / "link.py").symlink_to(secret)
+    (wt / "pkg").symlink_to(outside, target_is_directory=True)  # pkg/secret.py는 밖의 파일
+    (wt / "ok.py").write_text("import os\n")
+    return wt, secret
+
+
+def test_changed_python_files_skips_symlinks_and_outside(tmp_path: Path) -> None:
+    wt, _ = _outside_and_links(tmp_path)
+    (wt / "loop.py").symlink_to(wt / "loop.py")  # 링크 순환
+    changed = {n: frozenset({1}) for n in ("link.py", "pkg/secret.py", "ok.py", "loop.py")}
+    assert lint.changed_python_files(wt, changed) == ["ok.py"]
+
+
+def test_apply_safe_fixes_never_writes_through_links(tmp_path: Path) -> None:
+    """ruff 결과가 링크 경로를 가리켜도 호스트에서 worktree 밖 파일을 고치지 않는다."""
+    from app.models.text_edit import TextEdit
+
+    wt, secret = _outside_and_links(tmp_path)
+    delete = (TextEdit(1, 1, 2, 1, ""),)
+    run = RuffRun(
+        violations=tuple(
+            RuffViolation(f, 1, 1, "F401", "os", delete)
+            for f in ("link.py", "pkg/secret.py", "ok.py")
+        )
+    )
+    changed = {f: frozenset({1}) for f in ("link.py", "pkg/secret.py", "ok.py")}
+    applied, touched = lint.apply_safe_fixes(wt, run, changed)
+    assert (applied, touched) == (1, {"ok.py"})
+    assert secret.read_text() == "import os\n"
+    assert (wt / "ok.py").read_text() == ""
+
+
+def test_read_does_not_follow_links(tmp_path: Path) -> None:
+    wt, _ = _outside_and_links(tmp_path)
+    assert lint._read(wt, "link.py") == b""
+    assert lint._read(wt, "pkg/secret.py") == b""
+    assert lint._read(wt, "ok.py") == b"import os\n"
+
+
 def _git(cwd: Path, *args: str) -> str:
     import subprocess
 
@@ -96,6 +144,7 @@ def test_real_fix_touches_only_changed_lines(tmp_path: Path) -> None:
     wt = tmp_path / "wt"
     wt.mkdir()
     _git(wt, "init", "-q", "-b", "main")
+    repo.record_git_dir(wt)
     (wt / "mod.py").write_text('import os\n\nMSG = "기존"\n')
     _git(wt, "add", ".")
     _git(wt, "commit", "-q", "-m", "base")
@@ -108,7 +157,7 @@ def test_real_fix_touches_only_changed_lines(tmp_path: Path) -> None:
     base = BaseConfig(
         repo=RepoConfig(), memory_gb=1, max_memory_gb=4, ruff_config=None, ruff_source="기본"
     )
-    result = lint.fix_lint(wt, base, base_sha)
+    result = lint.fix_lint(wt, base, base_sha, names=TEST_NAMES)
     assert result is not None and result.applied == 2
     text = (wt / "mod.py").read_text()
     assert text.startswith("import os\n")  # base에 있던 위반 (F401 os)은 그대로
@@ -122,6 +171,7 @@ def _repo_with_pr(tmp_path: Path, base_files: dict[str, str], pr_files: dict[str
     wt = tmp_path / "wt"
     wt.mkdir()
     _git(wt, "init", "-q", "-b", "main")
+    repo.record_git_dir(wt)
     for name, text in base_files.items():
         (wt / name).write_text(text)
     _git(wt, "add", ".")
@@ -142,7 +192,7 @@ def test_format_applies_when_base_is_formatted(tmp_path: Path) -> None:
     wt, base_sha = _repo_with_pr(
         tmp_path, {"mod.py": "X = 1\n"}, {"mod.py": "X = 1\nY = {'a':1}\n"}
     )
-    result = lint.fix_lint(wt, DEFAULT_BASE, base_sha, base_sha=base_sha)
+    result = lint.fix_lint(wt, DEFAULT_BASE, base_sha, base_sha=base_sha, names=TEST_NAMES)
     assert result is not None and result.formatted_files == ("mod.py",)
     assert (wt / "mod.py").read_text() == 'X = 1\nY = {"a": 1}\n'
     assert result.touched_files == ("mod.py",)
@@ -156,7 +206,7 @@ def test_format_is_skipped_when_base_is_not_formatted(tmp_path: Path) -> None:
         {"mod.py": "X = 1\n", "old.py": "Z = {'b':2}\n"},
         {"mod.py": "X = 1\nY = {'a':1}\n"},
     )
-    result = lint.fix_lint(wt, DEFAULT_BASE, base_sha, base_sha=base_sha)
+    result = lint.fix_lint(wt, DEFAULT_BASE, base_sha, base_sha=base_sha, names=TEST_NAMES)
     assert result is not None and result.formatted_files == ()
     assert result.format_skipped == lint.BASE_NOT_FORMATTED
     assert "{'a':1}" in (wt / "mod.py").read_text()

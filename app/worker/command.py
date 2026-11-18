@@ -13,7 +13,7 @@ import logging
 from app.models.command import parse_command
 from app.models.job import PRJob
 from app.models.repo_config import parse_repo_config
-from app.worker import repo, retry, update
+from app.worker import proposal, repo, retry, update
 from app.worker.base_config import PIPELINE_YAML
 from app.worker.deps import Deps
 
@@ -35,12 +35,27 @@ def fix_unsupported_message(word: str, skill: str) -> str:
     )
 
 
-def no_pending_fix_message(head_sha: str) -> str:
-    return (
-        f"> /fix lint\n\n이 커밋(`{head_sha[:7]}`)에는 승인을 기다리는 lint 수정이 없습니다. "
-        "자동으로 고칠 수 있는 위반이 없거나, 테스트가 통과하지 않았거나, "
-        "이미 처리했을 수 있습니다."
-    )
+def no_pending_fix_message(head_sha: str, history: str = "", number: int | None = None) -> str:
+    """재개할 수정이 없을 때의 답글. 이 커밋의 제안 PR 기록이 있으면 그 번호를 알려준다."""
+    commit = f"이 커밋(`{head_sha[:7]}`)"
+    if history == "rejected" and number is not None:
+        reason = (
+            f"{commit}의 lint 제안 PR #{number}이 머지되지 않고 닫혀 다시 제안하지 않습니다. "
+            "새 커밋을 올리면 다시 검사합니다."
+        )
+    elif history == "open" and number is not None:
+        reason = f"{commit}의 lint 제안 PR #{number}이 이미 열려 있습니다."
+    elif history == "merged" and number is not None:
+        reason = (
+            f"{commit}은 lint 제안 PR #{number}을 머지한 결과라 같은 제안을 다시 만들지 않습니다."
+        )
+    else:
+        reason = (
+            f"{commit}에는 승인을 기다리는 lint 수정이 없습니다. "
+            "자동으로 고칠 수 있는 위반이 없거나, 테스트가 통과하지 않았거나, "
+            "이미 처리했을 수 있습니다."
+        )
+    return f"> /fix lint\n\n{reason}"
 
 
 def process_command(job: PRJob, deps: Deps) -> str:
@@ -49,6 +64,8 @@ def process_command(job: PRJob, deps: Deps) -> str:
         return "duplicate"
     parsed = parse_command(job.command)
     if parsed.name == "unknown":
+        # 답하지 않지만 처리한 것으로 적는다. 적지 않으면 동기화가 주기마다 다시 넣는다
+        deps.store.record_command(job, "unknown_command")
         return "unknown_command"
     _, final = retry.attempt()
     try:
@@ -61,8 +78,11 @@ def process_command(job: PRJob, deps: Deps) -> str:
             result = _fix(job, deps, parsed.word, parsed.arg, _target(job, refs))
         else:
             result = _extension(job, deps, parsed.word, parsed.arg, refs.base_sha)
-    except Exception:  # 환경 오류든 버그든 마지막 시도면 키를 지운다. 재시도는 RQ가 한다
+    except Exception:  # 환경 오류든 버그든 재시도는 RQ가 한다
         if final:
+            # 마지막 시도면 실패로 적고 키를 지운다. 적지 않으면 동기화가 주기마다 다시 넣는다.
+            # 다시 하려면 명령을 새로 단다 (update의 error와 같은 규칙)
+            deps.store.record_command(job, "error")
             deps.store.release(job)
         raise
     deps.store.record_command(job, result)
@@ -86,7 +106,13 @@ def _fix(job: PRJob, deps: Deps, word: str, skill: str, target: PRJob) -> str:
         deps.github.reply(job.repo, job.pr_number, fix_unsupported_message(word, skill))
         return "fix_unsupported"
     if not update.has_pending_fix(target, deps):
-        deps.github.reply(job.repo, job.pr_number, no_pending_fix_message(target.head_sha))
+        # 제안 PR을 닫거나 머지한 뒤 바로 /fix를 달 수 있으니 기록을 GitHub과 맞춘 뒤 본다
+        proposal.refresh(deps.store, deps.github, job.repo, job.pr_number)
+        history, number = proposal.blocked_by_history(
+            deps.store, job.repo, job.pr_number, skill, target.head_sha
+        )
+        body = no_pending_fix_message(target.head_sha, history, number)
+        deps.github.reply(job.repo, job.pr_number, body)
         return "no_pending_fix"
     approval = {"skill": skill, "comment_id": job.comment_id}
     return update.resume_fix(target, deps, approval)

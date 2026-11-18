@@ -22,8 +22,27 @@ PYTHON_SUFFIXES: Final = (".py", ".pyi")
 MAX_FIX_ROUNDS: Final = 5
 
 
+def worktree_file(worktree: Path, rel: str) -> Path | None:
+    """호스트에서 읽고 써도 되는 worktree 안의 일반 파일이면 그 경로, 아니면 None.
+
+    PR(과 샌드박스에서 돈 PR 코드)이 심볼릭 링크를 넣을 수 있다. 호스트에서 링크를 따라가면
+    worktree 밖 파일(`~/.ssh` 등)을 읽거나 고친다. 링크 자체는 건너뛰고, 상위 폴더가 링크라
+    실제 위치가 worktree 밖이면 거부한다.
+    """
+    path = worktree / rel
+    if path.is_symlink():
+        return None
+    try:
+        real = path.resolve(strict=True)
+    except (OSError, RuntimeError):  # 없음, 링크 순환
+        return None
+    if not real.is_relative_to(worktree.resolve()) or not real.is_file():
+        return None
+    return path
+
+
 def changed_python_files(worktree: Path, changed: ChangedLines) -> list[str]:
-    return sorted(f for f in changed if f.endswith(PYTHON_SUFFIXES) and (worktree / f).is_file())
+    return sorted(f for f in changed if f.endswith(PYTHON_SUFFIXES) and worktree_file(worktree, f))
 
 
 def to_result(run: ruff_runner.RuffRun, changed: ChangedLines, source: str) -> SkillResult:
@@ -52,6 +71,7 @@ def run_lint(
     *,
     job_id: str | None = None,
     is_stale: Callable[[], bool] | None = None,
+    names: docker_cli.Names = docker_cli.DEFAULT_NAMES,
 ) -> SkillResult | None:
     """.venv 없는 컨테이너에서 ruff를 돌린다. 새 커밋이 와서 중단되면 None.
 
@@ -61,8 +81,8 @@ def run_lint(
     files = changed_python_files(worktree, changed)
     if not files:
         return SkillResult(skill="lint", source=base.ruff_source)
-    docker_cli.ensure_image()
-    with container.running(worktree, None, job_id=job_id and f"{job_id}-lint") as name:
+    docker_cli.ensure_image(names.image)
+    with container.running(worktree, None, job_id=job_id and f"{job_id}-lint", names=names) as name:
         run = ruff_runner.run_ruff(name, files, base.ruff_config, is_stale=is_stale)
     if run.cancelled:
         return None
@@ -88,7 +108,9 @@ def apply_safe_fixes(
             by_file.setdefault(v.file, []).append(v)
     applied, touched = 0, set()
     for file, violations in by_file.items():
-        path = worktree / file
+        path = worktree_file(worktree, file)
+        if path is None:  # changed_python_files가 이미 뺐지만, 쓰기 직전에 다시 본다
+            continue
         # newline=""로 읽고 써서 CRLF 같은 줄바꿈을 그대로 둔다
         with path.open(encoding="utf-8", newline="") as f:
             text = f.read()
@@ -111,6 +133,7 @@ def base_is_formatted(
     *,
     job_id: str | None = None,
     is_stale: Callable[[], bool] | None = None,
+    names: docker_cli.Names = docker_cli.DEFAULT_NAMES,
 ) -> FormatResult | None:
     """base 브랜치 전체가 `ruff format --check`를 통과하는지 (DESIGN.md F7).
 
@@ -121,14 +144,17 @@ def base_is_formatted(
             target = base_tree / base.ruff_config
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes((worktree / base.ruff_config).read_bytes())
-        with container.running(base_tree, None, job_id=job_id and f"{job_id}-fmt") as name:
+        with container.running(
+            base_tree, None, job_id=job_id and f"{job_id}-fmt", names=names
+        ) as name:
             return ruff_runner.run_format(
                 name, ["."], base.ruff_config, check=True, is_stale=is_stale
             )
 
 
-def _read(path: Path) -> bytes:
-    return path.read_bytes() if path.is_file() else b""
+def _read(worktree: Path, rel: str) -> bytes:
+    path = worktree_file(worktree, rel)
+    return path.read_bytes() if path is not None else b""
 
 
 def fix_lint(
@@ -140,6 +166,7 @@ def fix_lint(
     job_id: str | None = None,
     is_stale: Callable[[], bool] | None = None,
     max_rounds: int = MAX_FIX_ROUNDS,
+    names: docker_cli.Names = docker_cli.DEFAULT_NAMES,
 ) -> LintFix | None:
     """ruff가 낸 안전한 수정 중 PR이 바꾼 줄의 것만 적용하고, 조건이 맞으면 포맷한 뒤 다시 검사한다.
 
@@ -153,7 +180,7 @@ def fix_lint(
         format_skipped = "포맷 확인 안 함"
     else:
         formatted_base = base_is_formatted(
-            worktree, base, base_sha, job_id=job_id, is_stale=is_stale
+            worktree, base, base_sha, job_id=job_id, is_stale=is_stale, names=names
         )
         if formatted_base is None:
             return None
@@ -161,7 +188,7 @@ def fix_lint(
             format_skipped = BASE_NOT_FORMATTED if formatted_base is False else formatted_base
     applied, touched = 0, set()
     formatted: list[str] = []
-    with container.running(worktree, None, job_id=job_id and f"{job_id}-fix") as name:
+    with container.running(worktree, None, job_id=job_id and f"{job_id}-fix", names=names) as name:
         for round_no in range(max_rounds + 1):
             changed = added_lines(repo.working_diff(worktree, merge_base))
             files = changed_python_files(worktree, changed)
@@ -177,14 +204,14 @@ def fix_lint(
             applied += count
             touched |= files_touched
         if not format_skipped and run.error is None and files:
-            before = {f: _read(worktree / f) for f in files}
+            before = {f: _read(worktree, f) for f in files}
             done = ruff_runner.run_format(
                 name, files, base.ruff_config, check=False, is_stale=is_stale
             )
             if done is None:
                 return None
             if done is True:
-                formatted = [f for f in files if _read(worktree / f) != before[f]]
+                formatted = [f for f in files if _read(worktree, f) != before[f]]
                 if formatted:  # 포맷 뒤 줄이 바뀌었으니 다시 검사한다
                     changed = added_lines(repo.working_diff(worktree, merge_base))
                     run = ruff_runner.run_ruff(

@@ -4,6 +4,7 @@
 ⚠️는 "위반 있음"이라는 뜻으로만 쓴다 (docs/DESIGN.md F9). 그 아래에 상세를 붙인다.
 """
 
+import re
 from collections import Counter
 from collections.abc import Mapping
 from typing import Final, Literal
@@ -21,8 +22,9 @@ MAX_OUTPUT_CHARS: Final = 1500
 MAX_PATCH_CHARS: Final = 6000
 
 # 코멘트 node가 정하는 수정 제안 상태: 승인 대기, 승인 없이 바로 수정, 또는 제안하지 않는 이유
-# merged: 제안을 머지해 생긴 커밋, rejected: 이 커밋의 제안이 거절됨 (다시 제안하지 않음)
-Proposal = Literal["approval", "auto", "merged", "rejected"] | FixBlocker
+# merged: 제안을 머지해 생긴 커밋, rejected: 이 커밋의 제안이 거절됨 (다시 제안하지 않음),
+# open: 이 커밋의 제안이 이미 열려 있음 (다시 권하지 않고 그 PR을 가리킴)
+Proposal = Literal["approval", "auto", "merged", "rejected", "open"] | FixBlocker
 FIX_COMMAND: Final = "/fix lint"
 _FIX_STATUS_TEXT: Final[Mapping[str, str]] = {
     "nothing_fixed": "적용할 수 있는 수정이 없음",
@@ -137,11 +139,23 @@ def proposal_suffix(proposal: Proposal | None) -> str:
     return ""
 
 
-def proposal_details(proposal: Proposal | None, run: PytestRun) -> list[str]:
+def _pr_ref(number: int | None) -> str:
+    return f"(#{number})" if number is not None else ""
+
+
+def proposal_details(
+    proposal: Proposal | None, run: PytestRun, number: int | None = None
+) -> list[str]:
+    ref = _pr_ref(number)
     if proposal == "merged":
-        return ["", "이 커밋은 lint 제안 PR을 머지한 결과라 같은 제안을 다시 만들지 않습니다."]
+        return [
+            "",
+            f"이 커밋은 lint 제안 PR{ref}을 머지한 결과라 같은 제안을 다시 만들지 않습니다.",
+        ]
     if proposal == "rejected":
-        return ["", "이 커밋의 lint 제안 PR이 머지되지 않고 닫혀 다시 제안하지 않습니다."]
+        return ["", f"이 커밋의 lint 제안 PR{ref}이 머지되지 않고 닫혀 다시 제안하지 않습니다."]
+    if proposal == "open":
+        return ["", f"이 커밋의 lint 제안 PR{ref}이 열려 있습니다. 그 PR을 확인해 주세요."]
     if proposal == "tests":
         return [
             "",
@@ -150,7 +164,7 @@ def proposal_details(proposal: Proposal | None, run: PytestRun) -> list[str]:
     if proposal == "approval":
         return [
             "",
-            f"`{FIX_COMMAND}`을 코멘트로 달면 ruff의 안전한 수정 중 PR이 바꾼 줄의 것만 적용하고, "
+            f"`{FIX_COMMAND}`를 코멘트로 달면 ruff의 안전한 수정 중 PR이 바꾼 줄의 것만 적용하고, "
             "테스트로 확인한 뒤 수정안을 만듭니다.",
         ]
     return []
@@ -185,13 +199,22 @@ def fix_section(fix: FixOutcome, result: ProposalResult | None = None) -> list[s
         lines.append(f"`ruff format`은 적용하지 않았습니다 ({fix.format_skipped}).")
     if fix.remaining:
         lines.append(f"자동으로 고치지 못한 위반 {len(fix.remaining)}건은 그대로 남습니다.")
+    if result is not None and result.secret_blocked:
+        return lines  # 비밀값으로 보이는 줄을 코멘트에 옮기지 않는다
     if fix.patch_path is not None and fix.patch_path.is_file():
         patch = fix.patch_path.read_text()
         if len(patch) > MAX_PATCH_CHARS:
             patch = patch[:MAX_PATCH_CHARS] + "\n… (생략)"
-        lines += ["", "<details><summary>수정 내용</summary>", "", "```diff", patch, "```", "",
+        fence = code_fence(patch)
+        lines += ["", "<details><summary>수정 내용</summary>", "", f"{fence}diff", patch, fence, "",
                   "</details>"]  # fmt: skip
     return lines
+
+
+def code_fence(text: str) -> str:
+    """text 안의 어떤 백틱 줄보다 긴 코드 울타리. 본문의 ```가 블록을 일찍 닫지 않게 한다."""
+    longest = max((len(m) for m in re.findall(r"`+", text)), default=0)
+    return "`" * max(3, longest + 1)
 
 
 def rules_details(results: list[SkillResult]) -> list[str]:
@@ -221,7 +244,8 @@ HEADER: Final = "### pr-proof"
 
 
 def _details(summary: str, text: str) -> list[str]:
-    return ["", f"<details><summary>{summary}</summary>", "", "```", text, "```", "", "</details>"]
+    fence = code_fence(text)
+    return ["", f"<details><summary>{summary}</summary>", "", fence, text, fence, "", "</details>"]
 
 
 def _footer(head_sha: str, seconds: float | None = None, *, from_sync: bool = False) -> str:
@@ -252,6 +276,11 @@ def _compose(
     lines += details
     lines += rules_details(results)
     lines += extra or []
+    if base is not None and "lint" not in base.repo.skills.enabled:
+        lines += [
+            "",
+            "lint는 이 리포에서 꺼져 있습니다 (base 브랜치 `.pipeline.yaml`의 `skills.enabled`).",
+        ]
     if base is not None and base.problems:
         lines += ["", "설정:"] + [f"- {p}" for p in base.problems]
     lines += ["", _footer(head_sha, seconds, from_sync=from_sync)]
@@ -272,6 +301,7 @@ def render_result(
     proposal: Proposal | None = None,
     fix: FixOutcome | None = None,
     proposal_result: ProposalResult | None = None,
+    proposal_number: int | None = None,
     from_sync: bool = False,
 ) -> str:
     memory_gb = base.memory_gb if base else MEMORY_LIMIT_GB
@@ -279,7 +309,7 @@ def render_result(
     if fix is not None:
         extra = fix_section(fix, proposal_result)
     else:
-        extra = proposal_details(proposal, run)
+        extra = proposal_details(proposal, run, proposal_number)
     return _compose(
         format_test_line(run, memory_gb),
         format_test_details(run, memory_gb, max_memory_gb),

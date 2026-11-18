@@ -105,7 +105,8 @@ def test_second_fix_command_has_nothing_pending(fix_env) -> None:
     main.handle(_update(), fix_env["deps"])
     main.handle(_fix_command(77), fix_env["deps"])
     assert main.handle(_fix_command(78), fix_env["deps"]) == "no_pending_fix"
-    assert "승인을 기다리는 lint 수정이 없습니다" in _replies(fix_env["gh"])[-1]
+    # 이미 열린 제안이 있으면 일반 문구 대신 그 번호를 알려준다
+    assert "lint 제안 PR #900이 이미 열려 있습니다" in _replies(fix_env["gh"])[-1]
     assert fix_env["state"]["fix_calls"] == 1
 
 
@@ -123,7 +124,6 @@ def test_new_commit_invalidates_pending_fix(fix_env) -> None:
 
 def test_recheck_starts_a_fresh_checkpoint(fix_env) -> None:
     main.handle(_update(), fix_env["deps"])
-    main.handle(_fix_command(77), fix_env["deps"])
     main.handle(_fix_command(80, "/recheck"), fix_env["deps"])  # 같은 커밋을 다시 검사
     assert main.handle(_fix_command(81), fix_env["deps"]) == "fix:ready"  # 다시 기다리고 있었다
 
@@ -209,6 +209,53 @@ def test_failed_fix_can_be_retried(fix_env) -> None:
         main.handle(_fix_command(), fix_env["deps"])
     assert not fix_env["deps"].store.command_handled(77)
     assert main.handle(_fix_command(), fix_env["deps"]) == "fix:ready"  # RQ 재시도
+
+
+def test_failed_proposal_can_be_retried(fix_env) -> None:
+    """제안 PR을 만들다 실패해도(푸시 뒤 네트워크 오류 등) 다음 시도가 수정부터 다시 한다."""
+    from app.worker import proposal, retry
+    from app.worker.github import GitHubError
+
+    main.handle(_update(), fix_env["deps"])
+    real_open = proposal.open_proposal
+    calls = {"n": 0}
+
+    def flaky_open(*a, **k):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise GitHubError("pulls 생성 실패")
+        return real_open(*a, **k)
+
+    fix_env["monkeypatch"].setattr(proposal, "open_proposal", flaky_open)
+    fix_env["monkeypatch"].setattr(retry, "attempt", lambda: (1, False))
+    with pytest.raises(GitHubError):
+        main.handle(_fix_command(), fix_env["deps"])
+    assert main.handle(_fix_command(), fix_env["deps"]) == "fix:ready"  # RQ 재시도
+    assert len(fix_env["gh"].pulls) == 1
+    assert fix_env["state"]["fix_calls"] == 2  # worktree가 없어 수정부터 다시 했다
+
+
+def test_command_failing_every_retry_is_recorded(fix_env) -> None:
+    """마지막 재시도까지 실패한 명령은 기록한다. 기록하지 않으면 동기화가 주기마다 다시 넣는다."""
+    from app.sandbox.docker_cli import SandboxError
+    from app.worker import retry
+
+    main.handle(_update(), fix_env["deps"])
+
+    def broken_fix(*a, **k):
+        raise SandboxError("docker 중단")
+
+    fix_env["monkeypatch"].setattr(lint, "fix_lint", broken_fix)
+    fix_env["monkeypatch"].setattr(retry, "attempt", lambda: (3, True))
+    with pytest.raises(SandboxError):
+        main.handle(_fix_command(), fix_env["deps"])
+    assert fix_env["deps"].store.command_handled(77)
+
+
+def test_unknown_command_is_recorded_without_reply(fix_env) -> None:
+    assert main.handle(_fix_command(90, "/cc @someone"), fix_env["deps"]) == "unknown_command"
+    assert fix_env["deps"].store.command_handled(90)  # 동기화가 다시 넣지 않는다
+    assert _replies(fix_env["gh"]) == []
 
 
 def test_format_only_fix_is_ready(fix_env) -> None:
@@ -322,7 +369,7 @@ def test_merged_proposal_does_not_loop(fix_env) -> None:
     main.handle(update, fix_env["deps"])
     body = bodies(fix_env["gh"])[-1]
     assert "자동 수정 가능" not in body
-    assert "lint 제안 PR을 머지한 결과라 같은 제안을 다시 만들지 않습니다" in body
+    assert f"lint 제안 PR(#{number})을 머지한 결과라 같은 제안을 다시 만들지 않습니다" in body
     (record,) = fix_env["deps"].store.proposals("o/r", 1)
     assert (record.state, record.merge_commit) == ("merged", merge)
 
@@ -334,16 +381,31 @@ def test_rejected_proposal_is_not_offered_again_for_same_commit(fix_env) -> None
     main.handle(_fix_command(80, "/recheck"), fix_env["deps"])
     body = bodies(fix_env["gh"])[-1]
     assert "자동 수정 가능" not in body
-    assert "머지되지 않고 닫혀 다시 제안하지 않습니다" in body
+    assert f"lint 제안 PR(#{number})이 머지되지 않고 닫혀 다시 제안하지 않습니다" in body
     assert fix_env["deps"].store.proposals("o/r", 1)[0].state == "rejected"
 
 
-def test_second_fix_on_same_commit_updates_proposal(fix_env) -> None:
+def test_fix_after_rejection_names_the_closed_proposal(fix_env) -> None:
+    """/recheck 없이 제안을 닫고 바로 /fix를 달아도 답글에 닫힌 제안 번호가 나온다."""
+    _open_and_fix(fix_env)
+    (number,) = fix_env["gh"].pulls
+    fix_env["gh"].pulls[number]["state"] = "closed"
+    assert main.handle(_fix_command(80), fix_env["deps"]) == "no_pending_fix"
+    reply = _replies(fix_env["gh"])[-1]
+    assert f"lint 제안 PR #{number}이 머지되지 않고 닫혀 다시 제안하지 않습니다" in reply
+    assert len(fix_env["gh"].pulls) == 1
+
+
+def test_recheck_with_open_proposal_points_to_it(fix_env) -> None:
+    """같은 커밋에 열린 제안이 있으면 /fix를 다시 권하지 않고 그 PR을 가리킨다."""
     _open_and_fix(fix_env, 77)
+    (number,) = fix_env["gh"].pulls
     main.handle(_fix_command(80, "/recheck"), fix_env["deps"])
-    assert main.handle(_fix_command(81), fix_env["deps"]) == "fix:ready"
-    assert len(fix_env["gh"].pulls) == 1  # 같은 브랜치의 열린 제안을 갱신
-    assert "을 갱신했습니다." in bodies(fix_env["gh"])[-1]
+    body = bodies(fix_env["gh"])[-1]
+    assert "자동 수정 가능" not in body
+    assert f"lint 제안 PR(#{number})이 열려 있습니다" in body
+    assert main.handle(_fix_command(81), fix_env["deps"]) == "no_pending_fix"
+    assert len(fix_env["gh"].pulls) == 1
     assert len(fix_env["deps"].store.proposals("o/r", 1)) == 1
 
 
@@ -354,6 +416,7 @@ def test_closing_original_pr_closes_proposals(fix_env) -> None:
         repo="o/r", pr_number=1, kind="close", head_sha=HEAD, base_sha="b" * 40,
         source="webhook",
     ).model_dump_json()  # fmt: skip
+    fix_env["gh"].state = "closed"
     assert main.handle(close, fix_env["deps"]) == "closed:1"
     assert fix_env["gh"].pulls[number]["state"] == "closed"
     assert fix_env["gh"].deleted_branches == ["pipeline/pr-1-fix-lint"]
@@ -367,6 +430,36 @@ def test_closing_pr_stops_running_work(fix_env) -> None:
         repo="o/r", pr_number=1, kind="close", head_sha=HEAD, base_sha="b" * 40,
         source="webhook",
     ).model_dump_json()  # fmt: skip
+    fix_env["gh"].state = "closed"
     main.handle(close, fix_env["deps"])
     latest = fix_env["redis"].get(state_keys.latest_head("o/r", 1)).decode()
     assert latest != HEAD  # 실행 중인 작업은 낡은 작업으로 보고 멈춘다
+
+
+def test_close_job_for_open_pr_does_nothing(fix_env) -> None:
+    """closed 웹훅이 reopened보다 늦게 오거나 동기화 목록에서 빠져도 열린 PR은 그대로 둔다."""
+    from app.models import state_keys
+
+    _open_and_fix(fix_env)
+    (number,) = fix_env["gh"].pulls
+    close = PRJob(
+        repo="o/r", pr_number=1, kind="close", head_sha=HEAD, base_sha="b" * 40,
+        source="sync",
+    ).model_dump_json()  # fmt: skip
+    assert main.handle(close, fix_env["deps"]) == "still_open"
+    assert fix_env["gh"].pulls[number]["state"] == "open"
+    assert fix_env["deps"].store.proposals("o/r", 1)[0].state == "open"
+    assert fix_env["redis"].get(state_keys.latest_head("o/r", 1)).decode() == HEAD
+
+
+def test_lint_disabled_runs_tests_only(fix_env) -> None:
+    repo_config = RepoConfig(skills=SkillsSettings(enabled=[]))
+    base = dataclasses.replace(BASE, repo=repo_config)
+    mp = fix_env["monkeypatch"]
+    mp.setattr(base_config, "load", lambda *a, **k: base)
+    mp.setattr(lint, "run_lint", lambda *a, **k: pytest.fail("lint가 돌면 안 됨"))
+    assert main.handle(_update(), fix_env["deps"]) == "passed"
+    body = bodies(fix_env["gh"])[-1]
+    assert "**테스트:** 통과 (9개)" in body and "**규칙:**" not in body
+    assert "lint는 이 리포에서 꺼져 있습니다" in body
+    assert main.handle(_fix_command(), fix_env["deps"]) == "no_pending_fix"

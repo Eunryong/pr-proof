@@ -32,6 +32,10 @@ class SyncConfig(BaseModel):
 class SandboxConfig(BaseModel):
     # 대상 리포가 .pipeline.yaml의 sandbox.memory_gb로 올릴 수 있는 상한
     max_memory_gb: float = 4
+    # 이미지 태그와 작업 컨테이너 이름 접두어. 기본값은 app/sandbox/docker_cli.py와 같다
+    # (tests/test_config.py가 확인). 같은 Docker를 쓰는 다른 실행과 겹치지 않게 바꿀 수 있다
+    image: str = "pipeline-sandbox"
+    container_prefix: str = "pr-proof-job"
 
 
 class PipelineConfig(BaseModel):

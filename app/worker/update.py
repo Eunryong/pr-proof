@@ -4,6 +4,7 @@ from typing import Any, Final
 
 from app.models.install import install_failure_outcome
 from app.models.job import PRJob
+from app.sandbox import docker_cli
 from app.sandbox.venv import DependencyInstallError
 from app.worker import graph, proposal, report, retry
 from app.worker.deps import Deps
@@ -37,6 +38,10 @@ def _context(deps: Deps, run_id: int, comment_id: int | None) -> graph.FlowConte
         run_id=run_id,
         comment_id=comment_id,
         max_memory_gb=deps.settings.sandbox.max_memory_gb,
+        sandbox_names=docker_cli.Names(
+            image=deps.settings.sandbox.image,
+            container_prefix=deps.settings.sandbox.container_prefix,
+        ),
     )
 
 
@@ -122,10 +127,15 @@ def process_close(job: PRJob, deps: Deps) -> str:
 
     최신 head를 닫힘 표시로 바꾸면 실행 중인 작업이 10초 안에 낡은 작업으로 보고 멈춘다.
     다시 열리면(reopened) 웹훅이 최신 head를 새로 적는다.
+
+    먼저 GitHub에서 PR이 정말 닫혔는지 본다. closed 웹훅이 reopened보다 늦게 오거나, 동기화의
+    열린 PR 목록이 잘려 열린 PR이 빠지면, 열린 PR의 제안을 닫게 된다.
     """
-    deps.store.set_latest_head(job.repo, job.pr_number, CLOSED_HEAD)
     _, final = retry.attempt()
     try:
+        if deps.github.pr_refs(job.repo, job.pr_number).open:
+            return "still_open"
+        deps.store.set_latest_head(job.repo, job.pr_number, CLOSED_HEAD)
         closed = proposal.close_all(deps.store, deps.github, job.repo, job.pr_number)
     except Exception:
         if final:

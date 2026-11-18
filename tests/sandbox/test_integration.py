@@ -9,20 +9,21 @@ import pytest
 from app.sandbox import container, docker_cli, pytest_runner, venv
 from app.sandbox.docker_cli import Image, SandboxError
 from app.sandbox.venv import DependencyInstallError
+from tests.sandbox_names import TEST_NAMES
 
 pytestmark = pytest.mark.docker
 
 
 @pytest.fixture(scope="module")
 def image() -> Image:
-    return docker_cli.ensure_image()
+    return docker_cli.ensure_image(TEST_NAMES.image)
 
 
 @pytest.fixture
 def job(worktree: Path, image: Image, venv_cache: Path):
     """eval 리포를 마운트한 작업 컨테이너 이름."""
-    venv_dir = venv.ensure_venv(worktree, image, cache_dir=venv_cache)
-    with container.running(worktree, venv_dir) as name:
+    venv_dir = venv.ensure_venv(worktree, image, cache_dir=venv_cache, tag=TEST_NAMES.image)
+    with container.running(worktree, venv_dir, names=TEST_NAMES) as name:
         yield name
 
 
@@ -84,8 +85,9 @@ def test_timeout_inside_container(job: str) -> None:
 
 
 def test_container_removed_after_block(worktree: Path, image: Image, venv_cache: Path) -> None:
-    venv_dir = venv.ensure_venv(worktree, image, cache_dir=venv_cache)
-    with container.running(worktree, venv_dir) as name:
+    venv_dir = venv.ensure_venv(worktree, image, cache_dir=venv_cache, tag=TEST_NAMES.image)
+    with container.running(worktree, venv_dir, names=TEST_NAMES, job_id="7") as name:
+        assert name == f"{TEST_NAMES.container_prefix}-7"  # 운영 컨테이너 이름과 겹치지 않는다
         assert _exists(name)
     assert not _exists(name)
 
@@ -97,7 +99,7 @@ def test_unknown_package_is_resolution_failure(
     (worktree / "requirements.txt").write_text("pr-proof-no-such-package-xyz==0.0.1\n")
     cache = tmp_path / "cache"
     with pytest.raises(DependencyInstallError) as info:
-        venv.ensure_venv(worktree, image, cache_dir=cache)
+        venv.ensure_venv(worktree, image, cache_dir=cache, tag=TEST_NAMES.image)
     assert info.value.kind == "resolution"
     assert list(cache.iterdir()) == []
 
@@ -136,3 +138,14 @@ def test_flaky_test_passes_on_rerun(job: str, worktree: Path) -> None:
     run = pytest_runner.run_tests(job, worktree)
     assert run.flaky == ("tests/test_flaky.py::test_sometimes",)
     assert run.status == "passed" and not run.allows_code_fix and run.allows_lint_fix
+
+
+def test_container_has_no_capabilities(job: str) -> None:
+    """--cap-drop ALL과 no-new-privileges가 실제 컨테이너에 걸린다."""
+    status = subprocess.run(
+        ["docker", "exec", job, "cat", "/proc/self/status"], capture_output=True, text=True
+    ).stdout
+    fields = dict(line.split(":\t", 1) for line in status.splitlines() if ":\t" in line)
+    assert int(fields["CapEff"].strip(), 16) == 0
+    assert int(fields["CapBnd"].strip(), 16) == 0  # setuid 바이너리로도 얻지 못한다
+    assert fields["NoNewPrivs"].strip() == "1"

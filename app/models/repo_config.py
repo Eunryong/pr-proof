@@ -8,6 +8,8 @@ from typing import Final
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from app.models.finding import Skill
+
 # docker가 받는 최소 메모리보다 넉넉히 크게. 너무 작으면 컨테이너가 뜨지 않아 환경 오류로 보인다
 MIN_MEMORY_GB: Final = 0.5
 
@@ -24,6 +26,8 @@ class FixSettings(BaseModel):
 
 class SkillsSettings(BaseModel):
     model_config = ConfigDict(extra="ignore")
+    # 켤 규칙 스킬. lint를 빼면 "테스트만" 돈다. static·structure는 3·4단계에서 붙는다
+    enabled: list[Skill] = Field(default_factory=lambda: ["lint", "static", "structure"])
     fix: FixSettings = FixSettings()
 
 

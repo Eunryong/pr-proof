@@ -179,6 +179,9 @@ F1–F5는 수신과 실행 기반(1단계), F6–F10은 검출·안전망·수�
 - 리포마다 처음 한 번만 `git clone --bare`로 코드를 캐시한다.
 - PR마다 `git fetch origin pull/<n>/head` 후 `git worktree add`로 별도 폴더를 만든다.
 - **git 명령은 호스트에서만 실행한다.** worktree의 `.git`은 호스트의 bare 저장소 경로를 가리키는 파일이라, `/work`만 마운트된 컨테이너 안에서는 git이 동작하지 않는다. 워커가 호스트에서 `git merge-base base head`로 PR 브랜치가 갈라진 커밋을 구하고, 그 커밋과 head의 diff(`git diff base...head`와 같음)를 `.pipeline-out/changes.diff`로 저장한다. base 브랜치가 앞서 나가도 main에서 바뀐 줄이 PR의 변경으로 잡히지 않는다. 설정과 규칙은 갈라진 커밋이 아니라 base 브랜치의 지금 커밋에서 읽는다. diff가 필요한 도구(바뀐 줄의 위반 검출, diff-cover, 확장의 바뀐 줄 뮤테이션)는 이 파일을 입력으로 받는다.
+- **worktree 안의 `.git`은 믿지 않는다.** 샌드박스는 worktree를 쓰기 가능으로 마운트하고, 3단계의 AI는 호스트에서 worktree 파일을 고친다. PR 코드나 지시문에 넘어간 AI가 `.git`을 worktree 안에 만든 저장소로 바꾸면, 그 저장소 설정(`core.fsmonitor`, 필터 드라이버, `core.sshCommand` 등)으로 다음 호스트 git 명령(수정안 diff, 범위 검사, 제안 PR 커밋·푸시)이 호스트에서 임의 명령을 실행한다. 그래서 `git worktree add` 직후, 그 안에서 아무것도 실행하기 전에 저장소 경로를 worktree 밖의 기록 파일(`<worktree 옆>/.<이름>.gitdir`)에 적고, worktree에서 도는 git은 모두 그 경로를 `--git-dir`·`--work-tree`로 넘긴다. 기록이 없으면 git을 실행하지 않는다. 기록은 worktree와 함께 지운다.
+- 호스트가 worktree 파일을 직접 읽고 쓸 때(lint의 바뀐 파일 목록, 안전한 수정 적용, 포맷 전후 비교)는 심볼릭 링크를 건너뛰고, 실제 위치(`resolve()`)가 worktree 밖이면 거부한다. PR이 넣은 링크를 따라가면 worktree 밖 파일을 읽거나 고친다.
+- `changes.diff`도 worktree 안에 있어 테스트가 돈 뒤에는 PR 코드가 바꿨을 수 있다. 이 파일은 테스트 전에 도는 단계(규칙 검출)만 읽는다. 테스트 뒤에 바뀐 줄이 필요하면 git으로 다시 센다.
 - 작업이 끝나면 worktree를 지운다. 인증은 `gh auth setup-git`으로 gh 로그인을 재사용한다.
 - interrupt로 멈췄다가 재개할 때는 worktree를 다시 만든다. 그래프 상태에는 경로가 아니라 데이터(위반 목록, 커버 여부, 테스트 결과)만 넣는다.
 
@@ -256,6 +259,7 @@ SKILLS = {"lint": run_lint, "static": run_static, "structure": run_structure}
 
 - **시작 조건:** 위반이 있고 안전망 조건(F8)을 충족하면 PR 코멘트로 "`/fix lint`", "`/fix static`", "`/fix structure`"를 제안하고, LangGraph `interrupt`로 그래프 상태를 저장한 뒤 멈춘다. 워커는 그동안 다른 작업을 처리한다. 리뷰어가 `/fix <skill>`을 달면 `command` 작업이 등록되고 같은 그래프가 그 지점부터 재개된다. `require_approval: false`면 승인 없이 바로 수정한다.
 - 체크포인트 thread_id는 `repo#pr#head_sha`다. 새 커밋이 오면 SHA가 달라져, 멈춰 있던 그래프는 별도 처리 없이 무효가 된다. 재개할 때 worktree는 다시 만든다 (F4).
+- 수정 도중 실패하면 재시도가 수정 단계부터 이어 간다. 제안 PR이나 수정 코멘트를 쓰다 실패해도 수정 단계부터 다시 한다. 수정한 worktree는 이미 지워졌고, 같은 커밋이라 같은 수정안이 나오며, 이미 연 제안 PR은 같은 브랜치라 새로 만들지 않고 갱신한다.
 - **AI 수정 루프:** ① 입력: 위반 목록과 출처, 해당 소스, 리포의 기존 상수·설정 위치 예시, (5단계부터) Chroma에서 찾은 비슷한 과거 수정 → ② AI(claude CLI)가 worktree의 파일을 고침 → ③ 결정적 검증 → ④ 실패하면 오류와 남은 위반을 AI에 다시 넘김, 최대 3회. 이 루프(작성 → 검증 → 재시도 → 제안 PR)는 하나의 서브그래프로 만들고, `static`과 `structure`가 프롬프트와 검증 함수만 바꿔 쓴다.
 - `lint` 수정은 ruff의 안전한 수정(`applicability: safe`)만 적용한다. unsafe·display-only 수정은 쓰지 않는다. `ruff check --fix`는 파일 전체의 위반을 고쳐 PR이 건드리지 않은 줄(기존 코드의 위반)까지 바꾸므로 쓰지 않는다. 대신 `ruff check --output-format json`이 내는 수정 편집 중 PR이 바꾼 줄에 걸린 위반의 것만 호스트에서 텍스트로 적용한다(코드를 실행하지 않는다). 편집이 겹치면 한 회차에 하나만 적용하고, 갈라진 커밋(merge-base)과 worktree의 diff로 바뀐 줄을 다시 세서 최대 5회 반복한다. 자동으로 고치지 못한 위반은 그대로 남기고 코멘트에 알린다.
 - `lint` 수정안의 검증: 고친 뒤 규칙 검사에서 원래 없던 위반이 없고(파일·규칙·메시지의 개수로 비교, 줄 번호는 밀리므로 쓰지 않음), 허용 범위 안이고, 샌드박스 테스트 결과가 수정 전과 같다(상태와 통과 개수). 통과하면 수정안 diff를 `data_dir/fixes/` 아래에 저장하고 코멘트에 보여준다.
@@ -265,6 +269,7 @@ SKILLS = {"lint": run_lint, "static": run_static, "structure": run_structure}
 - **범위 검사 방법:** 수정 후 호스트에서 `git status --porcelain=v1 -z --untracked-files=all`로 worktree의 모든 변경을 본다. `git diff`는 추적 중인 파일의 수정만 보여주므로 새 파일, 삭제, 이름 변경을 놓친다. 수정(`M`), 새 파일(`??`, `A`), 삭제(`D`), 이름 변경(`R`, 옛 경로와 새 경로 둘 다)이 모두 허용 목록 안에 있어야 한다. 허용 목록 밖의 변경이 하나라도 있으면 수정안 전체를 버린다.
 - 파이프라인 산출물(`.pipeline-out/`, `.venv` 마운트 지점, 확장의 `mutants/`)만 검사에서 제외한다.
 - **무시된 파일:** 대상 리포의 `.gitignore`에 걸리는 파일은 `--porcelain` 출력에 나오지 않지만, 푸시되지 않아도 검증 실행에 영향을 줄 수 있다(무시된 경로에 둔 `conftest.py`, `sitecustomize.py` 등). AI를 실행하기 직전에 `git status --porcelain=v1 -z --ignored=matching --untracked-files=all`로 무시된 파일 목록을 스냅샷으로 남기고, 실행 후 같은 명령의 결과와 비교해 **새로 생긴 무시된 파일**이 있으면 수정안을 버린다. 이미 있던 무시된 파일(빌드 산출물, 로컬 캐시)은 문제 삼지 않는다.
+- **I001(import 정렬):** 허용한다. 수정이 import 블록 전체를 다시 정렬해 블록 안의 기존 줄 순서가 바뀔 수 있지만, 위반 범위에 PR이 바꾼 줄이 있을 때만 고치고 ruff도 안전한 수정으로 분류한다. 제안 PR 본문에 "import 블록 전체를 다시 정렬했다"를 적는다. `ruff format`을 적용했을 때도 파일 전체에 적용했다고 적는다. 둘 다 없을 때만 "PR이 건드리지 않은 줄은 바꾸지 않았다"고 쓴다.
 - `structure`의 자동 수정은 1–2순위 규칙과 3순위 중 import 방향 위반에만 적용한다. 이름 패턴 위반은 알리기만 한다. 추정한 규칙으로 코드를 옮기면 틀렸을 때 비용이 크다.
 
 ### F8. 안전망 (테스트 실행과 변경 라인 커버리지)
@@ -340,8 +345,9 @@ SKILLS = {"lint": run_lint, "static": run_static, "structure": run_structure}
 | --- | --- |
 | 원본 PR에 새 커밋 | 이전 커밋의 열린 제안을 닫고 브랜치를 지운다(`superseded`). 새 커밋의 검사가 고칠 위반을 찾으면 다시 제안한다. 옛 제안이 새 커밋에서도 유효한지 판단하려면 새 커밋으로 수정과 검증을 다시 해야 하므로, 유지하지 않고 새로 만든다 |
 | 제안 PR 머지 → 원본에 새 커밋 | head가 제안 PR의 머지 커밋이거나 그 뒤에 새 커밋이 없으면 검사만 다시 하고, 같은 종류의 제안은 다시 만들지 않음 |
-| 원본 PR 머지·종료 | 진행 중인 검사를 멈추고(최신 head를 닫힘 표시로), 남은 제안 PR을 닫고 브랜치 삭제. close 웹훅을 놓쳐도 동기화가 열린 제안이 남은 닫힌 PR에 `close`를 넣는다 |
-| 작성자가 제안 PR을 닫음 | 같은 커밋에 대해 다시 제안하지 않음. 거절 기록으로 남김(`rejected`). 상태는 원본 PR의 다음 검사가 시작할 때 GitHub에서 확인한다 |
+| 원본 PR 머지·종료 | 진행 중인 검사를 멈추고(최신 head를 닫힘 표시로), 남은 제안 PR을 닫고 브랜치 삭제. close 웹훅을 놓쳐도 동기화가 열린 제안이 남은 닫힌 PR에 `close`를 넣는다. 워커는 먼저 GitHub에서 PR이 정말 닫혔는지 보고, 열려 있으면 아무것도 하지 않는다(closed 웹훅이 reopened보다 늦게 온 경우, 동기화 목록에서 빠진 경우) |
+| 작성자가 제안 PR을 닫음 | 같은 커밋에 대해 다시 제안하지 않음. 거절 기록으로 남김(`rejected`). 상태는 원본 PR의 다음 검사가 시작할 때, 그리고 재개할 수정이 없는 `/fix`를 받았을 때 GitHub에서 확인한다. 결과 코멘트와 `/fix` 답글에 닫힌 제안 번호를 적는다 |
+| 같은 커밋에 제안 PR이 열려 있음 | `/recheck` 결과 코멘트는 `/fix`를 다시 권하지 않고 그 제안 번호를 적는다. `/fix`에는 이미 열려 있다고 그 번호로 답한다 |
 
 ### F11. 수동 명령 (PR 코멘트)
 
@@ -349,7 +355,7 @@ SKILLS = {"lint": run_lint, "static": run_static, "structure": run_structure}
 - `/fix <lint|static|structure>`: 멈춰 있는 수정 단계를 승인하고 재개
 - 확장(F13): `/mutate`, `/generate-tests`
 
-명령은 F1의 작성자 권한 조건을 통과한 것만 처리하고, 처리한 코멘트 ID를 저장한다 (`commandrecord` 테이블).
+명령은 F1의 작성자 권한 조건을 통과한 것만 처리하고, 처리한 코멘트 ID를 저장한다 (`commandrecord` 테이블). 답하지 않는 모르는 명령과, 마지막 재시도까지 실패한 명령(`error`)도 저장한다. 저장하지 않으면 동기화가 주기마다 다시 넣는다. 실패한 명령을 다시 하려면 새로 단다.
 
 - 명령에 대한 답(꺼져 있음 등)은 결과 코멘트와 따로 새 코멘트로 단다. 답글에는 `<!-- pr-proof:reply -->` 표시를 붙여, 결과 코멘트를 찾을 때 섞이지 않게 한다.
 - 모르는 `/` 명령에는 답하지 않는다. `/cc`처럼 다른 도구의 관례일 수 있다.
@@ -488,21 +494,25 @@ sandbox:
 **도입 이유:** PR의 테스트 코드와 `conftest.py`는 pytest가 그대로 실행한다. 호스트에서 돌리면 PR을 올릴 수 있는 사람이 gh·claude 로그인이 있는 계정에서 코드를 실행하게 된다. 이후 단계에서는 AI가 고친 코드(무한 루프, 메모리 폭주 가능)도 사람 확인 없이 실행된다.
 
 ```bash
-docker run -d --name job-<id> --network none \
-  --memory 1g --cpus 1 --pids-limit 256 --user "$(id -u):$(id -g)" -e HOME=/tmp \
+docker run -d --name pr-proof-job-<id> --network none \
+  --memory 1g --cpus 1 --pids-limit 256 \
+  --cap-drop ALL --security-opt no-new-privileges \
+  --user "$(id -u):$(id -g)" -e HOME=/tmp \
   -v /tmp/pipeline/pr-<n>:/work -w /work \
   -v ~/.cache/pipeline/venvs/<cache-key>:/work/.venv:ro \
   -v <pr-proof>/docker/sandbox:/pipeline:ro \
   pipeline-sandbox sleep infinity
-docker exec -e PYTHONPATH=/work job-<id> timeout 600 .venv/bin/pytest \
+docker exec -e PYTHONPATH=/work pr-proof-job-<id> timeout 600 .venv/bin/pytest \
   -p no:cacheprovider \
   --json-report --json-report-file=.pipeline-out/report.json \
   --cov --cov-config=/pipeline/coveragerc \
   --cov-report=xml:.pipeline-out/coverage.xml
-docker rm -f job-<id>
+docker rm -f pr-proof-job-<id>
 ```
 
 - 작업당 컨테이너 하나, 명령은 `docker exec`로 넣는다.
+- 이미지 태그(`pipeline-sandbox`)와 컨테이너 이름 접두어(`pr-proof-job`)는 파이프라인 설정(`sandbox.image`, `sandbox.container_prefix`)에서 바꿀 수 있다. `pytest -m docker`는 운영과 같은 Docker를 쓰므로 `pipeline-sandbox-test`, `pr-proof-test`를 쓴다. 같으면 테스트가 운영 이미지를 개발 중인 Dockerfile로 다시 빌드하고, runs ID가 같은 운영 컨테이너를 지울 수 있다. Redis는 `fakeredis`, 데이터·.venv 캐시·설정은 임시 경로를 쓴다.
+- 설치·작업 컨테이너 모두 `--cap-drop ALL`로 리눅스 권한(capability)을 모두 빼고, `no-new-privileges`로 setuid 바이너리를 통한 권한 상승을 막는다. 호스트 UID로 실행하므로 `/work` 쓰기와 pip 설치에 권한이 필요 없다. `pytest -m docker`가 실제 컨테이너의 `CapBnd`(0)와 `NoNewPrivs`(1)를 확인한다.
 - 컨테이너는 호스트 사용자의 UID·GID로 실행한다. 고정 UID(1000)는 Linux에서 호스트 UID가 다르면 `.pipeline-out/`에 쓰지 못한다. 컨테이너에 없는 UID라 홈 디렉터리가 없으므로 `HOME=/tmp`를 준다.
 - 이미지는 Python과 검사 도구만 든 베이스 이미지 하나다. 대상 리포의 의존성은 이미지가 아니라 `.venv`에 설치하고, 캐시 키별로 보관해 테스트 컨테이너에는 읽기 전용으로 마운트한다 (F5). 설치는 네트워크를 쓰지만 컨테이너 안에서 일어나고 비밀값이 없다.
 - 비밀값은 샌드박스에 절대 넣지 않는다.
@@ -789,6 +799,7 @@ worker: python -m app.worker.main
 - [x] 수정: 조건부 `ruff format` (base가 `ruff format --check`를 통과하는 리포에서만)
 - [x] 제안 PR: 허용 경로만 스테이징, 푸시 전 비밀값 검사, 머지 확인, 상황별 처리, 루프 방지
 - [x] flaky 재실행
+- [x] `.pipeline.yaml`의 `skills.enabled`: lint를 빼면 규칙 줄 없이 테스트만 보여주고 수정을 제안하지 않는다
 - [x] 평가 케이스: 컨벤션 위반 주입 5개(`eval/lint/*.yaml`)와 E2E 테스트(`tests/e2e/test_lint_cases.py`: 로컬 git 원격 + 실제 ruff·샌드박스, GitHub만 가짜, 제안 브랜치 실제 푸시)
 
 ### 3단계. 정적변수(static): 검출 → 안전망 → AI 수정
