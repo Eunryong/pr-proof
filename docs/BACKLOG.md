@@ -32,3 +32,4 @@
 - [ ] (2단계 코드 검증) `controllers/webhook.py`의 `PIPELINE_BRANCH_PREFIX`가 `models/proposal.py`의 `BRANCH_PREFIX`와 값이 중복된다 — 지금은 같은 값이라 동작 차이 없음. models 쪽 상수 하나로 합치기 / 3단계 작업 중 해당 파일을 고칠 때
 - [ ] (2단계 코드 검증) `update.resume_fix`의 `DependencyInstallError`·`EnvironmentFailure` except 두 개가 같은 처리를 한다 — 동작 차이 없음. 하나로 합치기 / 3단계 작업 중 해당 파일을 고칠 때
 - [ ] (2단계 코드 검증) 워커가 작업마다 `Deps.from_config()`로 설정 읽기·DB 엔진·Redis 연결을 새로 만든다 — 작업당 수 ms 수준이고 결과에 영향 없음. 워커 시작 때 한 번 만들어 넘기기 / 6단계(운영)
+- [ ] (2단계 마무리 리뷰) PR 작성자의 `author_association`이 OWNER·MEMBER·COLLABORATOR가 아니면 검사하지 않고 "멤버가 `/recheck`를 달면 검사합니다"라고 코멘트한다. 권한 판단은 `models/comment.py`의 `command_in_comment`와 같은 함수를 쓴다 — 지금은 운영자 혼자 쓰는 예제 리포라 외부 PR이 없음. 외부 PR의 코드가 사람 확인 없이 샌드박스에서 돈다 / 다른 사람에게 쓰게 하기 전

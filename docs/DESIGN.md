@@ -495,7 +495,9 @@ sandbox:
 
 ```bash
 docker run -d --name pr-proof-job-<id> --network none \
-  --memory 1g --cpus 1 --pids-limit 256 --user "$(id -u):$(id -g)" -e HOME=/tmp \
+  --memory 1g --cpus 1 --pids-limit 256 \
+  --cap-drop ALL --security-opt no-new-privileges \
+  --user "$(id -u):$(id -g)" -e HOME=/tmp \
   -v /tmp/pipeline/pr-<n>:/work -w /work \
   -v ~/.cache/pipeline/venvs/<cache-key>:/work/.venv:ro \
   -v <pr-proof>/docker/sandbox:/pipeline:ro \
@@ -510,6 +512,7 @@ docker rm -f pr-proof-job-<id>
 
 - 작업당 컨테이너 하나, 명령은 `docker exec`로 넣는다.
 - 이미지 태그(`pipeline-sandbox`)와 컨테이너 이름 접두어(`pr-proof-job`)는 파이프라인 설정(`sandbox.image`, `sandbox.container_prefix`)에서 바꿀 수 있다. `pytest -m docker`는 운영과 같은 Docker를 쓰므로 `pipeline-sandbox-test`, `pr-proof-test`를 쓴다. 같으면 테스트가 운영 이미지를 개발 중인 Dockerfile로 다시 빌드하고, runs ID가 같은 운영 컨테이너를 지울 수 있다. Redis는 `fakeredis`, 데이터·.venv 캐시·설정은 임시 경로를 쓴다.
+- 설치·작업 컨테이너 모두 `--cap-drop ALL`로 리눅스 권한(capability)을 모두 빼고, `no-new-privileges`로 setuid 바이너리를 통한 권한 상승을 막는다. 호스트 UID로 실행하므로 `/work` 쓰기와 pip 설치에 권한이 필요 없다. `pytest -m docker`가 실제 컨테이너의 `CapBnd`(0)와 `NoNewPrivs`(1)를 확인한다.
 - 컨테이너는 호스트 사용자의 UID·GID로 실행한다. 고정 UID(1000)는 Linux에서 호스트 UID가 다르면 `.pipeline-out/`에 쓰지 못한다. 컨테이너에 없는 UID라 홈 디렉터리가 없으므로 `HOME=/tmp`를 준다.
 - 이미지는 Python과 검사 도구만 든 베이스 이미지 하나다. 대상 리포의 의존성은 이미지가 아니라 `.venv`에 설치하고, 캐시 키별로 보관해 테스트 컨테이너에는 읽기 전용으로 마운트한다 (F5). 설치는 네트워크를 쓰지만 컨테이너 안에서 일어나고 비밀값이 없다.
 - 비밀값은 샌드박스에 절대 넣지 않는다.
