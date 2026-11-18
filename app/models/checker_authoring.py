@@ -19,10 +19,12 @@ from pydantic import BaseModel, ConfigDict, TypeAdapter
 
 from app.models.cache_key import model_cache_key, text_hash
 from app.models.checker import Checker, CheckerKind
-from app.models.rule import Example, Rule, normalize
+from app.models.rule import CheckMethod, Example, Rule, RuleSource, normalize
+from app.models.rule_reading import prompt_version
 
-# 프롬프트, 스키마, 예시 확인 규칙을 바꾸면 올린다 (캐시 키에 들어간다)
-PROMPT_VERSION: Final = "1"
+# 예시 확인(judge_examples, model_examples)의 규칙을 바꾸면 올린다 (캐시 키에 들어간다).
+# 프롬프트와 스키마의 버전은 그 글에서 만든다 (PROMPT_VERSION)
+JUDGE_VERSION: Final = "1"
 # 도구 목록의 버전. 이 단계의 도구 목록은 비어 있다 (기존 도구는 3단계)
 TOOLS_VERSION: Final = "none-1"
 # 검사 엔진 버전 (7.2). sandbox/toolcache.py의 ast-grep 버전, TOOL_IMAGE의 Python과 맞춘다
@@ -103,6 +105,7 @@ def checker_key(rule: Rule, light: str, heavy: str) -> str:
         "tools": TOOLS_VERSION,
         "engines": [f"{k}={v}" for k, v in sorted(ENGINE_VERSION.items())],
         "heavy": heavy,
+        "judge": JUDGE_VERSION,
     }
     return model_cache_key("checker", light, PROMPT_VERSION, parts)
 
@@ -220,6 +223,19 @@ def build_prompt(rule: Rule, need: Shortfall, feedback: Sequence[str]) -> str:
             + f"\n<<<END FEEDBACK id={tag}>>>\n"
         )
     return "\n".join(parts)
+
+
+_FRAME_RULE: Final = Rule(
+    id="R-frame", text="규칙", source=RuleSource("README.md", "절", "0"), origin="document",
+    scope=(), check=CheckMethod("checker"), fix="none",
+    examples=(Example("x\n", (1,), "document"),),
+)  # fmt: skip
+# 캐시 키에 들어간다. 프롬프트나 스키마를 한 글자라도 바꾸면 달라져 검사기를 다시 쓴다
+PROMPT_VERSION: Final = prompt_version(
+    "\0".join(SYSTEM_PROMPT[k] for k in sorted(SYSTEM_PROMPT)),
+    ANSWER_SCHEMA,
+    build_prompt(_FRAME_RULE, Shortfall(1, 1), ["피드백"]),
+)
 
 
 # --- 답 읽기 ---

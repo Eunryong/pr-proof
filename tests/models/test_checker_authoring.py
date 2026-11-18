@@ -136,3 +136,12 @@ def test_judge_labels_model_examples() -> None:
     model_bad = Example("print(2)\n", (1,), "model")
     feedback = judge_examples((BAD, model_bad), [[(2, 2)], []])
     assert feedback[0].startswith("위반 예시 2 (모델이 씀)")
+
+
+def test_prompt_version_follows_prompt_text() -> None:
+    from app.models import checker_authoring
+    from app.models.rule_reading import prompt_version
+
+    changed = prompt_version("다른 지시", checker_authoring.ANSWER_SCHEMA, "")
+    assert len(checker_authoring.PROMPT_VERSION) == 12
+    assert checker_authoring.PROMPT_VERSION != changed
