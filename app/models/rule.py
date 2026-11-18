@@ -102,3 +102,39 @@ def rule_id(doc_path: str, quote: str) -> str:
     stem = _NOT_ALNUM.sub("-", PurePosixPath(doc_path).stem.lower()).strip("-") or "doc"
     digest = hashlib.sha256(normalize(quote).encode()).hexdigest()[:8]
     return f"R-{stem}-{digest}"
+
+
+def in_scope(scope: tuple[str, ...], path: str) -> bool:
+    """path(저장소 기준)가 규칙의 적용 범위 glob 중 하나에 드는지. 범위가 비면 저장소 전체다.
+
+    `**`는 폴더 여러 단계, `*`·`?`는 한 단계 안에서만 맞춘다 (`orders/*.py`는 `orders/a/b.py`를
+    담지 않는다). `orders/**`는 `orders` 아래 모든 파일이다.
+    """
+    return not scope or any(_glob_regex(pattern).fullmatch(path) for pattern in scope)
+
+
+def _glob_regex(pattern: str) -> re.Pattern[str]:
+    out, i = [], 0
+    while i < len(pattern):
+        if pattern.startswith("**/", i):
+            out.append("(?:.*/)?")
+            i += 3
+        elif pattern.startswith("**", i):
+            out.append(".*")
+            i += 2
+        elif pattern[i] == "*":
+            out.append("[^/]*")
+            i += 1
+        elif pattern[i] == "?":
+            out.append("[^/]")
+            i += 1
+        elif pattern[i] == "[" and (end := pattern.find("]", i + 1)) > i + 1:
+            body = pattern[i + 1 : end]
+            negate = body.startswith("!")
+            body = (body[1:] if negate else body).replace("^", r"\^")
+            out.append(f"[{'^' if negate else ''}{body}]")
+            i = end + 1
+        else:
+            out.append(re.escape(pattern[i]))
+            i += 1
+    return re.compile("".join(out))

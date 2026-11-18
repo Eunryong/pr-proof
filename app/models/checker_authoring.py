@@ -35,8 +35,11 @@ MIN_PASSING: Final = 2
 MAX_MODEL_EXAMPLES: Final = 6
 
 # 검사하지 못한 이유. not_code는 "검사 대상 아님", no_checker는 "읽었지만 아직 검사하지 못하는
-# 규칙"(모델 판단은 4단계)이다. 나머지는 저장하지 않으므로 다음 검사가 다시 시도한다
-UncheckedKind = Literal["not_code", "no_checker", "cap", "model_failed", "tool_unavailable"]
+# 규칙"(모델 판단은 4단계)이다. 나머지는 저장하지 않으므로 다음 검사가 다시 시도한다.
+# run_failed는 채택한 검사기가 이 PR의 파일에서 돌지 못한 것이다 (worker/detect.py)
+UncheckedKind = Literal[
+    "not_code", "no_checker", "cap", "model_failed", "tool_unavailable", "run_failed"
+]
 
 
 @dataclass(frozen=True)

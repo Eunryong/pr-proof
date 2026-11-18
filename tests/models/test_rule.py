@@ -1,6 +1,8 @@
 import re
 from datetime import UTC, datetime
 
+import pytest
+
 from app.models.checker import Checker, checker_id
 from app.models.rule import (
     CheckMethod,
@@ -10,6 +12,7 @@ from app.models.rule import (
     RuleSet,
     RuleSource,
     UnreadDoc,
+    in_scope,
     rule_id,
 )
 from app.models.violation import violation_id
@@ -84,3 +87,23 @@ def test_checker_id_is_body_hash() -> None:
         verified_at=datetime(2026, 11, 18, tzinfo=UTC),
     )  # fmt: skip
     assert checker.id == checker_id(body) != checker_id(body + "\n")
+
+
+@pytest.mark.parametrize(
+    ("scope", "path", "inside"),
+    [
+        ((), "anything.py", True),
+        (("orders/**",), "orders/a.py", True),
+        (("orders/**",), "orders/services/a.py", True),
+        (("orders/**",), "ordersx/a.py", False),
+        (("orders/**",), "tests/orders/a.py", False),
+        (("orders/*.py",), "orders/a/b.py", False),
+        (("**/test_*.py",), "test_a.py", True),
+        (("**/test_*.py",), "tests/unit/test_a.py", True),
+        (("orders/models/**", "orders/api/**"), "orders/api/h.py", True),
+        (("orders/[a-c].py",), "orders/b.py", True),
+        (("orders/[!a].py",), "orders/a.py", False),
+    ],
+)
+def test_in_scope(scope: tuple[str, ...], path: str, inside: bool) -> None:
+    assert in_scope(scope, path) is inside
