@@ -84,6 +84,10 @@ class AICall(SQLModel, table=True):
     cost_usd: float | None = None  # claude가 알려준 비용. 모르면 None
     charged_usd: float  # 예산에서 뺀 비용 (모르면 호출당 상한)
     permission_denials: int = 0  # 허용 범위 밖이라 거부된 도구 호출 수
+    # 모델이 부르려 한 허용 목록 밖 도구의 이름과 횟수 (JSON 객체). 없으면 None
+    unexpected_tools: str | None = None
+    # 오류의 내용. 도구 목록 확인으로 멈췄으면 더 나온 도구 이름과 claude CLI 버전이 있다
+    detail: str | None = None
     created_at: datetime | None = None  # Store가 기록할 때 채운다
 
 

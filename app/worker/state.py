@@ -5,7 +5,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from redis import Redis
-from sqlalchemy import func
+from sqlalchemy import Engine, func, inspect, text
+from sqlalchemy.schema import CreateColumn
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from app.models import state_keys
@@ -29,11 +30,30 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+def add_missing_columns(engine: Engine) -> None:
+    """모델에 더한 열을 이미 있는 테이블에 더한다. create_all은 새 테이블만 만든다.
+
+    더할 수 있는 것은 NULL을 허용하는 열뿐이다. 그 밖의 변경은 여기서 다루지 않는다.
+    """
+    inspector = inspect(engine)
+    with engine.begin() as conn:
+        for table in SQLModel.metadata.sorted_tables:
+            existing = {c["name"] for c in inspector.get_columns(table.name)}
+            for column in table.columns:
+                if column.name in existing:
+                    continue
+                if not column.nullable:
+                    raise RuntimeError(f"{table.name}.{column.name}: NULL 불가 열은 더할 수 없다")
+                ddl = CreateColumn(column).compile(engine)
+                conn.execute(text(f"ALTER TABLE {table.name} ADD COLUMN {ddl}"))
+
+
 class Store:
     def __init__(self, db_path: Path, redis: Redis) -> None:
         db_path.parent.mkdir(parents=True, exist_ok=True)
         self.engine = create_engine(f"sqlite:///{db_path}")
         SQLModel.metadata.create_all(self.engine)
+        add_missing_columns(self.engine)
         self.redis = redis
 
     # --- Redis ---

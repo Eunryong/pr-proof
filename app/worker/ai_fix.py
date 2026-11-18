@@ -98,6 +98,8 @@ def environment_problem(result: ClaudeResult) -> str | None:
     """PR과 관계없이 claude를 쓸 수 없는 상태면 그 이유."""
     if result.error == AIErrorKind.LAUNCH:
         return f"claude를 실행하지 못함: {result.detail}"
+    if result.error == AIErrorKind.TOOLS:
+        return f"claude 호출을 중단함: {result.detail}"
     if NOT_LOGGED_IN in result.text or NOT_LOGGED_IN in result.detail:
         return "claude 로그인이 풀림"
     return None
@@ -168,6 +170,11 @@ def code_fix(
                     "AI가 허용 범위 밖 도구 호출을 시도함 (%d건): %s",
                     len(result.permission_denials),
                     ", ".join(d.tool_name for d in result.permission_denials),
+                )
+            if result.unexpected_tools:
+                log.warning(
+                    "AI가 목록에 없는 도구를 부르려 함: %s",
+                    ", ".join(f"{name} {count}회" for name, count in result.unexpected_tools),
                 )
             problem = environment_problem(result)
             if problem is not None:
