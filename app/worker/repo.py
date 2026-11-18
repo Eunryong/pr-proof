@@ -91,6 +91,25 @@ def _tree_git(worktree: Path, *args: str) -> str:
     return _git(f"--git-dir={git_dir}", f"--work-tree={worktree}", *args, cwd=worktree)
 
 
+def worktree_file(worktree: Path, rel: str) -> Path | None:
+    """호스트에서 읽고 써도 되는 worktree 안의 일반 파일이면 그 경로, 아니면 None.
+
+    PR(과 샌드박스에서 돈 PR 코드)이 심볼릭 링크를 넣을 수 있다. 호스트에서 링크를 따라가면
+    worktree 밖 파일(`~/.ssh` 등)을 읽거나 고친다. 링크 자체는 건너뛰고, 상위 폴더가 링크라
+    실제 위치가 worktree 밖이면 거부한다.
+    """
+    path = worktree / rel
+    if path.is_symlink():
+        return None
+    try:
+        real = path.resolve(strict=True)
+    except (OSError, RuntimeError):  # 없음, 링크 순환
+        return None
+    if not real.is_relative_to(worktree.resolve()) or not real.is_file():
+        return None
+    return path
+
+
 def remote_url(repo: str) -> str:
     return f"https://github.com/{repo}.git"
 
@@ -163,9 +182,47 @@ def working_diff(worktree: Path, merge_base_sha: str) -> str:
     return _tree_git(worktree, *_DIFF, merge_base_sha)
 
 
+# 범위 검사용 status. 사용자·리포 git 설정이 결과를 바꾸거나 외부 프로그램을 부르지 않게 한다.
+# 전역 무시 파일은 끈다 (리포의 .gitignore만 본다). fsmonitor·untracked 캐시는 결과가 오래될 수
+# 있고 fsmonitor는 외부 명령을 부를 수 있다
+_STATUS: Final = (
+    "-c", "core.quotePath=false", "-c", "core.excludesFile=/dev/null", "-c", "core.fsmonitor=false",
+    "-c", "core.untrackedCache=false", "-c", "status.renames=true",
+    "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none",
+)  # fmt: skip
+
+
 def status(worktree: Path) -> str:
     """새 파일·삭제·이름 변경까지 보이는 변경 목록 (docs/DESIGN.md F7 범위 검사)."""
-    return _tree_git(worktree, "status", "--porcelain=v1", "-z", "--untracked-files=all")
+    return _tree_git(worktree, *_STATUS)
+
+
+def ignored_status(worktree: Path) -> str:
+    """무시된 파일을 하나씩 보여주는 status (`!!`). F7 무시된 파일 스냅샷용.
+
+    `--ignored=matching`은 무시된 폴더를 `!! build/` 한 줄로만 보여줘, 이미 있던 무시된 폴더 안에
+    새로 만든 `build/conftest.py`를 놓친다. `traditional`은 `--untracked-files=all`과 함께 쓰면
+    무시된 폴더 안의 파일을 하나씩 낸다.
+    """
+    return _tree_git(worktree, *_STATUS, "--ignored=traditional")
+
+
+def outside_symlinks(worktree: Path) -> list[str]:
+    """worktree 밖을 가리키는 추적 중인 심볼릭 링크 (리포 기준 경로).
+
+    PR이 `docs -> ~/.ssh` 같은 링크를 넣으면 그 폴더를 거친 쓰기는 worktree 밖으로 가고
+    `git status`에도 나오지 않는다. AI를 실행하기 전에 확인한다 (DESIGN.md AI 권한).
+    """
+    root = worktree.resolve()
+    out = []
+    for entry in _tree_git(worktree, "ls-files", "-s", "-z").split("\0"):
+        meta, _, path = entry.partition("\t")
+        if not meta.startswith("120000 "):
+            continue
+        target = (worktree / path).resolve()
+        if not target.is_relative_to(root):
+            out.append(path)
+    return out
 
 
 def head_diff(worktree: Path) -> str:

@@ -3,11 +3,13 @@ import pytest
 from app.models.finding import Finding, SkillResult
 from app.models.fix import (
     StatusEntry,
+    code_fix_tests_ok,
     compare,
     lint_fix_blocker,
     out_of_scope,
     parse_porcelain,
     same_test_result,
+    unresolved,
 )
 from app.models.test_run import PytestRun, ReportSummary
 
@@ -90,3 +92,35 @@ def test_lint_fix_blocker() -> None:
     unfixable = SkillResult(skill="lint", findings=(_f(fixable=False),))
     assert lint_fix_blocker(unfixable, _run(0)) == "no_fixable"
     assert lint_fix_blocker(SkillResult(skill="lint"), _run(0)) == "no_fixable"
+
+
+# --- AI 수정 검증 (3단계) ---
+
+
+def _static(file: str, code: str, line: int = 1) -> Finding:
+    return Finding(file, line, "warning", f"{code} msg", "static", "기본 규칙", code)
+
+
+def test_unresolved_counts_targets_by_key() -> None:
+    a1, a2 = _static("a.py", "PLR2004", 3), _static("a.py", "PLR2004", 9)
+    b = _static("b.py", "STATIC-REPEAT")
+    before = [a1, a2, b]
+    # a.py의 PLR2004 두 건 중 a1만 대상: 하나만 줄면 해소
+    assert unresolved(before, [a1], SkillResult("static", (a2, b))) == []
+    assert unresolved(before, [a1], SkillResult("static", (a1, a2, b))) == [a1]
+    # 둘 다 대상이면 둘 다 없어져야 한다 (줄이 밀려도 같은 키)
+    assert unresolved(before, [a1, a2], SkillResult("static", (_static("a.py", "PLR2004", 5),)))
+    assert unresolved(before, [b], SkillResult("static", (a1, a2))) == []
+
+
+def _code_run(passed: int, total: int, failed: int = 0, flaky: tuple[str, ...] = ()) -> PytestRun:
+    summary = ReportSummary(passed=passed, failed=failed, total=total)
+    return PytestRun(exit_code=1 if failed else 0, summary=summary, flaky=flaky)
+
+
+def test_code_fix_tests_must_all_pass_with_same_count() -> None:
+    before = _code_run(9, 9)
+    assert code_fix_tests_ok(before, _code_run(9, 9))
+    assert not code_fix_tests_ok(before, _code_run(8, 9, failed=1))
+    assert not code_fix_tests_ok(before, _code_run(8, 8))  # 테스트가 사라짐
+    assert not code_fix_tests_ok(before, PytestRun(exit_code=5, summary=None))  # 테스트 없음

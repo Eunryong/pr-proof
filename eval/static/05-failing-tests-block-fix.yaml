@@ -1,0 +1,12 @@
+name: failing-tests-block-static
+description: PR이 매직 값을 넣으면서 테스트도 깨뜨렸다. 안전망이 없으므로 static 수정을 제안하지 않는다. 위반은 그대로 보여준다.
+pr:
+  - file: orders/services/pricing.py
+    find: "order.coupon_percent > MAX_COUPON_PERCENT"
+    replace: "order.coupon_percent > 50"
+  - file: orders/services/pricing.py
+    find: "FREE_SHIPPING_MIN = 50_000"
+    replace: "FREE_SHIPPING_MIN = 1"
+expect:
+  findings: [PLR2004]
+  proposal: tests

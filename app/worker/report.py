@@ -9,12 +9,14 @@ from collections import Counter
 from collections.abc import Mapping
 from typing import Final, Literal
 
+from app.models.coverage import FixGate
 from app.models.finding import SkillResult
 from app.models.fix import FixBlocker, FixOutcome
 from app.models.proposal import ProposalResult
 from app.models.test_run import PytestRun
 from app.sandbox.docker_cli import MEMORY_LIMIT_GB
 from app.worker.base_config import PIPELINE_YAML, BaseConfig
+from app.worker.coverage import DiffCoverage
 
 MAX_LISTED_FAILURES: Final = 10
 MAX_LISTED_FINDINGS: Final = 30
@@ -25,6 +27,7 @@ MAX_PATCH_CHARS: Final = 6000
 # merged: 제안을 머지해 생긴 커밋, rejected: 이 커밋의 제안이 거절됨 (다시 제안하지 않음),
 # open: 이 커밋의 제안이 이미 열려 있음 (다시 권하지 않고 그 PR을 가리킴)
 Proposal = Literal["approval", "auto", "merged", "rejected", "open"] | FixBlocker
+SkillProposal = tuple[Proposal, int | None]  # (상태, 관련 제안 PR 번호)
 FIX_COMMAND: Final = "/fix lint"
 _FIX_STATUS_TEXT: Final[Mapping[str, str]] = {
     "nothing_fixed": "적용할 수 있는 수정이 없음",
@@ -32,7 +35,13 @@ _FIX_STATUS_TEXT: Final[Mapping[str, str]] = {
     "out_of_scope": "수정안을 버림: 허용 범위 밖의 파일이 바뀜",
     "tests_changed": "수정안을 버림: 고친 뒤 테스트 결과가 달라짐",
     "unchecked": "수정안을 버림: 고친 뒤 규칙 검사를 하지 못함",
+    "ai_failed": "수정안을 버림: 정해진 횟수 안에 검증을 통과하지 못함",
+    "budget": "PR당 AI 예산을 다 써서 멈춤",
+    "secret": "수정안을 버림: 비밀값으로 보이는 내용이 있음",
+    "refused": "AI를 실행하지 않음",
 }
+_UNCOVERED: Final = "테스트가 지나가지 않아 자동 수정 대상 아님"
+_UNKNOWN: Final = "커버리지를 알 수 없어 자동 수정 대상 아님"
 VIOLATION: Final = "⚠️"
 CLEAN: Final = "✅"
 
@@ -130,13 +139,30 @@ def format_rules_line(results: list[SkillResult]) -> str:
     return line
 
 
-def proposal_suffix(proposal: Proposal | None) -> str:
+def fix_command(skill: str) -> str:
+    return f"/fix {skill}"
+
+
+def proposal_suffix(proposals: Mapping[str, SkillProposal] | Proposal | None) -> str:
     """규칙 줄 끝에 붙는 수정 제안 (DESIGN.md F9: `· 자동 수정 가능: /fix lint`)."""
-    if proposal == "approval":
-        return f" · 자동 수정 가능: `{FIX_COMMAND}`"
-    if proposal == "auto":
-        return " · 자동 수정 중"
-    return ""
+    proposals = _as_mapping(proposals)
+    waiting = [s for s, (p, _) in proposals.items() if p == "approval"]
+    auto = [s for s, (p, _) in proposals.items() if p == "auto"]
+    parts = []
+    if waiting:
+        parts.append("자동 수정 가능: " + ", ".join(f"`{fix_command(s)}`" for s in waiting))
+    if auto:
+        parts.append("자동 수정 중")
+    return "".join(f" · {part}" for part in parts)
+
+
+def _as_mapping(proposals) -> Mapping[str, SkillProposal]:
+    """예전 호출(lint 상태 하나)도 받는다."""
+    if proposals is None:
+        return {}
+    if isinstance(proposals, str):
+        return {"lint": (proposals, None)}
+    return proposals
 
 
 def _pr_ref(number: int | None) -> str:
@@ -144,30 +170,62 @@ def _pr_ref(number: int | None) -> str:
 
 
 def proposal_details(
-    proposal: Proposal | None, run: PytestRun, number: int | None = None
+    proposal: Proposal | None,
+    run: PytestRun,
+    number: int | None = None,
+    skill: str = "lint",
+    gate: FixGate | None = None,
 ) -> list[str]:
     ref = _pr_ref(number)
     if proposal == "merged":
         return [
             "",
-            f"이 커밋은 lint 제안 PR{ref}을 머지한 결과라 같은 제안을 다시 만들지 않습니다.",
+            f"이 커밋은 {skill} 제안 PR{ref}을 머지한 결과라 같은 제안을 다시 만들지 않습니다.",
         ]
     if proposal == "rejected":
-        return ["", f"이 커밋의 lint 제안 PR{ref}이 머지되지 않고 닫혀 다시 제안하지 않습니다."]
-    if proposal == "open":
-        return ["", f"이 커밋의 lint 제안 PR{ref}이 열려 있습니다. 그 PR을 확인해 주세요."]
-    if proposal == "tests":
         return [
             "",
+            f"이 커밋의 {skill} 제안 PR{ref}이 머지되지 않고 닫혀 다시 제안하지 않습니다.",
+        ]
+    if proposal == "open":
+        return ["", f"이 커밋의 {skill} 제안 PR{ref}이 열려 있습니다. 그 PR을 확인해 주세요."]
+    if proposal == "tests":
+        if skill != "lint" and gate is not None and gate.blocked_reason:
+            return ["", f"{skill} 자동 수정을 제안하지 않습니다 ({gate.blocked_reason})."]
+        return [
+            "",
+            f"{'' if skill == 'lint' else skill + ' '}"
             f"테스트가 통과하지 않아 자동 수정을 제안하지 않습니다 ({format_test_line(run)}).",
         ]
-    if proposal == "approval":
+    if proposal == "approval" and skill == "lint":
         return [
             "",
             f"`{FIX_COMMAND}`를 코멘트로 달면 ruff의 안전한 수정 중 PR이 바꾼 줄의 것만 적용하고, "
             "테스트로 확인한 뒤 수정안을 만듭니다.",
         ]
+    if proposal == "approval":
+        n = len(gate.fixable) if gate is not None else 0
+        return [
+            "",
+            f"`{fix_command(skill)}`를 코멘트로 달면 AI가 테스트가 지나가는 {skill} 위반 {n}건을 "
+            "고치고, 규칙 재검사와 테스트로 확인한 뒤 수정안을 만듭니다.",
+        ]
     return []
+
+
+def gate_details(gate: FixGate | None) -> list[str]:
+    """자동 수정 대상이 아닌 위반과 그 이유 (DESIGN.md F8·F9)."""
+    if gate is None or not gate.allowed:
+        return []
+    items = [(f, _UNCOVERED) for f in gate.uncovered] + [(f, _UNKNOWN) for f in gate.unknown]
+    if not items:
+        return []
+    lines = ["", "자동 수정 대상이 아닌 위반:"]
+    lines += [f"- `{f.file}:{f.line}` `{f.code}` {why}" for f, why in items[:MAX_LISTED_FINDINGS]]
+    hidden = len(items) - MAX_LISTED_FINDINGS
+    if hidden > 0:
+        lines.append(f"- 외 {hidden}건")
+    return lines
 
 
 def proposal_line(result: ProposalResult | None) -> str:
@@ -186,7 +244,7 @@ def fix_section(fix: FixOutcome, result: ProposalResult | None = None) -> list[s
         lines = ["", f"**{fix.skill} 수정안:** {reason}"]
         if fix.detail:
             lines[-1] += f" ({fix.detail})"
-        return lines
+        return lines + ai_cost_lines(fix)
     tests = format_test_line(fix.test_run) if fix.test_run else "확인 안 함"
     what = f"위반 {fix.fixed}건을 고쳤습니다" if fix.fixed else "포맷만 고쳤습니다"
     lines = [
@@ -199,8 +257,11 @@ def fix_section(fix: FixOutcome, result: ProposalResult | None = None) -> list[s
         lines.append(f"`ruff format`은 적용하지 않았습니다 ({fix.format_skipped}).")
     if fix.remaining:
         lines.append(f"자동으로 고치지 못한 위반 {len(fix.remaining)}건은 그대로 남습니다.")
+    lines += ai_cost_lines(fix)
     if result is not None and result.secret_blocked:
         return lines  # 비밀값으로 보이는 줄을 코멘트에 옮기지 않는다
+    if fix.explanation:  # AI가 쓴 글이라 코드 블록에 넣는다 (멘션·마크업이 동작하지 않게)
+        lines += _details("AI의 변경 설명", fix.explanation)
     if fix.patch_path is not None and fix.patch_path.is_file():
         patch = fix.patch_path.read_text()
         if len(patch) > MAX_PATCH_CHARS:
@@ -209,6 +270,14 @@ def fix_section(fix: FixOutcome, result: ProposalResult | None = None) -> list[s
         lines += ["", "<details><summary>수정 내용</summary>", "", f"{fence}diff", patch, fence, "",
                   "</details>"]  # fmt: skip
     return lines
+
+
+def ai_cost_lines(fix: FixOutcome) -> list[str]:
+    """이번 검사의 AI 비용 (DESIGN.md 비용 최적화 6). 비용을 모르는 호출은 호출당 상한으로 센다."""
+    if not fix.ai_calls:
+        return []
+    models = ", ".join(fix.models)
+    return [f"AI 호출 {fix.ai_calls}회 ({models}) · 추정 비용 ${fix.ai_cost_usd:.4f}"]
 
 
 def code_fence(text: str) -> str:
@@ -232,7 +301,8 @@ def rules_details(results: list[SkillResult]) -> list[str]:
             hidden = len(r.findings) - MAX_LISTED_FINDINGS
             if hidden > 0:
                 lines.append(f"- 외 {hidden}건")
-    sources = [f"ruff ({r.source})" for r in results if r.skill == "lint" and r.source]
+    names = {"lint": "ruff", "static": "정적변수"}
+    sources = [f"{names[r.skill]} ({r.source})" for r in results if r.skill in names and r.source]
     if sources:
         lines += ["", f"적용한 규칙: {', '.join(sources)} · PR이 바꾼 줄만 검사"]
     return lines
@@ -264,22 +334,25 @@ def _compose(
     *,
     lint: SkillResult | None,
     base: BaseConfig | None,
+    static: SkillResult | None = None,
     seconds: float | None = None,
     from_sync: bool = False,
     suffix: str = "",
     extra: list[str] | None = None,
 ) -> str:
-    results = [lint] if lint is not None else []
+    results = [r for r in (lint, static) if r is not None]
     lines = [HEADER, "", f"**테스트:** {test_line}"]
     if results:
         lines.append(f"**규칙:** {format_rules_line(results)}{suffix}")
     lines += details
     lines += rules_details(results)
     lines += extra or []
-    if base is not None and "lint" not in base.repo.skills.enabled:
+    off = [s for s in ("lint", "static") if base is not None and s not in base.repo.skills.enabled]
+    if off:
         lines += [
             "",
-            "lint는 이 리포에서 꺼져 있습니다 (base 브랜치 `.pipeline.yaml`의 `skills.enabled`).",
+            f"이 리포에서 꺼진 규칙 스킬: {', '.join(off)} "
+            "(base 브랜치 `.pipeline.yaml`의 `skills.enabled`).",
         ]
     if base is not None and base.problems:
         lines += ["", "설정:"] + [f"- {p}" for p in base.problems]
@@ -291,40 +364,79 @@ def render_progress(head_sha: str, step: str) -> str:
     return f"{HEADER}\n\n**테스트:** 진행 중 ({step})\n\n{_footer(head_sha)}\n"
 
 
+def diff_coverage_line(cov: DiffCoverage | None) -> list[str]:
+    """PR이 바꾼 줄의 커버리지 (참고 지표, F8). 잴 수 없으면 쓰지 않는다."""
+    if cov is None:
+        return []
+    return [
+        "",
+        f"바뀐 줄 커버리지 (참고): {cov.percent:g}% "
+        f"(테스트가 센 {cov.measured_lines}줄 중 {cov.uncovered_lines}줄이 실행되지 않음)",
+    ]
+
+
 def render_result(
     run: PytestRun,
     head_sha: str,
     seconds: float,
     *,
     lint: SkillResult | None = None,
+    static: SkillResult | None = None,
     base: BaseConfig | None = None,
+    proposals: Mapping[str, SkillProposal] | None = None,
+    static_gate: FixGate | None = None,
+    diff_coverage: DiffCoverage | None = None,
+    fixes: Mapping[str, FixOutcome] | None = None,
+    proposal_results: Mapping[str, ProposalResult] | None = None,
+    from_sync: bool = False,
+    # lint 하나만 쓰던 호출 (2단계)
     proposal: Proposal | None = None,
+    proposal_number: int | None = None,
     fix: FixOutcome | None = None,
     proposal_result: ProposalResult | None = None,
-    proposal_number: int | None = None,
-    from_sync: bool = False,
 ) -> str:
+    """결과 코멘트. 스킬마다 수정을 했으면 그 결과, 아니면 제안 상태를 적는다."""
     memory_gb = base.memory_gb if base else MEMORY_LIMIT_GB
     max_memory_gb = base.max_memory_gb if base else MEMORY_LIMIT_GB
+    proposals = dict(proposals or {})
+    if proposal is not None:
+        proposals.setdefault("lint", (proposal, proposal_number))
+    fixes = dict(fixes or {})
     if fix is not None:
-        extra = fix_section(fix, proposal_result)
-    else:
-        extra = proposal_details(proposal, run, proposal_number)
+        fixes.setdefault(fix.skill, fix)
+    results = dict(proposal_results or {})
+    if proposal_result is not None and fix is not None:
+        results.setdefault(fix.skill, proposal_result)
+    extra = gate_details(static_gate) + diff_coverage_line(diff_coverage)
+    for skill in ("lint", "static"):
+        if skill in fixes:
+            extra += fix_section(fixes[skill], results.get(skill))
+        elif skill in proposals:
+            state, number = proposals[skill]
+            gate = static_gate if skill == "static" else None
+            extra += proposal_details(state, run, number, skill, gate)
+    waiting = {s: v for s, v in proposals.items() if s not in fixes}
     return _compose(
         format_test_line(run, memory_gb),
         format_test_details(run, memory_gb, max_memory_gb),
         head_sha,
         lint=lint,
+        static=static,
         base=base,
         seconds=seconds,
         from_sync=from_sync,
-        suffix=proposal_suffix(proposal) if fix is None else "",
+        suffix=proposal_suffix(waiting),
         extra=extra,
     )
 
 
 def render_install_failure(
-    head_sha: str, detail: str, *, lint: SkillResult | None = None, base: BaseConfig | None = None
+    head_sha: str,
+    detail: str,
+    *,
+    lint: SkillResult | None = None,
+    static: SkillResult | None = None,
+    base: BaseConfig | None = None,
 ) -> str:
     """의존성 설치 실패. 규칙 검사는 설치와 따로 돌므로 결과가 있으면 같이 보여준다."""
     return _compose(
@@ -332,6 +444,7 @@ def render_install_failure(
         _details("pip 출력", detail[-MAX_OUTPUT_CHARS:]),
         head_sha,
         lint=lint,
+        static=static,
         base=base,
     )
 

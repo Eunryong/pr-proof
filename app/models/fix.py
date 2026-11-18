@@ -4,9 +4,11 @@ from collections import Counter
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final, Literal
+from typing import Literal
 
 from app.models.finding import Finding, SkillResult
+from app.models.scope import LINT_POLICY, StatusEntry, judge_scope
+from app.models.scope import parse_porcelain as parse_porcelain  # 기존 호출처(graph)용 재공개
 from app.models.test_run import PytestRun
 
 FixStatus = Literal[
@@ -16,19 +18,11 @@ FixStatus = Literal[
     "out_of_scope",  # 허용 범위 밖 파일이 바뀌었다
     "tests_changed",  # 고친 뒤 테스트 결과가 고치기 전과 다르다
     "unchecked",  # 고친 뒤 규칙 검사를 하지 못했다
+    "ai_failed",  # AI 수정이 정해진 회차 안에 검증을 통과하지 못했다
+    "budget",  # PR당 AI 예산을 다 써서 멈췄다
+    "refused",  # AI를 실행하지 않았다 (worktree 밖을 가리키는 심볼릭 링크 등)
+    "secret",  # AI 수정안(diff 또는 변경 설명)에 비밀값으로 보이는 내용이 있어 버렸다
 ]
-
-# 수정 전후 비교에서 빼는 파이프라인 산출물
-PIPELINE_OUTPUTS: Final = (".pipeline-out/",)
-
-
-@dataclass(frozen=True)
-class StatusEntry:
-    """`git status --porcelain=v1 -z` 한 줄. 이름 변경이면 orig_path가 있다."""
-
-    code: str  # XY 두 글자. 예: " M", "??", "R "
-    path: str
-    orig_path: str | None = None
 
 
 @dataclass(frozen=True)
@@ -43,46 +37,20 @@ class FixOutcome:
     format_skipped: str = ""  # 포맷하지 않은 이유
     patch_path: Path | None = None  # 수정안 diff (제안 PR에 쓴다)
     detail: str = ""  # 버린 이유 등
+    # AI 수정 (static·structure)만 쓴다
+    explanation: str = ""  # AI가 쓴 변경 설명. GitHub에 올리기 전에 비밀값 검사를 거친다
+    ai_calls: int = 0
+    ai_cost_usd: float = 0.0  # 추정 비용. 비용을 모르는 호출은 호출당 상한으로 센다
+    models: tuple[str, ...] = ()  # 회차별 모델
 
     @property
     def ready(self) -> bool:
         return self.status == "ready"
 
 
-def parse_porcelain(output: str) -> list[StatusEntry]:
-    """`git status --porcelain=v1 -z` 출력. 이름 변경·복사는 다음 항목이 옛 경로다."""
-    parts = output.split("\0")
-    entries: list[StatusEntry] = []
-    i = 0
-    while i < len(parts):
-        item = parts[i]
-        i += 1
-        if len(item) < 4:
-            continue
-        code, path = item[:2], item[3:]
-        orig = None
-        if code[0] in "RC" or code[1] in "RC":
-            orig = parts[i] if i < len(parts) else None
-            i += 1
-        entries.append(StatusEntry(code=code, path=path, orig_path=orig))
-    return entries
-
-
 def out_of_scope(entries: Iterable[StatusEntry], allowed: Iterable[str]) -> list[str]:
-    """허용 목록 밖의 변경. 수정(M)만 허용 파일에 허락하고, 새 파일·삭제·이름 변경은 모두 밖이다.
-
-    lint 수정은 위반이 있는 파일의 내용만 바꾼다. 파일을 만들거나 지울 이유가 없다.
-    """
-    allowed_set = set(allowed)
-    bad = []
-    for e in entries:
-        paths = [e.path] + ([e.orig_path] if e.orig_path else [])
-        if all(p.startswith(PIPELINE_OUTPUTS) for p in paths):
-            continue
-        modified_only = set(e.code.strip()) == {"M"}
-        if not modified_only or e.path not in allowed_set:
-            bad.append(f"{e.code.strip()} {e.path}")
-    return bad
+    """lint 수정의 허용 범위 밖 변경 ("XY 경로" 목록). LINT_POLICY로 판정한다."""
+    return [v.label for v in judge_scope(entries, allowed, LINT_POLICY).violations]
 
 
 def _key(f: Finding) -> tuple[str, str, str]:
@@ -111,6 +79,31 @@ def same_test_result(before: PytestRun, after: PytestRun) -> bool:
         return before.summary is after.summary or after.status == "no_tests"
     # 불안정한 테스트는 재실행에서 통과한 수까지 센다
     return (before.passed_count, before.summary.total) == (after.passed_count, after.summary.total)
+
+
+def code_fix_tests_ok(before: PytestRun, after: PytestRun) -> bool:
+    """AI 수정 뒤 테스트: 모두 통과하고(불안정한 테스트 없이) 수정 전과 같은 수가 돌았다."""
+    if not after.allows_code_fix or before.summary is None or after.summary is None:
+        return False
+    return (after.passed_count, after.summary.total) == (before.passed_count, before.summary.total)
+
+
+def unresolved(
+    before: Sequence[Finding], targets: Sequence[Finding], after: SkillResult
+) -> list[Finding]:
+    """고치기로 한 위반 중 고친 뒤에도 남은 것. 파일·규칙·메시지의 개수로 비교한다.
+
+    같은 키의 위반이 여럿이고 그중 일부만 대상이면, 대상 수만큼 줄어야 해소로 본다.
+    """
+    before_count = Counter(_key(f) for f in before)
+    after_count = Counter(_key(f) for f in after.findings)
+    needed = Counter(_key(f) for f in targets)
+    left = []
+    for f in targets:
+        k = _key(f)
+        if after_count[k] > before_count[k] - needed[k]:
+            left.append(f)
+    return left
 
 
 FixBlocker = Literal["no_fixable", "tests"]

@@ -81,3 +81,23 @@ def test_body_mentions_import_block_rewrite_for_i001() -> None:
     body = _body({"F401": 1, "I001": 1})
     assert "`I001`(import 정렬)는 import 블록 전체를 다시 정렬했습니다." in body
     assert "PR이 건드리지 않은 줄은 바꾸지 않았습니다" not in body
+
+
+def test_find_secret_in_text_checks_the_whole_text() -> None:
+    assert proposal.find_secret_in_text("상수로 뺐다") is None
+    assert proposal.find_secret_in_text("키는 ghp_" + "a" * 36 + " 이다") == "토큰·키 형식"
+    assert proposal.find_secret_in_text("hook-secret-123 를 읽었다", ["hook-secret-123"]) == (
+        "파이프라인 비밀값"
+    )
+    assert proposal.find_secret_in_text("short", ["short"]) is None  # 너무 짧은 값은 보지 않는다
+
+
+def test_ai_body_fences_explanation_and_asks_for_review() -> None:
+    text = proposal.ai_body(
+        3, "static", "a" * 40, Counter({"PLR2004": 2}), "기본 규칙", "통과 (9개)",
+        ("haiku", "sonnet"), "@someone 상수로 뺐다", "````",
+    )  # fmt: skip
+    assert text.startswith(proposal.PROPOSAL_MARKER)
+    assert "`PLR2004` 2건" in text and "모델: haiku, sonnet" in text
+    assert "````\n@someone 상수로 뺐다\n````" in text  # 코드 블록 안이라 멘션이 동작하지 않는다
+    assert "리뷰한 뒤 머지" in text

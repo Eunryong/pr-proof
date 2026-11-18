@@ -12,6 +12,10 @@ from app.models.finding import Skill
 
 # docker가 받는 최소 메모리보다 넉넉히 크게. 너무 작으면 컨테이너가 뜨지 않아 환경 오류로 보인다
 MIN_MEMORY_GB: Final = 0.5
+DEFAULT_MAX_RETRIES: Final = 3
+MAX_RETRIES_CAP: Final = 5  # 회차마다 테스트를 다시 돌리므로 리포 설정으로 무한히 늘리지 못하게
+# claude --model에 넘기는 이름. `-`로 시작하면 옵션으로 읽히므로 막는다
+MODEL_NAME_PATTERN: Final = r"^[A-Za-z0-9][A-Za-z0-9._\[\]-]*$"
 
 
 class SandboxSettings(BaseModel):
@@ -22,6 +26,25 @@ class SandboxSettings(BaseModel):
 class FixSettings(BaseModel):
     model_config = ConfigDict(extra="ignore")
     require_approval: bool = True  # /fix 승인 후 수정안을 만든다. false면 바로 만든다
+    # static·structure는 테스트가 지나가는 위반 줄만 자동 수정한다 (DESIGN.md F8)
+    require_covered: bool = True
+    # AI 수정의 작성 → 검증 회차 상한 (DESIGN.md F7)
+    max_retries: int = Field(default=DEFAULT_MAX_RETRIES, ge=1, le=MAX_RETRIES_CAP)
+
+
+class StaticSettings(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    # 같은 리터럴이 이 횟수 이상 반복되면 위반. None이면 기본값(3)이고 출처는 "기본 규칙"
+    min_repeats: int | None = Field(default=None, ge=2)
+
+
+class ModelSettings(BaseModel):
+    """AI 수정에 쓸 모델과 PR당 예산 (DESIGN.md 비용 최적화). 백엔드는 claude CLI만 있다."""
+
+    model_config = ConfigDict(extra="ignore")
+    light: str = Field(default="haiku", pattern=MODEL_NAME_PATTERN)
+    heavy: str = Field(default="sonnet", pattern=MODEL_NAME_PATTERN)
+    budget_per_pr_usd: float = Field(default=0.5, ge=0)
 
 
 class SkillsSettings(BaseModel):
@@ -29,6 +52,7 @@ class SkillsSettings(BaseModel):
     # 켤 규칙 스킬. lint를 빼면 "테스트만" 돈다. static·structure는 3·4단계에서 붙는다
     enabled: list[Skill] = Field(default_factory=lambda: ["lint", "static", "structure"])
     fix: FixSettings = FixSettings()
+    static: StaticSettings = StaticSettings()
 
 
 class ExtensionSettings(BaseModel):
@@ -48,6 +72,7 @@ class RepoConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
     sandbox: SandboxSettings = SandboxSettings()
     skills: SkillsSettings = SkillsSettings()
+    model: ModelSettings = ModelSettings()
     extensions: Extensions = Extensions()
 
     def extension_enabled(self, name: str) -> bool:

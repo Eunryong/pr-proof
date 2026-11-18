@@ -22,27 +22,10 @@ PYTHON_SUFFIXES: Final = (".py", ".pyi")
 MAX_FIX_ROUNDS: Final = 5
 
 
-def worktree_file(worktree: Path, rel: str) -> Path | None:
-    """호스트에서 읽고 써도 되는 worktree 안의 일반 파일이면 그 경로, 아니면 None.
-
-    PR(과 샌드박스에서 돈 PR 코드)이 심볼릭 링크를 넣을 수 있다. 호스트에서 링크를 따라가면
-    worktree 밖 파일(`~/.ssh` 등)을 읽거나 고친다. 링크 자체는 건너뛰고, 상위 폴더가 링크라
-    실제 위치가 worktree 밖이면 거부한다.
-    """
-    path = worktree / rel
-    if path.is_symlink():
-        return None
-    try:
-        real = path.resolve(strict=True)
-    except (OSError, RuntimeError):  # 없음, 링크 순환
-        return None
-    if not real.is_relative_to(worktree.resolve()) or not real.is_file():
-        return None
-    return path
-
-
 def changed_python_files(worktree: Path, changed: ChangedLines) -> list[str]:
-    return sorted(f for f in changed if f.endswith(PYTHON_SUFFIXES) and worktree_file(worktree, f))
+    return sorted(
+        f for f in changed if f.endswith(PYTHON_SUFFIXES) and repo.worktree_file(worktree, f)
+    )
 
 
 def to_result(run: ruff_runner.RuffRun, changed: ChangedLines, source: str) -> SkillResult:
@@ -72,12 +55,16 @@ def run_lint(
     job_id: str | None = None,
     is_stale: Callable[[], bool] | None = None,
     names: docker_cli.Names = docker_cli.DEFAULT_NAMES,
+    changed: ChangedLines | None = None,
 ) -> SkillResult | None:
     """.venv 없는 컨테이너에서 ruff를 돌린다. 새 커밋이 와서 중단되면 None.
 
+    changed가 없으면 changes.diff를 읽는다. AI 수정 뒤 새 위반을 볼 때는 다시 센 줄을 넘긴다.
+
     의존성 설치와 따로 돌리므로, 설치가 실패한 PR에도 규칙 결과를 보여줄 수 있다.
     """
-    changed = added_lines((worktree / CHANGES_DIFF).read_text())
+    if changed is None:
+        changed = added_lines((worktree / CHANGES_DIFF).read_text())
     files = changed_python_files(worktree, changed)
     if not files:
         return SkillResult(skill="lint", source=base.ruff_source)
@@ -108,7 +95,7 @@ def apply_safe_fixes(
             by_file.setdefault(v.file, []).append(v)
     applied, touched = 0, set()
     for file, violations in by_file.items():
-        path = worktree_file(worktree, file)
+        path = repo.worktree_file(worktree, file)
         if path is None:  # changed_python_files가 이미 뺐지만, 쓰기 직전에 다시 본다
             continue
         # newline=""로 읽고 써서 CRLF 같은 줄바꿈을 그대로 둔다
@@ -153,7 +140,7 @@ def base_is_formatted(
 
 
 def _read(worktree: Path, rel: str) -> bytes:
-    path = worktree_file(worktree, rel)
+    path = repo.worktree_file(worktree, rel)
     return path.read_bytes() if path is not None else b""
 
 
