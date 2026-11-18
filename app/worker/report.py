@@ -13,13 +13,14 @@ from app.models.coverage import FixGate
 from app.models.doc_rules import DocRules
 from app.models.finding import Finding, SkillResult
 from app.models.fix import FixBlocker, FixOutcome
+from app.models.install import InstallFailureKind
 from app.models.proposal import ProposalResult
 from app.models.test_run import PytestRun
 from app.sandbox.docker_cli import MEMORY_LIMIT_GB
 from app.worker import doc_rules_report
 from app.worker.base_config import PIPELINE_YAML, BaseConfig
 from app.worker.coverage import DiffCoverage
-from app.worker.markdown import code_fence
+from app.worker.markdown import code_fence, inline_code
 
 MAX_LISTED_FAILURES: Final = 10
 MAX_LISTED_FINDINGS: Final = 30
@@ -481,10 +482,12 @@ def render_install_failure(
     base: BaseConfig | None = None,
     doc_rules: DocRules | None = None,
     checkers: Mapping[str, Checker] | None = None,
+    kind: InstallFailureKind = "unknown",
+    packages: Sequence[str] = (),
 ) -> str:
     """의존성 설치 실패. 규칙 검사는 설치와 따로 돌므로 결과가 있으면 같이 보여준다."""
     return _compose(
-        "실행 불가 (의존성을 설치하지 못함)",
+        f"실행 불가 ({install_failure_reason(kind, packages)})",
         _details("pip 출력", detail[-MAX_OUTPUT_CHARS:]),
         head_sha,
         lint=lint,
@@ -493,6 +496,15 @@ def render_install_failure(
         doc_rules=doc_rules,
         checkers=checkers,
     )
+
+
+def install_failure_reason(kind: InstallFailureKind, packages: Sequence[str] = ()) -> str:
+    if kind == "source_only" and packages:
+        names = ", ".join(inline_code(p, 100) for p in packages[:10])
+        return f"의존성을 설치하지 못함: 소스 배포본만 있는 패키지 {names}. wheel만 설치합니다"
+    if kind == "disallowed":
+        return "의존성을 설치하지 못함: wheel만 설치하므로 받지 않는 줄이 의존성 파일에 있음"
+    return "의존성을 설치하지 못함"
 
 
 def render_environment_wait(head_sha: str, *, final: bool) -> str:

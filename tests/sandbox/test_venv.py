@@ -1,5 +1,6 @@
 """app/sandbox/venv.py 단위 테스트. Docker 없이 돈다."""
 
+import json
 import subprocess
 from pathlib import Path
 from typing import Final
@@ -93,20 +94,91 @@ def test_dependency_files_order(tmp_path: Path) -> None:
     ]
 
 
-def test_write_deps_translates_pyproject_and_adds_tools(tmp_path: Path) -> None:
-    repo, dest = tmp_path / "repo", tmp_path / "deps"
+def test_deps_input_translates_pyproject_and_adds_tools(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
     repo.mkdir()
-    dest.mkdir()
     (repo / "requirements.txt").write_text("pytest\n")
     (repo / "pyproject.toml").write_text("[project]\nname='x'\ndependencies=['pyyaml']\n")
-    args = venv.write_deps(repo, dest)
+    files, args = venv.deps_input(repo)
     assert args == [
-        "-r", "/deps/requirements.txt",
-        "-r", "/deps/pyproject-deps.txt",
+        "-r", "/tmp/deps/requirements.txt",
+        "-r", "/tmp/deps/pyproject-deps.txt",
         *venv.TOOL_REQUIREMENTS,
     ]  # fmt: skip
-    assert (dest / "pyproject-deps.txt").read_text() == "pyyaml\n"
-    assert not (dest / "pyproject.toml").exists()  # 프로젝트 자체는 넘기지 않는다
+    # 프로젝트 자체는 넘기지 않는다
+    assert files == {"requirements.txt": "pytest\n", "pyproject-deps.txt": "pyyaml\n"}
+
+
+def test_install_container_gets_inputs_on_stdin_and_one_output_mount(
+    tmp_path: Path, repo: Path, monkeypatch
+) -> None:
+    calls = []
+
+    def fake_run(*args, **kwargs):
+        calls.append((args, kwargs))
+        return _completed(0)
+
+    monkeypatch.setattr(docker_cli, "run", fake_run)
+    target = venv.ensure_venv(repo, IMAGE, cache_dir=tmp_path / "cache")
+    ((args, kwargs),) = calls
+    mounts = [args[i + 1] for i, a in enumerate(args) if a in ("-v", "--volume", "--mount")]
+    assert len(mounts) == 1 and mounts[0].endswith(f":{venv.VENV_IN_CONTAINER}")
+    assert mounts[0].split(":")[0].startswith(str(tmp_path / "cache" / "."))  # 빈 임시 출력 폴더
+    assert "-i" in args and json.loads(kwargs["input"]) == venv.deps_input(repo)[0]
+    script = args[-1]
+    assert "--only-binary :all:" in script and "-r /tmp/deps/requirements.txt" in script
+    assert (target / ".complete").is_file()
+
+
+def test_cache_key_includes_install_method(repo: Path, monkeypatch) -> None:
+    before = venv.cache_key(repo, IMAGE)
+    monkeypatch.setattr(venv, "INSTALL_VERSION", "other")
+    assert venv.cache_key(repo, IMAGE) != before
+
+
+@pytest.mark.parametrize(
+    ("text", "bad"),
+    [
+        ("pytest==8.3.4\n# comment\n\nrequests>=2 ; python_version>'3'\n", []),
+        ("-r requirements.txt\npytest\n", []),
+        ("--no-binary :all:\npytest\n", ["--no-binary :all:"]),
+        ("-i https://evil.example/simple\n", ["-i https://evil.example/simple"]),
+        ("--extra-index-url=https://x\n", ["--extra-index-url=https://x"]),
+        ("-e .\n", ["-e ."]),
+        ("pkg @ https://example.com/pkg.tar.gz\n", ["pkg @ https://example.com/pkg.tar.gz"]),
+        ("git+https://github.com/a/b.git\n", ["git+https://github.com/a/b.git"]),
+        ("./local/pkg\n", ["./local/pkg"]),
+        ("-r ../outside.txt\n", ["-r ../outside.txt"]),
+        ("-r missing.txt\n", ["-r missing.txt"]),
+        ("pytest --hash=sha256:abc\n", []),
+    ],
+    ids=[
+        "plain",
+        "include",
+        "no-binary",
+        "index",
+        "extra-index",
+        "editable",
+        "direct-url",
+        "vcs",
+        "path",
+        "include-outside",
+        "include-missing",
+        "hash",
+    ],  # fmt: skip
+)
+def test_disallowed_lines(text: str, bad: list[str]) -> None:
+    files = {"requirements-dev.txt": text, "requirements.txt": "pytest\n"}
+    assert venv.disallowed_lines(files) == [f"requirements-dev.txt: {b}" for b in bad]
+
+
+def test_disallowed_requirement_is_not_installed(tmp_path: Path, repo: Path, monkeypatch) -> None:
+    (repo / "requirements.txt").write_text("--no-binary :all:\npytest\n")
+    monkeypatch.setattr(docker_cli, "run", lambda *a, **k: pytest.fail("설치하면 안 된다"))
+    with pytest.raises(DependencyInstallError) as info:
+        venv.ensure_venv(repo, IMAGE, cache_dir=tmp_path / "cache")
+    assert info.value.kind == "disallowed" and "--no-binary :all:" in info.value.detail
+    assert list((tmp_path / "cache").iterdir()) == []
 
 
 def test_ensure_venv_reuses_complete_cache(tmp_path: Path, repo: Path, monkeypatch) -> None:
@@ -138,6 +210,15 @@ ERROR: Could not find a version that satisfies the requirement pytest==8.3.4 (fr
 ERROR: No matching distribution found for pytest==8.3.4"""
 
 
+# pip 24.0 `install -vv --only-binary :all: docopt==0.6.2 pytest==8.3.4`를 python:3.11-slim에서
+# 실제로 돌린 출력을 설치 스크립트가 줄인 모양 (끝부분 + 건너뛴 이름). docopt는 소스 배포본만 있다
+SOURCE_ONLY: Final = """  Skipping link: not a file: https://pypi.org/simple/docopt/
+ERROR: Could not find a version that satisfies the requirement docopt==0.6.2 (from versions: none)
+ERROR: No matching distribution found for docopt==0.6.2
+No sources permitted for docopt
+No sources permitted for pytest"""
+
+
 @pytest.mark.parametrize(
     ("output", "kind"),
     [
@@ -151,12 +232,36 @@ ERROR: No matching distribution found for pytest==8.3.4"""
         ),
         ("ERROR: Invalid requirement: 'pytest==='", "resolution"),
         ("error: subprocess-exited-with-error\nFailed building wheel for psycopg2", "unknown"),
+        (SOURCE_ONLY, "source_only"),
+        (OFFLINE + "\nNo sources permitted for pytest", "network"),
         ("", "unknown"),
     ],
-    ids=["offline", "no-match", "resolution-impossible", "conflict", "invalid", "build", "empty"],
+    ids=[
+        "offline",
+        "no-match",
+        "resolution-impossible",
+        "conflict",
+        "invalid",
+        "build",
+        "source-only",
+        "offline-with-sdist",
+        "empty",
+    ],  # fmt: skip
 )
 def test_classify_pip_failure(output: str, kind: str) -> None:
     assert venv.classify_pip_failure(output) == kind
+
+
+def test_source_only_packages_only_names_missing_ones() -> None:
+    assert venv.source_only_packages(SOURCE_ONLY) == ("docopt",)
+    assert venv.source_only_packages("ERROR: No matching distribution found for nope==1") == ()
+
+
+def test_source_only_failure_names_packages(tmp_path: Path, repo: Path, monkeypatch) -> None:
+    monkeypatch.setattr(docker_cli, "run", lambda *a, **k: _completed(1, SOURCE_ONLY))
+    with pytest.raises(DependencyInstallError) as info:
+        venv.ensure_venv(repo, IMAGE, cache_dir=tmp_path / "cache")
+    assert (info.value.kind, info.value.packages) == ("source_only", ("docopt",))
 
 
 def _completed(code: int, stderr: str = "") -> subprocess.CompletedProcess[str]:

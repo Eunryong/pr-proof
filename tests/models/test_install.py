@@ -7,6 +7,8 @@ from app.models.install import UNKNOWN_FAILURE_LIMIT, install_failure_outcome
     ("kind", "failures", "outcome"),
     [
         ("resolution", 1, "unrunnable"),  # 1회에 PR 문제
+        ("source_only", 1, "unrunnable"),
+        ("disallowed", 1, "unrunnable"),
         ("network", 1, "environment"),
         ("network", 5, "environment"),  # 네트워크는 몇 번이든 환경 오류
         ("unknown", 1, "environment"),

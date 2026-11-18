@@ -99,7 +99,8 @@ def process_update(job: PRJob, deps: Deps) -> str:
             body = report.render_install_failure(
                 job.head_sha, e.detail, lint=ctx.lint, static=ctx.static, base=ctx.base,
                 doc_rules=ctx.doc_rules,
-                checkers=doc_rules.shown_checkers(ctx.doc_rules, store),
+                checkers=doc_rules.shown_checkers(ctx.doc_rules, store), kind=e.kind,
+                packages=e.packages,
             )  # fmt: skip
             ctx.comment_id = github.upsert_comment(job.repo, job.pr_number, body, ctx.comment_id)
             store.finish_run(run_id, "done", test_status="unrunnable", comment_id=ctx.comment_id)

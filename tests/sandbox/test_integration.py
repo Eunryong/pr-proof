@@ -114,6 +114,15 @@ def test_unknown_package_is_resolution_failure(
     assert list(cache.iterdir()) == []
 
 
+def test_source_only_package_is_not_built(worktree: Path, image: Image, venv_cache: Path) -> None:
+    """소스 배포본만 있는 패키지는 빌드하지 않고 실패한다 (8.1). docopt는 wheel이 없다."""
+    (worktree / "requirements.txt").write_text("pytest==8.3.4\ndocopt==0.6.2\n")
+    with pytest.raises(DependencyInstallError) as info:
+        venv.ensure_venv(worktree, image, cache_dir=venv_cache, tag=TEST_NAMES.image)
+    assert (info.value.kind, info.value.packages) == ("source_only", ("docopt",))
+    assert "No matching distribution found for docopt" in info.value.detail
+
+
 def test_broken_conftest_is_unrunnable_not_environment_error(job: str, worktree: Path) -> None:
     (worktree / "conftest.py").write_text("raise RuntimeError('broken conftest')\n")
     run = pytest_runner.run_tests(job, worktree)

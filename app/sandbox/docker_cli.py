@@ -56,11 +56,17 @@ def minimal_env() -> dict[str, str]:
     return {k: os.environ[k] for k in _ENV_PASSTHROUGH if k in os.environ}
 
 
-def run(*args: str, timeout: float = 120, check: bool = True) -> subprocess.CompletedProcess[str]:
-    """`docker <args>`를 실행한다. check면 0이 아닌 종료 코드를 SandboxError로 올린다."""
+def run(
+    *args: str, timeout: float = 120, check: bool = True, input: str | None = None
+) -> subprocess.CompletedProcess[str]:
+    """`docker <args>`를 실행한다. check면 0이 아닌 종료 코드를 SandboxError로 올린다.
+
+    input은 컨테이너의 표준 입력이다 (`docker run -i`와 같이 쓴다).
+    """
     try:
         proc = subprocess.run(
             ["docker", *args],
+            input=input,
             capture_output=True,
             text=True,
             env=minimal_env(),

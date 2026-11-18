@@ -28,6 +28,7 @@ from app.models.rule import CheckMethod, Rule, RuleSource, rule_id
 from app.sandbox import checker_runner
 from app.sandbox.checker_runner import CheckerRun, Match, Ran
 from app.sandbox.docker_cli import SandboxError
+from app.sandbox.venv import DependencyInstallError
 from app.worker import base_config, doc_rules, graph, repo, update
 from app.worker.ai import claude_cli
 from app.worker.ai.claude_cli import AIErrorKind, StructuredResult
@@ -364,3 +365,23 @@ def test_ruleset_cap_stops_authoring_and_next_check_continues(doc_env, tmp_path:
     assert all(isinstance(o, RuleChecked) for o in found.outcomes)
     assert [kind for kind, _ in model.prompts] == ["rules", "checker", "checker", "checker"]
     assert found.usage.calls == 1 and found.usage.cache_hits == 3
+
+
+def test_source_only_dependency_makes_tests_unrunnable_and_keeps_rules(doc_env, tmp_path) -> None:
+    use_model(doc_env, FakeModel(rule_answer(print_rule())))
+
+    def install_fails(*a, **k):
+        raise DependencyInstallError("source_only", "key", "ERROR: No matching …", ("docopt",))
+
+    use_runner(doc_env, install_fails)
+    remote = tmp_path / "remote"
+    base_sha, head = make_remote(remote, BASE_FILES, PR_FILES)
+    doc_env["gh"].head, doc_env["gh"].base = head, base_sha
+    doc_env["redis"].set(state_keys.latest_head("o/r", 1), head)
+    job = PRJob(repo="o/r", pr_number=1, kind="update", head_sha=head, base_sha=base_sha,
+                source="webhook")  # fmt: skip
+    assert update.process_update(job, doc_env["deps"]) == "unrunnable"
+    body = _last_comment(doc_env)
+    assert ("**테스트:** 실행 불가 (의존성을 설치하지 못함: 소스 배포본만 있는 패키지 `docopt`. "
+            "wheel만 설치합니다)") in body  # fmt: skip
+    assert "**문서 규칙:** ⚠️ 위반 1건 (규칙 1개)" in body and "```yaml" in body
