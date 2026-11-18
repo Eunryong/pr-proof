@@ -63,13 +63,30 @@ def handle(payload: str, deps: Deps | None = None) -> str:
     return result
 
 
+def _is_current_head(job: PRJob, deps: Deps, final: bool) -> bool:
+    """GitHub에서 PR의 지금 head를 확인하고 Redis의 최신 head를 그 값으로 바로잡는다.
+
+    웹훅은 순서대로 오지 않을 수 있다. 옛 커밋의 웹훅이 늦게 오면 Redis의 최신 head가 옛 커밋으로
+    덮이고, 그대로 두면 옛 커밋의 결과가 PR에 남는다. 확인에 실패하면 환경 오류로 재시도한다
+    (아직 runs 기록 전이므로 마지막 시도면 작업 키만 지운다).
+    """
+    try:
+        actual = deps.github.pr_head(job.repo, job.pr_number)
+    except GitHubError:
+        if final:
+            deps.store.release(job)
+        raise
+    deps.store.set_latest_head(job.repo, job.pr_number, actual)
+    return actual == job.head_sha
+
+
 def process_update(job: PRJob, deps: Deps) -> str:
     store, github = deps.store, deps.github
-    if store.is_stale(job):
-        return "stale"  # 더 새 커밋의 작업이 있다
+    attempt, final = _attempt()
+    if not _is_current_head(job, deps, final):
+        return "stale"  # 더 새 커밋이 있다. 그 커밋의 작업(또는 동기화)이 처리한다
     run_id = store.start_run(job)
     comment_id = store.last_comment_id(job.repo, job.pr_number)
-    attempt, final = _attempt()
     ctx = graph.FlowContext(
         store=store,
         github=github,
@@ -96,6 +113,9 @@ def process_update(job: PRJob, deps: Deps) -> str:
     except EnvironmentFailure as e:
         _give_up_or_retry(job, ctx, run_id, final, e)
         raise
+    except Exception as e:  # 파이프라인 버그, rq JobTimeoutException(작업 시간 초과)
+        _record_error(job, ctx, run_id, final, e)
+        raise
 
     if result.get("stopped"):
         store.finish_run(run_id, "cancelled", comment_id=ctx.comment_id)
@@ -113,6 +133,27 @@ def _give_up_or_retry(
     ctx.store.finish_run(run_id, "env_error", comment_id=ctx.comment_id)
     if final:
         ctx.store.release(job)  # 지우지 않으면 키 만료(6시간)까지 같은 커밋을 다시 넣지 못한다
+
+
+def _record_error(
+    job: PRJob, ctx: graph.FlowContext, run_id: int, final: bool, error: Exception
+) -> None:
+    """환경 오류가 아닌 예외를 기록한다.
+
+    runs가 running으로 남으면 동기화가 죽은 워커로 보고 같은 커밋을 계속 다시 넣는다.
+    마지막 시도면 작업 키를 지운다 (동기화는 error를 같은 커밋으로 다시 넣지 않는다).
+    """
+    log.exception("작업 오류 %s#%s: %s", job.repo, job.pr_number, error)
+    try:
+        ctx.comment_id = ctx.github.upsert_comment(
+            job.repo, job.pr_number, report.render_pipeline_error(job.head_sha, final=final),
+            ctx.comment_id,
+        )  # fmt: skip
+    except GitHubError:
+        log.warning("오류 표시를 PR에 남기지 못함")
+    ctx.store.finish_run(run_id, "error", comment_id=ctx.comment_id)
+    if final:
+        ctx.store.release(job)
 
 
 def _report_environment(job: PRJob, ctx: graph.FlowContext, final: bool, error: Exception) -> None:

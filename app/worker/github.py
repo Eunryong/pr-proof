@@ -47,6 +47,11 @@ class GitHub:
             self._login = self._run(["api", "user", "--jq", ".login"], None).strip()
         return self._login
 
+    def pr_head(self, repo: str, pr_number: int) -> str:
+        """PR의 지금 head SHA."""
+        args = ["api", f"repos/{repo}/pulls/{pr_number}", "--jq", ".head.sha"]
+        return self._run(args, None).strip()
+
     def find_comment(self, repo: str, pr_number: int) -> int | None:
         """이 계정이 단, 파이프라인 표시가 있는 코멘트의 ID."""
         jq = f'.[] | select(.body | contains("{COMMENT_MARKER}")) | [.id, .user.login] | @tsv'

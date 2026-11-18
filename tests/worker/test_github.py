@@ -7,15 +7,23 @@ from app.worker.github import GitHub, GitHubError
 
 
 class FakeGh:
-    def __init__(self, comments: str = "", patch_error: str | None = None) -> None:
+    def __init__(
+        self, comments: str = "", patch_error: str | None = None, head: str = "a" * 40
+    ) -> None:
         self.calls: list[tuple[list[str], str | None]] = []
         self.comments = comments
         self.patch_error = patch_error
+        self.head = head  # PR의 지금 head (pr_head)
+        self.head_error: str | None = None
 
     def __call__(self, args: list[str], stdin: str | None) -> str:
         self.calls.append((args, stdin))
         if args[:2] == ["api", "user"]:
             return "me\n"
+        if _is_head_lookup(args):
+            if self.head_error:
+                raise GitHubError(self.head_error)
+            return self.head + "\n"
         if "--paginate" in args:
             return self.comments
         if "PATCH" in args:
@@ -26,7 +34,18 @@ class FakeGh:
 
     def kinds(self) -> list[str]:
         return ["patch" if "PATCH" in a else "find" if "--paginate" in a else "create"
-                for a, _ in self.calls if a[:2] != ["api", "user"]]  # fmt: skip
+                for a, _ in self.calls
+                if a[:2] != ["api", "user"] and not _is_head_lookup(a)]  # fmt: skip
+
+
+def _is_head_lookup(args: list[str]) -> bool:
+    return len(args) > 1 and "/pulls/" in args[1] and ".head.sha" in args
+
+
+def test_pr_head() -> None:
+    gh = FakeGh(head="b" * 40)
+    assert GitHub(gh).pr_head("o/r", 7) == "b" * 40
+    assert gh.calls[0][0][:2] == ["api", "repos/o/r/pulls/7"]
 
 
 def test_creates_comment_with_marker_when_none_exists() -> None:

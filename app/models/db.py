@@ -5,7 +5,8 @@ from typing import Literal
 
 from sqlmodel import Field, SQLModel
 
-RunState = Literal["running", "done", "cancelled", "env_error"]
+# error: 환경 오류가 아닌 예외(파이프라인 버그, 작업 시간 초과). 같은 커밋은 다시 넣지 않는다
+RunState = Literal["running", "done", "cancelled", "env_error", "error"]
 
 
 class Run(SQLModel, table=True):
