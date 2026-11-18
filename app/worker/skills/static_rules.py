@@ -131,28 +131,40 @@ def _skipped_subtrees(node: ast.AST) -> Iterator[ast.AST]:
         yield from node.values
 
 
+def _in_counted_context(node: ast.expr, parent: ast.AST | None) -> bool:
+    """리터럴이 세는 자리에 있는지: 비교, 함수 호출의 인자, 연산식의 피연산자.
+
+    list·tuple·set·dict 리터럴의 원소는 데이터로 보고 세지 않는다 (부모가 그 리터럴이므로
+    여기서 걸러진다). 대입·return·기본값 자리의 값도 세지 않는다.
+    """
+    if isinstance(parent, ast.Compare | ast.BinOp | ast.BoolOp | ast.AugAssign | ast.keyword):
+        return True
+    return isinstance(parent, ast.Call) and node is not parent.func
+
+
 def literal_occurrences(tree: ast.Module) -> dict[LiteralKey, list[int]]:
     """세는 리터럴별로 나온 줄 번호 (나온 순서, 같은 줄에 두 번이면 두 번).
 
-    세지 않는 것: 독스트링·식 문장의 문자열, 타입 주석·`Literal[...]`, 대문자 이름 상수의
-    정의 값, `__all__`, dict 리터럴의 키, 첨자(인덱스·키), f-string 안, None·True·False,
-    0·1·-1, 2자 미만 문자열, `"__main__"`.
+    세는 자리는 비교, 함수 호출의 인자(키워드 인자 포함), 연산식(산술·논리·증분 대입)의
+    피연산자뿐이다 (`_in_counted_context`). 그 안에서도 세지 않는 것: 독스트링·식 문장의
+    문자열, 타입 주석·`Literal[...]`, 대문자 이름 상수의 정의 값, `__all__`, 첨자(인덱스·키),
+    f-string 안, None·True·False, 0·1·-1, 2자 미만 문자열, `"__main__"`.
     """
     found: dict[LiteralKey, list[int]] = {}
     skipped: set[int] = set()
-    stack: list[ast.AST] = [tree]
+    stack: list[tuple[ast.AST, ast.AST | None]] = [(tree, None)]
     while stack:
-        node = stack.pop()
+        node, parent = stack.pop()
         if id(node) in skipped:
             continue
         skipped.update(id(n) for n in _skipped_subtrees(node))
         if isinstance(node, ast.expr):
             value = _literal_value(node)
             if value is not None:
-                if _counted(value):
+                if _counted(value) and _in_counted_context(node, parent):
                     found.setdefault((type(value).__name__, value), []).append(node.lineno)
                 continue  # `-5`의 안쪽 5를 다시 세지 않는다
-        stack.extend(ast.iter_child_nodes(node))
+        stack.extend((child, node) for child in ast.iter_child_nodes(node))
     for lines in found.values():
         lines.sort()
     return found

@@ -84,8 +84,36 @@ def test_not_counted(source: str) -> None:
     assert _counts(source) == {}
 
 
-def test_dict_values_and_lowercase_assignments_are_counted() -> None:
-    assert _counts('d = {"key": "val"}\nname = "ab"\n') == {"val": 1, "ab": 1}
+@pytest.mark.parametrize(
+    "source",
+    [
+        'd = {"key": "val"}\n',  # dict 값도 데이터
+        "xs = [12, 13]\nt = (12, 13)\ns = {12, 13}\n",  # 컬렉션 리터럴의 원소
+        "f([12, 13], (12,), {12: 13})\n",  # 인자로 넘긴 컬렉션 안의 원소도 데이터
+        "if x in (12, 13):\n    pass\n",  # 비교 안이라도 컬렉션의 원소
+        'name = "ab"\n',  # 대입
+        'def f():\n    return "ab"\n',  # return
+        'def f(x="ab", n=12):\n    pass\n',  # 기본값
+        'y = "ab" if c else "cd"\n',  # 조건식
+    ],
+)
+def test_data_positions_are_not_counted(source: str) -> None:
+    assert _counts(source) == {}
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("if x > 12:\n    pass\n", {12: 1}),  # 비교
+        ('f("ab", key="cd")\n', {"ab": 1, "cd": 1}),  # 인자, 키워드 인자
+        ("y = x * 12 + 13\n", {12: 1, 13: 1}),  # 산술
+        ('y = a or "ab"\n', {"ab": 1}),  # 논리 연산
+        ("x += 12\n", {12: 1}),  # 증분 대입
+        ("y = x - -5\n", {-5: 1}),  # 부호 붙은 숫자도 하나
+    ],
+)
+def test_comparisons_arguments_and_operations_are_counted(source: str, expected: dict) -> None:
+    assert _counts(source) == expected
 
 
 # --- 반복 리터럴: 위반 ---
