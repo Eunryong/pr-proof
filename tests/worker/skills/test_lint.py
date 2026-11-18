@@ -211,3 +211,24 @@ def test_format_is_skipped_when_base_is_not_formatted(tmp_path: Path) -> None:
     assert result.format_skipped == lint.BASE_NOT_FORMATTED
     assert "{'a':1}" in (wt / "mod.py").read_text()
     assert not (tmp_path / f"wt-{base_sha[:8]}").exists()  # base worktree는 지운다
+
+
+def test_apply_safe_fixes_skips_rejected_line_by_content(tmp_path: Path) -> None:
+    from app.models.text_edit import TextEdit
+
+    (tmp_path / "a.py").write_text("import os\n  import sys\r\n")
+
+    def delete_line(row: int) -> tuple[TextEdit, ...]:
+        return (TextEdit(row, 1, row + 1, 1, ""),)
+
+    run = RuffRun(
+        violations=(
+            RuffViolation("a.py", 1, 1, "F401", "os", delete_line(1)),
+            RuffViolation("a.py", 2, 2, "F401", "sys", delete_line(2)),
+        )
+    )
+    changed = {"a.py": frozenset({1, 2})}
+    skip = frozenset({("a.py", "F401", "import sys")})  # 공백·줄바꿈이 달라도 내용으로 맞춘다
+    applied, _ = lint.apply_safe_fixes(tmp_path, run, changed, skip)
+    assert applied == 1
+    assert (tmp_path / "a.py").read_bytes() == b"  import sys\r\n"

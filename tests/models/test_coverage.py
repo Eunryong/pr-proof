@@ -242,3 +242,11 @@ def test_gate_blocked_by_test_status(name: str) -> None:
     gate = code_fix_gate(RUNS[name], "static", _marked(), require_covered=False)
     assert not gate.allowed and gate.blocked_reason
     assert gate.fixable == ()
+
+
+def test_gate_excludes_previously_rejected_even_when_covered() -> None:
+    rejected = Finding("a.py", 5, "warning", "w", "static", "s", covered=True, rejected_in=901)
+    for require in (True, False):
+        gate = code_fix_gate(PASSED, "static", (*_marked(), rejected), require_covered=require)
+        assert [f.line for f in gate.rejected] == [5]
+        assert 5 not in [f.line for f in gate.fixable + gate.uncovered + gate.unknown]

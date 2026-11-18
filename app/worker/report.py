@@ -42,6 +42,7 @@ _FIX_STATUS_TEXT: Final[Mapping[str, str]] = {
 }
 _UNCOVERED_SHORT: Final = "테스트가 지나가지 않음"
 _UNKNOWN_SHORT: Final = "커버리지를 알 수 없음"
+REJECTED_SHORT: Final = "이전에 거절됨"
 VIOLATION: Final = "⚠️"
 CLEAN: Final = "✅"
 
@@ -200,7 +201,8 @@ def proposal_details(
         ]
     if proposal == "approval" and skill == "lint":
         findings = lint.findings if lint is not None else ()
-        fixable = [f for f in findings if f.fixable]
+        fixable = [f for f in findings if f.fixable and f.rejected_in is None]
+        rejected = sum(1 for f in findings if f.fixable and f.rejected_in is not None)
         if lint is None:
             what = "ruff의 안전한 수정 중 PR이 바꾼 줄의 것만 적용하고"
         elif len(fixable) == len(findings):
@@ -212,6 +214,8 @@ def proposal_details(
             "",
             f"`{FIX_COMMAND}`를 코멘트로 달면 {what}, 테스트로 확인한 뒤 수정안을 만듭니다.",
         ]
+        if rejected:
+            lines[-1] += f" 이전에 거절된 위반 {rejected}건은 고치지 않습니다."
         if lint is not None and len(fixable) < len(findings):
             lines += ["", target_locations("lint", fixable)]
         return lines
@@ -232,7 +236,11 @@ def gate_details(gate: FixGate | None, skill: str = "static") -> list[str]:
     """
     if gate is None or not gate.allowed:
         return []
-    reasons = [(len(gate.uncovered), _UNCOVERED_SHORT), (len(gate.unknown), _UNKNOWN_SHORT)]
+    reasons = [
+        (len(gate.uncovered), _UNCOVERED_SHORT),
+        (len(gate.unknown), _UNKNOWN_SHORT),
+        (len(gate.rejected), REJECTED_SHORT),
+    ]
     skipped = sum(n for n, _ in reasons)
     if not skipped:
         return []
@@ -312,6 +320,13 @@ def code_fence(text: str) -> str:
     return "`" * max(3, longest + 1)
 
 
+def finding_line(f: Finding) -> str:
+    line = f"- `{f.file}:{f.line}` `{f.code}` {f.message}"
+    if f.rejected_in is not None:  # 같은 줄을 고친 제안 PR을 사람이 닫았다. 다시 고치지 않는다
+        line += f" · {REJECTED_SHORT} (#{f.rejected_in})"
+    return line
+
+
 def rules_details(results: list[SkillResult]) -> list[str]:
     lines: list[str] = []
     for r in results:
@@ -320,10 +335,7 @@ def rules_details(results: list[SkillResult]) -> list[str]:
             continue
         if r.findings:
             lines += ["", f"{r.skill} 위반:"]
-            lines += [
-                f"- `{f.file}:{f.line}` `{f.code}` {f.message}"
-                for f in r.findings[:MAX_LISTED_FINDINGS]
-            ]
+            lines += [finding_line(f) for f in r.findings[:MAX_LISTED_FINDINGS]]
             hidden = len(r.findings) - MAX_LISTED_FINDINGS
             if hidden > 0:
                 lines.append(f"- 외 {hidden}건")

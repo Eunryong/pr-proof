@@ -33,6 +33,7 @@ from langgraph.types import Command, interrupt
 
 from app.models import fix as fix_rules
 from app.models import proposal as proposal_rules
+from app.models import rejection
 from app.models.coverage import FixGate, code_fix_gate
 from app.models.db import AICall
 from app.models.finding import SkillResult
@@ -234,17 +235,36 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
             return {}  # base의 .pipeline.yaml에서 껐다. 규칙 줄 없이 테스트만 보여준다
         progress(job, "규칙 검사")
         out: FlowState = {}
+        rejected = ctx.store.rejected_targets(job.repo, job.pr_number)
         if enabled("lint"):
             result = lint_for(job)
             if result is None:
                 return {"stopped": "cancelled"}
-            ctx.lint = out["lint"] = result
+            ctx.lint = out["lint"] = remember_rejections(result, rejected)
         if enabled("static"):
             result = static_for(job)
             if result is None:
                 return {"stopped": "cancelled"}
-            ctx.static = out["static"] = result
+            ctx.static = out["static"] = remember_rejections(result, rejected)
         return out
+
+    def remember_rejections(
+        result: SkillResult, rejected: Mapping[rejection.RejectionKey, int]
+    ) -> SkillResult:
+        """위반마다 줄 내용을 채우고, 사람이 닫은 제안이 고친 것과 같은 위반에 표시한다 (F10)."""
+        if not result.findings:
+            return result
+        findings = rejection.with_line_text(result.findings, worktree_lines)
+        return replace(result, findings=rejection.mark_rejected(findings, rejected))
+
+    def worktree_lines(rel: str) -> list[str] | None:
+        path = repo.worktree_file(ctx.worktree, rel)
+        if path is None:
+            return None
+        try:
+            return path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            return None
 
     def test(state: FlowState) -> FlowState:
         job = state["job"]
@@ -356,9 +376,14 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
         job = state["job"]
         fresh_worktree(job)
         progress(job, "lint 수정")
+        skip = frozenset(
+            key
+            for f in state["lint"].findings
+            if f.rejected_in is not None and (key := rejection.finding_key(f)) is not None
+        )
         result = (ctx.fix_lint or lint.fix_lint)(
             ctx.worktree, ctx.base, ctx.merge_base, base_sha=job.base_sha, job_id=f"{ctx.run_id}",
-            is_stale=is_stale_for(job), names=ctx.sandbox_names,
+            is_stale=is_stale_for(job), names=ctx.sandbox_names, skip=skip,
         )  # fmt: skip
         if result is None:
             return {"stopped": "cancelled"}

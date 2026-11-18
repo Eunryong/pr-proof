@@ -10,6 +10,7 @@ from typing import Final
 
 from app.models.diff import ChangedLines, added_lines, touches
 from app.models.finding import Finding, SkillResult
+from app.models.rejection import RejectionKey, key_of
 from app.models.text_edit import apply_edits
 from app.sandbox import container, docker_cli, ruff_runner
 from app.sandbox.ruff_runner import FormatResult
@@ -85,10 +86,22 @@ class LintFix:
     format_skipped: str = ""  # 포맷을 하지 않은 이유 (base가 포맷돼 있지 않음 등)
 
 
+def _skipped(
+    file: str, v: ruff_runner.RuffViolation, lines: list[str], skip: frozenset[RejectionKey]
+) -> bool:
+    return 0 < v.line <= len(lines) and key_of(file, v.code, lines[v.line - 1]) in skip
+
+
 def apply_safe_fixes(
-    worktree: Path, run: ruff_runner.RuffRun, changed: ChangedLines
+    worktree: Path,
+    run: ruff_runner.RuffRun,
+    changed: ChangedLines,
+    skip: frozenset[RejectionKey] = frozenset(),
 ) -> tuple[int, set[str]]:
-    """PR이 바꾼 줄에 걸린 위반의 안전한 수정만 파일에 적용한다. (적용 수, 바꾼 파일)."""
+    """PR이 바꾼 줄에 걸린 위반의 안전한 수정만 파일에 적용한다. (적용 수, 바꾼 파일).
+
+    skip은 이전에 거절된 위반 (파일, 규칙, 줄 내용)이다. 줄 번호가 밀려도 내용으로 맞춘다.
+    """
     by_file: dict[str, list[ruff_runner.RuffViolation]] = {}
     for v in run.violations:
         if v.fixable and touches(changed, v.file, v.line, v.end_line):
@@ -101,6 +114,9 @@ def apply_safe_fixes(
         # newline=""로 읽고 써서 CRLF 같은 줄바꿈을 그대로 둔다
         with path.open(encoding="utf-8", newline="") as f:
             text = f.read()
+        if skip:
+            lines = text.splitlines()
+            violations = [v for v in violations if not _skipped(file, v, lines, skip)]
         new_text, count = apply_edits(text, [v.edits for v in violations])
         if count and new_text != text:
             with path.open("w", encoding="utf-8", newline="") as f:
@@ -154,6 +170,7 @@ def fix_lint(
     is_stale: Callable[[], bool] | None = None,
     max_rounds: int = MAX_FIX_ROUNDS,
     names: docker_cli.Names = docker_cli.DEFAULT_NAMES,
+    skip: frozenset[RejectionKey] = frozenset(),
 ) -> LintFix | None:
     """ruff가 낸 안전한 수정 중 PR이 바꾼 줄의 것만 적용하고, 조건이 맞으면 포맷한 뒤 다시 검사한다.
 
@@ -161,6 +178,7 @@ def fix_lint(
     회차마다 갈라진 커밋(merge_base)과의 diff로 바뀐 줄을 다시 센다 (수정으로 줄 번호가 밀린다).
     `ruff format`은 base_sha(base 브랜치)가 포맷돼 있을 때만 PR이 바꾼 파일에 적용한다.
     base_sha가 None이면 포맷하지 않는다. 새 커밋이 오면 None.
+    skip(이전에 거절된 위반)은 고치지 않는다.
     """
     format_skipped = ""
     if base_sha is None:
@@ -185,7 +203,7 @@ def fix_lint(
             result = to_result(run, changed, base.ruff_source)
             if run.error is not None or round_no >= max_rounds:
                 break
-            count, files_touched = apply_safe_fixes(worktree, run, changed)
+            count, files_touched = apply_safe_fixes(worktree, run, changed, skip)
             if count == 0:
                 break
             applied += count
