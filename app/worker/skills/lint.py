@@ -12,6 +12,7 @@ from app.models.diff import ChangedLines, added_lines, touches
 from app.models.finding import Finding, SkillResult
 from app.models.text_edit import apply_edits
 from app.sandbox import container, docker_cli, ruff_runner
+from app.sandbox.ruff_runner import FormatResult
 from app.worker import repo
 from app.worker.base_config import BaseConfig
 from app.worker.repo import CHANGES_DIFF
@@ -72,7 +73,9 @@ def run_lint(
 class LintFix:
     after: SkillResult  # 고친 뒤 PR이 바꾼 줄의 위반
     applied: int  # 적용한 위반 수정 수
-    touched_files: tuple[str, ...]  # 수정을 적용한 파일 (허용 범위)
+    touched_files: tuple[str, ...]  # 수정·포맷을 적용한 파일 (허용 범위)
+    formatted_files: tuple[str, ...] = ()  # ruff format으로 바뀐 파일
+    format_skipped: str = ""  # 포맷을 하지 않은 이유 (base가 포맷돼 있지 않음 등)
 
 
 def apply_safe_fixes(
@@ -98,22 +101,66 @@ def apply_safe_fixes(
     return applied, touched
 
 
+BASE_NOT_FORMATTED: Final = "base 브랜치가 ruff format을 따르지 않음"
+
+
+def base_is_formatted(
+    worktree: Path,
+    base: BaseConfig,
+    base_sha: str,
+    *,
+    job_id: str | None = None,
+    is_stale: Callable[[], bool] | None = None,
+) -> FormatResult | None:
+    """base 브랜치 전체가 `ruff format --check`를 통과하는지 (DESIGN.md F7).
+
+    포맷돼 있지 않은 리포에서 PR 파일을 포맷하면 PR이 건드리지 않은 줄까지 diff가 커진다.
+    """
+    with repo.side_worktree(worktree, base_sha) as base_tree:
+        if base.ruff_config is not None:  # base 설정 파일을 같은 경로에 둔다
+            target = base_tree / base.ruff_config
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes((worktree / base.ruff_config).read_bytes())
+        with container.running(base_tree, None, job_id=job_id and f"{job_id}-fmt") as name:
+            return ruff_runner.run_format(
+                name, ["."], base.ruff_config, check=True, is_stale=is_stale
+            )
+
+
+def _read(path: Path) -> bytes:
+    return path.read_bytes() if path.is_file() else b""
+
+
 def fix_lint(
     worktree: Path,
     base: BaseConfig,
     merge_base: str,
     *,
+    base_sha: str | None = None,
     job_id: str | None = None,
     is_stale: Callable[[], bool] | None = None,
     max_rounds: int = MAX_FIX_ROUNDS,
 ) -> LintFix | None:
-    """ruff가 낸 안전한 수정 중 PR이 바꾼 줄의 것만 적용하고, 고친 뒤 다시 검사한다.
+    """ruff가 낸 안전한 수정 중 PR이 바꾼 줄의 것만 적용하고, 조건이 맞으면 포맷한 뒤 다시 검사한다.
 
     `ruff check --fix`를 쓰지 않는다. 파일 전체를 고쳐 PR이 건드리지 않은 줄까지 바뀐다.
     회차마다 갈라진 커밋(merge_base)과의 diff로 바뀐 줄을 다시 센다 (수정으로 줄 번호가 밀린다).
-    새 커밋이 오면 None.
+    `ruff format`은 base_sha(base 브랜치)가 포맷돼 있을 때만 PR이 바꾼 파일에 적용한다.
+    base_sha가 None이면 포맷하지 않는다. 새 커밋이 오면 None.
     """
+    format_skipped = ""
+    if base_sha is None:
+        format_skipped = "포맷 확인 안 함"
+    else:
+        formatted_base = base_is_formatted(
+            worktree, base, base_sha, job_id=job_id, is_stale=is_stale
+        )
+        if formatted_base is None:
+            return None
+        if formatted_base is not True:
+            format_skipped = BASE_NOT_FORMATTED if formatted_base is False else formatted_base
     applied, touched = 0, set()
+    formatted: list[str] = []
     with container.running(worktree, None, job_id=job_id and f"{job_id}-fix") as name:
         for round_no in range(max_rounds + 1):
             changed = added_lines(repo.working_diff(worktree, merge_base))
@@ -129,4 +176,30 @@ def fix_lint(
                 break
             applied += count
             touched |= files_touched
-    return LintFix(after=result, applied=applied, touched_files=tuple(sorted(touched)))
+        if not format_skipped and run.error is None and files:
+            before = {f: _read(worktree / f) for f in files}
+            done = ruff_runner.run_format(
+                name, files, base.ruff_config, check=False, is_stale=is_stale
+            )
+            if done is None:
+                return None
+            if done is True:
+                formatted = [f for f in files if _read(worktree / f) != before[f]]
+                if formatted:  # 포맷 뒤 줄이 바뀌었으니 다시 검사한다
+                    changed = added_lines(repo.working_diff(worktree, merge_base))
+                    run = ruff_runner.run_ruff(
+                        name, changed_python_files(worktree, changed), base.ruff_config,
+                        is_stale=is_stale,
+                    )  # fmt: skip
+                    if run.cancelled:
+                        return None
+                    result = to_result(run, changed, base.ruff_source)
+            else:
+                format_skipped = done
+    return LintFix(
+        after=result,
+        applied=applied,
+        touched_files=tuple(sorted(touched | set(formatted))),
+        formatted_files=tuple(formatted),
+        format_skipped=format_skipped,
+    )

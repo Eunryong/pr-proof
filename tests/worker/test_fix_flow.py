@@ -199,3 +199,34 @@ def test_failed_fix_can_be_retried(fix_env) -> None:
         main.handle(_fix_command(), fix_env["deps"])
     assert not fix_env["deps"].store.command_handled(77)
     assert main.handle(_fix_command(), fix_env["deps"]) == "fix:ready"  # RQ 재시도
+
+
+def test_format_only_fix_is_ready(fix_env) -> None:
+    fix_env["monkeypatch"].setattr(
+        lint, "fix_lint",
+        lambda *a, **k: LintFix(
+            SkillResult("lint", (FIXABLE, UNFIXABLE), "x"), applied=0, touched_files=("a.py",),
+            formatted_files=("a.py",),
+        ),
+    )  # fmt: skip
+    main.handle(_update(), fix_env["deps"])
+    assert main.handle(_fix_command(), fix_env["deps"]) == "fix:ready"
+    body = bodies(fix_env["gh"])[-1]
+    assert "**lint 수정안:** 포맷만 고쳤습니다." in body
+    assert "`ruff format`을 PR이 바꾼 파일 1개에 적용했습니다." in body
+
+
+def test_format_skip_reason_is_shown(fix_env) -> None:
+    fix_env["monkeypatch"].setattr(
+        lint, "fix_lint",
+        lambda *a, **k: LintFix(
+            SkillResult("lint", (UNFIXABLE,), "x"), applied=1, touched_files=("a.py",),
+            format_skipped=lint.BASE_NOT_FORMATTED,
+        ),
+    )  # fmt: skip
+    main.handle(_update(), fix_env["deps"])
+    main.handle(_fix_command(), fix_env["deps"])
+    assert (
+        f"`ruff format`은 적용하지 않았습니다 ({lint.BASE_NOT_FORMATTED})"
+        in bodies(fix_env["gh"])[-1]
+    )

@@ -209,7 +209,7 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
             enter_checkout(job)
         progress(job, "lint 수정")
         result = (ctx.fix_lint or lint.fix_lint)(
-            ctx.worktree, ctx.base, ctx.merge_base, job_id=f"{ctx.run_id}",
+            ctx.worktree, ctx.base, ctx.merge_base, base_sha=job.base_sha, job_id=f"{ctx.run_id}",
             is_stale=is_stale_for(job),
         )  # fmt: skip
         if result is None:
@@ -222,8 +222,11 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
     def verify_fix(job: PRJob, state: FlowState, result: LintFix) -> FixOutcome | None:
         """수정안을 결정적으로 검증한다. 새 커밋이 와서 중단되면 None."""
         before = state["lint"].findings
-        if result.applied == 0:
-            return FixOutcome(skill="lint", status="nothing_fixed", remaining=tuple(before))
+        if result.applied == 0 and not result.formatted_files:
+            return FixOutcome(
+                skill="lint", status="nothing_fixed", remaining=tuple(before),
+                format_skipped=result.format_skipped,
+            )  # fmt: skip
         if not result.after.checked:
             return FixOutcome(skill="lint", status="unchecked", detail=result.after.error or "")
         fixed, new = fix_rules.compare(before, result.after)
@@ -254,6 +257,8 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
             remaining=remaining,
             test_run=after_run,
             changed_files=result.touched_files,
+            formatted_files=result.formatted_files,
+            format_skipped=result.format_skipped,
             patch_path=save_patch(job, repo.head_diff(ctx.worktree)),
         )
 

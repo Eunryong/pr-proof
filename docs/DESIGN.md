@@ -259,7 +259,7 @@ SKILLS = {"lint": run_lint, "static": run_static, "structure": run_structure}
 - **AI 수정 루프:** ① 입력: 위반 목록과 출처, 해당 소스, 리포의 기존 상수·설정 위치 예시, (5단계부터) Chroma에서 찾은 비슷한 과거 수정 → ② AI(claude CLI)가 worktree의 파일을 고침 → ③ 결정적 검증 → ④ 실패하면 오류와 남은 위반을 AI에 다시 넘김, 최대 3회. 이 루프(작성 → 검증 → 재시도 → 제안 PR)는 하나의 서브그래프로 만들고, `static`과 `structure`가 프롬프트와 검증 함수만 바꿔 쓴다.
 - `lint` 수정은 ruff의 안전한 수정(`applicability: safe`)만 적용한다. unsafe·display-only 수정은 쓰지 않는다. `ruff check --fix`는 파일 전체의 위반을 고쳐 PR이 건드리지 않은 줄(기존 코드의 위반)까지 바꾸므로 쓰지 않는다. 대신 `ruff check --output-format json`이 내는 수정 편집 중 PR이 바꾼 줄에 걸린 위반의 것만 호스트에서 텍스트로 적용한다(코드를 실행하지 않는다). 편집이 겹치면 한 회차에 하나만 적용하고, 갈라진 커밋(merge-base)과 worktree의 diff로 바뀐 줄을 다시 세서 최대 5회 반복한다. 자동으로 고치지 못한 위반은 그대로 남기고 코멘트에 알린다.
 - `lint` 수정안의 검증: 고친 뒤 규칙 검사에서 원래 없던 위반이 없고(파일·규칙·메시지의 개수로 비교, 줄 번호는 밀리므로 쓰지 않음), 허용 범위 안이고, 샌드박스 테스트 결과가 수정 전과 같다(상태와 통과 개수). 통과하면 수정안 diff를 `data_dir/fixes/` 아래에 저장하고 코멘트에 보여준다.
-- `ruff format`은 base 브랜치에서 `ruff format --check`가 통과하는 리포에서만, PR이 바꾼 파일에 적용한다. base가 포맷돼 있지 않으면 PR이 건드리지 않은 줄까지 diff가 커지므로 format을 뺀다.
+- `ruff format`은 base 브랜치에서 `ruff format --check`가 통과하는 리포에서만, PR이 바꾼 파일에 적용한다. base가 포맷돼 있지 않으면 PR이 건드리지 않은 줄까지 diff가 커지므로 format을 뺀다. 확인은 base 커밋의 임시 worktree에서 base의 ruff 설정으로 `ruff format --check .`을 돌린다. 포맷은 안전한 수정 편집을 적용한 뒤 PR이 바꾼 파일에 한 번 하고, 규칙 검사를 다시 한다. 포맷하지 않은 이유는 코멘트에 적는다.
 - 종료 조건: 테스트 통과, 원래 위반 해소, 새 위반 없음.
 - **허용 변경 범위:** 수정안은 위반이 검출된 파일과 그 이동 대상만 바꿀 수 있다. 테스트 파일을 바꾸면 결과를 버린다. 예외는 코드 이동에 따른 import 경로 변경뿐이며, assert와 기대값은 바꿀 수 없다.
 - **범위 검사 방법:** 수정 후 호스트에서 `git status --porcelain=v1 -z --untracked-files=all`로 worktree의 모든 변경을 본다. `git diff`는 추적 중인 파일의 수정만 보여주므로 새 파일, 삭제, 이름 변경을 놓친다. 수정(`M`), 새 파일(`??`, `A`), 삭제(`D`), 이름 변경(`R`, 옛 경로와 새 경로 둘 다)이 모두 허용 목록 안에 있어야 한다. 허용 목록 밖의 변경이 하나라도 있으면 수정안 전체를 버린다.
@@ -781,7 +781,7 @@ worker: python -m app.worker.main
 - [x] 동기화: 놓친 명령 보충 (F2). 웹훅과 같은 권한 확인(`author_association`이 OWNER·MEMBER·COLLABORATOR)과 파이프라인 코멘트 제외를 같은 함수(`models/comment.py`의 `command_in_comment`)로 적용한다
 - [x] SqliteSaver 체크포인트, thread_id `repo#pr#head_sha`, `/fix lint` interrupt·재개 (재개 시 worktree 다시 만들기). 새 검사는 같은 thread의 이전 체크포인트를 지우고 시작, 수정 도중 실패하면 재시도가 수정 단계부터 이어 감. `require_approval: false`면 바로 수정
 - [x] 수정: ruff의 안전한 수정 중 PR이 바꾼 줄의 것만 적용 → 규칙 재검사(새 위반 없음) → 허용 범위 검사 → 샌드박스 테스트 재실행(수정 전과 같은 결과) → 수정안 diff 저장·코멘트
-- [ ] 수정: 조건부 `ruff format` (base가 `ruff format --check`를 통과하는 리포에서만)
+- [x] 수정: 조건부 `ruff format` (base가 `ruff format --check`를 통과하는 리포에서만)
 - [ ] 제안 PR: 허용 경로만 스테이징, 푸시 전 비밀값 검사, 머지 확인, 상황별 처리, 루프 방지
 - [x] flaky 재실행
 - [ ] 평가 케이스: 컨벤션 위반 주입 3–5개와 E2E 테스트

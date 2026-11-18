@@ -111,3 +111,32 @@ def test_only_safe_fixes_become_edits() -> None:
     )
     assert v_safe.fixable and v_safe.edits[0].end_row == 2
     assert not v_unsafe.fixable and not v_display.fixable and not v_none.fixable
+
+
+def test_format_argv() -> None:
+    argv = ruff_runner.format_argv(["a.py"], None, check=True)
+    assert argv[:2] == ["ruff", "format"] and "--check" in argv and "--isolated" in argv
+    assert "--check" not in ruff_runner.format_argv(["a.py"], "c.toml", check=False)
+
+
+@pytest.mark.parametrize(
+    ("code", "check", "expected"),
+    [(0, True, True), (1, True, False), (0, False, True)],
+    ids=["formatted", "would-reformat", "applied"],
+)
+def test_format_exit_codes(fake_exec, code: int, check: bool, expected) -> None:
+    fake_exec(ExecResult(code, "", ""))
+    assert ruff_runner.run_format("c", ["."], None, check=check) is expected
+
+
+@pytest.mark.parametrize("check", [True, False])
+def test_format_error_is_reason_not_environment(fake_exec, check: bool) -> None:
+    fake_exec(ExecResult(2, "", "error: Failed to parse a.py"))
+    result = ruff_runner.run_format("c", ["a.py"], None, check=check)
+    assert isinstance(result, str) and "Failed to parse" in result
+
+
+def test_format_docker_failure_is_environment_error(fake_exec) -> None:
+    fake_exec(ExecResult(125, "", "daemon gone"))
+    with pytest.raises(SandboxError):
+        ruff_runner.run_format("c", ["."], None, check=True)

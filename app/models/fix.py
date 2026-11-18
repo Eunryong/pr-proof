@@ -39,6 +39,8 @@ class FixOutcome:
     remaining: tuple[Finding, ...] = ()  # 고친 뒤에도 남은 PR의 위반
     test_run: PytestRun | None = None  # 고친 뒤 테스트
     changed_files: tuple[str, ...] = ()
+    formatted_files: tuple[str, ...] = ()  # ruff format으로 바뀐 파일
+    format_skipped: str = ""  # 포맷하지 않은 이유
     patch_path: Path | None = None  # 수정안 diff (제안 PR에 쓴다)
     detail: str = ""  # 버린 이유 등
 

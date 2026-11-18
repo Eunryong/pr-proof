@@ -91,6 +91,45 @@ def _safe_edits(fix: dict | None) -> tuple[TextEdit, ...]:
     )
 
 
+FormatResult = bool | str  # True 포맷돼 있음(또는 적용함), False 아님, str 오류
+
+
+def format_argv(files: list[str], config: str | None, *, check: bool) -> list[str]:
+    config_args = ["--config", config] if config is not None else ["--isolated"]
+    return [
+        "ruff", "format", "--no-cache", "--force-exclude", *(["--check"] if check else []),
+        *config_args, "--", *files,
+    ]  # fmt: skip
+
+
+def run_format(
+    container: str,
+    files: list[str],
+    config: str | None,
+    *,
+    check: bool,
+    timeout: int = LINT_TIMEOUT,
+    is_stale: Callable[[], bool] | None = None,
+) -> FormatResult | None:
+    """`ruff format`. check면 바꾸지 않고 포맷돼 있는지만 본다. 새 커밋이 와서 중단되면 None."""
+    result = run_in_sandbox(
+        container, format_argv(files, config, check=check), timeout=timeout, is_stale=is_stale
+    )
+    if result.cancelled:
+        return None
+    if result.timed_out:
+        return f"ruff format이 {timeout}초 안에 끝나지 않음"
+    if result.returncode in docker_cli.DOCKER_FAILED:
+        raise docker_cli.SandboxError(
+            f"docker exec 실패 ({result.returncode}): {result.stderr.strip()[-MAX_ERROR_CHARS:]}"
+        )
+    if result.returncode == 0:
+        return True
+    if check and result.returncode == 1:
+        return False  # 바꿀 파일이 있다
+    return f"ruff format 오류: {result.stderr.strip()[-MAX_ERROR_CHARS:]}"
+
+
 def run_ruff(
     container: str,
     files: list[str],
