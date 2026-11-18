@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from app.jobs import PRJob
+from app.models.job import PRJob
 
 
 def make(**overrides) -> PRJob:

@@ -1,7 +1,7 @@
 [project]
 name = "pr-proof"
 version = "0.1.0"
-description = "PR의 테스트가 변경을 실제로 검증하는지 판정하는 로컬 파이프라인"
+description = "PR의 협업 규칙 위반을 검출하고, 테스트로 검증한 수정안을 제안 PR로 올리는 로컬 파이프라인"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115",
@@ -27,11 +27,12 @@ include = ["app*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "-m 'not docker'"  # Docker·GitHub이 필요한 테스트는 pytest -m docker로 따로 돌린다
+markers = ["docker: Docker가 필요한 통합 테스트 (없으면 건너뛴다)"]
 
 [tool.ruff]
 target-version = "py311"
 line-length = 100
-extend-exclude = ["eval/repos"]
 
 [tool.ruff.format]
 exclude = ["*.md"]
