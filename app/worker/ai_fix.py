@@ -98,6 +98,8 @@ def environment_problem(result: ClaudeResult) -> str | None:
     """PR과 관계없이 claude를 쓸 수 없는 상태면 그 이유."""
     if result.error == AIErrorKind.LAUNCH:
         return f"claude를 실행하지 못함: {result.detail}"
+    if result.error == AIErrorKind.TOOLS:
+        return f"claude 호출을 중단함: {result.detail}"
     if NOT_LOGGED_IN in result.text or NOT_LOGGED_IN in result.detail:
         return "claude 로그인이 풀림"
     return None
