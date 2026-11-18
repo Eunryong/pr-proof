@@ -5,7 +5,8 @@
 - 제안 PR 머지 → 원본에 새 커밋: 새 head가 그 머지 커밋이면 같은 스킬의 제안을 다시 만들지
   않는다 (루프 방지).
 - 원본 PR 머지·닫힘: 열린 제안을 닫고 브랜치를 지운다 (closed_with_pr).
-- 사람이 제안 PR을 닫음: rejected. 같은 커밋에는 다시 제안하지 않는다.
+- 사람이 제안 PR을 닫음: rejected. 같은 커밋에는 다시 제안하지 않는다. 다음 커밋에서도 그 제안이
+  고친 위반이 같은 줄 내용 그대로면 수정 대상에서 뺀다 (app/models/rejection.py).
 """
 
 import logging
@@ -13,6 +14,7 @@ from pathlib import Path
 
 from app import config
 from app.models import proposal as rules
+from app.models import rejection
 from app.models.finding import SkillResult
 from app.models.fix import FixOutcome
 from app.models.job import PRJob
@@ -140,7 +142,9 @@ def open_proposal(
         number = existing
     else:
         number = github.create_pr(job.repo, refs.head_ref, branch, title, body)
-    store.record_proposal(job.repo, job.pr_number, skill, job.head_sha, branch, number)
+    # 사람이 이 제안을 닫으면 다음 커밋에서 같은 위반을 다시 올리지 않으려고 고친 위반을 남긴다
+    targets = rejection.fixed_keys(before.findings, outcome.remaining)
+    store.record_proposal(job.repo, job.pr_number, skill, job.head_sha, branch, number, targets)
     return ProposalResult(
         number=number,
         url=f"https://github.com/{job.repo}/pull/{number}",

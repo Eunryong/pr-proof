@@ -30,6 +30,17 @@ class Proposal(SQLModel, table=True):
     updated_at: datetime
 
 
+class ProposalTarget(SQLModel, table=True):
+    """제안 PR이 고친 위반 (파일, 규칙 코드, 줄 내용). 사람이 그 제안을 닫으면 다음 커밋에서
+    같은 위반을 수정 대상에서 뺀다 (DESIGN.md F10, app/models/rejection.py)."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    proposal_id: int = Field(index=True)
+    file: str
+    code: str
+    line_text: str
+
+
 class CommandRecord(SQLModel, table=True):
     """처리한 명령 코멘트. 같은 코멘트에 두 번 답하지 않는다 (DESIGN.md F11)."""
 

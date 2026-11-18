@@ -20,6 +20,10 @@ class Finding:
     # 위반 줄이 테스트로 실행되는지 (DESIGN.md F8). None은 모름(재지 않음·coverage.xml 없음).
     # lint는 동작을 바꾸지 않아 쓰지 않는다. 채우는 곳은 app/models/coverage.py의 mark_covered
     covered: bool | None = None
+    # 위반 줄의 내용 (앞뒤 공백 제거). 거절 기록과 맞춰 볼 때 쓴다 (app/models/rejection.py)
+    line_text: str | None = None
+    # 같은 줄을 고친 제안 PR을 사람이 머지하지 않고 닫았다 (그 번호). 자동 수정 대상에서 뺀다
+    rejected_in: int | None = None
 
 
 @dataclass(frozen=True)
@@ -37,4 +41,5 @@ class SkillResult:
 
     @property
     def fixable_count(self) -> int:
-        return sum(1 for f in self.findings if f.fixable)
+        """자동으로 고칠 수 있는 위반 수. 이전에 거절된 위반은 세지 않는다."""
+        return sum(1 for f in self.findings if f.fixable and f.rejected_in is None)

@@ -1,5 +1,6 @@
 """워커의 상태 읽기·쓰기: 처리 기록(SQLite), 최신 head 확인과 작업 키 정리(Redis)."""
 
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -7,8 +8,9 @@ from redis import Redis
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from app.models import state_keys
-from app.models.db import AICall, CommandRecord, Proposal, Run
+from app.models.db import AICall, CommandRecord, Proposal, ProposalTarget, Run
 from app.models.job import PRJob
+from app.models.rejection import RejectionKey
 
 
 def _now() -> datetime:
@@ -83,9 +85,19 @@ class Store:
     # --- 제안 PR ---
 
     def record_proposal(
-        self, repo: str, pr_number: int, skill: str, head_sha: str, branch: str, number: int
+        self,
+        repo: str,
+        pr_number: int,
+        skill: str,
+        head_sha: str,
+        branch: str,
+        number: int,
+        targets: Iterable[RejectionKey] = (),
     ) -> None:
-        """열린 제안을 기록한다. 같은 스킬의 열린 제안이 있으면 그 기록을 새 커밋·번호로 바꾼다."""
+        """열린 제안을 기록한다. 같은 스킬의 열린 제안이 있으면 그 기록을 새 커밋·번호로 바꾼다.
+
+        targets는 이 수정안이 고친 위반이다. 기록을 바꿀 때는 이전 목록을 지우고 새로 쓴다.
+        """
         now = _now()
         with Session(self.engine) as session:
             stmt = select(Proposal).where(
@@ -101,7 +113,30 @@ class Store:
             else:
                 row.head_sha, row.number, row.updated_at = head_sha, number, now
             session.add(row)
+            session.flush()
+            old = select(ProposalTarget).where(ProposalTarget.proposal_id == row.id)
+            for target in session.exec(old):
+                session.delete(target)
+            for file, code, line_text in dict.fromkeys(targets):
+                session.add(
+                    ProposalTarget(proposal_id=row.id, file=file, code=code, line_text=line_text)
+                )
             session.commit()
+
+    def rejected_targets(self, repo: str, pr_number: int) -> dict[RejectionKey, int]:
+        """이 PR에서 사람이 닫은 제안이 고친 위반 → 그 제안 PR 번호 (같은 위반이면 최근 것)."""
+        with Session(self.engine) as session:
+            stmt = (
+                select(ProposalTarget, Proposal.number)
+                .join(Proposal, ProposalTarget.proposal_id == Proposal.id)
+                .where(
+                    Proposal.repo == repo,
+                    Proposal.pr_number == pr_number,
+                    Proposal.state == "rejected",
+                )  # fmt: skip
+                .order_by(Proposal.id)
+            )
+            return {(t.file, t.code, t.line_text): number for t, number in session.exec(stmt)}
 
     def proposals(self, repo: str, pr_number: int, state: str | None = None) -> list[Proposal]:
         with Session(self.engine) as session:

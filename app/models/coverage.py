@@ -220,6 +220,7 @@ class FixGate:
     fixable: tuple[Finding, ...] = ()
     uncovered: tuple[Finding, ...] = ()  # 테스트가 지나가지 않아 자동 수정 대상 아님
     unknown: tuple[Finding, ...] = ()  # 커버리지를 알 수 없어 자동 수정 대상 아님
+    rejected: tuple[Finding, ...] = ()  # 같은 줄을 고친 이전 제안을 사람이 닫아 대상 아님
 
 
 def blocked_reason(run: PytestRun) -> str | None:
@@ -243,16 +244,20 @@ def code_fix_gate(
 
     lint는 동작을 바꾸지 않으므로 이 함수를 쓰지 않는다 (`PytestRun.allows_lint_fix`).
     require_covered가 False면 커버리지와 관계없이 모든 위반이 대상이다.
+    이전에 거절된 위반(rejected_in)은 커버리지와 관계없이 대상이 아니다.
     """
-    own = tuple(f for f in findings if f.skill == skill)
+    mine = tuple(f for f in findings if f.skill == skill)
     reason = blocked_reason(run)
     if reason is not None:
         return FixGate(allowed=False, blocked_reason=reason)
+    rejected = tuple(f for f in mine if f.rejected_in is not None)
+    own = tuple(f for f in mine if f.rejected_in is None)
     if not require_covered:
-        return FixGate(allowed=True, fixable=own)
+        return FixGate(allowed=True, fixable=own, rejected=rejected)
     return FixGate(
         allowed=True,
         fixable=tuple(f for f in own if f.covered is True),
         uncovered=tuple(f for f in own if f.covered is False),
         unknown=tuple(f for f in own if f.covered is None),
+        rejected=rejected,
     )
