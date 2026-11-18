@@ -106,3 +106,9 @@ def test_runaway_checker_is_stopped(repo: Path) -> None:
     run = checker_runner.run_checker("python-ast", "while True:\n    pass\n", repo,
                                      ["orders/bad.py"], timeout=3)  # fmt: skip
     assert run == Failed("3초 안에 끝나지 않음")
+
+
+def test_script_that_ignores_a_large_file_list_finishes(repo: Path) -> None:
+    files = [f"orders/m{i:05d}_{'x' * 40}.py" for i in range(3000)]  # 파이프 버퍼보다 큼
+    run = checker_runner.run_checker("python-ast", "print('[]')\n", repo, files, timeout=30)
+    assert run == Ran(())

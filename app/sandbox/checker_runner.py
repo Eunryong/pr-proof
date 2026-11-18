@@ -172,18 +172,20 @@ def _run_bounded(docker_args: list[str], stdin: bytes, *, timeout: int) -> RawRu
     name = f"pr-proof-checker-{uuid.uuid4().hex[:12]}"
     cmd = ["docker", docker_args[0], "--name", name, *docker_args[1:]]
     timed_out = too_large = False
-    with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+    # 표준 입력은 파일로 넘긴다. 파이프면 입력을 읽지 않는 스크립트 앞에서 쓰기가 멈춘다
+    with (
+        tempfile.TemporaryFile() as given,
+        tempfile.TemporaryFile() as out,
+        tempfile.TemporaryFile() as err,
+    ):
+        given.write(stdin)
+        given.seek(0)
         try:
             proc = subprocess.Popen(
-                cmd, stdin=subprocess.PIPE, stdout=out, stderr=err, env=docker_cli.minimal_env()
+                cmd, stdin=given, stdout=out, stderr=err, env=docker_cli.minimal_env()
             )
         except OSError as e:
             raise docker_cli.SandboxError(f"docker run 실행 실패: {e}") from e
-        try:
-            proc.stdin.write(stdin)
-            proc.stdin.close()
-        except BrokenPipeError:
-            pass
         deadline = time.monotonic() + timeout
         while proc.poll() is None:
             if out.tell() > MAX_OUTPUT_BYTES:
