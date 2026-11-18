@@ -80,6 +80,52 @@ def test_apply_safe_fixes_only_on_changed_lines(tmp_path: Path) -> None:
     assert (tmp_path / "a.py").read_text() == "import os\n"  # PR이 안 건드린 줄은 그대로
 
 
+def _outside_and_links(tmp_path: Path) -> tuple[Path, Path]:
+    """worktree 밖 파일, 그 파일을 가리키는 링크(`link.py`), 밖 폴더를 가리키는 링크(`pkg/`)."""
+    wt, outside = tmp_path / "wt", tmp_path / "outside"
+    wt.mkdir()
+    outside.mkdir()
+    secret = outside / "secret.py"
+    secret.write_text("import os\n")
+    (wt / "link.py").symlink_to(secret)
+    (wt / "pkg").symlink_to(outside, target_is_directory=True)  # pkg/secret.py는 밖의 파일
+    (wt / "ok.py").write_text("import os\n")
+    return wt, secret
+
+
+def test_changed_python_files_skips_symlinks_and_outside(tmp_path: Path) -> None:
+    wt, _ = _outside_and_links(tmp_path)
+    (wt / "loop.py").symlink_to(wt / "loop.py")  # 링크 순환
+    changed = {n: frozenset({1}) for n in ("link.py", "pkg/secret.py", "ok.py", "loop.py")}
+    assert lint.changed_python_files(wt, changed) == ["ok.py"]
+
+
+def test_apply_safe_fixes_never_writes_through_links(tmp_path: Path) -> None:
+    """ruff 결과가 링크 경로를 가리켜도 호스트에서 worktree 밖 파일을 고치지 않는다."""
+    from app.models.text_edit import TextEdit
+
+    wt, secret = _outside_and_links(tmp_path)
+    delete = (TextEdit(1, 1, 2, 1, ""),)
+    run = RuffRun(
+        violations=tuple(
+            RuffViolation(f, 1, 1, "F401", "os", delete)
+            for f in ("link.py", "pkg/secret.py", "ok.py")
+        )
+    )
+    changed = {f: frozenset({1}) for f in ("link.py", "pkg/secret.py", "ok.py")}
+    applied, touched = lint.apply_safe_fixes(wt, run, changed)
+    assert (applied, touched) == (1, {"ok.py"})
+    assert secret.read_text() == "import os\n"
+    assert (wt / "ok.py").read_text() == ""
+
+
+def test_read_does_not_follow_links(tmp_path: Path) -> None:
+    wt, _ = _outside_and_links(tmp_path)
+    assert lint._read(wt, "link.py") == b""
+    assert lint._read(wt, "pkg/secret.py") == b""
+    assert lint._read(wt, "ok.py") == b"import os\n"
+
+
 def _git(cwd: Path, *args: str) -> str:
     import subprocess
 
