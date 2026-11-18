@@ -2,13 +2,19 @@
 
 git은 호스트에서만 실행한다. worktree의 `.git`은 bare 저장소를 가리키므로 컨테이너 안에서는
 동작하지 않는다. 인증은 gh 로그인을 명령 단위로 빌려 쓰고, 전역 git 설정은 바꾸지 않는다.
+
+worktree 안의 `.git` 파일은 믿지 않는다. 샌드박스의 PR 코드(그리고 3단계의 AI)가 worktree에 쓸 수
+있어서, `.git`을 자기가 만든 저장소로 바꾸면 그 저장소 설정(`core.fsmonitor`, 필터 등)으로 호스트
+git이 임의 명령을 실행한다. 그래서 worktree를 만든 직후, 아무것도 실행하기 전에 저장소 경로를
+worktree 밖 파일에 적고(`record_git_dir`), worktree에서 도는 git은 모두 그 경로를 `--git-dir`로
+넘긴다(`_tree_git`). 기록이 없으면 실행하지 않는다.
 """
 
 import os
 import shutil
 import subprocess
 import uuid
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -61,6 +67,30 @@ def _git(*args: str, cwd: Path | None = None) -> str:
     return proc.stdout
 
 
+def _git_dir_record(worktree: Path) -> Path:
+    """worktree의 저장소 경로를 적는 파일. worktree 밖(옆)에 두어 샌드박스가 바꾸지 못한다."""
+    return worktree.parent / f".{worktree.name}.gitdir"
+
+
+def record_git_dir(worktree: Path) -> None:
+    """worktree를 막 만든 뒤(그 안에서 아무것도 실행하기 전)에만 부른다."""
+    git_dir = _git("rev-parse", "--absolute-git-dir", cwd=worktree).strip()
+    _git_dir_record(worktree).write_text(git_dir)
+
+
+def _forget_git_dir(worktree: Path) -> None:
+    _git_dir_record(worktree).unlink(missing_ok=True)
+
+
+def _tree_git(worktree: Path, *args: str) -> str:
+    """worktree에서 git을 실행한다. worktree 안의 `.git` 대신 만들 때 적어 둔 저장소를 쓴다."""
+    try:
+        git_dir = _git_dir_record(worktree).read_text().strip()
+    except OSError as e:
+        raise GitError(f"worktree의 저장소 기록이 없음: {worktree}") from e
+    return _git(f"--git-dir={git_dir}", f"--work-tree={worktree}", *args, cwd=worktree)
+
+
 def remote_url(repo: str) -> str:
     return f"https://github.com/{repo}.git"
 
@@ -93,9 +123,15 @@ def read_base_files(worktree: Path, base_sha: str, names: tuple[str, ...]) -> di
 
     설정과 규칙은 PR head가 아니라 base에서 읽는다 (PR이 자기 검사 기준을 바꾸지 못하게).
     """
-    listed = _git("ls-tree", "--name-only", "-z", base_sha, "--", *names, cwd=worktree)
+    return _read_base_files(lambda *a: _tree_git(worktree, *a), base_sha, names)
+
+
+def _read_base_files(
+    git: Callable[..., str], base_sha: str, names: tuple[str, ...]
+) -> dict[str, str]:
+    listed = git("ls-tree", "--name-only", "-z", base_sha, "--", *names)
     present = [name for name in listed.split("\0") if name in names]
-    return {name: _git("show", f"{base_sha}:{name}", cwd=worktree) for name in present}
+    return {name: git("show", f"{base_sha}:{name}") for name in present}
 
 
 def read_base_files_from_cache(
@@ -104,11 +140,11 @@ def read_base_files_from_cache(
     """worktree 없이 bare 캐시에서 base 커밋의 파일을 읽는다 (명령 처리용)."""
     bare = ensure_bare(data_dir, repo, url)
     _git("fetch", "--quiet", "--no-tags", "origin", base_sha, cwd=bare)
-    return read_base_files(bare, base_sha, names)
+    return _read_base_files(lambda *a: _git(*a, cwd=bare), base_sha, names)
 
 
 def merge_base(worktree: Path, base_sha: str, head_sha: str) -> str:
-    return _git("merge-base", base_sha, head_sha, cwd=worktree).strip()
+    return _tree_git(worktree, "merge-base", base_sha, head_sha).strip()
 
 
 # 사용자 전역 git 설정이 diff 형식(접두사, 경로 표기, 외부 diff 도구)을 바꾸지 않게 한다.
@@ -124,17 +160,17 @@ def working_diff(worktree: Path, merge_base_sha: str) -> str:
 
     base 브랜치의 지금 커밋과 비교하면, PR이 갈라진 뒤 base에서 바뀐 줄까지 PR의 변경으로 잡힌다.
     """
-    return _git(*_DIFF, merge_base_sha, cwd=worktree)
+    return _tree_git(worktree, *_DIFF, merge_base_sha)
 
 
 def status(worktree: Path) -> str:
     """새 파일·삭제·이름 변경까지 보이는 변경 목록 (docs/DESIGN.md F7 범위 검사)."""
-    return _git("status", "--porcelain=v1", "-z", "--untracked-files=all", cwd=worktree)
+    return _tree_git(worktree, "status", "--porcelain=v1", "-z", "--untracked-files=all")
 
 
 def head_diff(worktree: Path) -> str:
     """체크아웃한 커밋과 worktree 사이의 diff. 수정안 자체다."""
-    return _git(*_DIFF, "HEAD", cwd=worktree)
+    return _tree_git(worktree, *_DIFF, "HEAD")
 
 
 # 사용자 전역 git 설정의 서명·훅이 파이프라인 커밋에 끼어들지 않게 한다
@@ -153,12 +189,12 @@ def commit_and_push(
     `git add -A`를 쓰지 않는다. `.pipeline-out/`이나 테스트 산출물이 섞이지 않게 한다 (F10).
     """
     name, email = author
-    _git("add", "--", *paths, cwd=worktree)
-    _git(*_COMMIT_SAFETY, "-c", f"user.name={name}", "-c", f"user.email={email}",
-         "commit", "-q", "-m", message, cwd=worktree)  # fmt: skip
-    sha = _git("rev-parse", "HEAD", cwd=worktree).strip()
-    _git(*_COMMIT_SAFETY, "push", "--quiet", "--force", "origin", f"HEAD:refs/heads/{branch}",
-         cwd=worktree)  # fmt: skip
+    _tree_git(worktree, "add", "--", *paths)
+    _tree_git(worktree, *_COMMIT_SAFETY, "-c", f"user.name={name}", "-c", f"user.email={email}",
+              "commit", "-q", "-m", message)  # fmt: skip
+    sha = _tree_git(worktree, "rev-parse", "HEAD").strip()
+    _tree_git(worktree, *_COMMIT_SAFETY, "push", "--quiet", "--force", "origin",
+              f"HEAD:refs/heads/{branch}")  # fmt: skip
     return sha
 
 
@@ -166,7 +202,7 @@ def write_changes_diff(worktree: Path, merge_base_sha: str, head_sha: str) -> Pa
     """PR이 바꾼 내용 (`git diff base...head`와 같다). 수정 후 다시 셀 때와 같은 기준을 쓴다."""
     out = worktree / CHANGES_DIFF
     out.parent.mkdir(exist_ok=True)
-    out.write_text(_git(*_DIFF, merge_base_sha, head_sha, cwd=worktree))
+    out.write_text(_tree_git(worktree, *_DIFF, merge_base_sha, head_sha))
     return out
 
 
@@ -174,15 +210,17 @@ def write_changes_diff(worktree: Path, merge_base_sha: str, head_sha: str) -> Pa
 def side_worktree(worktree: Path, sha: str) -> Iterator[Path]:
     """같은 저장소에서 다른 커밋의 worktree를 잠깐 만든다 (base 브랜치의 포맷 확인 등)."""
     path = worktree.parent / f"{worktree.name}-{sha[:8]}"
-    _git("worktree", "add", "--quiet", "--detach", str(path), sha, cwd=worktree)
+    _tree_git(worktree, "worktree", "add", "--quiet", "--detach", str(path), sha)
     try:
+        record_git_dir(path)
         yield path
     finally:
+        _forget_git_dir(path)
         try:
-            _git("worktree", "remove", "--force", str(path), cwd=worktree)
+            _tree_git(worktree, "worktree", "remove", "--force", str(path))
         except GitError:
             shutil.rmtree(path, ignore_errors=True)
-            _git("worktree", "prune", cwd=worktree)
+            _tree_git(worktree, "worktree", "prune")
 
 
 @contextmanager
@@ -204,10 +242,12 @@ def checkout(
     path.parent.mkdir(parents=True, exist_ok=True)
     _git("worktree", "add", "--quiet", "--detach", str(path), head_sha, cwd=bare)
     try:
+        record_git_dir(path)
         fork_point = merge_base(path, base_sha, head_sha)
         write_changes_diff(path, fork_point, head_sha)
         yield Checkout(path=path, head_sha=head_sha, base_sha=base_sha, merge_base=fork_point)
     finally:
+        _forget_git_dir(path)
         try:
             _git("worktree", "remove", "--force", str(path), cwd=bare)
         except GitError:

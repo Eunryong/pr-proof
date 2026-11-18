@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from app.worker import base_config
+from app.worker import base_config, repo
 
 
 def _git(cwd: Path, *args: str) -> str:
@@ -28,6 +28,7 @@ def repo_dir(tmp_path: Path) -> Path:
     path = tmp_path / "wt"
     path.mkdir()
     _git(path, "init", "-q", "-b", "main")
+    repo.record_git_dir(path)  # 파이프라인의 worktree처럼 저장소 경로를 밖에 적는다
     return path
 
 
