@@ -8,3 +8,8 @@ omit =
     .venv/*
     .pipeline-out/*
 data_file = .pipeline-out/.coverage
+
+[report]
+# __init__.py가 없는 폴더(src/ 구조, 스크립트 폴더)의 파일도 찾는다. 테스트가 import하지 않은
+# 파일이 coverage.xml에서 빠지면 바뀐 줄 커버리지의 분모에서 빠져 숫자가 틀린다.
+include_namespace_packages = True

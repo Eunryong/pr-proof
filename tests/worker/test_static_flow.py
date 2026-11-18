@@ -80,8 +80,8 @@ def test_static_violations_are_shown_and_offered(static_env) -> None:
     assert "- `src/app.py:3` `PLR2004` Magic value `3`" in body
     # 대상이 아닌 위반은 이유별 개수만, 고칠 위반은 목록으로 (같은 위반을 두 번 적지 않는다)
     assert "자동 수정 대상이 아닌 위반 1건: 테스트가 지나가지 않음 1건" in body
-    assert "`/fix static`이 고칠 위반 1건:\n- `src/app.py:3` `PLR2004` Magic value `3`" in body
-    assert body.count("STATIC-REPEAT") == 1
+    assert "`/fix static`이 고칠 위반 1건: `src/app.py:3`" in body
+    assert body.count("STATIC-REPEAT") == 1 and body.count("Magic value `3`") == 1
     assert "AI가 테스트가 지나가는 static 위반 1건을 고치고" in body
     assert "정적변수 (기본 규칙)" in body
     assert update.has_pending_fix(_target(), static_env["deps"], "static")
@@ -124,10 +124,10 @@ def test_uncovered_only_is_not_offered(static_env) -> None:
     body = bodies(static_env["gh"])[-1]
     assert "`/fix static`" not in body
     assert "자동 수정 대상이 아닌 위반 1건: 테스트가 지나가지 않음 1건" in body
-    assert "이 고칠 위반" not in body  # 고칠 위반이 없으면 목록도 없다
+    assert "`/fix static`이 고칠 위반" not in body  # 고칠 위반이 없으면 목록도 없다
     assert not update.has_pending_fix(_target(), static_env["deps"], "static")
     assert main.handle(_fix_command(77, "/fix static"), static_env["deps"]) == "no_pending_fix"
-    assert "승인을 기다리는 static 수정이 없습니다" in _replies(static_env["gh"])[-1]
+    assert "승인을 기다리거나 다시 돌릴 static 수정이 없습니다" in _replies(static_env["gh"])[-1]
 
 
 def test_flaky_tests_block_static_but_not_lint(static_env) -> None:
@@ -230,3 +230,53 @@ def test_checkpoint_from_before_stage3_still_resumes_lint() -> None:
     assert graph._awaiting_skills({"skill": "lint", "head_sha": HEAD}) == ["lint"]
     assert graph._awaiting_skills({"skills": ["lint", "static"]}) == ["lint", "static"]
     assert graph._awaiting_skills(None) == []
+
+
+def test_default_config_fixes_both_without_approval(static_env) -> None:
+    """기본값(require_approval: false): 사람이 /fix를 달지 않아도 제안 PR까지 간다."""
+    base = dataclasses.replace(BASE, repo=RepoConfig())
+    static_env["monkeypatch"].setattr(base_config, "load", lambda *a, **k: base)
+    assert main.handle(_update(), static_env["deps"]) == "passed"
+    assert len(static_env["gh"].pulls) == 2 and len(static_env["static"]["calls"]) == 1
+    body = bodies(static_env["gh"])[-1]
+    assert "**lint 수정안:**" in body and "**static 수정안:**" in body
+    assert "자동 수정 가능" not in body
+    assert not update.has_pending_fix(_target(), static_env["deps"], "static")
+
+
+def test_failed_ai_fix_is_rerun_by_fix_command(static_env) -> None:
+    base = dataclasses.replace(BASE, repo=RepoConfig())
+    mp = static_env["monkeypatch"]
+    mp.setattr(base_config, "load", lambda *a, **k: base)
+    real = ai_fix.code_fix
+    outcomes = iter(["ai_failed", "ready"])
+
+    def flaky_fix(*a, **kw):
+        out = real(*a, **kw)
+        status = next(outcomes)
+        if status == "ready":
+            return out
+        return FixOutcome(skill="static", status="ai_failed", detail="3회 안에 통과하지 못함",
+                          ai_calls=3, ai_cost_usd=0.03, models=("haiku",))  # fmt: skip
+
+    mp.setattr(ai_fix, "code_fix", flaky_fix)
+    deps, gh = static_env["deps"], static_env["gh"]
+    assert main.handle(_update(), deps) == "passed"
+    body = bodies(gh)[-1]
+    assert (
+        "**static 수정안:**" in body
+        and "`/fix static`를 코멘트로 달면 AI 수정을 다시 돌립니다." in body
+    )
+    assert len(gh.pulls) == 1  # lint만 제안 PR
+    assert update.has_pending_fix(_target(), deps, "static")
+    assert not update.has_pending_fix(
+        _target(), deps, "lint"
+    )  # 수정안을 낸 스킬은 다시 돌리지 않는다
+
+    assert main.handle(_fix_command(77, "/fix static"), deps) == "fix:ready"
+    assert len(static_env["static"]["calls"]) == 2 and len(gh.pulls) == 2
+    body = bodies(gh)[-1]
+    assert "**lint 수정안:**" in body and "제안 PR #" in body.split("**static 수정안:**")[1]
+    # 수정안을 낸 뒤에는 다시 돌릴 것이 없다 (열린 제안 PR을 알려 준다)
+    assert main.handle(_fix_command(78, "/fix static"), deps) == "no_pending_fix"
+    assert "static 제안 PR" in _replies(gh)[-1]

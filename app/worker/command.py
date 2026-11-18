@@ -58,9 +58,9 @@ def no_pending_fix_message(
         )
     else:
         reason = (
-            f"{commit}에는 승인을 기다리는 {skill} 수정이 없습니다. "
+            f"{commit}에는 승인을 기다리거나 다시 돌릴 {skill} 수정이 없습니다. "
             "자동으로 고칠 수 있는 위반이 없거나, 테스트가 통과하지 않았거나, "
-            "이미 처리했을 수 있습니다."
+            "이미 수정안을 만들었을 수 있습니다."
         )
     return f"> /fix {skill}\n\n{reason}"
 

@@ -60,6 +60,7 @@ def test_stage3_defaults() -> None:
     config, problem = parse_repo_config(None)
     assert problem is None
     assert (config.skills.fix.require_covered, config.skills.fix.max_retries) == (True, 3)
+    assert config.skills.fix.require_approval is False  # 기본: 검사 뒤 바로 수정안까지 간다
     assert config.skills.static.min_repeats is None
     assert (config.model.light, config.model.heavy, config.model.budget_per_pr_usd) == (
         "haiku", "sonnet", 0.5,

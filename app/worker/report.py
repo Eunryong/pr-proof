@@ -6,11 +6,11 @@
 
 import re
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Final, Literal
 
 from app.models.coverage import FixGate
-from app.models.finding import SkillResult
+from app.models.finding import Finding, SkillResult
 from app.models.fix import FixBlocker, FixOutcome
 from app.models.proposal import ProposalResult
 from app.models.test_run import PytestRun
@@ -175,6 +175,7 @@ def proposal_details(
     number: int | None = None,
     skill: str = "lint",
     gate: FixGate | None = None,
+    lint: SkillResult | None = None,
 ) -> list[str]:
     ref = _pr_ref(number)
     if proposal == "merged":
@@ -198,11 +199,22 @@ def proposal_details(
             f"테스트가 통과하지 않아 자동 수정을 제안하지 않습니다 ({format_test_line(run)}).",
         ]
     if proposal == "approval" and skill == "lint":
-        return [
+        findings = lint.findings if lint is not None else ()
+        fixable = [f for f in findings if f.fixable]
+        if lint is None:
+            what = "ruff의 안전한 수정 중 PR이 바꾼 줄의 것만 적용하고"
+        elif len(fixable) == len(findings):
+            what = f"lint 위반 {len(fixable)}건을 ruff의 안전한 수정으로 고치고"
+        else:
+            n, safe = len(findings), len(fixable)
+            what = f"lint 위반 {n}건 중 ruff의 안전한 수정이 있는 {safe}건을 고치고"
+        lines = [
             "",
-            f"`{FIX_COMMAND}`를 코멘트로 달면 ruff의 안전한 수정 중 PR이 바꾼 줄의 것만 적용하고, "
-            "테스트로 확인한 뒤 수정안을 만듭니다.",
+            f"`{FIX_COMMAND}`를 코멘트로 달면 {what}, 테스트로 확인한 뒤 수정안을 만듭니다.",
         ]
+        if lint is not None and len(fixable) < len(findings):
+            lines += ["", target_locations("lint", fixable)]
+        return lines
     if proposal == "approval":
         n = len(gate.fixable) if gate is not None else 0
         return [
@@ -214,9 +226,9 @@ def proposal_details(
 
 
 def gate_details(gate: FixGate | None, skill: str = "static") -> list[str]:
-    """자동 수정 대상이 아닌 위반은 이유별 개수만, 대신 수정이 실제로 고칠 위반을 적는다 (F8·F9).
+    """자동 수정 대상이 아닌 위반은 이유별 개수만, 수정이 실제로 고칠 위반은 위치만 적는다 (F8·F9).
 
-    위반 목록은 위에 이미 있으므로 같은 위반을 다시 나열하지 않는다. 대상이 전부면 따로 적지 않는다.
+    위반 내용은 위 목록에 이미 있으므로 다시 적지 않는다. 대상이 전부면 따로 적지 않는다.
     """
     if gate is None or not gate.allowed:
         return []
@@ -227,15 +239,16 @@ def gate_details(gate: FixGate | None, skill: str = "static") -> list[str]:
     by_reason = ", ".join(f"{why} {n}건" for n, why in reasons if n)
     lines = ["", f"자동 수정 대상이 아닌 위반 {skipped}건: {by_reason}"]
     if gate.fixable:
-        lines += ["", f"`{fix_command(skill)}`이 고칠 위반 {len(gate.fixable)}건:"]
-        lines += [
-            f"- `{f.file}:{f.line}` `{f.code}` {f.message}"
-            for f in gate.fixable[:MAX_LISTED_FINDINGS]
-        ]
-        hidden = len(gate.fixable) - MAX_LISTED_FINDINGS
-        if hidden > 0:
-            lines.append(f"- 외 {hidden}건")
+        lines += ["", target_locations(skill, gate.fixable)]
     return lines
+
+
+def target_locations(skill: str, targets: Sequence[Finding]) -> str:
+    """수정이 고칠 위반의 위치만 한 줄로. 내용은 위 위반 목록에 이미 있다."""
+    shown = ", ".join(f"`{f.file}:{f.line}`" for f in targets[:MAX_LISTED_FINDINGS])
+    hidden = len(targets) - MAX_LISTED_FINDINGS
+    more = f" 외 {hidden}건" if hidden > 0 else ""
+    return f"`{fix_command(skill)}`이 고칠 위반 {len(targets)}건: {shown}{more}"
 
 
 def proposal_line(result: ProposalResult | None) -> str:
@@ -254,7 +267,10 @@ def fix_section(fix: FixOutcome, result: ProposalResult | None = None) -> list[s
         lines = ["", f"**{fix.skill} 수정안:** {reason}"]
         if fix.detail:
             lines[-1] += f" ({fix.detail})"
-        return lines + ai_cost_lines(fix)
+        lines += ai_cost_lines(fix)
+        if fix.skill != "lint":  # lint 수정은 결정적이라 같은 커밋에서 다시 돌려도 같다
+            lines.append(f"`{fix_command(fix.skill)}`를 코멘트로 달면 AI 수정을 다시 돌립니다.")
+        return lines
     tests = format_test_line(fix.test_run) if fix.test_run else "확인 안 함"
     what = f"위반 {fix.fixed}건을 고쳤습니다" if fix.fixed else "포맷만 고쳤습니다"
     lines = [
@@ -424,7 +440,7 @@ def render_result(
         elif skill in proposals:
             state, number = proposals[skill]
             gate = static_gate if skill == "static" else None
-            extra += proposal_details(state, run, number, skill, gate)
+            extra += proposal_details(state, run, number, skill, gate, lint=lint)
     waiting = {s: v for s, v in proposals.items() if s not in fixes}
     return _compose(
         format_test_line(run, memory_gb),

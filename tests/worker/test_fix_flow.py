@@ -81,6 +81,9 @@ def test_update_suggests_fix_and_waits(fix_env) -> None:
     assert main.handle(_update(), fix_env["deps"]) == "passed"
     body = bodies(fix_env["gh"])[-1]
     assert "**규칙:** ⚠️ 위반 2건 (lint 2) · 자동 수정 가능: `/fix lint`" in body
+    # 고칠 수 있는 건수와 위치를 같이 적는다 (내용은 위 목록에 있으므로 위치만)
+    assert "lint 위반 2건 중 ruff의 안전한 수정이 있는 1건을 고치고" in body
+    assert "`/fix lint`이 고칠 위반 1건: `a.py:2`" in body
     assert fix_env["state"]["fix_calls"] == 0  # 승인 전에는 고치지 않는다
     from app.worker import update
 

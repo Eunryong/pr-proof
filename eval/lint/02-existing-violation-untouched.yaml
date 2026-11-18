@@ -9,7 +9,7 @@ pr:
     replace: "import json\nimport sys\n\n"
 expect:
   findings: [F401]
-  proposal: approval
+  proposal: auto
   fix: ready
   remaining: []
   file: orders/api/handlers.py
