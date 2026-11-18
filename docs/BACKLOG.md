@@ -5,7 +5,7 @@
 형식: `- [ ] (발견 단계) 내용 — 왜 나중인지 한 줄 / 처리할 단계`
 
 - [x] (1단계) `sandbox.memory_gb` 설정을 컨테이너와 메모리 초과 코멘트에 연결 — 대상 리포 설정 읽기가 2단계에 들어옴 / 2단계. 2026-11-17 연결
-- [ ] (1단계) preflight의 claude 로그인 확인 — 1단계는 claude를 호출하지 않음 / 3단계
+- [x] (1단계) preflight의 claude 로그인 확인 — 1단계는 claude를 호출하지 않음 / 3단계. 2026-11-18 `claude auth status`의 `loggedIn`·`loginExpiresAt`으로 확인 (claude CLI 2.1.327)
 - [x] (1단계) 실제 GitHub 웹훅 연결 (터널 + 리포 웹훅 설정) — 서명한 페이로드를 로컬 api에 보내는 방식으로 같은 경로를 확인했음. 터널과 GitHub 설정은 운영자가 할 일 / 1단계 마무리 때 운영자와 함께. 2026-11-17 smee로 연결, synchronize → 코멘트 갱신 확인
 - [ ] (1단계) smee 채널 생성·웹훅 등록·전달 자동화 — 수동 1회 등록으로 충분 / 6단계. 전달은 Node 의존을 없애도록 Python SSE 방식 검토
 - [ ] (1단계) init/start 명령으로 설치 과정 단축 — 사용 편의 / 6단계 (데모·README 전)
