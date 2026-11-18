@@ -136,7 +136,7 @@
 
 지금 구현을 그대로 쓴다. 규칙은 v1 F1–F3과 같고 요점만 옮긴다.
 
-- **웹훅 (v1 F1):** `POST /webhook/github` 하나. `X-Hub-Signature-256` HMAC 검증, `X-GitHub-Delivery` ID로 재전송 제거, 허용 목록의 저장소만, 큐에 넣고 바로 202. api는 GitHub을 조회하지 않는다. `issue_comment`는 `created`이고, 파이프라인 자신의 코멘트가 아니고, 작성자의 `author_association`이 OWNER·MEMBER·COLLABORATOR인 것만 받는다.
+- **웹훅 (v1 F1):** `POST /webhook/github` 하나. `X-Hub-Signature-256` HMAC 검증, `X-GitHub-Delivery` ID로 재전송 제거, 허용 목록의 저장소만, 큐에 넣고 바로 202. 웹훅 처리에서 api가 GitHub을 조회하는 것은 외부 작성자 확인에 쓰는 base의 `.pipeline.yaml` 하나뿐이다(8.6). `pull_request` 이벤트는 작성자를 `may_run`으로 확인해, 통과하지 못하면 검사 작업 대신 승인 안내 작업을 넣는다. `issue_comment`는 `created`이고, 파이프라인 자신의 코멘트가 아니고, 작성자의 `author_association`이 OWNER·MEMBER·COLLABORATOR인 것만 받는다.
 - **동기화 (v1 F2):** api 시작 시 한 번, 이후 5분마다. GitHub의 PR 상태와 SQLite의 처리 이력을 비교해 차이를 작업으로 넣는다.
 
   | 비교 | 차이가 있으면 |
