@@ -12,6 +12,7 @@ from app.models import state_keys
 from app.models.call_budget import RulesetScope, Scope, Spent
 from app.models.db import (
     AICall,
+    CheckerEntry,
     CommandRecord,
     ModelCacheEntry,
     ModelCall,
@@ -254,6 +255,20 @@ class Store:
     def save_ruleset(self, key: str, ruleset_json: str) -> None:
         with Session(self.engine) as session:
             session.merge(RulesetEntry(key=key, ruleset_json=ruleset_json, created_at=_now()))
+            session.commit()
+
+    def saved_checker(self, key: str) -> CheckerEntry | None:
+        with Session(self.engine) as session:
+            return session.get(CheckerEntry, key)
+
+    def save_checker(self, key: str, *, rule_id: str, accepted: bool, checker_json: str | None,
+                     detail: str, attempts_json: str) -> None:  # fmt: skip
+        entry = CheckerEntry(
+            key=key, rule_id=rule_id, accepted=accepted, checker_json=checker_json, detail=detail,
+            attempts_json=attempts_json, created_at=_now(),
+        )  # fmt: skip
+        with Session(self.engine) as session:
+            session.merge(entry)
             session.commit()
 
     def command_handled(self, comment_id: int) -> bool:
