@@ -5,7 +5,7 @@ pr:
     append: "\nNOTICE = \"무료 배송 기준: \" + f\"5만원\"\n"
 expect:
   findings: [F541]
-  proposal: approval
+  proposal: auto
   fix: ready
   remaining: []
   file: orders/services/pricing.py

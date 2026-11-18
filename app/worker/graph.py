@@ -1,13 +1,15 @@
 """워커의 작업 흐름 (LangGraph).
 
     체크아웃 → 규칙 검사(lint, static) → 테스트 → 코멘트 ─┬─ (제안할 수정 없음) → 끝
-                                                   ├─ 승인 대기(interrupt) ─ /fix <skill>
-                                                   └─ (require_approval: false)
+                                                   ├─ (기본: 바로 수정)
+                                                   └─ 승인 대기(interrupt) ─ /fix <skill>
+                                                      (require_approval: true)
         /fix lint   → 수정(ruff) ─┐
         /fix static → AI 수정 ────┴→ 제안 PR → 수정 코멘트 ─┬─ (남은 제안 없음) → 끝
                                                        └─ 다른 스킬의 승인 대기·자동 수정
 
 스킬마다 수정은 한 번이다. 수정마다 새 worktree에서 시작한다 (앞 수정의 변경이 섞이지 않게).
+수정안을 내지 못하고 끝난 스킬은 `/fix <skill>`로 그 스킬만 다시 돌린다 (사람이 달 때만).
 
 각 단계 사이에서 이 작업의 커밋이 아직 PR의 최신 커밋인지 확인하고, 낡았으면 멈춘다.
 그래프 상태에는 데이터만 넣고, worktree 같은 자원은 FlowContext가 들고 정리한다.
@@ -546,7 +548,7 @@ def run_flow(job: PRJob, ctx: FlowContext) -> FlowState:
     return result
 
 
-PendingFix = Literal["awaiting", "interrupted_fix", "interrupted_after_fix"]
+PendingFix = Literal["awaiting", "interrupted_fix", "interrupted_after_fix", "rerun"]
 
 
 def _awaiting_skills(value: object) -> list[str]:
@@ -570,6 +572,9 @@ def pending_fix(job: PRJob, ctx: FlowContext, saver: SqliteSaver, skill: str) ->
         "fix_skill"
     ) == skill:
         return "interrupted_after_fix"
+    done = snapshot.values.get("fixes", {}).get(skill)
+    if not snapshot.next and done is not None and not done.ready:
+        return "rerun"  # 끝난 수정이 수정안을 내지 못했다. /fix로 그 스킬만 다시 돌린다
     return None
 
 
@@ -579,7 +584,10 @@ def has_pending_fix(job: PRJob, ctx: FlowContext, skill: str) -> bool:
 
 
 def resume_fix(job: PRJob, ctx: FlowContext, approval: dict[str, Any]) -> FlowState | None:
-    """멈춰 있던 그래프를 approval["skill"]의 수정 단계부터 이어서 실행한다. 없으면 None."""
+    """멈춰 있던 그래프를 approval["skill"]의 수정 단계부터 이어서 실행한다. 없으면 None.
+
+    수정안을 내지 못하고 끝난 수정(실패·예산 등)도 그 스킬의 수정 단계부터 다시 돌린다.
+    """
     skill = approval["skill"]
     with ctx.stack:
         saver = open_checkpointer(ctx.data_dir, ctx.stack)
@@ -593,6 +601,13 @@ def resume_fix(job: PRJob, ctx: FlowContext, approval: dict[str, Any]) -> FlowSt
             # 수정 단계부터 다시 한다. 같은 브랜치라 이미 연 제안 PR은 새로 만들지 않고 갱신한다.
             # fix_skill이 남아 있어 대기 node 다음 경로가 그 스킬의 수정 node로 간다
             config = graph.update_state(config, None, as_node=AWAIT_FIX)
+        elif pending == "rerun":
+            # 끝난 그래프의 그 스킬 결과만 지우고 대기 node 다음(그 스킬의 수정 node)부터 다시 간다.
+            # 다른 스킬의 결과와 제안 PR은 그대로 두므로 수정 코멘트에 함께 남는다
+            fixes = {k: v for k, v in graph.get_state(config).values["fixes"].items() if k != skill}
+            config = graph.update_state(
+                config, {"fixes": fixes, "fix_skill": skill}, as_node=AWAIT_FIX
+            )
         command = Command(resume=approval) if pending == "awaiting" else None
         result = graph.invoke(command, config)
     if skill not in result.get("fixes", {}):

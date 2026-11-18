@@ -10,7 +10,7 @@ ai:  # 가짜 AI가 회차마다 적용할 편집 (실제 claude로 돌리면 �
       replace: "order.coupon_percent > MAX_COUPON_PERCENT"
 expect:
   findings: [PLR2004]
-  proposal: approval
+  proposal: auto
   fix: ready
   file: orders/services/pricing.py
   same_as_base: true

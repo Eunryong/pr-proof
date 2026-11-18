@@ -16,7 +16,7 @@ import yaml
 from app import config
 from app.models import state_keys
 from app.models.job import PRJob
-from app.worker import main, repo
+from app.worker import main, repo, report
 from app.worker.ai import claude_cli
 from app.worker.ai.claude_cli import ClaudeResult
 from app.worker.deps import Deps
@@ -111,25 +111,24 @@ def test_static_case(case_path: Path, eval_repo: Path, shared_venvs: Path, tmp_p
     assert "`/fix lint`" not in rules, "케이스가 lint 위반을 넣지 않아야 static만 본다"
 
     match expect["proposal"]:
-        case "approval":
+        case "auto":  # 기본값(require_approval: false): /fix 없이 검사 뒤 바로 AI 수정까지 간다
             assert status == "passed"
-            assert rules.endswith("자동 수정 가능: `/fix static`"), rules
+            assert "자동 수정 가능" not in rules, rules
         case "uncovered":
             assert status == "passed" and "`/fix static`" not in rules
             assert "자동 수정 대상이 아닌 위반 1건: 테스트가 지나가지 않음 1건" in body
         case "tests":
             assert status == "failed" and "`/fix static`" not in rules
             assert "static 자동 수정을 제안하지 않습니다 (테스트가 실패함)" in body
-    if expect["proposal"] != "approval":
+    if expect["proposal"] != "auto":
         assert _git(remote["path"], "branch", "--list", BRANCH) == ""
         return
 
-    fix = PRJob(repo=REPO, pr_number=1, kind="command", command="/fix static", comment_id=7,
-                source="webhook")  # fmt: skip
-    assert main.handle(fix.model_dump_json(), deps) == f"fix:{expect['fix']}"
-    fixed_body = _bodies(gh)[-1]
+    fixed_body = body
     assert "AI 호출" in fixed_body, fixed_body
     if expect["fix"] != "ready":
+        assert f"**static 수정안:** {report._FIX_STATUS_TEXT[expect['fix']]}" in fixed_body
+        assert "`/fix static`를 코멘트로 달면 AI 수정을 다시 돌립니다." in fixed_body
         assert gh.pulls == {} and _git(remote["path"], "branch", "--list", BRANCH) == ""
         return
 

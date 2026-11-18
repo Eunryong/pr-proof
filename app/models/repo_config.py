@@ -25,7 +25,7 @@ class SandboxSettings(BaseModel):
 
 class FixSettings(BaseModel):
     model_config = ConfigDict(extra="ignore")
-    require_approval: bool = True  # /fix 승인 후 수정안을 만든다. false면 바로 만든다
+    require_approval: bool = False  # 검사 뒤 바로 수정안을 만든다. true면 /fix 승인 후 만든다
     # static·structure는 테스트가 지나가는 위반 줄만 자동 수정한다 (DESIGN.md F8)
     require_covered: bool = True
     # AI 수정의 작성 → 검증 회차 상한 (DESIGN.md F7)

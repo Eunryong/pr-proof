@@ -134,22 +134,20 @@ def test_lint_case(case_path: Path, eval_repo: Path, shared_venvs: Path, tmp_pat
     assert _finding_codes(body) == sorted(expect["findings"]), body
 
     match expect["proposal"]:
-        case "approval":
+        case "auto":  # 기본값(require_approval: false): /fix 없이 검사 뒤 바로 수정안까지 간다
             assert status == "passed"
-            assert rules.endswith("자동 수정 가능: `/fix lint`"), rules
+            assert "자동 수정 가능" not in rules, rules
         case "no_fixable":
             assert "자동 수정" not in rules
         case "tests":
             assert status == "failed" and "자동 수정" not in rules
             assert "테스트가 통과하지 않아 자동 수정을 제안하지 않습니다" in body
-    if expect["proposal"] != "approval":
+    if expect["proposal"] != "auto":
         assert _git(remote["path"], "branch", "--list", BRANCH) == ""
         return
 
-    fix = PRJob(repo=REPO, pr_number=1, kind="command", command="/fix lint", comment_id=7,
-                source="webhook")  # fmt: skip
-    assert main.handle(fix.model_dump_json(), deps) == f"fix:{expect['fix']}"
-    fixed_body = _bodies(gh)[-1]
+    fixed_body = body
+    assert expect["fix"] == "ready" and "**lint 수정안:**" in fixed_body, fixed_body
     ((number, pull),) = gh.pulls.items()
     assert f"제안 PR #{number}을 열었습니다." in fixed_body, fixed_body
     assert (pull["base"], pull["head"]) == ("feature", BRANCH)

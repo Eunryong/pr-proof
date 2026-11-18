@@ -41,6 +41,16 @@ def test_passing_tests_leave_report_and_relative_coverage(job: str, worktree: Pa
     assert not list(worktree.rglob("__pycache__"))
 
 
+def test_file_no_test_imports_is_in_coverage_as_zero(job: str, worktree: Path) -> None:
+    """__init__.py 없는 폴더의 import 안 된 파일도 coverage.xml에 0%로 있어야 분모가 맞다."""
+    tools = worktree / "scripts" / "tools"
+    tools.mkdir(parents=True)
+    (tools / "unused.py").write_text("x = 1\nprint(x)\n")
+    run = pytest_runner.run_tests(job, worktree)
+    xml = run.coverage_xml.read_text()
+    assert 'filename="scripts/tools/unused.py" complexity="0" line-rate="0"' in xml, xml
+
+
 def test_failing_test_is_reported(job: str, worktree: Path) -> None:
     pricing = worktree / "orders" / "services" / "pricing.py"
     pricing.write_text(

@@ -10,6 +10,6 @@ ai:  # 편집이 회차보다 적으면 마지막 것을 다시 쓴다 (이미 �
       replace: "order.coupon_percent > MAX_COUPON_PERCENT - 10"
 expect:
   findings: [PLR2004]
-  proposal: approval
+  proposal: auto
   fix: ai_failed
   ai_only_scripted: true  # 실제 AI는 제대로 고칠 수 있으므로 가짜 AI일 때만 확인한다

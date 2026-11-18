@@ -257,3 +257,21 @@ def test_ai_fix_section_fences_explanation_and_shows_cost() -> None:
                         ai_cost_usd=0.1, models=("haiku",) * 3)  # fmt: skip
     text = "\n".join(report.fix_section(failed))
     assert "정해진 횟수 안에 검증을 통과하지 못함 (남은 위반 1건)" in text and "AI 호출 3회" in text
+
+
+def test_gate_details_lists_fixable_locations_only_once() -> None:
+    from app.models.coverage import FixGate
+
+    def f(line: int) -> Finding:
+        return Finding(
+            "a.py", line, "warning", "repeated `2`", "static", "기본 규칙", "STATIC-REPEAT"
+        )
+
+    fixable = tuple(f(n) for n in range(report.MAX_LISTED_FINDINGS + 2))
+    gate = FixGate(allowed=True, fixable=fixable, uncovered=(f(999),))
+    lines = report.gate_details(gate)
+    assert "자동 수정 대상이 아닌 위반 1건: 테스트가 지나가지 않음 1건" in lines
+    (target,) = [line for line in lines if "이 고칠 위반" in line]
+    assert target.startswith(f"`/fix static`이 고칠 위반 {len(fixable)}건: `a.py:0`, `a.py:1`")
+    assert target.endswith(" 외 2건") and "repeated" not in target
+    assert report.gate_details(FixGate(allowed=True, fixable=fixable)) == []  # 전부 대상이면 생략

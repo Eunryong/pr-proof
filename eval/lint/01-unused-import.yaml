@@ -6,7 +6,7 @@ pr:
     replace: "import os\n\nfrom orders.models.order import Order\n"
 expect:
   findings: [F401]
-  proposal: approval
+  proposal: auto
   fix: ready
   remaining: []
   file: orders/services/pricing.py

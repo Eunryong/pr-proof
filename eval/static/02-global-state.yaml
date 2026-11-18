@@ -16,7 +16,7 @@ ai:
       replace: ""
 expect:
   findings: [STATIC-MUTABLE]
-  proposal: approval
+  proposal: auto
   fix: ready
   file: orders/services/pricing.py
   same_as_base: true
