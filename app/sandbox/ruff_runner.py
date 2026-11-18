@@ -9,12 +9,14 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Final
 
+from app.models.text_edit import TextEdit
 from app.sandbox import docker_cli
 from app.sandbox.container import WORKDIR, run_in_sandbox
 
 LINT_TIMEOUT: Final = 120
 MAX_ERROR_CHARS: Final = 500
 SYNTAX_ERROR_CODE: Final = "syntax-error"
+SAFE_FIX: Final = "safe"  # 동작을 바꾸지 않는 수정. unsafe·display-only는 적용하지 않는다
 # ruff 종료 코드: 0 위반 없음, 1 위반 있음, 2 설정·인자 오류 등
 _RUFF_OK: Final = frozenset({0, 1})
 
@@ -26,6 +28,11 @@ class RuffViolation:
     end_line: int
     code: str
     message: str
+    edits: tuple[TextEdit, ...] = ()  # 안전한 수정이 있을 때만. 없으면 비어 있다
+
+    @property
+    def fixable(self) -> bool:
+        return bool(self.edits)
 
 
 @dataclass(frozen=True)
@@ -62,9 +69,26 @@ def parse_output(stdout: str) -> tuple[RuffViolation, ...]:
                 end_line=end,
                 code=item.get("code") or SYNTAX_ERROR_CODE,
                 message=item["message"],
+                edits=_safe_edits(item.get("fix")),
             )
         )
     return tuple(violations)
+
+
+def _safe_edits(fix: dict | None) -> tuple[TextEdit, ...]:
+    """안전한 수정의 편집 목록. 위치는 1부터 세는 줄·열(문자 단위)이다."""
+    if not fix or fix.get("applicability") != SAFE_FIX:
+        return ()
+    return tuple(
+        TextEdit(
+            row=e["location"]["row"],
+            column=e["location"]["column"],
+            end_row=e["end_location"]["row"],
+            end_column=e["end_location"]["column"],
+            content=e.get("content") or "",
+        )
+        for e in fix.get("edits") or ()
+    )
 
 
 def run_ruff(

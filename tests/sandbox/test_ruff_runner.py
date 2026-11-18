@@ -88,3 +88,26 @@ def test_timeout_and_cancel(fake_exec) -> None:
 def test_broken_json(fake_exec) -> None:
     fake_exec(ExecResult(1, "{nope", ""))
     assert "출력을 읽지 못함" in ruff_runner.run_ruff("c", ["a.py"], None).error
+
+
+def _fix(applicability: str) -> dict:
+    return {
+        "applicability": applicability,
+        "message": "Remove unused import",
+        "edits": [
+            {"content": "", "location": {"row": 1, "column": 1},
+             "end_location": {"row": 2, "column": 1}},
+        ],
+    }  # fmt: skip
+
+
+def test_only_safe_fixes_become_edits() -> None:
+    safe = _item("a.py", 1) | {"fix": _fix("safe")}
+    unsafe = _item("a.py", 2) | {"fix": _fix("unsafe")}
+    display = _item("a.py", 3) | {"fix": _fix("display-only")}
+    none = _item("a.py", 4) | {"fix": None}
+    v_safe, v_unsafe, v_display, v_none = ruff_runner.parse_output(
+        json.dumps([safe, unsafe, display, none])
+    )
+    assert v_safe.fixable and v_safe.edits[0].end_row == 2
+    assert not v_unsafe.fixable and not v_display.fixable and not v_none.fixable

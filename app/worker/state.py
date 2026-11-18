@@ -39,13 +39,14 @@ class Store:
 
     # --- SQLite ---
 
-    def start_run(self, job: PRJob) -> int:
+    def start_run(self, job: PRJob, kind: str | None = None) -> int:
+        """kind는 기본으로 작업 종류. /fix 재개는 "fix"로 남긴다."""
         now = _now()
         run = Run(
             repo=job.repo,
             pr_number=job.pr_number,
             head_sha=job.head_sha or "",
-            kind=job.kind,
+            kind=kind or job.kind,
             source=job.source,
             state="running",
             started_at=now,

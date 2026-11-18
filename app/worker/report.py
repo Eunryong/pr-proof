@@ -5,9 +5,11 @@
 """
 
 from collections import Counter
-from typing import Final
+from collections.abc import Mapping
+from typing import Final, Literal
 
 from app.models.finding import SkillResult
+from app.models.fix import FixBlocker, FixOutcome
 from app.models.test_run import PytestRun
 from app.sandbox.docker_cli import MEMORY_LIMIT_GB
 from app.worker.base_config import PIPELINE_YAML, BaseConfig
@@ -15,6 +17,18 @@ from app.worker.base_config import PIPELINE_YAML, BaseConfig
 MAX_LISTED_FAILURES: Final = 10
 MAX_LISTED_FINDINGS: Final = 30
 MAX_OUTPUT_CHARS: Final = 1500
+MAX_PATCH_CHARS: Final = 6000
+
+# 코멘트 node가 정하는 수정 제안 상태: 승인 대기, 승인 없이 바로 수정, 또는 제안하지 않는 이유
+Proposal = Literal["approval", "auto"] | FixBlocker
+FIX_COMMAND: Final = "/fix lint"
+_FIX_STATUS_TEXT: Final[Mapping[str, str]] = {
+    "nothing_fixed": "적용할 수 있는 수정이 없음",
+    "new_violations": "수정안을 버림: 고친 뒤 원래 없던 위반이 생김",
+    "out_of_scope": "수정안을 버림: 허용 범위 밖의 파일이 바뀜",
+    "tests_changed": "수정안을 버림: 고친 뒤 테스트 결과가 달라짐",
+    "unchecked": "수정안을 버림: 고친 뒤 규칙 검사를 하지 못함",
+}
 VIOLATION: Final = "⚠️"
 CLEAN: Final = "✅"
 
@@ -106,6 +120,55 @@ def format_rules_line(results: list[SkillResult]) -> str:
     return line
 
 
+def proposal_suffix(proposal: Proposal | None) -> str:
+    """규칙 줄 끝에 붙는 수정 제안 (DESIGN.md F9: `· 자동 수정 가능: /fix lint`)."""
+    if proposal == "approval":
+        return f" · 자동 수정 가능: `{FIX_COMMAND}`"
+    if proposal == "auto":
+        return " · 자동 수정 중"
+    return ""
+
+
+def proposal_details(proposal: Proposal | None, run: PytestRun) -> list[str]:
+    if proposal == "tests":
+        return [
+            "",
+            f"테스트가 통과하지 않아 자동 수정을 제안하지 않습니다 ({format_test_line(run)}).",
+        ]
+    if proposal == "approval":
+        return [
+            "",
+            f"`{FIX_COMMAND}`을 코멘트로 달면 ruff의 안전한 수정 중 PR이 바꾼 줄의 것만 적용하고, "
+            "테스트로 확인한 뒤 수정안을 만듭니다.",
+        ]
+    return []
+
+
+def fix_section(fix: FixOutcome) -> list[str]:
+    """수정안 결과. 버린 수정안은 이유만 적는다."""
+    if not fix.ready:
+        reason = _FIX_STATUS_TEXT.get(fix.status, fix.status)
+        lines = ["", f"**{fix.skill} 수정안:** {reason}"]
+        if fix.detail:
+            lines[-1] += f" ({fix.detail})"
+        return lines
+    tests = format_test_line(fix.test_run) if fix.test_run else "확인 안 함"
+    lines = [
+        "",
+        f"**{fix.skill} 수정안:** 위반 {fix.fixed}건을 고쳤습니다. 고친 뒤 테스트: {tests}."
+        " 제안 PR은 준비 중입니다.",
+    ]
+    if fix.remaining:
+        lines.append(f"자동으로 고치지 못한 위반 {len(fix.remaining)}건은 그대로 남습니다.")
+    if fix.patch_path is not None and fix.patch_path.is_file():
+        patch = fix.patch_path.read_text()
+        if len(patch) > MAX_PATCH_CHARS:
+            patch = patch[:MAX_PATCH_CHARS] + "\n… (생략)"
+        lines += ["", "<details><summary>수정 내용</summary>", "", "```diff", patch, "```", "",
+                  "</details>"]  # fmt: skip
+    return lines
+
+
 def rules_details(results: list[SkillResult]) -> list[str]:
     lines: list[str] = []
     for r in results:
@@ -154,13 +217,16 @@ def _compose(
     base: BaseConfig | None,
     seconds: float | None = None,
     from_sync: bool = False,
+    suffix: str = "",
+    extra: list[str] | None = None,
 ) -> str:
     results = [lint] if lint is not None else []
     lines = [HEADER, "", f"**테스트:** {test_line}"]
     if results:
-        lines.append(f"**규칙:** {format_rules_line(results)}")
+        lines.append(f"**규칙:** {format_rules_line(results)}{suffix}")
     lines += details
     lines += rules_details(results)
+    lines += extra or []
     if base is not None and base.problems:
         lines += ["", "설정:"] + [f"- {p}" for p in base.problems]
     lines += ["", _footer(head_sha, seconds, from_sync=from_sync)]
@@ -178,10 +244,13 @@ def render_result(
     *,
     lint: SkillResult | None = None,
     base: BaseConfig | None = None,
+    proposal: Proposal | None = None,
+    fix: FixOutcome | None = None,
     from_sync: bool = False,
 ) -> str:
     memory_gb = base.memory_gb if base else MEMORY_LIMIT_GB
     max_memory_gb = base.max_memory_gb if base else MEMORY_LIMIT_GB
+    extra = fix_section(fix) if fix is not None else proposal_details(proposal, run)
     return _compose(
         format_test_line(run, memory_gb),
         format_test_details(run, memory_gb, max_memory_gb),
@@ -190,6 +259,8 @@ def render_result(
         base=base,
         seconds=seconds,
         from_sync=from_sync,
+        suffix=proposal_suffix(proposal) if fix is None else "",
+        extra=extra,
     )
 
 
