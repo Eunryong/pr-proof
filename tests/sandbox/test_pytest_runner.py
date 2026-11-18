@@ -186,3 +186,19 @@ def test_many_failures_are_not_rerun(two_runs, tmp_path: Path) -> None:
     calls = two_runs("passed", first=report)
     pytest_runner.run_tests("job-1", tmp_path)
     assert len(calls) == 1
+
+
+def test_report_that_is_a_fifo_or_symlink_is_missing(tmp_path) -> None:
+    """PR 코드가 결과 파일을 FIFO로 바꿔도 워커가 멈추지 않고, 링크를 따라가지 않는다."""
+    import os
+
+    from app.sandbox.pytest_runner import passed_ids, read_summary
+
+    fifo = tmp_path / "report.json"
+    os.mkfifo(fifo)
+    assert read_summary(fifo) is None and passed_ids(fifo) == set()
+    secret = tmp_path / "secret.json"
+    secret.write_text('{"summary": {"total": 1, "passed": 1}, "tests": []}')
+    link = tmp_path / "link.json"
+    link.symlink_to(secret)
+    assert read_summary(link) is None

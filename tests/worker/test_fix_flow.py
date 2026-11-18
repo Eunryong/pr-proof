@@ -182,7 +182,7 @@ def test_nothing_applied(fix_env) -> None:
     assert main.handle(_fix_command(), fix_env["deps"]) == "fix:nothing_fixed"
 
 
-@pytest.mark.parametrize("skill", ["static", "structure", ""])
+@pytest.mark.parametrize("skill", ["structure", ""])
 def test_other_fix_skills_are_not_supported(fix_env, skill: str) -> None:
     text = f"/fix {skill}".strip()
     assert main.handle(_fix_command(text=text), fix_env["deps"]) == "fix_unsupported"
@@ -461,5 +461,5 @@ def test_lint_disabled_runs_tests_only(fix_env) -> None:
     assert main.handle(_update(), fix_env["deps"]) == "passed"
     body = bodies(fix_env["gh"])[-1]
     assert "**테스트:** 통과 (9개)" in body and "**규칙:**" not in body
-    assert "lint는 이 리포에서 꺼져 있습니다" in body
+    assert "이 리포에서 꺼진 규칙 스킬: lint, static" in body
     assert main.handle(_fix_command(), fix_env["deps"]) == "no_pending_fix"

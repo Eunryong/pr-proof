@@ -220,3 +220,40 @@ def test_secret_blocked_proposal_hides_patch(tmp_path) -> None:
     text = "\n".join(report.fix_section(_ready_fix(tmp_path, "+token\n"), result))
     assert "제안 PR을 만들지 않았습니다 (비밀값으로 보이는 내용이 있음" in text
     assert "수정 내용" not in text
+
+
+# --- 3단계: static, 커버리지, AI 수정 ---
+
+
+def test_suffix_lists_every_waiting_skill() -> None:
+    proposals = {"lint": ("approval", None), "static": ("approval", None)}
+    assert report.proposal_suffix(proposals) == " · 자동 수정 가능: `/fix lint`, `/fix static`"
+    assert report.proposal_suffix({"static": ("tests", None)}) == ""
+    assert report.proposal_suffix("approval") == " · 자동 수정 가능: `/fix lint`"  # 2단계 호출
+
+
+def test_diff_coverage_line() -> None:
+    from app.worker.coverage import DiffCoverage
+
+    assert report.diff_coverage_line(None) == []
+    assert report.diff_coverage_line(DiffCoverage(66.67, 3, 1)) == [
+        "",
+        "바뀐 줄 커버리지 (참고): 66.67% (테스트가 센 3줄 중 1줄이 실행되지 않음)",
+    ]
+
+
+def test_ai_fix_section_fences_explanation_and_shows_cost() -> None:
+    from app.models.fix import FixOutcome
+
+    fix = FixOutcome(
+        skill="static", status="ready", fixed=1, test_run=PASSED,
+        explanation="```\n@team 끝", ai_calls=3, ai_cost_usd=0.4123,
+        models=("haiku", "haiku", "sonnet"),
+    )  # fmt: skip
+    lines = "\n".join(report.fix_section(fix))
+    assert "AI 호출 3회 (haiku, haiku, sonnet) · 추정 비용 $0.4123" in lines
+    assert "````\n```\n@team 끝\n````" in lines  # 설명 안의 ```가 블록을 닫지 못한다
+    failed = FixOutcome(skill="static", status="ai_failed", detail="남은 위반 1건", ai_calls=3,
+                        ai_cost_usd=0.1, models=("haiku",) * 3)  # fmt: skip
+    text = "\n".join(report.fix_section(failed))
+    assert "정해진 횟수 안에 검증을 통과하지 못함 (남은 위반 1건)" in text and "AI 호출 3회" in text

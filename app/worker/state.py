@@ -7,7 +7,7 @@ from redis import Redis
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from app.models import state_keys
-from app.models.db import CommandRecord, Proposal, Run
+from app.models.db import AICall, CommandRecord, Proposal, Run
 from app.models.job import PRJob
 
 
@@ -120,6 +120,22 @@ class Store:
                 row.merge_commit = merge_commit
             session.add(row)
             session.commit()
+
+    # --- AI 비용 ---
+
+    def record_ai_call(self, call: AICall) -> None:
+        call.created_at = _now()
+        with Session(self.engine) as session:
+            session.add(call)
+            session.commit()
+
+    def ai_spent(self, repo: str, pr_number: int) -> float:
+        """이 PR에 지금까지 쓴 AI 비용 (예산에서 뺀 값의 합)."""
+        with Session(self.engine) as session:
+            stmt = select(AICall.charged_usd).where(
+                AICall.repo == repo, AICall.pr_number == pr_number
+            )
+            return float(sum(session.exec(stmt).all()))
 
     def command_handled(self, comment_id: int) -> bool:
         with Session(self.engine) as session:

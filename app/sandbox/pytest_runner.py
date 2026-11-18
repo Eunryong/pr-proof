@@ -15,11 +15,13 @@ from app.sandbox.container import (
     ExecResult,
     run_in_sandbox,
 )
+from app.sandbox.safe_read import read_regular_file
 
 REPORT_FILE: Final = f"{OUT_DIR}/report.json"
 RERUN_REPORT_FILE: Final = f"{OUT_DIR}/rerun.json"
 # 이보다 많이 실패하면 불안정이 아니라 실제 실패로 보고 다시 돌리지 않는다
 MAX_RERUN_TESTS: Final = 20
+MAX_REPORT_BYTES: Final = 50 * 1024 * 1024  # 큰 테스트 묶음의 report.json도 들어가게
 COVERAGE_XML: Final = f"{OUT_DIR}/coverage.xml"
 # coverage.xml 경로를 리포 기준 상대 경로로 남기는 파이프라인 쪽 설정 (docker/sandbox/coveragerc)
 COVERAGERC: Final = f"{PIPELINE_DIR}/coveragerc"
@@ -50,21 +52,28 @@ def rerun_argv(node_ids: list[str]) -> list[str]:
     ]  # fmt: skip
 
 
+def _read_json(report: Path) -> object:
+    """PR 코드가 바꿀 수 있는 결과 파일. 일반 파일만 읽는다 (링크·FIFO면 없는 것으로 본다)."""
+    data = read_regular_file(report, max_bytes=MAX_REPORT_BYTES)
+    if data is None:
+        return None
+    return json.loads(data)
+
+
 def passed_ids(report: Path) -> set[str]:
     try:
-        data = json.loads(report.read_text())
+        data = _read_json(report)
         return {t["nodeid"] for t in data.get("tests", []) if t.get("outcome") == "passed"}
-    except (OSError, json.JSONDecodeError, KeyError, TypeError, AttributeError):
+    except (ValueError, KeyError, TypeError, AttributeError):
         return set()
 
 
 def read_summary(report: Path) -> ReportSummary | None:
-    """report.json을 읽는다. 없거나 깨졌으면 None."""
-    if not report.is_file():
-        return None
+    """report.json을 읽는다. 없거나(링크·FIFO 포함) 깨졌으면 None."""
     try:
-        return ReportSummary.from_report(json.loads(report.read_text()))
-    except (json.JSONDecodeError, KeyError, TypeError, AttributeError):
+        data = _read_json(report)
+        return None if data is None else ReportSummary.from_report(data)
+    except (ValueError, KeyError, TypeError, AttributeError):
         return None
 
 

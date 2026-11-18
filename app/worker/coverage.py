@@ -7,7 +7,6 @@
 
 import json
 import os
-import stat
 import subprocess
 import sys
 import tempfile
@@ -23,6 +22,7 @@ from app.models.coverage import (
     parse_coverage_xml,
 )
 from app.models.finding import Finding
+from app.sandbox.safe_read import read_regular_file
 
 DIFF_COVER_TIMEOUT: Final = 60
 MAX_SOURCE_BYTES: Final = 2 * 1024 * 1024
@@ -32,29 +32,6 @@ _ENV_PASSTHROUGH: Final = ("PATH",)
 _DIFF_COVER_MAIN: Final = (
     "import sys; from diff_cover.diff_cover_tool import main; sys.exit(main())"
 )
-
-
-def read_regular_file(path: Path, *, max_bytes: int) -> bytes | None:
-    """일반 파일만 max_bytes까지 읽는다. 링크·FIFO·장치·너무 큰 파일·읽기 실패는 None.
-
-    O_NOFOLLOW로 마지막 경로의 심볼릭 링크를 거부하고, O_NONBLOCK으로 FIFO에서 멈추지 않는다.
-    """
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
-    try:
-        fd = os.open(path, flags)
-    except OSError:
-        return None
-    try:
-        info = os.fstat(fd)
-        if not stat.S_ISREG(info.st_mode) or info.st_size > max_bytes:
-            return None
-        with os.fdopen(fd, "rb", closefd=False) as f:
-            data = f.read(max_bytes + 1)
-    except OSError:
-        return None
-    finally:
-        os.close(fd)
-    return data if len(data) <= max_bytes else None
 
 
 def read_coverage(
@@ -132,7 +109,7 @@ def _minimal_env(home: Path) -> dict[str, str]:
 
 def diff_coverage(
     coverage_xml: Path | None,
-    changes_diff: Path,
+    changes_diff: Path | bytes,
     *,
     timeout: float = DIFF_COVER_TIMEOUT,
     python: str = sys.executable,
@@ -150,7 +127,11 @@ def diff_coverage(
     if coverage_xml is None:
         return None
     xml = read_regular_file(coverage_xml, max_bytes=MAX_COVERAGE_XML_BYTES)
-    diff = read_regular_file(changes_diff, max_bytes=MAX_DIFF_BYTES)
+    # 테스트 뒤에는 샌드박스가 changes.diff를 바꿀 수 있어 테스트 전에 읽은 바이트를 받는다
+    if isinstance(changes_diff, bytes):
+        diff = changes_diff if len(changes_diff) <= MAX_DIFF_BYTES else None
+    else:
+        diff = read_regular_file(changes_diff, max_bytes=MAX_DIFF_BYTES)
     if xml is None or diff is None or parse_coverage_xml(xml) is None:
         return None
     with tempfile.TemporaryDirectory(prefix="pr-proof-diffcover-") as tmp:

@@ -11,12 +11,13 @@ from rq import get_current_job
 from app.models.job import PRJob
 from app.sandbox.docker_cli import SandboxError
 from app.worker import graph, report
+from app.worker.ai_fix import AIEnvironmentError
 from app.worker.github import GitHubError
 from app.worker.repo import GitError
 
 log = logging.getLogger(__name__)
 
-EnvironmentFailure = (SandboxError, GitError, GitHubError)
+EnvironmentFailure = (SandboxError, GitError, GitHubError, AIEnvironmentError)
 
 
 def attempt() -> tuple[int, bool]:

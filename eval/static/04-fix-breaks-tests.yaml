@@ -1,0 +1,15 @@
+name: fix-breaks-tests
+description: AI가 매직 값을 없애면서 동작을 바꾼다(상한 50 → 40). 매 회차 테스트가 깨지므로 정해진 횟수 뒤 수정안을 버리고 제안 PR을 만들지 않는다.
+pr:
+  - file: orders/services/pricing.py
+    find: "order.coupon_percent > MAX_COUPON_PERCENT"
+    replace: "order.coupon_percent > 50"
+ai:  # 편집이 회차보다 적으면 마지막 것을 다시 쓴다 (이미 적용돼 find가 없으면 건너뛴다)
+  - - file: orders/services/pricing.py
+      find: "order.coupon_percent > 50"
+      replace: "order.coupon_percent > MAX_COUPON_PERCENT - 10"
+expect:
+  findings: [PLR2004]
+  proposal: approval
+  fix: ai_failed
+  ai_only_scripted: true  # 실제 AI는 제대로 고칠 수 있으므로 가짜 AI일 때만 확인한다

@@ -207,6 +207,24 @@ def ignored_status(worktree: Path) -> str:
     return _tree_git(worktree, *_STATUS, "--ignored=traditional")
 
 
+def outside_symlinks(worktree: Path) -> list[str]:
+    """worktree 밖을 가리키는 추적 중인 심볼릭 링크 (리포 기준 경로).
+
+    PR이 `docs -> ~/.ssh` 같은 링크를 넣으면 그 폴더를 거친 쓰기는 worktree 밖으로 가고
+    `git status`에도 나오지 않는다. AI를 실행하기 전에 확인한다 (DESIGN.md AI 권한).
+    """
+    root = worktree.resolve()
+    out = []
+    for entry in _tree_git(worktree, "ls-files", "-s", "-z").split("\0"):
+        meta, _, path = entry.partition("\t")
+        if not meta.startswith("120000 "):
+            continue
+        target = (worktree / path).resolve()
+        if not target.is_relative_to(root):
+            out.append(path)
+    return out
+
+
 def head_diff(worktree: Path) -> str:
     """체크아웃한 커밋과 worktree 사이의 diff. 수정안 자체다."""
     return _tree_git(worktree, *_DIFF, "HEAD")

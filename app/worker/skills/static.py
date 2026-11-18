@@ -100,8 +100,12 @@ def run_static(
     job_id: str | None = None,
     is_stale: Callable[[], bool] | None = None,
     names: docker_cli.Names = docker_cli.DEFAULT_NAMES,
+    changed: ChangedLines | None = None,
 ) -> SkillResult | None:
     """PR이 바꾼 줄의 정적변수 위반. 새 커밋이 와서 중단되면 None.
+
+    changed가 없으면 changes.diff(테스트 전에 만든 PR의 diff)를 읽는다. 수정 뒤 다시 검사할 때는
+    갈라진 커밋과 worktree의 diff로 센 줄을 넘긴다 (수정으로 줄이 밀린다).
 
     min_repeats와 source는 `.pipeline.yaml`의 `skills.static.min_repeats`에서 온다
     (없으면 기본값 3과 "기본 규칙"). source는 반복 리터럴 위반과 결과의 출처로 쓴다.
@@ -111,7 +115,8 @@ def run_static(
     """
     if min_repeats < MIN_REPEATS_FLOOR:
         raise ValueError(f"min_repeats는 2 이상이어야 함: {min_repeats}")
-    changed = added_lines((worktree / CHANGES_DIFF).read_text())
+    if changed is None:
+        changed = added_lines((worktree / CHANGES_DIFF).read_text())
     files = static_files(worktree, changed)
     if not files:
         return SkillResult(skill="static", source=source)

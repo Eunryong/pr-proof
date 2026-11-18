@@ -55,12 +55,16 @@ def run_lint(
     job_id: str | None = None,
     is_stale: Callable[[], bool] | None = None,
     names: docker_cli.Names = docker_cli.DEFAULT_NAMES,
+    changed: ChangedLines | None = None,
 ) -> SkillResult | None:
     """.venv 없는 컨테이너에서 ruff를 돌린다. 새 커밋이 와서 중단되면 None.
 
+    changed가 없으면 changes.diff를 읽는다. AI 수정 뒤 새 위반을 볼 때는 다시 센 줄을 넘긴다.
+
     의존성 설치와 따로 돌리므로, 설치가 실패한 PR에도 규칙 결과를 보여줄 수 있다.
     """
-    changed = added_lines((worktree / CHANGES_DIFF).read_text())
+    if changed is None:
+        changed = added_lines((worktree / CHANGES_DIFF).read_text())
     files = changed_python_files(worktree, changed)
     if not files:
         return SkillResult(skill="lint", source=base.ruff_source)

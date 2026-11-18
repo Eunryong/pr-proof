@@ -56,3 +56,21 @@ class Run(SQLModel, table=True):
     started_at: datetime
     heartbeat_at: datetime
     finished_at: datetime | None = None
+
+
+class AICall(SQLModel, table=True):
+    """AI 호출 한 번 (DESIGN.md 비용 최적화). PR당 예산은 이 기록의 합으로 센다."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    repo: str = Field(index=True)
+    pr_number: int = Field(index=True)
+    head_sha: str
+    skill: str
+    model: str
+    attempt: int
+    ok: bool
+    error: str | None = None  # AIErrorKind
+    cost_usd: float | None = None  # claude가 알려준 비용. 모르면 None
+    charged_usd: float  # 예산에서 뺀 비용 (모르면 호출당 상한)
+    permission_denials: int = 0  # 허용 범위 밖이라 거부된 도구 호출 수
+    created_at: datetime | None = None  # Store가 기록할 때 채운다

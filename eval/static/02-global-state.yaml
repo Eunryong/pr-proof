@@ -1,0 +1,22 @@
+name: global-state
+description: PR이 모듈 수준 리스트를 함수 안에서 바꾼다(STATIC-MUTABLE). 상태를 없앤 수정안을 검증해 올린다.
+pr:
+  - file: orders/services/pricing.py
+    find: "MAX_COUPON_PERCENT = 50\n"
+    replace: "MAX_COUPON_PERCENT = 50\n_seen_orders = []\n"
+  - file: orders/services/pricing.py
+    find: "def subtotal(order: Order) -> int:\n"
+    replace: "def subtotal(order: Order) -> int:\n    _seen_orders.append(order)\n"
+ai:
+  - - file: orders/services/pricing.py
+      find: "_seen_orders = []\n"
+      replace: ""
+    - file: orders/services/pricing.py
+      find: "    _seen_orders.append(order)\n"
+      replace: ""
+expect:
+  findings: [STATIC-MUTABLE]
+  proposal: approval
+  fix: ready
+  file: orders/services/pricing.py
+  same_as_base: true

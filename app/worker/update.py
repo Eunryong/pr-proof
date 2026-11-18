@@ -45,9 +45,9 @@ def _context(deps: Deps, run_id: int, comment_id: int | None) -> graph.FlowConte
     )
 
 
-def has_pending_fix(job: PRJob, deps: Deps) -> bool:
-    """이 커밋에 /fix로 재개할 수정이 있는지 (승인 대기, 또는 수정 도중 실패)."""
-    return graph.has_pending_fix(job, _context(deps, run_id=0, comment_id=None))
+def has_pending_fix(job: PRJob, deps: Deps, skill: str = "lint") -> bool:
+    """이 커밋에 `/fix <skill>`로 재개할 수정이 있는지 (승인 대기, 또는 수정 도중 실패)."""
+    return graph.has_pending_fix(job, _context(deps, run_id=0, comment_id=None), skill)
 
 
 def resume_fix(job: PRJob, deps: Deps, approval: dict[str, Any]) -> str:
@@ -59,12 +59,8 @@ def resume_fix(job: PRJob, deps: Deps, approval: dict[str, Any]) -> str:
     ctx = _context(deps, run_id, store.last_comment_id(job.repo, job.pr_number))
     try:
         result = graph.resume_fix(job, ctx, approval)
-    except (
-        DependencyInstallError
-    ) as e:  # 수정 뒤 테스트의 설치 실패. 수정 전에 설치가 됐으므로 환경 쪽
-        retry.environment_failure(job, ctx, run_id, final, e)
-        raise
-    except retry.EnvironmentFailure as e:
+    # 수정 뒤 테스트의 설치 실패는 수정 전에 설치가 됐으므로 환경 쪽으로 본다
+    except (DependencyInstallError, *retry.EnvironmentFailure) as e:
         retry.environment_failure(job, ctx, run_id, final, e)
         raise
     except Exception as e:  # 파이프라인 버그, rq JobTimeoutException
@@ -76,7 +72,7 @@ def resume_fix(job: PRJob, deps: Deps, approval: dict[str, Any]) -> str:
     if result.get("stopped"):
         store.finish_run(run_id, "cancelled", comment_id=ctx.comment_id)
         return "stale"
-    outcome = result["fix"]
+    outcome = result["fixes"][approval["skill"]]
     store.finish_run(run_id, "done", test_status=outcome.status, comment_id=ctx.comment_id)
     return f"fix:{outcome.status}"
 
@@ -100,7 +96,7 @@ def process_update(job: PRJob, deps: Deps) -> str:
     except DependencyInstallError as e:
         if install_failure_outcome(e.kind, attempt) == "unrunnable":
             body = report.render_install_failure(
-                job.head_sha, e.detail, lint=ctx.lint, base=ctx.base
+                job.head_sha, e.detail, lint=ctx.lint, static=ctx.static, base=ctx.base
             )
             ctx.comment_id = github.upsert_comment(job.repo, job.pr_number, body, ctx.comment_id)
             store.finish_run(run_id, "done", test_status="unrunnable", comment_id=ctx.comment_id)
