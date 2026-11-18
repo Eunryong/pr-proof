@@ -3,10 +3,17 @@
 지금 단계에서 쓰는 항목만 정의한다. 다른 항목은 무시한다 (스키마 초안의 나머지는 그 단계에서).
 """
 
-from typing import Final
+from typing import Annotated, Final
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    ValidationError,
+)
 
 from app.models.finding import Skill
 
@@ -16,6 +23,35 @@ DEFAULT_MAX_RETRIES: Final = 3
 MAX_RETRIES_CAP: Final = 5  # 회차마다 테스트를 다시 돌리므로 리포 설정으로 무한히 늘리지 못하게
 # claude --model에 넘기는 이름. `-`로 시작하면 옵션으로 읽히므로 막는다
 MODEL_NAME_PATTERN: Final = r"^[A-Za-z0-9][A-Za-z0-9._\[\]-]*$"
+DEFAULT_RULE_DOCS: Final = ("README.md", "CONTRIBUTING.md")
+MAX_RULE_DOCS: Final = 20
+
+
+def _check_doc_path(path: str) -> str:
+    """루트 기준 상대 경로만. git 인자와 문서 경계 표시에 그대로 들어가므로 이상한 글자를 막는다."""
+    parts = path.split("/")
+    if (
+        not path
+        or path.startswith(("/", "-"))
+        or any(part in ("", ".", "..") for part in parts)
+        or any(not ch.isprintable() or ch in '\\"' for ch in path)
+    ):
+        raise ValueError(f"루트 기준 상대 경로가 아님: {path!r}")
+    return path
+
+
+DocPath = Annotated[str, AfterValidator(_check_doc_path)]
+RuleId = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+
+class RulesSettings(BaseModel):
+    """규칙 문서와 끈 규칙 (DESIGN.md 4.3, 10절 `rules`). docs를 적으면 기본 목록을 대신한다."""
+
+    model_config = ConfigDict(extra="ignore")
+    docs: list[DocPath] = Field(
+        default_factory=lambda: list(DEFAULT_RULE_DOCS), max_length=MAX_RULE_DOCS
+    )
+    disabled: list[RuleId] = Field(default_factory=list)
 
 
 class SandboxSettings(BaseModel):
@@ -86,6 +122,7 @@ class Extensions(BaseModel):
 
 class RepoConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
+    rules: RulesSettings = RulesSettings()
     sandbox: SandboxSettings = SandboxSettings()
     skills: SkillsSettings = SkillsSettings()
     model: ModelSettings = ModelSettings()

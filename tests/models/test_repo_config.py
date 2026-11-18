@@ -136,3 +136,28 @@ def test_call_limits_are_capped_by_pipeline(requested: tuple, expected: tuple) -
         max_pr_max=500, max_ruleset_max=300, max_repo_daily=2000,
     )  # fmt: skip
     assert (capped.pr_max, capped.ruleset_max, capped.repo_daily) == expected
+
+
+def test_rules_defaults_and_docs_replace_the_default_list() -> None:
+    rules = parse_repo_config(None)[0].rules
+    assert (rules.docs, rules.disabled) == (["README.md", "CONTRIBUTING.md"], [])
+    text = "rules:\n  docs: [docs/rules.md]\n  disabled: [R-readme-3fa9c2d1, ' PLR2004 ']\n"
+    config, problem = parse_repo_config(text)
+    assert config.rules.docs == ["docs/rules.md"] and problem is None
+    assert config.rules.disabled == ["R-readme-3fa9c2d1", "PLR2004"]
+    assert parse_repo_config("rules:\n  docs: []\n")[0].rules.docs == []
+
+
+@pytest.mark.parametrize(
+    "path", ["../x.md", "/etc/passwd", "-x.md", "a//b.md", "./a.md", "a\\\\b.md", "a\\tb.md", ""]
+)
+def test_bad_rule_doc_path_falls_back_with_reason(path: str) -> None:
+    config, problem = parse_repo_config(f'rules:\n  docs: ["{path}"]\n')
+    assert config.rules.docs == ["README.md", "CONTRIBUTING.md"]
+    assert problem is not None and "rules.docs" in problem
+
+
+def test_too_many_rule_docs_and_empty_disabled_id_are_problems() -> None:
+    many = ", ".join(f"d{i}.md" for i in range(21))
+    assert "rules.docs" in parse_repo_config(f"rules:\n  docs: [{many}]\n")[1]
+    assert "rules.disabled" in parse_repo_config("rules:\n  disabled: ['  ']\n")[1]
