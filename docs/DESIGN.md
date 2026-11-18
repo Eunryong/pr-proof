@@ -142,6 +142,18 @@ F1–F5는 수신과 실행 기반(1단계), F6–F10은 검출·안전망·수�
 | PR 코멘트의 명령 ↔ 처리한 코멘트 ID | `command` 등록 |
 | "실행 중"으로 남았는데 워커 생존 확인이 끊긴 작업 | 다시 등록 |
 
+**끝난 상태별 재등록 규칙.** 재시도 횟수(환경 오류 3회, 원인을 알 수 없는 설치 실패 2회)는 작업 하나 안에서만 센다. 동기화가 같은 커밋으로 새 작업을 넣으면 횟수가 0부터 다시 시작하므로, `runs`의 끝난 상태를 보고 다시 넣을지 정한다. 그렇지 않으면 Docker가 꺼진 동안 같은 커밋이 5분마다 다시 돌아 재시도가 끝없이 반복된다.
+
+| 같은 head의 마지막 `runs` 상태 | 동기화가 같은 head를 다시 넣나 |
+| --- | --- |
+| `done` (테스트 통과·실패·실행 불가, 의존성 해석 실패 포함) | 넣지 않는다. 새 커밋이 올 때만 검사한다 |
+| `env_error` (재시도를 모두 씀) | 마지막 시도가 끝난 지 30분이 지났을 때만 넣는다 (`sync.env_error_backoff_minutes`) |
+| `running`인데 생존 확인이 끊김 (기본 20분) | 넣는다. 죽은 워커가 남긴 작업 키를 지우고 넣는다 |
+| `cancelled` (더 새 커밋이 있어 멈춤) | 그 head가 다시 최신이고 `done`이 없을 때만 넣는다 |
+| 기록 없음 | 넣는다 |
+
+`env_error`의 간격은 동기화 주기(5분)보다 길어야 한다. 워커는 마지막 재시도가 실패하면 작업 키를 지운다. 지우지 않으면 키가 만료될 때까지(6시간) 동기화가 같은 커밋을 다시 넣지 못한다. 환경 확인(preflight)은 워커가 하므로, 웹 쪽 동기화는 시간 간격으로만 판단한다.
+
 - 실행 시점: api 시작 시 1회, 이후 5분마다(설정값). FastAPI lifespan에서 백그라운드 루프로 띄우고, `gh` 호출은 스레드에서 실행해 웹훅 응답을 막지 않는다.
 - 수동 실행은 CLI(`python -m app.cli sync`)로 한다. api는 웹훅용 터널로 외부에 열려 있으므로 HTTP 엔드포인트로 만들지 않는다.
 - 서버가 꺼진 동안 커밋이 여러 개 쌓였어도 최신 head만 검사한다.
@@ -274,7 +286,7 @@ SKILLS = {"lint": run_lint, "static": run_static, "structure": run_structure}
   | 네트워크 실패 | `NewConnectionError`, `Temporary failure in name resolution`, `ConnectTimeoutError`, `ReadTimeoutError`, `ProxyError`, `SSLError` 등 | 환경 오류 |
   | 판단 불가 (빌드 실패 등) | 위 둘 다 없음 | 같은 의존성 해시로 2회 연속 실패하면 `unrunnable`, 그 전에는 환경 오류 |
 
-  네트워크가 끊기면 pip이 `Could not find a version`도 함께 출력하므로 네트워크 표지를 먼저 본다. 설치 컨테이너 자체가 실패하면(종료 코드 125·126·127) pip 출력과 무관하게 환경 오류다. 연속 실패 횟수는 워커가 의존성 캐시 키별로 Redis에 센다.
+  네트워크가 끊기면 pip이 `Could not find a version`도 함께 출력하므로 네트워크 표지를 먼저 본다. 설치 컨테이너 자체가 실패하면(종료 코드 125·126·127) pip 출력과 무관하게 환경 오류다. 연속 실패 횟수는 같은 작업의 재시도 번호(RQ 재시도)로 센다. 환경 오류는 정해진 간격(60초, 5분, 15분)으로 3회까지 다시 시도하고, 마지막 시도에서도 실패하면 코멘트를 "환경 문제로 검사하지 못함 (다음 커밋에서 다시 검사합니다)"로 바꾼다.
 - **종료 코드 137 (SIGKILL):** 먼저 취소와 시간 초과인지 본다. 그때는 파이프라인이 컨테이너를 지워서 137이 나올 수 있다. 둘 다 아닐 때만 메모리 한도 초과로 분류한다. 메모리 한도로 컨테이너 자체가 죽은 경우(docker inspect의 `OOMKilled`)도 환경 오류가 아니라 메모리 초과(`unrunnable`)다.
 - **메모리 초과 안내:** 코멘트에 "실행 불가 (메모리 한도 1GB를 넘어 종료됨)"과 "메모리 한도는 1GB입니다 (현재 고정)"을 넣는다. 2단계에서 설정을 연결하면 "base 브랜치의 `.pipeline.yaml`에서 `sandbox.memory_gb`로 늘릴 수 있다"는 안내로 바꾼다. 늘릴 수 있는 상한은 파이프라인 쪽 설정(`sandbox.max_memory_gb`)이 정한다. 설정은 base 브랜치에서 읽으므로 PR이 자기 한도를 올릴 수 없다.
 - **위반 줄의 커버리지:** 샌드박스가 남긴 `coverage.xml`로 위반 줄이 테스트로 실행되는지 본다. 실행되지 않는 줄의 위반은 "테스트가 지나가지 않아 자동 수정 대상 아님"으로 표시하고 알리기만 한다. 고친 뒤 테스트가 통과해도 그 줄의 동작을 확인한 것이 아니기 때문이다.
@@ -425,6 +437,8 @@ extensions:                    # 선택 확장 (F13, 7단계). 기본은 모두 
 repos: [owner/name]            # 처리할 리포 허용 목록
 sync:
   interval_minutes: 5
+  env_error_backoff_minutes: 30   # 재시도를 다 쓴 환경 오류를 다시 넣기까지의 간격
+  heartbeat_timeout_minutes: 20   # 생존 확인이 이만큼 끊기면 실행 중 작업을 다시 넣는다. .venv 설치(최대 15분)보다 길게
 sandbox:
   max_memory_gb: 4             # 대상 리포가 sandbox.memory_gb로 올릴 수 있는 상한
 ```
@@ -702,7 +716,7 @@ class PRJob(BaseModel):
 docker compose up -d      # redis (5단계부터 chroma)
 
 # Procfile — honcho start
-api:    uvicorn app.api:app --port 8000
+api:    uvicorn app.api:app --port ${API_PORT:-8000}   # 포트는 .env의 API_PORT
 worker: python -m app.worker.main
 ```
 
@@ -721,24 +735,24 @@ worker: python -m app.worker.main
 
 ### 1단계. 수신 → 체크아웃 → 샌드박스 테스트 → PR 코멘트, 동기화
 
-- [ ] FastAPI `POST /webhook/github`: 서명 검증, 리포 허용 목록, delivery ID 중복 제거, 큐 등록, 202 응답
-- [ ] `models/job.py` 작업 계약, RQ 워커 진입점, 작업 키 중복 방지
-- [ ] preflight: gh·claude 로그인, Docker, Redis 확인
-- [ ] bare clone 캐시 + worktree 생성·정리, 호스트에서 `changes.diff` 만들기
+- [x] FastAPI `POST /webhook/github`: 서명 검증, 리포 허용 목록, delivery ID 중복 제거, 큐 등록, 202 응답
+- [x] `models/job.py` 작업 계약, RQ 워커 진입점, 작업 키 중복 방지
+- [x] preflight: gh 로그인, Docker, Redis 확인 (claude 로그인 확인은 claude를 쓰는 3단계에서)
+- [x] bare clone 캐시 + worktree 생성·정리, 호스트에서 `changes.diff` 만들기
 - [x] 샌드박스: 베이스 Dockerfile, 캐시 키(의존성 해시 + 이미지 digest + Python 버전)별 `.venv` 설치와 캐시, 테스트 컨테이너에는 `:ro` 마운트, `run_in_sandbox()`
-- [ ] LangGraph 직선 그래프(체크아웃 → 테스트 → 코멘트). 체크포인터 없이 시작
+- [x] LangGraph 직선 그래프(체크아웃 → 테스트 → 코멘트). 체크포인터 없이 시작
 - [x] worktree에서 `.venv` + pytest 직접 실행 (샌드박스 안), 결과 JSON과 커버리지 파일 남기기
-- [ ] PR 코멘트 하나 달고 진행하면서 수정하기 ("테스트:" 줄, 환경 오류는 결과 대신 대기 표시)
-- [ ] SQLite `runs`에 결과·상태·생존 확인 시각 저장
-- [ ] 동기화(api 안의 루프): 열린 PR의 head 비교, 닫힌 PR 처리, 죽은 작업 재등록
-- [ ] 최신 커밋 확인과 정리: 단계 사이, 그리고 `run_in_sandbox()` 실행 중 10초 간격 (실행 중 확인과 컨테이너 정리는 구현. Redis 최신 head 연결과 단계 사이 확인이 남음)
+- [x] PR 코멘트 하나 달고 진행하면서 수정하기 ("테스트:" 줄, 환경 오류는 결과 대신 대기 표시)
+- [x] SQLite `runs`에 결과·상태·생존 확인 시각 저장
+- [x] 동기화(api 안의 루프, 수동 `python -m app.cli sync`): 열린 PR의 head 비교, 죽은 작업 재등록, 끝난 상태별 재등록 규칙 (F2 표). 닫힌 PR 처리는 워커가 `close`를 처리할 때 붙인다 (BACKLOG)
+- [x] 최신 커밋 확인과 정리: 단계 사이, 그리고 `run_in_sandbox()` 실행 중 10초 간격 (Redis 최신 head)
 
 ### 2단계. 컨벤션(lint): 검출 → 수정 → 제안 PR
 
 메인 흐름(검출 → 승인 → 수정 → 검증 → 제안 PR)을 가장 단순한 스킬로 처음부터 끝까지 완성한다.
 
 - [ ] `.pipeline.yaml`·도구 설정 파일을 base 브랜치에서 읽기, `sandbox.memory_gb`(상한 `max_memory_gb`)를 설치·작업 컨테이너에 적용하고 메모리 초과 코멘트에 설정 안내 추가
-- [ ] 의존성 설치 실패 처리: 원인 분류에 따라 실행 불가·환경 오류, 판단 불가는 캐시 키별 연속 실패 횟수(Redis)
+- [x] 의존성 설치 실패 처리: 원인 분류에 따라 실행 불가·환경 오류, 판단 불가는 재시도 번호로 (1단계에서 처리)
 - [ ] `Finding` 인터페이스, ruff로 바뀐 줄의 위반 검출 (`changes.diff`)
 - [ ] PR 코멘트: "테스트:" 줄과 "규칙:" 줄(⚠️/✅), 위반 목록과 출처, 제안 명령
 - [ ] 명령 처리: `/recheck`, `/fix lint`, 꺼진 확장 명령에는 "꺼져 있음" 코멘트

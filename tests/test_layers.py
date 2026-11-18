@@ -17,11 +17,11 @@ APP: Final = Path(__file__).resolve().parent.parent / "app"
 # 계층별로 import해도 되는 app 내부 계층
 ALLOWED: Final[Mapping[str, frozenset[str]]] = {
     "models": frozenset({"models"}),
-    "services": frozenset({"models", "services"}),
+    "services": frozenset({"models", "services", "config"}),
     "views": frozenset({"models", "views"}),
-    "controllers": frozenset({"models", "services", "views", "controllers"}),
+    "controllers": frozenset({"models", "services", "views", "controllers", "config"}),
     "sandbox": frozenset({"models", "sandbox"}),
-    "worker": frozenset({"models", "sandbox", "worker"}),
+    "worker": frozenset({"models", "sandbox", "worker", "config"}),
 }
 
 
