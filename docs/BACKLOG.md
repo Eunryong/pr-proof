@@ -38,3 +38,4 @@
 - [ ] (3단계 안전망) `.pipeline-out/`의 `report.json` 등 PR 코드가 쓸 수 있는 산출물을 기존 코드는 일반 `open`으로 읽는다 (심볼릭 링크·FIFO 거부 없음). 결과 파일을 FIFO로 바꾸면 워커가 멈출 수 있다 — 작업 시간 제한(RQ)이 끊고, 코멘트에 틀린 결과는 나오지 않음 / 3단계 그래프 연결 때 `read_regular_file`로 바꾸기
 - [ ] (3단계 안전망) PR 코드가 `coverage.xml`을 고쳐 지나가지 않는 줄을 지나가는 것처럼 보이게 할 수 있다 — 영향은 같은 PR의 수정 제안뿐이고 그 수정도 테스트 재실행과 승인을 거침 / 6단계 평가 때 재검토
 - [ ] (3단계 범위 검사) PR에 원래 있던 심볼릭 링크 폴더를 통해 worktree 밖에 쓰면 `git status`에 나오지 않는다 — claude CLI의 `--restricted` 경로 제한이 막는다 / 3단계 AI 수정 연결 때 확인
+- [ ] (2단계 마무리 리뷰) PR 작성자의 `author_association`이 OWNER·MEMBER·COLLABORATOR가 아니면 검사하지 않고 "멤버가 `/recheck`를 달면 검사합니다"라고 코멘트한다. 권한 판단은 `models/comment.py`의 `command_in_comment`와 같은 함수를 쓴다 — 지금은 운영자 혼자 쓰는 예제 리포라 외부 PR이 없음. 외부 PR의 코드가 사람 확인 없이 샌드박스에서 돈다 / 다른 사람에게 쓰게 하기 전

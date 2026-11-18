@@ -138,3 +138,14 @@ def test_flaky_test_passes_on_rerun(job: str, worktree: Path) -> None:
     run = pytest_runner.run_tests(job, worktree)
     assert run.flaky == ("tests/test_flaky.py::test_sometimes",)
     assert run.status == "passed" and not run.allows_code_fix and run.allows_lint_fix
+
+
+def test_container_has_no_capabilities(job: str) -> None:
+    """--cap-drop ALL과 no-new-privileges가 실제 컨테이너에 걸린다."""
+    status = subprocess.run(
+        ["docker", "exec", job, "cat", "/proc/self/status"], capture_output=True, text=True
+    ).stdout
+    fields = dict(line.split(":\t", 1) for line in status.splitlines() if ":\t" in line)
+    assert int(fields["CapEff"].strip(), 16) == 0
+    assert int(fields["CapBnd"].strip(), 16) == 0  # setuid 바이너리로도 얻지 못한다
+    assert fields["NoNewPrivs"].strip() == "1"

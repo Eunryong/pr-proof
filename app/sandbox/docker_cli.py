@@ -19,6 +19,9 @@ IMAGE_DIR: Final = Path(__file__).resolve().parents[2] / "docker" / "sandbox"
 # 설치·작업 컨테이너 공통 자원 제한. 메모리는 대상 리포의 sandbox.memory_gb로 바꿀 수 있다
 MEMORY_LIMIT_GB: Final = 1.0
 _FIXED_LIMITS: Final = ("--cpus", "1", "--pids-limit", "256")
+# PR 코드에 리눅스 권한(capability)을 주지 않고, setuid 바이너리로도 권한을 올리지 못하게 한다.
+# 호스트 UID로 실행하므로 /work·.venv 쓰기와 pip 설치에는 권한이 필요 없다
+_HARDENING: Final = ("--cap-drop", "ALL", "--security-opt", "no-new-privileges")
 # docker 자체가 실패한 종료 코드: 125 docker 오류, 126 실행 불가, 127 명령 없음
 DOCKER_FAILED: Final = frozenset({125, 126, 127})
 
@@ -38,8 +41,11 @@ class Image:
 
 
 def limits(memory_gb: float = MEMORY_LIMIT_GB) -> tuple[str, ...]:
-    """자원 제한 인자. 메모리는 MB 정수로 넘긴다 (1.5GB 같은 소수 한도)."""
-    return ("--memory", f"{int(memory_gb * 1024)}m", *_FIXED_LIMITS)
+    """설치·작업 컨테이너 공통의 자원 제한과 권한 제한 인자.
+
+    메모리는 MB 정수로 넘긴다 (1.5GB 같은 소수 한도).
+    """
+    return ("--memory", f"{int(memory_gb * 1024)}m", *_FIXED_LIMITS, *_HARDENING)
 
 
 def minimal_env() -> dict[str, str]:
