@@ -2,8 +2,10 @@ from pathlib import Path
 
 import fakeredis
 import pytest
+from sqlalchemy import create_engine, inspect, text
 
 from app.models import state_keys
+from app.models.db import AICall
 from app.models.job import PRJob
 from app.worker.state import Store
 
@@ -63,3 +65,47 @@ def test_reproposal_replaces_targets(store: Store) -> None:
     (row,) = store.proposals("o/r", 1)
     store.set_proposal_state(row.id, "rejected")
     assert store.rejected_targets("o/r", 1) == {("a.py", "F401", "import sys"): 902}
+
+
+def test_new_nullable_columns_are_added_to_an_existing_table(tmp_path: Path) -> None:
+    path = tmp_path / "pipeline.db"
+    old = create_engine(f"sqlite:///{path}")
+    with old.begin() as conn:
+        conn.execute(
+            text(
+                "CREATE TABLE aicall (id INTEGER PRIMARY KEY, repo VARCHAR NOT NULL, "
+                "pr_number INTEGER NOT NULL, head_sha VARCHAR NOT NULL, skill VARCHAR NOT NULL, "
+                "model VARCHAR NOT NULL, attempt INTEGER NOT NULL, ok BOOLEAN NOT NULL, "
+                "error VARCHAR, cost_usd FLOAT, charged_usd FLOAT NOT NULL, "
+                "permission_denials INTEGER NOT NULL, created_at DATETIME)"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO aicall (repo, pr_number, head_sha, skill, model, attempt, ok, "
+                "charged_usd, permission_denials) VALUES ('o/r', 1, 'a', 'static', 'haiku', 1, 1, "
+                "0.1, 0)"
+            )
+        )
+    old.dispose()
+
+    store = Store(path, fakeredis.FakeStrictRedis())
+    Store(path, fakeredis.FakeStrictRedis())  # 다시 열어도 같은 상태
+    columns = {c["name"] for c in inspect(store.engine).get_columns("aicall")}
+    assert {"unexpected_tools", "detail"} <= columns
+    store.record_ai_call(
+        AICall(
+            repo="o/r",
+            pr_number=1,
+            head_sha="b",
+            skill="static",
+            model="haiku",
+            attempt=2,
+            ok=False,
+            error="tools",
+            charged_usd=0.3,
+            unexpected_tools='{"Bash": 2}',
+            detail="도구 목록이 기대와 다름",
+        )
+    )
+    assert store.ai_spent("o/r", 1) == pytest.approx(0.4)  # 옛 행도 그대로 읽힌다
