@@ -11,6 +11,9 @@ from pathlib import Path
 from typing import Final
 
 IMAGE: Final = "pipeline-sandbox"
+# 도구 설치와 검사기 실행 컨테이너의 이미지 (docs/DESIGN.md 2.3, 8.1). 대상 리포의 것을 넣지 않는다.
+# glibc(도구 캐시의 gnu 빌드), 인증서(설치 컨테이너의 https), Python(받기 스크립트)이 든다
+TOOL_IMAGE: Final = "python:3.11-slim"
 # 작업 컨테이너 이름 접두어. 이름 뒤에는 runs ID가 붙는다
 CONTAINER_PREFIX: Final = "pr-proof-job"
 # 베이스 이미지 Dockerfile과 컨테이너에 읽기 전용으로 넣는 파이프라인 설정(coveragerc)
