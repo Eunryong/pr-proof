@@ -142,3 +142,42 @@ def test_script_that_ignores_a_large_file_list_finishes(repo: Path) -> None:
     files = [f"orders/m{i:05d}_{'x' * 40}.py" for i in range(3000)]  # 파이프 버퍼보다 큼
     run = checker_runner.run_checker("python-ast", "print('[]')\n", repo, files, timeout=30)
     assert run == Ran(())
+
+
+TEST_NAME_DECL: Final = (
+    '{"applies_to": "(^|/)tests/[^/]+\\\\.py$", "condition": "must_match", '
+    '"pattern": "(^|/)(test_[^/]+|__init__|conftest)\\\\.py$", "message": "이름이 틀림"}'
+)
+
+
+def test_path_pattern_flags_paths_that_break_the_condition() -> None:
+    paths = ["tests/pricing_test.py", "tests/test_pricing.py", "tests/__init__.py", "orders/a.py"]
+    run = checker_runner.run_checker("path-pattern", TEST_NAME_DECL, Path("/nonexistent"), paths)
+    assert run == Ran((Match("tests/pricing_test.py", 1, 1, "이름이 틀림"),))
+
+
+def test_path_pattern_examples_are_matched_by_their_path() -> None:
+    run = checker_runner.run_on_examples(
+        "path-pattern", TEST_NAME_DECL, ["tests/checks.py\n", "tests/test_ok.py"]
+    )
+    assert isinstance(run, Ran)
+    assert [m.file for m in run.matches] == [
+        checker_runner.example_file("path-pattern", 0, "tests/checks.py\n")
+    ]
+
+
+def test_must_not_match_flags_matching_paths() -> None:
+    decl = '{"applies_to": "", "condition": "must_not_match", "pattern": "[A-Z]"}'
+    run = checker_runner.run_path_pattern(decl, ["orders/Pricing.py", "orders/pricing.py"])
+    assert isinstance(run, Ran)
+    assert [m.file for m in run.matches] == ["orders/Pricing.py"]
+
+
+def test_backtracking_regex_is_stopped_by_the_time_limit() -> None:
+    decl = '{"condition": "must_match", "pattern": "^(a+)+$"}'
+    run = checker_runner.run_path_pattern(decl, ["a" * 60 + "!"], timeout=5)
+    assert isinstance(run, Failed)
+
+
+def test_path_pattern_that_is_not_a_declaration_never_runs() -> None:
+    assert isinstance(checker_runner.run_path_pattern("import os", ["a.py"]), Invalid)

@@ -140,3 +140,43 @@ def test_match_beyond_file_end_is_dropped(worktree: Path) -> None:
     sandbox = GrepSandbox(Ran((Match("orders/services/pricing.py", 99, 99, "m"),)))
     changed = added_lines(_diff("orders/services/pricing.py", 99, 1))
     assert detect([CHECKED], worktree, changed, sandbox=sandbox).violations == ()
+
+
+PATH_RULE: Final = replace(RULE, id="R-readme-path", check=CheckMethod("path"), scope=())
+PATH_CHECKED: Final = Checked(
+    PATH_RULE, replace(CHECKER, kind="path-pattern", body="{}", rule_id=PATH_RULE.id), cached=True
+)
+
+
+class PathSandbox(GrepSandbox):
+    """받은 경로 중 `test_`로 시작하지 않는 파일을 잡는다."""
+
+    def on_files(
+        self, kind: CheckerKind, body: str, root: Path, files: Sequence[str]
+    ) -> CheckerRun:
+        self.files.append(list(files))
+        bad = [f for f in files if not f.rsplit("/", 1)[-1].startswith("test_")]
+        return Ran(tuple(Match(f, 1, 1, "이름이 틀림") for f in bad))
+
+
+def test_path_rule_checks_only_new_files_and_reports_per_file(worktree: Path) -> None:
+    (worktree / "tests").mkdir()
+    for name in ("pricing_test.py", "test_ok.py", "old_checks.py", "notes.md"):
+        (worktree / "tests" / name).write_text("x = 1\n")
+    changed = {"tests/old_checks.py": frozenset({1}), "tests/pricing_test.py": frozenset({1})}
+    new = frozenset({"tests/pricing_test.py", "tests/test_ok.py", "tests/gone.py"})
+    sandbox = PathSandbox()
+    found = detect([PATH_CHECKED], worktree, changed, new_files=new, sandbox=sandbox)
+    # 원래 있던 파일(old_checks.py)과 worktree에 없는 경로는 넘기지 않는다
+    assert sandbox.files == [["tests/pricing_test.py", "tests/test_ok.py"]]
+    assert [(v.file, v.line, v.unit, v.found_by) for v in found.violations] == [
+        ("tests/pricing_test.py", 0, "file", "checker")
+    ]
+    assert found.violations[0].id == violation_id(PATH_RULE.id, "tests/pricing_test.py", "", 0)
+
+
+def test_content_rule_ignores_new_file_list(worktree: Path) -> None:
+    sandbox = GrepSandbox()
+    detect([CHECKED], worktree, {}, new_files=frozenset({"orders/services/pricing.py"}),
+           sandbox=sandbox)  # fmt: skip
+    assert sandbox.files == []

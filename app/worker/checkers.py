@@ -26,8 +26,6 @@ from app.models.checker_authoring import (
     ANSWER_SCHEMA,
     ENGINE_VERSION,
     MAX_ATTEMPTS,
-    PROMPT_VERSION,
-    SYSTEM_PROMPT,
     Checked,
     Draft,
     RuleCheck,
@@ -45,7 +43,9 @@ from app.models.checker_authoring import (
     parse_answer,
     plan_check,
     previous_body_feedback,
+    prompt_version_for,
     shortfall,
+    system_prompt,
 )
 from app.models.repo_config import ModelSettings
 from app.models.rule import Rule, normalize
@@ -204,8 +204,8 @@ class _Author:
             attempt, tier = state["attempt"], state["tier"]
             feedback = state.get("feedback", [])
             model = self.models.light if tier == "light" else self.models.heavy
-            kind = kind_for_attempt(attempt)
-            artifact = draft_key(key, attempt, model, feedback)
+            kind = kind_for_attempt(attempt, rule)
+            artifact = draft_key(key, attempt, model, feedback, prompt_version_for(rule))
             if self.store.cached_result(artifact) is not None:
                 self.budget.record_hit(self.scope, stage="checker", tier=tier, model=model)
                 return WriteResult(artifact=artifact)
@@ -215,7 +215,7 @@ class _Author:
                 raise _CapHit(call)
             answer = self.ask(
                 build_prompt(rule, need, feedback),
-                system_prompt=SYSTEM_PROMPT[kind],
+                system_prompt=system_prompt(kind),
                 schema=ANSWER_SCHEMA,
                 model=model,
                 max_budget_usd=CALL_BUDGET_USD[tier],
@@ -236,13 +236,13 @@ class _Author:
                 raise _ModelCallFailed(failure)
             if parsed is None:
                 raise WriteFailed(failure)
-            examples, problems = model_examples(rule.examples, parsed)
+            examples, problems = model_examples(rule.examples, parsed, kind)
             draft = Draft(
                 kind=kind, body=parsed.checker, examples=examples,
                 example_problems=tuple(problems), model=answer.model_id or model,
             )  # fmt: skip
             self.store.save_result(artifact, stage="checker", model=draft.model,
-                                   prompt_version=PROMPT_VERSION,
+                                   prompt_version=prompt_version_for(rule),
                                    result_json=draft_to_json(draft))  # fmt: skip
             return WriteResult(artifact=artifact)
 
@@ -261,8 +261,8 @@ class _Author:
                                feedback=(f"{what}:\n{run.reason}", previous))  # fmt: skip
             spans = [
                 [(m.line, m.end_line) for m in run.matches
-                 if m.file == checker_runner.example_path(i)]
-                for i in range(len(examples))
+                 if m.file == checker_runner.example_file(draft.kind, i, e.code)]
+                for i, e in enumerate(examples)
             ]  # fmt: skip
             problems = judge_examples(examples, spans)
             if not problems:

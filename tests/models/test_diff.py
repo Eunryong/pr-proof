@@ -2,7 +2,7 @@ from typing import Final
 
 import pytest
 
-from app.models.diff import added_lines, touches
+from app.models.diff import added_lines, new_files, touches
 
 MODIFY: Final = """\
 diff --git a/orders/pricing.py b/orders/pricing.py
@@ -157,3 +157,37 @@ def test_special_paths_are_read(header: str, path: str) -> None:
 
 def test_unknown_prefix_is_skipped_not_misnamed() -> None:
     assert added_lines(_one_line("+++ w/orders/a.py")) == {}
+
+
+def test_new_files_are_added_and_renamed_paths_only() -> None:
+    diff = """\
+diff --git a/tests/pricing_test.py b/tests/pricing_test.py
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/tests/pricing_test.py
+@@ -0,0 +1,2 @@
++new file mode 100644
+++++ b/not/a/header.py
+diff --git a/orders/empty.py b/orders/empty.py
+new file mode 100644
+index 0000000..e69de29
+diff --git a/orders/old.py b/orders/moved.py
+similarity index 100%
+rename from orders/old.py
+rename to orders/moved.py
+diff --git a/orders/a.py b/orders/a.py
+index 1111111..2222222 100644
+--- a/orders/a.py
++++ b/orders/a.py
+@@ -1 +1 @@
+-x = 1
++x = 2
+diff --git a/orders/gone.py b/orders/gone.py
+deleted file mode 100644
+--- a/orders/gone.py
++++ /dev/null
+@@ -1 +0,0 @@
+-x = 1
+"""
+    assert new_files(diff) == {"tests/pricing_test.py", "orders/empty.py", "orders/moved.py"}

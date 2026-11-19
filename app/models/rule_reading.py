@@ -29,7 +29,7 @@ from app.models.rule import (
 )
 
 # 문서 고르기와 원문 확인의 버전. 이 파일의 결정적 처리를 바꾸면 올린다 (캐시 키에 들어간다)
-READER_VERSION: Final = "2"
+READER_VERSION: Final = "3"
 # 한 번에 읽는 문서 합계의 상한 (약 10만 토큰). 넘는 문서는 읽지 않고 이유를 남긴다
 MAX_DOCS_BYTES: Final = 400_000
 # 정리한 뒤 이보다 짧은 인용은 어느 문서에나 있을 수 있어 근거가 되지 못한다
@@ -147,7 +147,8 @@ scope_exclude, examples를 빈 목록으로, scope_reason을 빈 문자열로, c
 - examples: 문서에 그 규칙의 지키는 예나 어기는 예 코드 블록이 있으면 블록 내용을 그대로 옮긴다
   (``` 줄은 뺀다). violates는 어기는 예면 true. lines는 어기는 예에서 규칙을 어긴 줄 번호
   (블록의 첫 줄이 1)이고 지키는 예는 빈 목록. 문서에 없는 예는 만들지 않는다.
-- check: 코드의 모양(import, 호출, 선언, 리터럴, 파일 이름)으로 기계적으로 가릴 수 있으면
+- check: 파일의 내용을 보지 않고 이름이나 경로만 보면 가릴 수 있으면 "path"(예: "테스트 파일
+  이름은 test_<모듈>.py다"). 코드의 모양(import, 호출, 선언, 리터럴)으로 기계적으로 가릴 수 있으면
   "checker", 코드의 뜻을 읽어야 가릴 수 있으면 "model". target이 "code"가 아니면 "none".
 - reason: target이 "pr"이나 "human"이면 그렇게 고른 이유 한 줄. target이 "code"이고 check가
   "model"이면 그 이유 한 줄. 그 밖에는 빈 문자열.
@@ -199,7 +200,7 @@ ANSWER_SCHEMA: Final[Mapping[str, object]] = {
                             },
                         },
                     },
-                    "check": {"enum": ["checker", "model", "none"]},
+                    "check": {"enum": ["path", "checker", "model", "none"]},
                     "reason": {"type": "string"},
                     "fix": {"enum": ["model", "none"]},
                 },
@@ -257,7 +258,7 @@ class AnswerRule(BaseModel):
     scope_exclude: list[str] = []
     scope_reason: str = ""
     examples: list[AnswerExample] = []
-    check: Literal["checker", "model", "none"]
+    check: Literal["path", "checker", "model", "none"]
     reason: str = ""
     fix: Literal["model", "none"] = "none"
 
@@ -372,21 +373,15 @@ def _inferred_exclude(raw: "AnswerRule", scope_stated: bool) -> tuple[tuple[str,
     """모델이 추정으로 뺀 경로와 이유. 받아들이는 조건을 하나라도 어기면 빼지 않는다 (4.3).
 
     문서가 범위를 밝힌 규칙은 그 범위를 그대로 쓴다. 이유가 없거나 glob 형식이 틀린 추정은
-    버린다. 버리면 범위가 넓은 쪽(저장소 전체)으로 남는다.
+    버린다. 너무 많이 빼는 glob은 여기서 가리지 않는다: 규칙 묶음을 꺼낸 뒤 그 PR의 base 파일
+    목록으로 효과를 본다 (`rule.checked_exclude`). 버리면 범위가 넓은 쪽(저장소 전체)으로 남는다.
     """
     exclude, reason = tuple(raw.scope_exclude), raw.scope_reason.strip()
     if scope_stated or not exclude or not reason:
         return (), ""
-    if not all(_valid_glob(p) and _starts_with_a_folder(p) for p in exclude):
+    if not all(_valid_glob(p) for p in exclude):
         return (), ""
     return exclude, reason
-
-
-def _starts_with_a_folder(pattern: str) -> bool:
-    """첫 마디가 글자 그대로의 폴더 이름인지. `**`나 `*.py`처럼 저장소 전체를 뺄 수 있는 glob을
-    막는다 (추정으로 규칙을 통째로 끄지 못하게)."""
-    first, _, rest = pattern.partition("/")
-    return bool(rest) and not (set("*?[") & set(first))
 
 
 def _valid_glob(pattern: str) -> bool:
@@ -461,7 +456,9 @@ def _rule(raw: AnswerRule, id_: str, source: RuleSource, flat_doc: str) -> Rule:
     if not all(_valid_glob(p) for p in scope):
         scope = ()  # 형식이 틀린 적용 범위는 저장소 전체로 둔다 (4.3)
     exclude, exclude_reason = _inferred_exclude(raw, bool(raw.scope))
-    kind: Literal["checker", "model"] = "checker" if raw.check == "checker" else "model"
+    kind: Literal["path", "checker", "model"] = (
+        raw.check if raw.check in ("path", "checker") else "model"
+    )
     return Rule(
         id=id_,
         text=text,
@@ -470,7 +467,8 @@ def _rule(raw: AnswerRule, id_: str, source: RuleSource, flat_doc: str) -> Rule:
         scope=scope,
         check=CheckMethod(kind=kind, reason=raw.reason if kind == "model" else ""),
         fix=raw.fix,
-        examples=_examples(raw.examples, flat_doc),
+        # 경로 규칙의 예시는 코드가 아니라 경로다. 문서의 코드 블록은 쓰지 않는다
+        examples=() if kind == "path" else _examples(raw.examples, flat_doc),
         exclude=exclude,
         exclude_reason=exclude_reason,
     )

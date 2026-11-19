@@ -16,10 +16,10 @@ import time
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Final
 
-from app.models.checker import CheckerKind, validate_body
+from app.models.checker import CheckerKind, is_repo_path, validate_body
 from app.sandbox import docker_cli
 
 WORK: Final = "/work"
@@ -30,6 +30,25 @@ SCRIPT_FILE: Final = "check.py"
 EXAMPLE_DIR: Final = "examples"
 
 CHECK_TIMEOUT: Final = 120
+# 경로 패턴은 정규식 몇 번이다. 오래 걸리면 정규식이 나쁜 것이다 (끝없는 되짚기)
+PATH_PATTERN_TIMEOUT: Final = 20
+# 경로 패턴 선언을 경로 목록에 맞추는 스크립트. 모델이 쓴 것은 선언(자료)뿐이고 이 코드는 고정이다.
+# 표준 입력: {"decl": {...}, "paths": [...]}. applies_to가 맞는 경로 중 조건을 어긴 것을 낸다
+_PATH_SCRIPT: Final = """\
+import json, re, sys
+data = json.load(sys.stdin)
+decl = data["decl"]
+applies = re.compile(decl["applies_to"]) if decl.get("applies_to") else None
+pattern = re.compile(decl["pattern"])
+want = decl["condition"] == "must_match"
+out = []
+for path in data["paths"]:
+    if applies is not None and not applies.search(path):
+        continue
+    if bool(pattern.search(path)) != want:
+        out.append({"file": path, "line": 1, "why": decl.get("message") or ""})
+json.dump(out, sys.stdout)
+"""
 MAX_OUTPUT_BYTES: Final = 8 * 1024 * 1024
 MAX_RESULTS: Final = 5000
 MAX_STDERR_CHARS: Final = 1500
@@ -85,6 +104,8 @@ def run_checker(
 
     docker 자체가 실패하면 SandboxError를 올린다.
     """
+    if kind == "path-pattern":
+        return run_path_pattern(body, files)
     _check_paths(files)
     problem = validate_body(kind, body)
     if problem:
@@ -130,8 +151,11 @@ def run_on_examples(
 ) -> CheckerRun:
     """예시 코드마다 파일을 하나씩 만들어 검사기를 돌린다. 저장소는 마운트하지 않는다.
 
-    Match.file은 `example_path(i)`이다.
+    Match.file은 `example_file(kind, i, snippet)`이다. 경로 패턴의 예시는 코드가 아니라 경로라서
+    파일을 만들지 않는다.
     """
+    if kind == "path-pattern":
+        return run_path_pattern(body, [s.strip() for s in snippets])
     with tempfile.TemporaryDirectory(prefix="pipeline-examples-") as tmp:
         root = Path(tmp)
         (root / EXAMPLE_DIR).mkdir()
@@ -145,6 +169,40 @@ def example_path(index: int) -> str:
     return f"{EXAMPLE_DIR}/example_{index}.py"
 
 
+def example_file(kind: CheckerKind, index: int, snippet: str) -> str:
+    """예시 index의 결과가 달리는 Match.file."""
+    return snippet.strip() if kind == "path-pattern" else example_path(index)
+
+
+def run_path_pattern(
+    body: str, paths: Sequence[str], *, timeout: int = PATH_PATTERN_TIMEOUT
+) -> CheckerRun:
+    """경로 패턴 선언을 paths(저장소 기준 경로)에 맞춘다. 파일은 읽지 않고 저장소도 마운트하지
+    않는다. 위반은 파일 단위다 (Match.line은 1).
+
+    정규식은 모델이 쓴 것이라 끝없이 되짚을 수 있다. 그래서 호스트가 아니라 시간·자원 제한이 있는
+    컨테이너에서 맞춘다.
+    """
+    _check_paths(paths)
+    problem = validate_body("path-pattern", body)
+    if problem:
+        return Invalid(problem)
+    if not paths:
+        return Ran(())
+    with tempfile.TemporaryDirectory(prefix="pipeline-checker-") as tmp:
+        checker_dir = Path(tmp)
+        (checker_dir / SCRIPT_FILE).write_text(_PATH_SCRIPT)
+        stdin = json.dumps({"decl": json.loads(body), "paths": list(paths)}).encode()
+        docker = [
+            "run", "--rm", "-i", "--network", "none", "--read-only", *docker_cli.limits(),
+            "--user", docker_cli.user(), "-e", "HOME=/tmp", "-e", "PYTHONDONTWRITEBYTECODE=1",
+            "-v", f"{checker_dir}:{CHECKER_DIR}:ro", "-w", CHECKER_DIR, docker_cli.TOOL_IMAGE,
+            "python", "-I", f"{CHECKER_DIR}/{SCRIPT_FILE}",
+        ]  # fmt: skip
+        result = _run_bounded(docker, stdin, timeout=timeout)
+    return read_result("path-pattern", result, frozenset(paths), timeout)
+
+
 def _check_paths(files: Sequence[str]) -> None:
     for f in files:
         if not _is_relative_inside(f):
@@ -152,8 +210,7 @@ def _check_paths(files: Sequence[str]) -> None:
 
 
 def _is_relative_inside(path: str) -> bool:
-    p = PurePosixPath(path)
-    return bool(path) and not p.is_absolute() and ".." not in p.parts and "\0" not in path
+    return is_repo_path(path)
 
 
 @dataclass(frozen=True)

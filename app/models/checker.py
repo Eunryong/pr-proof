@@ -6,17 +6,25 @@
 
 import ast
 import hashlib
+import json
+import re
 import sys
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import PurePosixPath
 from typing import Final, Literal
 
 import yaml
 
 from app.models.rule import Example
 
-CheckerKind = Literal["ast-grep", "python-ast"]
+# path-pattern은 코드가 아니라 선언(JSON)이다: 경로에 거는 정규식 조건. 파이프라인이 쓴 고정
+# 스크립트가 샌드박스에서 맞춘다 (sandbox/checker_runner.py)
+CheckerKind = Literal["ast-grep", "python-ast", "path-pattern"]
+PATH_PATTERN_KEYS: Final = frozenset({"applies_to", "condition", "pattern", "message"})
+PATH_CONDITIONS: Final = ("must_match", "must_not_match")
+MAX_REGEX_CHARS: Final = 300
 
 MAX_BODY_CHARS: Final = 20_000
 # 이 단계의 검사기는 Python 파일만 본다 (7.7 Python 프로필)
@@ -41,6 +49,12 @@ class Checker:
     verified_at: datetime | None = None
 
 
+def is_repo_path(path: str) -> bool:
+    """검사기에 넘길 수 있는 저장소 기준 상대 경로인지. 모델이 쓴 경로 예시도 이것으로 본다."""
+    p = PurePosixPath(path)
+    return bool(path) and not p.is_absolute() and ".." not in p.parts and "\0" not in path
+
+
 def checker_id(body: str) -> str:
     return hashlib.sha256(body.encode()).hexdigest()
 
@@ -53,7 +67,41 @@ def validate_body(kind: CheckerKind, body: str) -> str | None:
         return f"검사기 본문이 {MAX_BODY_CHARS}자를 넘음"
     if kind == "ast-grep":
         return _validate_ast_grep(body)
+    if kind == "path-pattern":
+        return _validate_path_pattern(body)
     return _validate_python_ast(body)
+
+
+def _validate_path_pattern(body: str) -> str | None:
+    """선언의 모양과 정규식 문법만 본다. 맞추는 일은 시간 제한이 있는 샌드박스가 한다."""
+    try:
+        decl = json.loads(body)
+    except ValueError as e:
+        return f"JSON을 읽지 못함: {e}"
+    if not isinstance(decl, dict):
+        return "선언의 최상위가 객체가 아님"
+    extra = sorted(str(k) for k in decl if k not in PATH_PATTERN_KEYS)
+    if extra:
+        allowed = ", ".join(sorted(PATH_PATTERN_KEYS))
+        return f"쓸 수 없는 키: {', '.join(extra)} (쓸 수 있는 키: {allowed})"
+    if decl.get("condition") not in PATH_CONDITIONS:
+        allowed = " 또는 ".join(PATH_CONDITIONS)
+        return f"condition은 {allowed}여야 함 (받은 값: {decl.get('condition')!r})"
+    if not isinstance(decl.get("pattern"), str) or not decl["pattern"]:
+        return "pattern이 없거나 문자열이 아님"
+    for key in ("applies_to", "pattern"):
+        value = decl.get(key, "")
+        if not isinstance(value, str):
+            return f"{key}가 문자열이 아님"
+        if len(value) > MAX_REGEX_CHARS:
+            return f"{key}가 {MAX_REGEX_CHARS}자를 넘음"
+        try:
+            re.compile(value)
+        except re.error as e:
+            return f"{key}의 정규식이 틀림: {e}"
+    if not isinstance(decl.get("message", ""), str):
+        return "message가 문자열이 아님"
+    return None
 
 
 def _validate_ast_grep(body: str) -> str | None:

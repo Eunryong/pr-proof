@@ -12,7 +12,7 @@ from typing import Final
 
 from app.models.checker_authoring import Checked, RuleCheck, Unchecked
 from app.models.diff import ChangedLines, touches
-from app.models.rule import applies_to
+from app.models.rule import checked_file, looks_at_paths
 from app.models.violation import Violation, violation_id
 from app.sandbox import toolcache
 from app.sandbox.checker_runner import Failed, Invalid, Match
@@ -20,7 +20,6 @@ from app.sandbox.safe_read import read_regular_file
 from app.worker import repo
 from app.worker.checkers import RunsCheckers, Sandbox
 
-PYTHON_SUFFIXES: Final = (".py", ".pyi")
 MAX_SOURCE_BYTES: Final = 5 * 1024 * 1024
 
 
@@ -36,9 +35,12 @@ def detect(
     worktree: Path,
     changed: ChangedLines,
     *,
+    new_files: frozenset[str] = frozenset(),
     sandbox: RunsCheckers | None = None,
 ) -> Detection:
     """checks 중 검사기가 있는 규칙(`Checked`)을 돌린다. changed는 merge-base 기준 바뀐 줄이다.
+
+    경로 규칙은 PR이 새로 만든 파일(new_files)의 경로만 보고, 위반은 파일 단위다.
 
     docker 자체가 실패하면 SandboxError를 올린다 (환경 오류).
     """
@@ -49,10 +51,10 @@ def detect(
         if not isinstance(check, Checked):
             continue
         rule, checker = check.rule, check.checker
+        by_path = looks_at_paths(rule)
         files = [
-            f for f in sorted(changed)
-            if f.endswith(PYTHON_SUFFIXES) and applies_to(rule, f)
-            and repo.worktree_file(worktree, f) is not None
+            f for f in sorted(new_files if by_path else changed)
+            if checked_file(rule, f) and repo.worktree_file(worktree, f) is not None
         ]  # fmt: skip
         if not files:
             continue
@@ -64,8 +66,22 @@ def detect(
         if isinstance(run, Invalid | Failed):
             unchecked.append(Unchecked(rule, "run_failed", f"검사기를 돌리지 못함: {run.reason}"))
             continue
-        violations += _violations(check, run.matches, worktree, changed)
+        if by_path:
+            violations += _file_violations(check, run.matches)
+        else:
+            violations += _violations(check, run.matches, worktree, changed)
     return Detection(tuple(violations), tuple(unchecked))
+
+
+def _file_violations(check: Checked, matches: Sequence[Match]) -> list[Violation]:
+    """파일 단위 위반. 파일마다 하나다. id는 경로로 정한다 (줄 내용이 없다)."""
+    return [
+        Violation(
+            id=violation_id(check.rule.id, file, "", 0), rule_id=check.rule.id, file=file,
+            line=0, message=message or check.rule.text, found_by="checker", unit="file",
+        )
+        for file, message in sorted({m.file: m.message for m in matches}.items())
+    ]  # fmt: skip
 
 
 def _violations(

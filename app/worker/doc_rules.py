@@ -18,7 +18,7 @@ from app.models.checker_authoring import (
     checker_from_json,
     checker_key,
 )
-from app.models.diff import added_lines
+from app.models.diff import added_lines, new_files
 from app.models.doc_rules import (
     CheckerRef,
     DocRules,
@@ -34,8 +34,9 @@ from app.models.doc_rules import (
     with_run_failures,
 )
 from app.models.repo_config import ModelSettings, RulesSettings
+from app.models.rule import checked_exclude
 from app.sandbox.docker_cli import SandboxError
-from app.worker import checkers, detect, rules
+from app.worker import checkers, detect, repo, rules
 from app.worker.budget import CallBudget
 from app.worker.checkers import RunsCheckers
 from app.worker.repo import GitError
@@ -67,6 +68,14 @@ def read(
         return NotRun(f"base의 규칙 문서를 읽지 못함: {_first_line(str(e))}")
     match result:
         case rules.RulesFound(key=key, ruleset=ruleset, rules=found):
+            if any(r.exclude for r in found):
+                # 범위 추정의 효과 확인. 규칙 묶음은 저장된 것이어도 이 PR의 base 목록으로 매번 본다
+                try:
+                    base_files = repo.list_base_files(worktree, base_sha)
+                except GitError as e:
+                    log.warning("base의 파일 목록을 읽지 못함: %s", e)
+                    return NotRun(f"base의 파일 목록을 읽지 못함: {_first_line(str(e))}")
+                found = tuple(checked_exclude(r, base_files) for r in found)
             return RulesRead(key, found, disabled=len(ruleset.rules) - len(found))
         case rules.NoRuleDocuments(unread=unread):
             return NoRuleDocs(unread)
@@ -113,9 +122,11 @@ def find(
     since_call은 이 검사를 시작하기 전 마지막 호출 기록의 id다. 그 뒤의 기록만 호출 수에 센다.
     """
     checks = [_saved_check(o, rt.store) for o in outcomes]
-    changed = added_lines(changes_diff.decode("utf-8", errors="replace"))
+    diff = changes_diff.decode("utf-8", errors="replace")
     try:
-        found = detect.detect(checks, worktree, changed, sandbox=rt.sandbox)
+        found = detect.detect(
+            checks, worktree, added_lines(diff), new_files=new_files(diff), sandbox=rt.sandbox
+        )
     except SandboxError as e:
         log.warning("검사기 실행 샌드박스 실패: %s", e)
         return NotRun(f"검사기를 돌리는 샌드박스가 실패함: {_first_line(str(e))}")
