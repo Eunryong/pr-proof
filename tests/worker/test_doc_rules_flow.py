@@ -410,7 +410,7 @@ def test_source_only_dependency_makes_tests_unrunnable_and_keeps_rules(doc_env, 
     ("base", "answer"),
     [
         ({"orders/a.py": "x = 1\n"}, rule_answer()),
-        (BASE_FILES, rule_answer(print_rule(check="none", reason="사람이 판단할 규칙"))),
+        (BASE_FILES, rule_answer(print_rule(target="human", check="none", reason="사람이 할 일"))),
     ],
     ids=["no-rule-documents", "no-rule-needs-a-checker"],
 )

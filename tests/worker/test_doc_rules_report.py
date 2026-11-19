@@ -117,14 +117,16 @@ def test_inferred_exclude_is_shown_with_reason() -> None:
 def test_unchecked_rules_are_grouped_by_reason() -> None:
     outcomes = (
         RuleUnchecked(replace(RULE, id="R-1"), "no_checker", "3회 안에 예시를 통과하지 못함"),
-        RuleUnchecked(replace(RULE, id="R-2"), "not_code", "사람이 판단할 규칙"),
+        RuleUnchecked(replace(RULE, id="R-2", target="human"), "human", "사람이 판단할 규칙"),
+        RuleUnchecked(replace(RULE, id="R-6", target="pr"), "pr", "커밋 메시지의 규칙"),
         RuleUnchecked(replace(RULE, id="R-3"), "cap", "호출 상한: 규칙 묶음 상한 (3/3회 사용)"),
         RuleUnchecked(replace(RULE, id="R-4"), "cap", "호출 상한: 규칙 묶음 상한 (3/3회 사용)"),
         RuleUnchecked(replace(RULE, id="R-5"), "tool_unavailable", "도구를 준비하지 못함: x"),
     )
     text = _text(_found(*outcomes, disabled=2))
     assert (
-        "**문서 규칙:** 검사한 규칙 없음 (읽은 규칙 5개) · `rules.disabled`로 끈 규칙 2개" in text
+        "**문서 규칙:** 검사한 규칙 없음 (읽은 규칙 6개) · PR 단위 규칙 1개 · "
+        "사람이 확인하는 규칙 1개 · `rules.disabled`로 끈 규칙 2개" in text
     )
     assert (
         "읽었지만 아직 검사하지 못하는 규칙 1개 (예시를 통과하는 검사기가 없음):\n- `R-1`" in text
@@ -132,8 +134,24 @@ def test_unchecked_rules_are_grouped_by_reason() -> None:
     assert "이번 검사에서 검사하지 못한 규칙 1개 (검사하지 못함 (도구 준비 실패) 1개):" in text
     assert ("모델 호출 상한에 걸려 처리하지 못함: 검사기 작성 2개 규칙 "
             "(`호출 상한: 규칙 묶음 상한 (3/3회 사용)`). 다음 검사") in text  # fmt: skip
-    assert "확인: 검사 대상 아님" in text  # not_code는 읽은 규칙 목록에만 보인다
-    assert "- `R-2`" not in text.split("<details>")[0]
+    # 코드 줄로 확인하지 않는 규칙은 검사하지 못한 규칙과 따로 목록으로 보인다
+    assert ("PR 단위로 확인할 규칙 1개 (커밋 메시지, PR 본문, 브랜치, 바뀐 파일 종류. "
+            "아직 확인하지 않음):\n- `R-6`") in text  # fmt: skip
+    assert "사람이 확인하는 규칙 1개 (파이프라인이 검사하지 않음):\n- `R-2`" in text
+    assert "확인: 사람이 확인하는 규칙 (검사하지 않음)" in text
+
+
+def test_title_counts_rules_outside_code_apart_from_unchecked() -> None:
+    outcomes = (
+        RuleChecked(RULE, REF),
+        RuleUnchecked(replace(RULE, id="R-1"), "no_checker", "3회 안에 예시를 통과하지 못함"),
+        RuleUnchecked(replace(RULE, id="R-2", target="human"), "human", "절차"),
+        RuleUnchecked(replace(RULE, id="R-3", target="human"), "human", "절차"),
+    )
+    assert (
+        "**문서 규칙:** ✅ 위반 없음 (규칙 1개 검사) · 검사하지 못한 규칙 1개 · "
+        "사람이 확인하는 규칙 2개"
+    ) in _text(_found(*outcomes))
 
 
 def test_no_rules_explains_how_to_write_them() -> None:

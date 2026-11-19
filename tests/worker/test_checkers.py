@@ -210,10 +210,10 @@ def test_cap_stops_authoring_and_next_check_resumes(store: Store) -> None:
 
 
 def test_rules_code_cannot_show_get_no_calls(store: Store) -> None:
-    none_rule = replace(RULE, check=CheckMethod("none", reason="PR 크기 규칙"))
+    none_rule = replace(RULE, target="pr", check=CheckMethod("none", reason="PR 크기 규칙"))
     model = FakeModel()
     (result,) = _author(store, model, rules=(none_rule,))
-    assert result == Unchecked(none_rule, "not_code", "PR 크기 규칙")
+    assert result == Unchecked(none_rule, "pr", "PR 크기 규칙")
     assert model.calls == [] and _counted(store) == []
 
 

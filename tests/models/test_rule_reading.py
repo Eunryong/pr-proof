@@ -6,6 +6,7 @@ import pytest
 
 from app.models.rule import RuleSource, applies_to, rule_id
 from app.models.rule_reading import (
+    ANSWER_SCHEMA,
     Answer,
     Document,
     TreeEntry,
@@ -264,6 +265,73 @@ def test_check_and_fix_hints() -> None:
         "뜻을 봐야 함",
         "none",
     )
+
+
+BOLD_ITEMS: Final = Document(
+    "README.md",
+    "b" * 40,
+    "# 프로젝트\n\n## 협업 규칙\n\n1. **데이터 무결성**:\n"
+    "   - 학습 데이터에 평가 데이터가 섞이지 않게 한다.\n\n## 도구\n\n설명.\n",
+)
+LEAK_RULE: Final = "학습 데이터에 평가 데이터가 섞이지 않게 한다."
+
+
+def test_bold_item_at_the_end_of_the_section_path_is_not_a_heading() -> None:
+    """모델이 굵은 글씨 항목을 절 경로 끝에 붙여도 실제 절에서 원문을 찾는다."""
+    rules, dropped = _verify(
+        {"section": "협업 규칙 > 데이터 무결성", "quote": LEAK_RULE}, docs=(BOLD_ITEMS,)
+    )
+    assert dropped == ()
+    assert rules[0].source.section == "협업 규칙"
+
+
+@pytest.mark.parametrize(
+    "section", ["데이터 무결성", "도구 > 데이터 무결성", "없는 절 > 또 없는 절"]
+)
+def test_made_up_section_still_needs_a_real_heading_that_holds_the_quote(section: str) -> None:
+    rules, dropped = _verify({"section": section, "quote": LEAK_RULE}, docs=(BOLD_ITEMS,))
+    assert rules == () and dropped[0].reason == "원문이 그 절에 없음"
+
+
+def test_target_defaults_to_code_and_is_kept() -> None:
+    rules, _ = _verify(
+        {"section": "출력", "quote": PRINT_RULE},
+        {"section": "금액", "quote": "금액은 원 단위 정수(`int`)로 다룬다.", "target": "code"},
+    )
+    assert [r.target for r in rules] == ["code", "code"]
+
+
+@pytest.mark.parametrize("target", ["pr", "human"])
+def test_rules_outside_code_keep_only_the_reason(target: str) -> None:
+    """PR 단위 규칙과 사람이 확인하는 규칙은 검사하지 않는다. 범위, 예시, 확인 방법은 버린다."""
+    rules, dropped = _verify(
+        {"section": "출력", "quote": PRINT_RULE, "target": target, "scope": ["orders/**"],
+         "scope_exclude": ["tests/**"], "scope_reason": "테스트", "check": "checker",
+         "reason": " 줄로 볼 수 없음 ", "fix": "model",
+         "examples": [{"code": "print(1)", "violates": True, "lines": [1]}]},
+    )  # fmt: skip
+    (rule,) = rules
+    assert dropped == ()
+    assert rule.target == target and rule.id.startswith("R-readme-")
+    assert (rule.check.kind, rule.check.reason, rule.fix) == ("none", "줄로 볼 수 없음", "none")
+    assert (rule.scope, rule.exclude, rule.exclude_reason, rule.examples) == ((), (), "", ())
+
+
+def test_code_rule_answered_with_no_check_is_still_tried() -> None:
+    """코드 규칙인데 check가 "none"이면 답이 어긋난 것이다. 검사 대상에서 빼지 않는다."""
+    (rule,), _ = _verify({"section": "출력", "quote": PRINT_RULE, "check": "none", "reason": "?"})
+    assert (rule.target, rule.check.kind, rule.check.reason) == ("code", "model", "?")
+
+
+def test_quote_of_a_rule_outside_code_is_still_verified() -> None:
+    rules, dropped = _verify({"section": "출력", "quote": "없는 문장을 지었다", "target": "human"})
+    assert rules == () and dropped[0].reason == "원문이 그 절에 없음"
+
+
+def test_answer_schema_requires_a_target() -> None:
+    item = ANSWER_SCHEMA["properties"]["rules"]["items"]
+    assert "target" in item["required"]
+    assert item["properties"]["target"] == {"enum": ["code", "pr", "human"]}
 
 
 @pytest.mark.parametrize(
