@@ -384,6 +384,7 @@ def _compose(
     doc_rules: DocRules | None = None,
     checkers: Mapping[str, Checker] | None = None,
     decisions: Decided | None = None,
+    model_fix: doc_rules_report.FixView | None = None,
 ) -> str:
     results = [r for r in (lint, static) if r is not None]
     lines = [HEADER, "", f"**테스트:** {test_line}"]
@@ -392,7 +393,7 @@ def _compose(
     lines += details
     lines += rules_details(results)
     lines += extra or []
-    lines += doc_rules_report.section(doc_rules, checkers or {}, decisions)
+    lines += doc_rules_report.section(doc_rules, checkers or {}, decisions, model_fix)
     off = [s for s in ("lint", "static") if base is not None and s not in base.repo.skills.enabled]
     if off:
         lines += [
@@ -438,6 +439,7 @@ def render_result(
     doc_rules: DocRules | None = None,
     checkers: Mapping[str, Checker] | None = None,
     decisions: Decided | None = None,
+    model_fix: doc_rules_report.FixView | None = None,
     # lint 하나만 쓰던 호출 (2단계)
     proposal: Proposal | None = None,
     proposal_number: int | None = None,
@@ -479,6 +481,7 @@ def render_result(
         doc_rules=doc_rules,
         checkers=checkers,
         decisions=decisions,
+        model_fix=model_fix,
     )
 
 

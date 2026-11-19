@@ -43,8 +43,7 @@ from app.sandbox.docker_cli import SandboxError
 from app.sandbox.venv import DependencyInstallError
 from app.worker import base_config, doc_rules, graph, repo, update
 from app.worker.ai import claude_cli
-from app.worker.ai.claude_cli import AIErrorKind, StructuredResult
-from app.worker.doc_rules_report import NOT_CONNECTED
+from app.worker.ai.claude_cli import AIErrorKind, ClaudeResult, StructuredResult
 from app.worker.markdown import inline_code
 
 from .helpers import BASE, PASSED, bodies, use_runner
@@ -177,7 +176,13 @@ def doc_env(env, tmp_path: Path):
     mp.setattr(doc_rules, "sandbox_for", lambda cache: sandbox)
     use_runner(env, lambda *a, **k: PASSED)
     env["sandbox"] = sandbox
+    mp.setattr(claude_cli, "run_claude", _no_fix_model)
     return env
+
+
+def _no_fix_model(*args, **kwargs) -> ClaudeResult:
+    """수정 작성은 이 파일에서 보지 않는다 (test_model_fix_flow.py). 실제 claude를 부르지 않는다."""
+    pytest.fail("이 테스트에서는 수정 작성을 부르지 않아야 한다")
 
 
 def use_model(env, model: FakeModel) -> FakeModel:
@@ -577,10 +582,9 @@ def test_decisions_follow_tests_and_show_in_the_comment(doc_env, tmp_path: Path)
     assert "  - `orders/a.py:3` · skip (모델이 답하지 않음)" in body
     assert ("수정 판단: fix 0건, skip 2건 (모델이 고치지 않기로 함 1건, 수정 판단을 하지 못함 1건)"
             " · 모델 호출 1회 · 저장된 판단 0건 사용") in body  # fmt: skip
-    assert NOT_CONNECTED in body
-    assert (
-        state["lint"].findings and "fixes" not in state
-    )  # v1 lint 경로는 그대로, 수정은 잇지 않음
+    # 모델이 모두 skip했으므로 모델 수정은 돌지 않는다. v1 lint 경로는 그대로
+    assert "**수정안:**" not in body and "model_fix" not in state
+    assert state["lint"].findings and "fixes" not in state
 
 
 def test_recheck_of_the_same_commit_makes_no_decision_call(doc_env, tmp_path: Path) -> None:

@@ -5,9 +5,13 @@ lint·static 케이스와 같은 방식이다: 예제 리포의 로컬 git 원�
 `pytest -m docker`가 결정적이고 비용이 없다. 원문 확인, 예시 확인, 검사기 실행, 바뀐 줄 거르기는
 모두 진짜다. `PR_PROOF_REAL_MODEL=1`이면 로그인된 claude를 실제로 부른다 (비용이 든다. 비교용).
 
-v1 lint·static은 base의 `.pipeline.yaml`로 끈다. 이 케이스는 문서 규칙 절만 본다.
+v1 lint·static은 base의 `.pipeline.yaml`로 끈다. 이 케이스는 문서 규칙 절과 모델 수정안만 본다.
+케이스에 `fix`가 있으면 수정 판단은 `model.skip`에 적은 위반만 skip하고 나머지를 fix로 답하며, 수정
+작성은 케이스의 `fix` 편집을 모델 폴더에 적용하는 가짜다(검증과 수정안 PR 푸시는 진짜). `fix`가 없는
+케이스는 모든 위반을 skip으로 답해 수정까지 가지 않는다.
 """
 
+import json
 import os
 import re
 import shutil
@@ -21,9 +25,10 @@ import yaml
 from app import config
 from app.models import fix_decision, rule_reading, state_keys
 from app.models.job import PRJob
+from app.models.rule import rule_id
 from app.worker import main, repo
 from app.worker.ai import claude_cli
-from app.worker.ai.claude_cli import StructuredResult
+from app.worker.ai.claude_cli import ClaudeResult, StructuredResult
 from app.worker.deps import Deps
 from app.worker.github import GitHub
 from app.worker.state import Store
@@ -38,6 +43,7 @@ REPO: Final = "o/r"
 REAL_MODEL_ENV: Final = "PR_PROOF_REAL_MODEL"
 # v1 스킬을 끈다. 케이스가 `pipeline`을 주면 그 위에 덮는다
 PIPELINE_YAML: Final = {"skills": {"enabled": []}}
+BRANCH: Final = "pipeline/pr-1-fix-model"
 # 위치 뒤에 수정 판단(" · skip (...)")이 붙을 수 있다
 _LOCATION: Final = re.compile(r"^- (`+) ?(.+?) ?\1(?: \(파일 이름·경로\))?(?: · .+)?$")
 
@@ -86,9 +92,15 @@ def _answer(data: dict) -> StructuredResult:
                             permission_denials=0)  # fmt: skip
 
 
+_DECIDE_BLOCK: Final = re.compile(
+    r"^<<<VIOLATION id=(\S+) .*?^파일: (.+?)\n줄: (\d+)$", re.M | re.S
+)
+
+
 def scripted_model(case: dict):
     """규칙 읽기에는 케이스의 규칙 목록을, 검사기 작성에는 프롬프트에 든 규칙의 검사기를 답한다.
-    수정 판단에는 받은 위반을 모두 fix로 답한다."""
+    수정 판단에는 케이스에 `fix`가 있으면 `model.skip`의 위반만 skip, 나머지는 fix로 답한다."""
+    skip = case["model"].get("skip") or {}
     rules = case["model"]["rules"]
     reading = {"rules": [
         {"file": "README.md", "section": r["section"], "quote": r["quote"],
@@ -102,15 +114,42 @@ def scripted_model(case: dict):
         if schema is rule_reading.ANSWER_SCHEMA:
             return _answer(reading)
         if schema is fix_decision.ANSWER_SCHEMA:
-            ids = re.findall(r"^<<<VIOLATION id=(\S+) ", prompt, re.M)
-            return _answer(
-                {"decisions": [{"id": i, "action": "fix", "why": "케이스"} for i in ids]}
-            )
+            decisions = []
+            for vid, file, line in _DECIDE_BLOCK.findall(prompt):
+                why = skip.get(f"{file}:{line}")
+                action = "skip" if why or "fix" not in case else "fix"
+                decisions.append({"id": vid, "action": action, "why": why or "케이스"})
+            return _answer({"decisions": decisions})
         (rule,) = [r for r in rules if r["quote"] in prompt]
         return _answer({"checker": rule["checker"]["body"],
                         "examples": rule["checker"]["examples"]})  # fmt: skip
 
     return ask
+
+
+def scripted_fixer(case: dict):
+    """수정 작성의 가짜 claude. 회차마다 `fix.edits`의 다음 편집(모자라면 마지막 것)을 모델 폴더에
+    적용하고 `fix.answer`를 마지막 답으로 낸다. 답의 `rule`은 `model.rules`의 순번이다."""
+    rules = case["model"]["rules"]
+    answer = dict(case["fix"]["answer"])
+    answer["changes"] = [
+        {**c, "rule": rule_id("README.md", rules[c["rule"]]["quote"])} for c in answer["changes"]
+    ]
+    calls: list[str] = []
+
+    def run(work: Path, prompt: str, **kw) -> ClaudeResult:
+        edits = case["fix"]["edits"][min(len(calls), len(case["fix"]["edits"]) - 1)]
+        calls.append(prompt)
+        for edit in edits:
+            path = work / edit["file"]
+            text = path.read_text()
+            if edit["find"] in text:
+                path.write_text(text.replace(edit["find"], edit["replace"], 1))
+        return ClaudeResult(ok=True, error=None, cost_usd=0.0, num_turns=1, permission_denials=(),
+                            text=json.dumps(answer, ensure_ascii=False))  # fmt: skip
+
+    run.calls = calls
+    return run
 
 
 def doc_rules_section(body: str) -> str:
@@ -173,8 +212,11 @@ def test_rules_case(case_path: Path, eval_repo: Path, deps_for, tmp_path: Path,
     real_model = os.environ.get(REAL_MODEL_ENV) == "1"
     if real_model and case.get("scripted_only"):
         pytest.skip("가짜 모델로만 확인하는 케이스")
+    fixer = scripted_fixer(case) if "fix" in case else None
     if not real_model:
         monkeypatch.setattr(claude_cli, "run_structured", scripted_model(case))
+        if fixer is not None:
+            monkeypatch.setattr(claude_cli, "run_claude", fixer)
     remote = _remote(tmp_path, eval_repo, case)
     deps, gh, redis = deps_for(remote)
 
@@ -192,10 +234,43 @@ def test_rules_case(case_path: Path, eval_repo: Path, deps_for, tmp_path: Path,
     for text in expect.get("absent", ()):
         assert text not in section, (text, section)
 
+    if "fix" in expect:
+        _check_fix(expect, section, gh, remote, fixer, real_model)
+
     if expect.get("second_pr_without_calls"):
         again = doc_rules_section(_check(deps, gh, redis, remote, pr=2))
         assert "모델 호출 0회" in again, again
         assert flagged(again) == found
+
+
+def _check_fix(expect: dict, section: str, gh: FakeGh, remote: dict, fixer, real_model: bool):
+    """모델 수정의 결과: ready면 수정안 PR과 푸시된 브랜치, failed·none이면 수정안 PR이 없다."""
+    branch = _git(remote["path"], "branch", "--list", BRANCH)
+    if expect["fix"] != "ready":
+        assert gh.pulls == {} and branch == "", section
+        if expect["fix"] == "none":
+            assert "**수정안:**" not in section, section
+            assert real_model or fixer.calls == []
+        else:
+            assert "**수정안:** 수정안을 만들지 못함" in section, section
+        return
+    ((number, pull),) = gh.pulls.items()
+    assert f"수정안 PR #{number}을 열었습니다." in section, section
+    assert (pull["base"], pull["head"]) == ("feature", BRANCH)
+    pushed = _git(remote["path"], "rev-parse", BRANCH)
+    assert _git(remote["path"], "rev-parse", f"{pushed}^") == remote["head"]
+    changed = _git(remote["path"], "diff", "--name-only", remote["head"], pushed).split()
+    assert changed == [expect["fix_file"]]
+    text = _git(remote["path"], "show", f"{pushed}:{expect['fix_file']}")
+    if expect.get("same_as_base") and not real_model:
+        assert text == _git(remote["path"], "show", f"{remote['base']}:{expect['fix_file']}")
+    for needle in expect.get("pushed_contains", ()):
+        assert needle in text, (needle, text)
+    for needle in expect.get("pr_contains", ()):
+        assert needle in pull["body"], (needle, pull["body"])
+    for needle in expect.get("pr_absent", ()):
+        assert needle not in pull["body"], (needle, pull["body"])
+    assert "**검증** (파이프라인이 확인한 결과)" in pull["body"]
 
 
 def test_case_files_are_well_formed() -> None:

@@ -8,7 +8,8 @@
 
 from collections import Counter
 from collections.abc import Mapping, Sequence
-from typing import Final
+from dataclasses import dataclass
+from typing import Final, Literal
 
 from app.models.checker import Checker
 from app.models.doc_rules import (
@@ -23,6 +24,8 @@ from app.models.doc_rules import (
     RuleUnchecked,
 )
 from app.models.fix_decision import Decided, FixDecision
+from app.models.model_fix import ModelFix
+from app.models.proposal import ProposalResult
 from app.models.rule import Rule
 from app.models.violation import Violation
 from app.worker.markdown import code_fence, inline_code
@@ -80,19 +83,41 @@ _SKIP_LABEL: Final[Mapping[str, str]] = {
     "call_limit": "호출 상한",
     "undecided": "수정 판단을 하지 못함",
 }
-NOT_CONNECTED: Final = (
-    "문서 규칙 위반의 수정안은 아직 만들지 않습니다. fix로 정한 위반도 지금은 알리기만 합니다."
-)
+_FIX_FAILED: Final[Mapping[str, str]] = {
+    "failed": "정해진 회차 안에 검증을 통과하지 못함",
+    "dropped": "수정안을 버림",
+    "refused": "모델을 실행하지 않음",
+}
+MAX_PATCH_CHARS: Final = 6000
+FixState = Literal["running", "approval", "merged", "open", "rejected", "done"]
+
+
+@dataclass(frozen=True)
+class FixView:
+    """모델 수정 묶음의 지금 상태 (4.9 "수정 결과"). 그래프가 만들고 코멘트는 그리기만 한다."""
+
+    targets: int  # 모델 수정 대상 위반 수
+    size_capped: int  # 크기 상한으로 수정안에 넣지 못한 위반 수 (11.2 D6)
+    state: FixState
+    number: int | None = None  # merged·open·rejected의 수정안 PR 번호
+    fix: ModelFix | None = None  # state가 done일 때
+    proposal: ProposalResult | None = None
+
+
 # 확인 대상이 코드 줄이 아닌 규칙 (4.3). 검사하지 못한 것이 아니라 검사 대상이 아니다
 _OTHER_TARGETS: Final = frozenset({"pr", "human"})
 
 
 def section(
-    result: DocRules | None, checkers: Mapping[str, Checker], decisions: Decided | None = None
+    result: DocRules | None,
+    checkers: Mapping[str, Checker],
+    decisions: Decided | None = None,
+    fix: FixView | None = None,
 ) -> list[str]:
     """ "문서 규칙" 절의 줄들. checkers는 위반을 찾은 검사기의 {CheckerRef.key: 검사기}다.
 
     decisions는 테스트 뒤의 수정 판단이다. 아직 없으면(테스트 전에 끝남) 판단 없이 그린다.
+    fix는 모델 수정 묶음의 상태다. fix로 정한 위반이 없으면 None이다.
     """
     match result:
         case None:
@@ -108,15 +133,18 @@ def section(
         case NoRulesFound():
             return ["", f"{TITLE} {NO_RULES}", "", HOW_TO_WRITE]
         case Found():
-            return _found(result, checkers, decisions)
+            return _found(result, checkers, decisions, fix)
 
 
-def _found(found: Found, checkers: Mapping[str, Checker], decisions: Decided | None) -> list[str]:
+def _found(
+    found: Found, checkers: Mapping[str, Checker], decisions: Decided | None, fix: FixView | None
+) -> list[str]:
     head = ["", f"{TITLE} {_title_line(found)}"]
     tail = ["", usage_line(found.usage), "", HOW_TO_CORRECT]
     by_id = {d.violation_id: d for d in decisions.decisions} if decisions else {}
     blocks = [
         _decision_summary(decisions),
+        _fix_lines(fix),
         _violations(found, by_id),
         _not_checkable(found.outcomes),
         _failed(found.outcomes),
@@ -192,7 +220,7 @@ def _decision_summary(decisions: Decided | None) -> list[str]:
     if skips:
         line += f" ({', '.join(f'{label} {n}건' for label, n in skips.items())})"
     line += f" · 모델 호출 {decisions.calls}회 · 저장된 판단 {decisions.cached}건 사용"
-    lines = ["", line, NOT_CONNECTED]
+    lines = ["", line]
     capped = sum(1 for d in decisions.decisions if d.reason == "call_limit")
     if capped:
         lines += [
@@ -201,6 +229,88 @@ def _decision_summary(decisions: Decided | None) -> list[str]:
             "다음 검사(새 커밋이나 `/recheck`)가 다시 정합니다.",
         ]
     return lines
+
+
+def _fix_lines(view: FixView | None) -> list[str]:
+    """모델 수정 묶음의 결과: 수정안 PR 번호, 만들지 못한 이유, 크기 상한 건수, 호출 수
+    (4.9, 9.4)."""
+    if view is None:
+        return []
+    ref = f" #{view.number}" if view.number is not None else ""
+    match view.state:
+        case "running":
+            line = f"fix로 정한 위반 {view.targets}건의 수정안을 만드는 중입니다."
+        case "approval":
+            line = (
+                "base의 `.pipeline.yaml`이 `require_approval: true`라 문서 규칙 위반의 수정안을 "
+                "만들지 않았습니다. 이 묶음을 승인하는 명령은 아직 없습니다."
+            )
+        case "merged":
+            line = (
+                f"이 커밋은 모델 수정안 PR{ref}을 머지한 결과라 같은 수정안을 다시 만들지 않습니다."
+            )
+        case "open":
+            line = f"이 커밋의 모델 수정안 PR{ref}이 열려 있습니다. 그 PR을 확인해 주세요."
+        case "rejected":
+            line = f"이 커밋의 모델 수정안 PR{ref}이 머지되지 않고 닫혀 다시 만들지 않습니다."
+        case "done":
+            return _fix_result(view)
+    lines = ["", f"**수정안:** {line}"]
+    if view.size_capped:
+        lines.append(f"수정안 크기 상한으로 처리하지 못함: {view.size_capped}건")
+    return lines
+
+
+def _fix_result(view: FixView) -> list[str]:
+    fix, proposal = view.fix, view.proposal
+    if fix is None:
+        return []
+    if fix.status == "budget":
+        line = (
+            f"모델 호출 상한에 걸려 처리하지 못함: 수정 {len(fix.targets)}건 "
+            f"({inline_code(fix.detail, MAX_DETAIL_CHARS)})."
+        )
+    elif not fix.ready:
+        line = f"수정안을 만들지 못함: {_FIX_FAILED[fix.status]}"
+        if fix.detail:
+            line += f" ({inline_code(fix.detail, MAX_DETAIL_CHARS)})"
+    else:
+        check = fix.verification
+        line = f"위반 {len(fix.targets)}건을 고쳤습니다."
+        if check is not None:
+            line += (
+                f" 검증: 테스트 {check.tests}개가 수정 전과 같은 결과로 통과, 대상 위반 "
+                f"{check.resolved}건 해소, 새 위반 없음."
+            )
+        if proposal is not None and proposal.number is not None:
+            verb = "갱신했습니다" if proposal.updated else "열었습니다"
+            line += f" 수정안 PR #{proposal.number}을 {verb}."
+        elif proposal is not None:
+            line += f" 수정안 PR을 만들지 않았습니다 ({proposal.reason})."
+    lines = ["", f"**수정안:** {line}"]
+    if view.size_capped:
+        lines.append(f"수정안 크기 상한으로 처리하지 못함: {view.size_capped}건")
+    lines.append(_fix_usage(fix))
+    shown = fix.ready and proposal is not None and proposal.number is None
+    if shown and not proposal.secret_blocked and fix.patch_path and fix.patch_path.is_file():
+        patch = fix.patch_path.read_text()
+        if len(patch) > MAX_PATCH_CHARS:
+            patch = patch[:MAX_PATCH_CHARS] + "\n… (생략)"
+        fence = code_fence(patch)
+        lines += ["", "<details><summary>수정 내용</summary>", "", f"{fence}diff", patch, fence,
+                  "", "</details>"]  # fmt: skip
+    return lines
+
+
+def _fix_usage(fix: ModelFix) -> str:
+    """수정 작성의 모델 호출 (9.4). 상한은 PR 상한이다."""
+    line = f"수정 작성: 모델 호출 {fix.calls}회, 회차 {fix.attempts}"
+    if fix.models:
+        line += f" · {', '.join(inline_code(m, 80) for m in dict.fromkeys(fix.models))}"
+    line += f" · 저장된 결과 {fix.cache_hits}건 사용"
+    if fix.calls:
+        line += f" · 토큰 입력 {fix.input_tokens}, 출력 {fix.output_tokens}"
+    return line
 
 
 def _decision(d: FixDecision | None) -> str:

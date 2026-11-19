@@ -59,3 +59,25 @@ expect:
   absent: [...]                # 없어야 할 글
   second_pr_without_calls: true  # 같은 base의 두 번째 PR은 모델 호출 0회
 ```
+
+모델 수정까지 보는 케이스(`09`–`12`, 옛 static 케이스를 옮긴 것)는 아래를 더한다. `fix`가 없는 케이스는
+수정 판단이 모든 위반을 skip으로 답해 수정까지 가지 않는다.
+
+```yaml
+model:
+  skip:                    # 수정 판단이 skip으로 답할 위반과 이유. 나머지는 fix
+    orders/services/pricing.py:21: 이유
+fix:                       # 가짜 수정 모델 (실제 모델로 돌리면 쓰지 않는다)
+  edits:                   # 회차마다 모델 폴더에 적용할 편집 (모자라면 마지막 것을 다시 쓴다)
+    - - {file: 경로, find: 바꿀 문자열, replace: 바꿀 내용}
+  answer:                  # 마지막 답(설명 JSON). rule은 model.rules의 순번
+    summary: 요약
+    changes: [{file: 경로, line: 13, rule: 0, why: 이유}]
+expect:
+  fix: ready               # ready | failed | none (none: 수정 모델을 부르지 않음)
+  fix_file: 경로           # ready일 때 수정안 브랜치에서 바뀐 유일한 파일
+  same_as_base: true       # 그 파일이 base와 같아야 함
+  pushed_contains: [...]   # 그 파일에 있어야 할 글
+  pr_contains: [...]       # 수정안 PR 본문에 있어야 할 글
+  pr_absent: [...]
+```

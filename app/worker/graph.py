@@ -10,7 +10,8 @@
 
 규칙 검사와 테스트 사이에 문서 규칙 경로가 돈다: 규칙 읽기 → 검사기 작성 → 위반 찾기 (5.1).
 규칙이 없거나 이 경로가 실패하면 그 자리에서 테스트로 넘어간다. 테스트 뒤에 그 위반마다 수정 판단
-(fix/skip과 이유, 4.6)을 정해 코멘트에 보인다. 문서 규칙 위반의 수정은 아직 잇지 않았다.
+(fix/skip과 이유, 4.6)을 정해 코멘트에 보인다. v1 스킬의 수정이 끝난 뒤 `fix`·`model`로 정한
+위반을 모델 수정 묶음으로 고치고(fix_model, 5.3 (b)) 수정안 PR로 올린다(deliver_model).
 
 스킬마다 수정은 한 번이다. 수정마다 새 worktree에서 시작한다 (앞 수정의 변경이 섞이지 않게).
 수정안을 내지 못하고 끝난 스킬은 `/fix <skill>`로 그 스킬만 다시 돌린다 (사람이 달 때만).
@@ -40,8 +41,10 @@ from app.config import CallMaxima
 from app.models import doc_rules as doc_rule_models
 from app.models import fix as fix_rules
 from app.models import fix_decision as fix_decision_models
+from app.models import model_fix as model_fix_models
 from app.models import proposal as proposal_rules
 from app.models import rejection
+from app.models.checker_authoring import Checked
 from app.models.coverage import FixGate, code_fix_gate
 from app.models.db import AICall
 from app.models.doc_rules import DocRules, Found, RuleOutcome, RulesRead
@@ -49,17 +52,30 @@ from app.models.finding import SkillResult
 from app.models.fix import FixOutcome
 from app.models.fix_decision import Decided, SafetyNet
 from app.models.job import PRJob
+from app.models.model_fix import ModelFix, Picked
 from app.models.proposal import ProposalResult
 from app.models.repo_config import call_limits
 from app.models.test_run import PytestRun
 from app.sandbox import container, docker_cli, pytest_runner, venv
-from app.worker import ai_fix, base_config, coverage, decide, doc_rules, proposal, repo, report
+from app.worker import (
+    ai_fix,
+    base_config,
+    coverage,
+    decide,
+    detect,
+    doc_rules,
+    model_fix,
+    proposal,
+    repo,
+    report,
+)
 from app.worker.ai import claude_cli, workdir
 from app.worker.ai.claude_cli import ClaudeResult
 from app.worker.base_config import BaseConfig
 from app.worker.budget import CallBudget
 from app.worker.coverage import DiffCoverage
 from app.worker.doc_rules import Runtime as DocRuntime
+from app.worker.doc_rules_report import FixView
 from app.worker.github import GitHub
 from app.worker.repo import CHANGES_DIFF
 from app.worker.skills import lint, static
@@ -83,6 +99,8 @@ LOAD_RULES: Final = "load_rules"
 AUTHOR_CHECKERS: Final = "author_checkers"
 DETECT: Final = "detect"
 DECIDE: Final = "decide"
+FIX_MODEL: Final = "fix_model"
+DELIVER_MODEL: Final = "deliver_model"
 TOOL_DIR: Final = "tools"  # 도구 캐시 (data_dir 아래, venvs와 같은 자리)
 # 체크포인트에서 되살릴 수 있는 상태 타입 (나머지는 langgraph가 막는다)
 _STATE_TYPES: Final = (
@@ -96,6 +114,7 @@ _STATE_TYPES: Final = (
     ("app.worker.coverage", "DiffCoverage"),
     *doc_rule_models.STATE_TYPES,
     *fix_decision_models.STATE_TYPES,
+    *model_fix_models.STATE_TYPES,
 )
 
 
@@ -132,6 +151,7 @@ class FlowState(TypedDict, total=False):
     rule_checks: tuple[RuleOutcome, ...]
     doc_rules: DocRules  # 문서 규칙 경로의 결과. 코멘트의 "문서 규칙" 절은 이 값으로만 그린다
     fix_decisions: Decided  # 문서 규칙 위반마다 수정 판단 (테스트 뒤, 4.6)
+    model_fix: ModelFix  # 모델 수정 묶음의 결과 (4.7, 4.8). 수정안 PR은 proposals["model"]
     test_run: PytestRun
     commented: bool
     fix_skill: str  # 지금(마지막으로) 수정하는 스킬
@@ -417,6 +437,33 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
         done = state.get("fixes", {})
         return [s for s, (p, _) in skill_proposals(state).items() if p == mode and s not in done]
 
+    def model_targets(state: FlowState) -> Picked | None:
+        """수정 판단이 fix·model로 정한 위반. 없으면 None."""
+        found, decided = state.get("doc_rules"), state.get("fix_decisions")
+        if not isinstance(found, Found) or decided is None:
+            return None
+        picked = model_fix_models.pick_targets(found.violations, decided.decisions)
+        return picked if picked.targets else None
+
+    def model_fix_view(state: FlowState) -> FixView | None:
+        picked = model_targets(state)
+        if picked is None:
+            return None
+        counts = {"targets": len(picked.targets), "size_capped": len(picked.size_capped)}
+        done = state.get("model_fix")
+        if done is not None:
+            result = state.get("proposals", {}).get(proposal.MODEL_BUNDLE)
+            return FixView(**counts, state="done", fix=done, proposal=result)
+        job = state["job"]
+        history, number = proposal.blocked_by_history(
+            ctx.store, job.repo, job.pr_number, proposal.MODEL_BUNDLE, job.head_sha
+        )
+        if history:
+            return FixView(**counts, state=history, number=number)
+        if ctx.base.repo.skills.fix.require_approval:
+            return FixView(**counts, state="approval")
+        return FixView(**counts, state="running")
+
     def render(state: FlowState) -> str:
         job = state["job"]
         return report.render_result(
@@ -435,6 +482,7 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
             doc_rules=state.get("doc_rules"),
             checkers=doc_rules.shown_checkers(state.get("doc_rules"), ctx.store),
             decisions=state.get("fix_decisions"),
+            model_fix=model_fix_view(state),
         )
 
     def comment(state: FlowState) -> FlowState:
@@ -451,6 +499,9 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
         auto = open_skills(state, "auto")
         if auto:
             return FIX_NODES[auto[0]]
+        view = model_fix_view(state)
+        if view is not None and view.state == "running":
+            return FIX_MODEL
         return AWAIT_FIX if open_skills(state, "approval") else END
 
     def await_fix(state: FlowState) -> FlowState:
@@ -613,6 +664,58 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
         path.write_text(patch)
         return path
 
+    def fix_model(state: FlowState) -> FlowState:
+        """fix·model로 정한 문서 규칙 위반을 모델로 고치고 결정적으로 검증한다 (5.1 fix_model)."""
+        job, found = state["job"], state["doc_rules"]
+        picked = model_targets(state)
+        fresh_worktree(job)
+        progress(job, "문서 규칙 수정 (모델)")
+        rt = doc_runtime(job)
+        checks = doc_rules.saved_checks(found, rt.store)
+        recheck_lint = None
+        if enabled("lint") and state.get("lint") is not None:
+
+            def recheck_lint(changed):
+                return lint_for(job, changed)
+
+        tools = model_fix.FixTools(
+            run_model=workdir.run_in_model_folder,
+            recheck=lambda changed, new: detect.detect(
+                checks, ctx.worktree, changed, new_files=new, sandbox=rt.sandbox
+            ),
+            rules_rechecked=sum(1 for c in checks if isinstance(c, Checked)),
+            run_tests=lambda: tests_for(job),
+            recheck_lint=recheck_lint,
+            is_stale=lambda: ctx.store.is_stale(job),
+            guarded=(ctx.base.ruff_config,) if ctx.base.ruff_config else (),
+            secrets=proposal.pipeline_secrets(),
+        )
+        outcome = model_fix.fix_violations(
+            found, picked, worktree=ctx.worktree, merge_base=ctx.merge_base,
+            test_before=state["test_run"], lint_before=state.get("lint"), store=rt.store,
+            budget=rt.budget, models=ctx.base.repo.model,
+            max_attempts=ctx.base.repo.skills.fix.max_retries, tools=tools,
+        )  # fmt: skip
+        if outcome is None:
+            return {"stopped": "cancelled"}
+        if outcome.ready:
+            patch = save_patch(job, repo.head_diff(ctx.worktree), proposal.MODEL_BUNDLE)
+            outcome = replace(outcome, patch_path=patch)
+        return {"model_fix": outcome}
+
+    def deliver_model(state: FlowState) -> FlowState:
+        """검증을 통과한 모델 수정안만 수정안 PR로 올린다 (5.1 deliver)."""
+        fix = state["model_fix"]
+        if not fix.ready:
+            return {}
+        job = state["job"]
+        progress(job, "수정안 PR")
+        skipped = sum(1 for d in state["fix_decisions"].decisions if d.action == "skip")
+        result = proposal.open_model_proposal(
+            job, ctx.worktree, ctx.store, ctx.github, fix, state["doc_rules"], skipped=skipped
+        )
+        return {"proposals": {**state.get("proposals", {}), proposal.MODEL_BUNDLE: result}}
+
     def propose(state: FlowState) -> FlowState:
         """검증을 통과한 수정안만 제안 PR로 올린다 (F10)."""
         skill = state["fix_skill"]
@@ -638,7 +741,7 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
             return "stop"
         return "next"
 
-    fix_targets = [AWAIT_FIX, FIX, AI_FIX, END]
+    fix_targets = [AWAIT_FIX, FIX, AI_FIX, FIX_MODEL, END]
     graph = StateGraph(FlowState)
     graph.add_node("checkout", checkout)
     graph.add_node("rules", rules)
@@ -653,6 +756,8 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
     graph.add_node(AI_FIX, ai_fix_step)
     graph.add_node(PROPOSE, propose)
     graph.add_node(FIX_COMMENT, fix_comment)
+    graph.add_node(FIX_MODEL, fix_model)
+    graph.add_node(DELIVER_MODEL, deliver_model)
     graph.add_edge(START, "checkout")
     graph.add_conditional_edges("checkout", route, {"next": "rules", "stop": END})
     graph.add_conditional_edges("rules", route, {"next": LOAD_RULES, "stop": END})
@@ -671,6 +776,8 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
     graph.add_conditional_edges(AI_FIX, route, {"next": PROPOSE, "stop": END})
     graph.add_conditional_edges(PROPOSE, route, {"next": FIX_COMMENT, "stop": END})
     graph.add_conditional_edges(FIX_COMMENT, next_fix, fix_targets)
+    graph.add_conditional_edges(FIX_MODEL, route, {"next": DELIVER_MODEL, "stop": END})
+    graph.add_conditional_edges(DELIVER_MODEL, route, {"next": FIX_COMMENT, "stop": END})
     return graph.compile(checkpointer=checkpointer)
 
 

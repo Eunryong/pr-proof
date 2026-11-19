@@ -468,3 +468,33 @@ def _run_args() -> list[str]:
     runner = FakeRunner(_output())
     _run(runner)
     return runner.calls[0][0]
+
+
+def test_file_tool_call_takes_the_pipeline_instructions_as_a_system_prompt() -> None:
+    """수정 작성의 지시는 --append-system-prompt로, 자료는 표준 입력으로만 넘긴다 (8.4)."""
+    runner = FakeRunner(_output())
+    _run(runner, prompt="규칙 원문과 위반 목록", system_prompt="너는 수정 작성 단계다")
+    args, stdin, *_ = runner.calls[0]
+    assert args[args.index("--append-system-prompt") + 1] == "너는 수정 작성 단계다"
+    assert args[args.index("--tools") + 1] == "Read,Grep,Glob,Write,Edit"
+    assert stdin == "규칙 원문과 위반 목록" and "규칙 원문" not in " ".join(args)
+    assert "--append-system-prompt" not in _run_args()
+
+
+@pytest.mark.parametrize("system_prompt", ["", "-p 옵션처럼"])
+def test_file_tool_call_rejects_a_bad_system_prompt(system_prompt: str) -> None:
+    runner = FakeRunner(_output())
+    with pytest.raises(ValueError):
+        _run(runner, system_prompt=system_prompt)
+    assert runner.calls == []
+
+
+def test_file_tool_call_reads_usage_and_model_id() -> None:
+    usage = {"input_tokens": 5, "cache_creation_input_tokens": 100,
+             "cache_read_input_tokens": 1000, "output_tokens": 70}  # fmt: skip
+    model_usage = {"claude-haiku-5-5": {"outputTokens": 70}}
+    result = _run(FakeRunner(_output(usage=usage, modelUsage=model_usage)))
+    assert (result.model_id, result.input_tokens, result.output_tokens) == (
+        "claude-haiku-5-5", 1105, 70,
+    )  # fmt: skip
+    assert _run(FakeRunner(_output())).input_tokens is None

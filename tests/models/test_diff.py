@@ -1,8 +1,17 @@
+import subprocess
+from pathlib import Path
 from typing import Final
 
 import pytest
 
-from app.models.diff import added_lines, hunk_around, new_files, touches
+from app.models.diff import (
+    ChangeBlock,
+    added_lines,
+    change_blocks,
+    hunk_around,
+    new_files,
+    touches,
+)
 
 MODIFY: Final = """\
 diff --git a/orders/pricing.py b/orders/pricing.py
@@ -217,3 +226,47 @@ def test_hunk_around_cuts_a_long_hunk_to_the_window() -> None:
 )
 def test_hunk_around_without_a_matching_hunk_is_empty(file: str, line: int) -> None:
     assert hunk_around(MODIFY, file, line, radius=3) == ""
+
+
+def _git_diff(tmp_path: Path, before: str, after: str, *extra: str) -> str:
+    """실제 git이 낸 diff (문맥 줄 기본값, 또는 extra)."""
+    (tmp_path / "a.py").write_text(before)
+    (tmp_path / "b.py").write_text(after)
+    proc = subprocess.run(
+        ["git", "diff", "--no-index", "--no-color", *extra, "a.py", "b.py"],
+        cwd=tmp_path, capture_output=True, text=True,
+    )  # fmt: skip
+    return proc.stdout.replace("a/b.py", "a/a.py").replace("b/b.py", "b/a.py")
+
+
+PR_PRICING: Final = "".join(f"L{n}\n" for n in range(1, 13))
+
+
+@pytest.mark.parametrize("context", [(), ("-U0",)], ids=["context-3", "no-context"])
+def test_change_blocks_split_at_unchanged_lines(tmp_path: Path, context: tuple[str, ...]) -> None:
+    lines = PR_PRICING.splitlines(keepends=True)
+    after = lines[:5] + lines[6:9] + lines[10:]  # L6, L10을 지움
+    after[0] = "L1 changed\n"
+    after.insert(3, "new\n")  # L3 뒤에 더함
+    diff = _git_diff(tmp_path, PR_PRICING, "".join(after), *context)
+    assert change_blocks(diff) == (
+        ChangeBlock("a.py", frozenset({1})),
+        ChangeBlock("a.py", frozenset({4})),
+        ChangeBlock("a.py", frozenset({6, 7})),  # L6을 지운 자리: 앞줄 L5(6), 뒷줄 L7(7)
+        ChangeBlock("a.py", frozenset({9, 10})),  # L10을 지운 자리
+    )
+
+
+def test_change_block_deleting_the_first_or_last_line(tmp_path: Path) -> None:
+    first = _git_diff(tmp_path, "a\nb\nc\n", "b\nc\n", "-U0")
+    assert change_blocks(first) == (ChangeBlock("a.py", frozenset({1})),)
+    last = _git_diff(tmp_path, "a\nb\nc\n", "a\nb\n")
+    assert change_blocks(last) == (ChangeBlock("a.py", frozenset({2, 3})),)
+
+
+def test_change_blocks_skip_deleted_files() -> None:
+    diff = (
+        "diff --git a/x.py b/x.py\ndeleted file mode 100644\n--- a/x.py\n+++ /dev/null\n"
+        "@@ -1 +0,0 @@\n-x = 1\n"
+    )
+    assert change_blocks(diff) == ()

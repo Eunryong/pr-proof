@@ -137,10 +137,13 @@ def test_changes_are_applied_to_the_worktree_as_a_diff(wt: Path) -> None:
     # worktree의 링크는 그대로이고, 범위 검사가 보는 status에 바뀐 파일이 보인다
     assert (wt / "notes.txt").is_symlink()
     assert " M src/app.py" in repo.status(wt) and "?? src/limits.py" in repo.status(wt)
+    # 적용한 diff가 결과에 남는다. 같은 diff를 처음 상태에 다시 적용하면 같은 결과가 된다
+    assert b"src/limits.py" in result.applied and b"LIMIT = 1" in result.applied
 
 
 def test_no_change_applies_nothing(wt: Path) -> None:
     result = workdir.run_in_model_folder(wt, "p", run=_model(lambda work: None))
+    assert result.applied == b""
     assert result.ok and repo.status(wt) == ""
 
 
