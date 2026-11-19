@@ -1,7 +1,9 @@
 """`update` 작업: PR의 한 커밋을 검사하고 코멘트에 결과를 남긴다."""
 
+import logging
 from typing import Any, Final
 
+from app.models.access import may_run
 from app.models.install import install_failure_outcome
 from app.models.job import PRJob
 from app.sandbox import docker_cli
@@ -11,6 +13,20 @@ from app.worker.deps import Deps
 from app.worker.github import GitHubError
 
 CLOSED_HEAD: Final = "closed"  # PR이 닫혔다는 Redis 최신 head 표시. 어떤 커밋 SHA와도 같지 않다
+UNTRUSTED_AUTHOR: Final = "untrusted_author"  # 신뢰되지 않은 사람이 연 PR이라 아무것도 하지 않음
+
+log = logging.getLogger(__name__)
+
+
+def untrusted(job: PRJob, refs) -> bool:
+    """PR 작성자가 신뢰되지 않으면 True (8.6의 임시 가드레일). 판단은 방금 조회한 값으로만 한다."""
+    if may_run(refs.author_association):
+        return False
+    log.warning(
+        "신뢰되지 않은 작성자의 PR이라 아무것도 하지 않음: %s#%d 작성자 %r (%r)",
+        job.repo, job.pr_number, refs.author_login, refs.author_association,
+    )  # fmt: skip
+    return True
 
 
 def _skip_reason(job: PRJob, deps: Deps, final: bool) -> str | None:
@@ -23,6 +39,9 @@ def _skip_reason(job: PRJob, deps: Deps, final: bool) -> str | None:
     웹훅은 순서대로 오지 않을 수 있다. 옛 커밋의 웹훅이 늦게 오면 Redis의 최신 head가 옛 커밋으로
     덮이고, 그대로 두면 옛 커밋의 결과가 PR에 남는다. 그래서 최신 head를 GitHub의 값으로 바로잡는다.
     확인에 실패하면 환경 오류로 재시도한다(아직 runs 기록 전이므로 마지막 시도면 작업 키만 지운다).
+
+    신뢰되지 않은 사람이 연 PR이면 체크아웃도 코멘트도 기록도 없이 끝낸다. 같은 조회에서 읽은
+    작성자 값으로 정한다.
     """
     try:
         refs = deps.github.pr_refs(job.repo, job.pr_number)
@@ -33,6 +52,8 @@ def _skip_reason(job: PRJob, deps: Deps, final: bool) -> str | None:
     if not refs.open:
         deps.store.set_latest_head(job.repo, job.pr_number, CLOSED_HEAD)
         return "closed"
+    if untrusted(job, refs):
+        return UNTRUSTED_AUTHOR
     deps.store.set_latest_head(job.repo, job.pr_number, refs.head_sha)
     return None if refs.head_sha == job.head_sha else "stale"
 
@@ -90,7 +111,8 @@ def process_update(job: PRJob, deps: Deps) -> str:
     attempt, final = retry.attempt()
     skip = _skip_reason(job, deps, final)
     if skip is not None:
-        return skip  # stale: 더 새 커밋의 작업(또는 동기화)이 처리한다. closed: 할 일이 없다
+        # stale: 더 새 커밋의 작업(또는 동기화)이 처리한다. closed, untrusted_author: 할 일이 없다
+        return skip
     run_id = store.start_run(job)
     comment_id = store.last_comment_id(job.repo, job.pr_number)
     ctx = _context(deps, run_id, comment_id)

@@ -249,6 +249,44 @@ def outside_symlinks(worktree: Path) -> list[str]:
     return out
 
 
+def list_files(worktree: Path) -> list[str]:
+    """추적 중인 파일과 무시되지 않은 새 파일 (리포 기준 경로). 모델 폴더로 복사할 후보다."""
+    out = _tree_git(
+        worktree, "-c", "core.quotePath=false", "-c", "core.excludesFile=/dev/null",
+        "-c", "core.fsmonitor=false", "ls-files", "-z", "--cached", "--others",
+        "--exclude-standard",
+    )  # fmt: skip
+    return sorted({path for path in out.split("\0") if path})
+
+
+def apply_patch(worktree: Path, patch: bytes) -> None:
+    """모델 폴더에서 뽑은 diff를 worktree의 파일에 적용한다. 인덱스는 건드리지 않는다.
+
+    git은 심볼릭 링크 너머의 경로에 쓰지 않고("beyond a symbolic link"), 하나라도 맞지 않으면
+    아무것도 적용하지 않는다.
+    """
+    try:
+        git_dir = _git_dir_record(worktree).read_text().strip()
+    except OSError as e:
+        raise GitError(f"worktree의 저장소 기록이 없음: {worktree}") from e
+    env = {k: os.environ[k] for k in _ENV_PASSTHROUGH if k in os.environ}
+    command = [
+        "git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
+        "-c", "core.autocrlf=false", f"--git-dir={git_dir}", f"--work-tree={worktree}",
+        "apply", "--binary", "--whitespace=nowarn", "-",
+    ]  # fmt: skip
+    try:
+        proc = subprocess.run(
+            command, cwd=worktree, input=patch, capture_output=True, env=env,
+            timeout=GIT_TIMEOUT, check=False,
+        )  # fmt: skip
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise GitError(f"git apply 실행 실패: {e}") from e
+    if proc.returncode != 0:
+        detail = proc.stderr.decode(errors="replace").strip()[-500:]
+        raise GitError(f"git apply 실패 ({proc.returncode}): {detail}")
+
+
 def head_diff(worktree: Path) -> str:
     """체크아웃한 커밋과 worktree 사이의 diff. 수정안 자체다."""
     return _tree_git(worktree, *_DIFF, "HEAD")
