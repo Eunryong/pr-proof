@@ -45,7 +45,7 @@ from app.sandbox.safe_read import read_regular_file
 from app.worker import repo, scope
 from app.worker.ai.claude_cli import AIEnvironmentError, ClaudeResult, environment_problem
 from app.worker.budget import CallBudget
-from app.worker.detect import Detection
+from app.worker.detect import Detection, source_lines
 from app.worker.lang.python import read_sources
 from app.worker.loop import LoopPolicy, LoopState, Verdict, WriteFailed, WriteResult, build_loop
 from app.worker.proposal import MODEL_BUNDLE
@@ -228,6 +228,10 @@ def fix_violations(
     ignored_before = scope.snapshot_ignored(worktree)
     constants = module_constants(worktree, allowed)
     start = file_hashes(worktree, allowed)
+    # 모델이 찾은 위반은 도구로 다시 확인하지 못해 그 줄이 바뀌었는지만 본다 (4.8의 5번)
+    by_model = [v for v in targets if v.found_by == "model"]
+    by_tools = [v for v in targets if v.found_by != "model"]
+    lines_before = {f: source_lines(worktree, f) for f in {v.file for v in by_model}}
     asked = [Target(v, by_rule[v.rule_id]) for v in targets]
 
     def write(state: LoopState) -> WriteResult:
@@ -322,7 +326,10 @@ def fix_violations(
         if detection.unchecked:
             what = "; ".join(f"{u.rule.id}: {u.detail}" for u in detection.unchecked)
             return Verdict("retry", f"고친 뒤 규칙 재검사를 하지 못함: {what}")
-        left, new = rules.recheck(found.violations, targets, detection.violations)
+        before = [v for v in found.violations if v.found_by != "model"]
+        left, new = rules.recheck(before, by_tools, detection.violations)
+        lines_after = {f: source_lines(worktree, f) for f in lines_before}
+        left += rules.unchanged_lines(by_model, lines_before, lines_after)
         if left or new:
             feedback = rules.violation_feedback("아직 남은 위반", left) + rules.violation_feedback(
                 "새로 생긴 위반", new
@@ -350,6 +357,7 @@ def fix_violations(
         verification = Verification(
             tests=after.passed_count, resolved=len(targets),
             rules_rechecked=tools.rules_rechecked, files=len(files), lines=lines,
+            unverified=len(by_model),
         )  # fmt: skip
         passed.append((explanation, tuple(files), verification))
         return Verdict("pass")

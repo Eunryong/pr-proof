@@ -20,6 +20,7 @@ from app.models.doc_rules import (
     NoRulesFound,
     NotRun,
     RuleChecked,
+    RuleJudged,
     RuleOutcome,
     RuleUnchecked,
     outcomes_by_rule,
@@ -184,6 +185,7 @@ def _found(
     tail = ["", usage_line(found.usage), "", HOW_TO_CORRECT]
     by_id = {d.violation_id: d for d in decisions.decisions} if decisions else {}
     blocks = [
+        _judge_lines(found),
         _decision_summary(decisions),
         *(_fix_lines(view, bundle) for bundle, view in fixes.items()),
         _violations(found, by_id),
@@ -199,7 +201,8 @@ def _found(
 
 
 def _title_line(found: Found) -> str:
-    checked = sum(1 for o in found.outcomes if isinstance(o, RuleChecked))
+    checked = sum(1 for o in found.outcomes if isinstance(o, RuleChecked)
+                  or isinstance(o, RuleJudged) and not o.left)  # fmt: skip
     pr = len(_unchecked(found.outcomes, frozenset({"pr"})))
     human = len(_unchecked(found.outcomes, frozenset({"human"})))
     unchecked = len(found.outcomes) - checked - pr - human
@@ -252,7 +255,42 @@ def _how_checked(outcome: RuleOutcome) -> str:
             return f"도구 `{ref.kind}`{codes} (모델이 도구 목록에서 고르고 예시로 확인함)"
         saved = ", 저장된 것" if ref.cached else ""
         return f"검사기 `{ref.id[:8]}` ({ref.kind}{saved})"
+    if isinstance(outcome, RuleJudged):
+        left = f", 이번에 판단하지 못한 hunk {outcome.left}개" if outcome.left else ""
+        return f"모델 판단 (예시를 통과하는 검사기를 만들지 못함{left})"
     return _UNCHECKED_TEXT[outcome.kind]
+
+
+def _judge_lines(found: Found) -> list[str]:
+    """모델 판단의 규칙 수와 호출 (9.4), 판단하지 못한 규칙 (4.9의 호출 상한 줄)."""
+    usage = found.judge
+    judged = [o for o in found.outcomes if isinstance(o, RuleJudged)]
+    if usage is None or not judged:
+        return []
+    line = (
+        f"모델 판단: 규칙 {usage.rules}개, hunk {usage.hunks}개 · 모델 호출 {usage.calls}회 · "
+        f"저장된 판단 {usage.cached}건 사용"
+    )
+    if usage.models:
+        line += f" · {', '.join(inline_code(m, 80) for m in usage.models)}"
+    if usage.dropped:
+        line += f" · 버린 답 {usage.dropped}건 (PR이 바꾼 줄을 그대로 인용하지 않음)"
+    if usage.calls:
+        line += f" · 토큰 입력 {usage.input_tokens}, 출력 {usage.output_tokens}"
+    lines = ["", line]
+    capped = [o for o in judged if o.left_kind == "cap"]
+    if capped:
+        why = inline_code(capped[0].left_detail, MAX_DETAIL_CHARS)
+        lines += ["", f"모델 호출 상한에 걸려 처리하지 못함: 위반 판단 {len(capped)}개 규칙 "
+                  f"(hunk {sum(o.left for o in capped)}개, {why}). {RERUN_HINT}"]  # fmt: skip
+    failed = [o for o in judged if o.left_kind == "model_failed"]
+    if failed:
+        lines += ["", f"모델 판단을 하지 못한 규칙 {len(failed)}개 (모델 호출 실패. 다음 검사가 "
+                  "다시 묻습니다):"]  # fmt: skip
+        for o in failed:
+            why = inline_code(o.left_detail, MAX_DETAIL_CHARS)
+            lines.append(f"- `{o.rule.id}` {_quote(o.rule)} · {why}")
+    return lines
 
 
 def _decision_summary(decisions: Decided | None) -> list[str]:

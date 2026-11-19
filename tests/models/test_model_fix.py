@@ -153,3 +153,25 @@ def test_size_cap() -> None:
     assert rules.size_problem(20, 500) is None
     assert "파일이 21개" in rules.size_problem(21, 1)
     assert "줄이 501줄" in rules.size_problem(1, 501)
+
+
+def _judged(vid: str, text: str) -> Violation:
+    return Violation(id=vid, rule_id="R", file="a.py", line=1, message="m", found_by="model",
+                     line_text=text)  # fmt: skip
+
+
+def test_judged_target_counts_as_fixed_only_when_its_line_changed() -> None:
+    """4.8의 5번: 모델이 찾은 위반은 그 줄의 내용이 바뀌었는지까지만 본다(줄 번호는 보지 않는다)."""
+    before = {"a.py": ["def total():", "  return 1"]}
+    target = _judged("v", "def total():")
+    assert rules.unchanged_lines([target], before, {"a.py": ["", "def get_total():"]}) == []
+    assert rules.unchanged_lines([target], before, {"a.py": ["x = 1", "def total():"]}) == [target]
+    assert rules.unchanged_lines([target], before, {}) == []  # 파일이 없어짐
+
+
+def test_same_text_twice_needs_as_many_lines_changed_as_targets() -> None:
+    before = {"a.py": ["def f():", "def f():", "def f():"]}
+    one, two = _judged("1", "def f():"), _judged("2", "def f():")
+    after = {"a.py": ["def run():", "def f():", "def f():"]}
+    assert rules.unchanged_lines([one, two], before, after) == [one, two]
+    assert rules.unchanged_lines([one], before, after) == []

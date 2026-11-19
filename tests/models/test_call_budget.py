@@ -26,24 +26,39 @@ def test_ruleset_cap_grows_with_rules_up_to_max(rule_count: int, expected: int) 
     assert (limits.scope_cap, limits.scope, limits.repo_daily) == ("ruleset", expected, 500)
 
 
-def test_pr_cap_is_pr_max_in_this_stage() -> None:
-    assert limits_for(DEFAULTS, PrScope()) == CallLimits("pr", 150, 500)
+@pytest.mark.parametrize(
+    ("targets", "expected"),
+    [(0, 20), (1, 24), (32, 148), (33, 150), (34, 150), (1000, 150)],
+)
+def test_pr_cap_grows_with_target_violations_up_to_max(targets: int, expected: int) -> None:
+    """9.2 (4-5): PR 상한은 pr_base + 대상 위반 수 × per_violation이고 pr_max에서 멈춘다."""
+    assert limits_for(DEFAULTS, PrScope(), targets=targets) == CallLimits("pr", expected, 500)
+    assert limits_for(DEFAULTS, RulesetScope("k", 0), targets=targets).scope == 10
+
+
+def test_low_pr_max_caps_even_without_violations() -> None:
     assert limits_for(CallSettings(pr_max=3), PrScope()).scope == 3
+    assert limits_for(CallSettings(pr_base=0, per_violation=0), PrScope(), targets=50).scope == 0
 
 
-@pytest.mark.parametrize(("grants", "expected"), [(0, 3), (1, 6), (2, 9)])
-def test_each_fix_command_grants_the_pr_cap_once_more(grants: int, expected: int) -> None:
-    """9.2: `/fix`는 PR 상한을 한 번 더 받는다. 저장소 하루 상한과 규칙 묶음 상한은 그대로다."""
-    settings = CallSettings(pr_max=3)
-    assert limits_for(settings, PrScope(), grants) == CallLimits("pr", expected, 500)
+@pytest.mark.parametrize(
+    ("grants", "targets", "expected"), [(0, 0, 0), (0, 2, 2), (1, 0, 3), (1, 2, 5), (2, 9, 9)]
+)
+def test_each_fix_command_grants_pr_max_once_more(grants: int, targets: int, expected: int) -> None:
+    """9.2: `/fix`는 PR 상한을 한 번 더(pr_max만큼) 받는다. 저장소 하루 상한과 규칙 묶음 상한은
+    그대로다."""
+    settings = CallSettings(pr_base=0, per_violation=1, pr_max=3)
+    assert limits_for(settings, PrScope(), grants, targets) == CallLimits("pr", expected, 500)
     assert limits_for(settings, RulesetScope("k", 0), grants).scope == 10
 
 
-def test_negative_rule_count_or_grants_are_rejected() -> None:
+def test_negative_rule_count_grants_or_targets_are_rejected() -> None:
     with pytest.raises(ValueError):
         limits_for(DEFAULTS, RulesetScope("k", -1))
     with pytest.raises(ValueError):
         limits_for(DEFAULTS, PrScope(), -1)
+    with pytest.raises(ValueError):
+        limits_for(DEFAULTS, PrScope(), targets=-1)
 
 
 PR: Final = CallLimits("pr", 10, 100)

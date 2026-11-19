@@ -7,11 +7,12 @@
 
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from typing import Final
+from typing import Final, Literal
 
 from app.models.checker import CheckerKind
 from app.models.checker_authoring import UncheckedKind
 from app.models.db import ModelCall
+from app.models.judge import JudgeUsage
 from app.models.rule import Rule, UnreadDoc
 from app.models.violation import Violation
 
@@ -43,7 +44,25 @@ class RuleUnchecked:
     detail: str
 
 
-RuleOutcome = RuleChecked | RuleUnchecked
+# 모델 판단을 다 하지 못한 이유: 호출 상한, 모델 호출 실패 (4.5 "실패 시")
+JudgeGap = Literal["cap", "model_failed"]
+
+
+@dataclass(frozen=True)
+class RuleJudged:
+    """검사기를 만들지 못해 모델이 바뀐 hunk를 직접 보는 규칙 (4.4의 3번, 4.5 모델의 직접 판단).
+
+    left는 이번 검사에서 판단하지 못한 (이 규칙, hunk) 쌍의 수다. 0이면 다 봤다.
+    """
+
+    rule: Rule
+    reason: str  # 검사기를 만들지 못한 이유 (검사기 작성의 마지막 실패)
+    left: int = 0
+    left_kind: JudgeGap | None = None
+    left_detail: str = ""
+
+
+RuleOutcome = RuleChecked | RuleUnchecked | RuleJudged
 
 
 @dataclass(frozen=True)
@@ -93,6 +112,7 @@ class Found:
     disabled: int
     usage: CallUsage
     note: str = ""  # RulesRead.note
+    judge: JudgeUsage | None = None  # 모델 판단을 한 검사만
 
 
 DocRules = NotRun | NoRuleDocs | NoRulesFound | Found
@@ -102,6 +122,8 @@ STATE_TYPES: Final = (
     ("app.models.doc_rules", "CheckerRef"),
     ("app.models.doc_rules", "RuleChecked"),
     ("app.models.doc_rules", "RuleUnchecked"),
+    ("app.models.doc_rules", "RuleJudged"),
+    ("app.models.judge", "JudgeUsage"),
     ("app.models.doc_rules", "RulesRead"),
     ("app.models.doc_rules", "CallUsage"),
     ("app.models.doc_rules", "NotRun"),
