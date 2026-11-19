@@ -84,8 +84,8 @@ def test_static_violations_are_shown_and_offered(static_env) -> None:
     assert body.count("STATIC-REPEAT") == 1 and body.count("Magic value `3`") == 1
     assert "AI가 테스트가 지나가는 static 위반 1건을 고치고" in body
     assert "정적변수 (기본 규칙)" in body
-    assert update.has_pending_fix(_target(), static_env["deps"], "static")
-    assert update.has_pending_fix(_target(), static_env["deps"], "lint")
+    assert update.pending_fix(_target(), static_env["deps"], "static")
+    assert update.pending_fix(_target(), static_env["deps"], "lint")
     assert static_env["static"]["calls"] == []  # 승인 전에는 AI를 부르지 않는다
 
 
@@ -125,7 +125,7 @@ def test_uncovered_only_is_not_offered(static_env) -> None:
     assert "`/fix static`" not in body
     assert "자동 수정 대상이 아닌 위반 1건: 테스트가 지나가지 않음 1건" in body
     assert "`/fix static`이 고칠 위반" not in body  # 고칠 위반이 없으면 목록도 없다
-    assert not update.has_pending_fix(_target(), static_env["deps"], "static")
+    assert not update.pending_fix(_target(), static_env["deps"], "static")
     assert main.handle(_fix_command(77, "/fix static"), static_env["deps"]) == "no_pending_fix"
     assert "승인을 기다리거나 다시 돌릴 static 수정이 없습니다" in _replies(static_env["gh"])[-1]
 
@@ -178,7 +178,7 @@ def test_ai_environment_error_is_retried_from_the_fix(static_env) -> None:
 
 
 def test_auto_mode_fixes_both_skills_in_fresh_worktrees(static_env) -> None:
-    repo_config = RepoConfig(skills=SkillsSettings(fix=FixSettings(require_approval=False)))
+    repo_config = RepoConfig(fix=FixSettings(require_approval=False))
     base = dataclasses.replace(BASE, repo=repo_config)
     mp = static_env["monkeypatch"]
     mp.setattr(base_config, "load", lambda *a, **k: base)
@@ -241,7 +241,7 @@ def test_default_config_fixes_both_without_approval(static_env) -> None:
     body = bodies(static_env["gh"])[-1]
     assert "**lint 수정안:**" in body and "**static 수정안:**" in body
     assert "자동 수정 가능" not in body
-    assert not update.has_pending_fix(_target(), static_env["deps"], "static")
+    assert not update.pending_fix(_target(), static_env["deps"], "static")
 
 
 def test_failed_ai_fix_is_rerun_by_fix_command(static_env) -> None:
@@ -268,10 +268,8 @@ def test_failed_ai_fix_is_rerun_by_fix_command(static_env) -> None:
         and "`/fix static`를 코멘트로 달면 AI 수정을 다시 돌립니다." in body
     )
     assert len(gh.pulls) == 1  # lint만 제안 PR
-    assert update.has_pending_fix(_target(), deps, "static")
-    assert not update.has_pending_fix(
-        _target(), deps, "lint"
-    )  # 수정안을 낸 스킬은 다시 돌리지 않는다
+    assert update.pending_fix(_target(), deps, "static")
+    assert not update.pending_fix(_target(), deps, "lint")  # 수정안을 낸 스킬은 다시 돌리지 않는다
 
     assert main.handle(_fix_command(77, "/fix static"), deps) == "fix:ready"
     assert len(static_env["static"]["calls"]) == 2 and len(gh.pulls) == 2

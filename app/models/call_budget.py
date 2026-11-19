@@ -5,6 +5,7 @@
 저장된 결과를 쓴 것은 0으로 센다.
 
 이 단계의 PR 상한은 `pr_max`다. 대상 위반 수에 비례하는 부분은 4단계에 넣는다 (9.2 "넣는 순서").
+`/fix`로 다시 돌릴 때마다 PR 상한을 한 번 더 받는다 (9.2 "걸렸을 때"). 저장소 하루 상한은 그대로다.
 """
 
 from collections.abc import Mapping
@@ -84,13 +85,16 @@ class Denied:
         return f"호출 상한: {label} ({self.used}/{self.limit}회 사용, 이 호출 {self.cost}회)"
 
 
-def limits_for(settings: CallSettings, scope: Scope) -> CallLimits:
+def limits_for(settings: CallSettings, scope: Scope, pr_grants: int = 0) -> CallLimits:
+    """pr_grants는 그 PR에 `/fix`가 PR 상한을 더 준 횟수다. 규칙 묶음 상한에는 쓰지 않는다."""
     if isinstance(scope, RulesetScope):
         if scope.rule_count < 0:
             raise ValueError(f"규칙 수가 음수다: {scope.rule_count}")
         cap = settings.ruleset_base + scope.rule_count * settings.per_rule
         return CallLimits("ruleset", min(cap, settings.ruleset_max), settings.repo_daily)
-    return CallLimits("pr", settings.pr_max, settings.repo_daily)
+    if pr_grants < 0:
+        raise ValueError(f"상한을 더 준 횟수가 음수다: {pr_grants}")
+    return CallLimits("pr", settings.pr_max * (1 + pr_grants), settings.repo_daily)
 
 
 def decide(limits: CallLimits, spent: Spent, tier: Tier) -> Allowed | Denied:

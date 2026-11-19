@@ -1,48 +1,41 @@
-"""`command` 작업: PR 코멘트 명령 처리 (docs/DESIGN.md F11).
+"""`command` 작업: PR 코멘트 명령 처리 (docs/DESIGN.md 4.9 명령).
 
 - `/recheck`: PR의 지금 head로 다시 검사한다
-- `/fix lint`, `/fix static`: 승인을 기다리며 멈춰 있는 수정 단계를 재개한다 (structure는 4단계)
-- 확장 명령(`/mutate`, `/generate-tests`): base 브랜치 설정에서 꺼져 있으면 꺼져 있다고 답한다
+- `/fix <묶음>`: 승인을 기다리는 수정을 승인하고, 이 커밋에서 수정안을 내지 못하고 끝난 수정(검증
+  실패, 호출 상한)을 다시 돌린다. 묶음은 `mechanical`·`model`이고, 인자가 없으면 할 일이 남은 묶음
+  전부다. v1 경로의 `/fix lint`(`mechanical`과 같다)와 `/fix static`도 그 경로를 지울 때까지 받는다
 - 모르는 명령은 답하지 않는다 (`/cc` 같은 다른 관례일 수 있다)
 
 처리한 코멘트 ID는 runs와 따로 저장해 같은 코멘트에 두 번 답하지 않는다.
 """
 
 import logging
-from typing import Final
 
-from app.models.command import parse_command
+from app.models.command import FIX_TARGETS, parse_command
 from app.models.job import PRJob
-from app.models.repo_config import parse_repo_config
-from app.worker import proposal, repo, retry, update
-from app.worker.base_config import PIPELINE_YAML
+from app.worker import graph, proposal, retry, update
 from app.worker.deps import Deps
-
-FIXABLE_SKILLS: Final = ("lint", "static")
 
 log = logging.getLogger(__name__)
 
 
-def extension_off_message(word: str, name: str) -> str:
-    return f"> {word}\n\n`{word}`는 이 리포에서 꺼져 있습니다 (`extensions.{name}.enabled`)."
-
-
-def extension_unsupported_message(word: str) -> str:
-    return f"> {word}\n\n`{word}`는 아직 이 파이프라인에서 지원하지 않습니다."
-
-
-def fix_unsupported_message(word: str, skill: str) -> str:
-    target = f"{word} {skill}".strip()
+def fix_unsupported_message(word: str, arg: str) -> str:
+    target = f"{word} {arg}".strip()
     return (
-        f"> {target}\n\n`{target}`는 아직 지원하지 않습니다. "
-        "지금은 `/fix lint`, `/fix static`만 쓸 수 있습니다."
+        f"> {target}\n\n`{target}`는 지원하지 않습니다. "
+        "`/fix`, `/fix mechanical`, `/fix model`을 쓸 수 있습니다 "
+        "(v1 경로의 `/fix lint`, `/fix static`도 아직 받습니다)."
     )
 
 
 def no_pending_fix_message(
-    head_sha: str, history: str = "", number: int | None = None, skill: str = "lint"
-) -> str:
-    """재개할 수정이 없을 때의 답글. 이 커밋의 제안 PR 기록이 있으면 그 번호를 알려준다."""
+    head_sha: str, history: str = "", number: int | None = None, skill: str = "lint",
+    typed: str = "",
+) -> str:  # fmt: skip
+    """재개할 수정이 없을 때의 답글. 이 커밋의 제안 PR 기록이 있으면 그 번호를 알려준다.
+
+    typed는 코멘트에 쓴 인자다(`mechanical`은 lint의 기록을 본다). 비면 skill로 쓴다.
+    """
     commit = f"이 커밋(`{head_sha[:7]}`)"
     if history == "rejected" and number is not None:
         reason = (
@@ -57,12 +50,13 @@ def no_pending_fix_message(
             "같은 제안을 다시 만들지 않습니다."
         )
     else:
+        what = f"{skill} 수정" if skill else "수정"
         reason = (
-            f"{commit}에는 승인을 기다리거나 다시 돌릴 {skill} 수정이 없습니다. "
+            f"{commit}에는 승인을 기다리거나 다시 돌릴 {what}이 없습니다. "
             "자동으로 고칠 수 있는 위반이 없거나, 테스트가 통과하지 않았거나, "
             "이미 수정안을 만들었을 수 있습니다."
         )
-    return f"> /fix {skill}\n\n{reason}"
+    return f"> {f'/fix {typed or skill}'.strip()}\n\n{reason}"
 
 
 def process_command(job: PRJob, deps: Deps) -> str:
@@ -83,10 +77,8 @@ def process_command(job: PRJob, deps: Deps) -> str:
             result = update.UNTRUSTED_AUTHOR
         elif parsed.name == "recheck":
             result = f"recheck:{update.process_update(_target(job, refs), deps)}"
-        elif parsed.name == "fix":
-            result = _fix(job, deps, parsed.word, parsed.arg, _target(job, refs))
         else:
-            result = _extension(job, deps, parsed.word, parsed.arg, refs.base_sha)
+            result = _fix(job, deps, parsed.word, parsed.arg, _target(job, refs))
     except Exception:  # 환경 오류든 버그든 재시도는 RQ가 한다
         if final:
             # 마지막 시도면 실패로 적고 키를 지운다. 적지 않으면 동기화가 주기마다 다시 넣는다.
@@ -110,31 +102,35 @@ def _target(job: PRJob, refs) -> PRJob:
     )
 
 
-def _fix(job: PRJob, deps: Deps, word: str, skill: str, target: PRJob) -> str:
-    if skill not in FIXABLE_SKILLS:
-        deps.github.reply(job.repo, job.pr_number, fix_unsupported_message(word, skill))
+def _fix(job: PRJob, deps: Deps, word: str, arg: str, target: PRJob) -> str:
+    """arg의 묶음마다 재개할 수정이 있으면 차례로 이어 간다. 하나도 없으면 그 이유를 답한다.
+
+    모델 묶음을 다시 돌릴 때는 PR 호출 상한을 한 번 더 준다 (9.2). 같은 코멘트를 다시 처리해도
+    (재시도) 한 번이고, 이미 처리한 묶음은 재개할 것이 없어 건너뛴다.
+    """
+    skills = FIX_TARGETS.get(arg)
+    if skills is None:
+        deps.github.reply(job.repo, job.pr_number, fix_unsupported_message(word, arg))
         return "fix_unsupported"
-    if not update.has_pending_fix(target, deps, skill):
-        # 제안 PR을 닫거나 머지한 뒤 바로 /fix를 달 수 있으니 기록을 GitHub과 맞춘 뒤 본다
-        proposal.refresh(deps.store, deps.github, job.repo, job.pr_number)
+    results = []
+    for skill in skills:
+        pending = update.pending_fix(target, deps, skill)
+        if pending is None:
+            continue
+        if skill == graph.MODEL and pending == "rerun":
+            deps.store.add_call_grant(job.repo, job.pr_number, target.head_sha, job.comment_id)
+        approval = {"skill": skill, "comment_id": job.comment_id}
+        results.append(update.resume_fix(target, deps, approval))
+    if results:
+        return ";".join(results)
+    # 제안 PR을 닫거나 머지한 뒤 바로 /fix를 달 수 있으니 기록을 GitHub과 맞춘 뒤 본다
+    proposal.refresh(deps.store, deps.github, job.repo, job.pr_number)
+    history, number = "", None
+    if len(skills) == 1:
         history, number = proposal.blocked_by_history(
-            deps.store, job.repo, job.pr_number, skill, target.head_sha
+            deps.store, job.repo, job.pr_number, skills[0], target.head_sha
         )
-        body = no_pending_fix_message(target.head_sha, history, number, skill)
-        deps.github.reply(job.repo, job.pr_number, body)
-        return "no_pending_fix"
-    approval = {"skill": skill, "comment_id": job.comment_id}
-    return update.resume_fix(target, deps, approval)
-
-
-def _extension(job: PRJob, deps: Deps, word: str, name: str, base_sha: str) -> str:
-    files = repo.read_base_files_from_cache(
-        deps.settings.data_dir, job.repo, base_sha, (PIPELINE_YAML,)
-    )
-    config, _ = parse_repo_config(files.get(PIPELINE_YAML))  # 읽지 못하면 기본값(꺼짐)
-    if config.extension_enabled(name):
-        body, result = extension_unsupported_message(word), "extension_unsupported"
-    else:
-        body, result = extension_off_message(word, name), "extension_off"
+    skill = skills[0] if len(skills) == 1 else ""
+    body = no_pending_fix_message(target.head_sha, history, number, skill, typed=arg)
     deps.github.reply(job.repo, job.pr_number, body)
-    return result
+    return "no_pending_fix"

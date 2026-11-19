@@ -13,6 +13,7 @@ from pydantic import (
     Field,
     StringConstraints,
     ValidationError,
+    model_validator,
 )
 
 from app.models.finding import Skill
@@ -20,7 +21,8 @@ from app.models.finding import Skill
 # docker가 받는 최소 메모리보다 넉넉히 크게. 너무 작으면 컨테이너가 뜨지 않아 환경 오류로 보인다
 MIN_MEMORY_GB: Final = 0.5
 DEFAULT_MAX_RETRIES: Final = 3
-MAX_RETRIES_CAP: Final = 5  # 회차마다 테스트를 다시 돌리므로 리포 설정으로 무한히 늘리지 못하게
+# 회차마다 테스트를 다시 돌리므로 리포 설정으로 무한히 늘리지 못하게. 넘는 값은 이 값으로 줄인다
+MAX_RETRIES_CAP: Final = 5
 # claude --model에 넘기는 이름. `-`로 시작하면 옵션으로 읽히므로 막는다
 MODEL_NAME_PATTERN: Final = r"^[A-Za-z0-9][A-Za-z0-9._\[\]-]*$"
 DEFAULT_RULE_DOCS: Final = ("README.md", "CONTRIBUTING.md")
@@ -60,12 +62,14 @@ class SandboxSettings(BaseModel):
 
 
 class FixSettings(BaseModel):
+    """수정 설정 (DESIGN.md 10절 `fix`). 파이프라인 쪽 최댓값은 `fix_limits`가 적용한다."""
+
     model_config = ConfigDict(extra="ignore")
     require_approval: bool = False  # 검사 뒤 바로 수정안을 만든다. true면 /fix 승인 후 만든다
-    # static·structure는 테스트가 지나가는 위반 줄만 자동 수정한다 (DESIGN.md F8)
+    # 모델 수정은 테스트가 지나가는 위반 줄만 한다 (4.6)
     require_covered: bool = True
-    # AI 수정의 작성 → 검증 회차 상한 (DESIGN.md F7)
-    max_retries: int = Field(default=DEFAULT_MAX_RETRIES, ge=1, le=MAX_RETRIES_CAP)
+    # 모델 수정의 작성 → 검증 회차 상한 (4.7)
+    max_retries: int = Field(default=DEFAULT_MAX_RETRIES, ge=1)
 
 
 class StaticSettings(BaseModel):
@@ -109,21 +113,7 @@ class SkillsSettings(BaseModel):
     model_config = ConfigDict(extra="ignore")
     # 켤 규칙 스킬. lint를 빼면 "테스트만" 돈다. static·structure는 3·4단계에서 붙는다
     enabled: list[Skill] = Field(default_factory=lambda: ["lint", "static", "structure"])
-    fix: FixSettings = FixSettings()
     static: StaticSettings = StaticSettings()
-
-
-class ExtensionSettings(BaseModel):
-    """선택 확장 하나 (7단계). 지금은 꺼져 있다는 안내에만 쓴다 (DESIGN.md F11)."""
-
-    model_config = ConfigDict(extra="ignore")
-    enabled: bool = False
-
-
-class Extensions(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-    mutation: ExtensionSettings = ExtensionSettings()
-    ai_tests: ExtensionSettings = ExtensionSettings()
 
 
 class RepoConfig(BaseModel):
@@ -132,11 +122,17 @@ class RepoConfig(BaseModel):
     sandbox: SandboxSettings = SandboxSettings()
     skills: SkillsSettings = SkillsSettings()
     model: ModelSettings = ModelSettings()
-    extensions: Extensions = Extensions()
+    fix: FixSettings = FixSettings()
 
-    def extension_enabled(self, name: str) -> bool:
-        settings = getattr(self.extensions, name, None)
-        return bool(settings and settings.enabled)
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_fix_key(cls, data: object) -> object:
+        """구현 2단계 동안 옛 키 `skills.fix`도 읽는다 (10절). 새 키 `fix`가 있으면 그것만 쓴다."""
+        if isinstance(data, dict) and "fix" not in data:
+            skills = data.get("skills")
+            if isinstance(skills, dict) and "fix" in skills:
+                return {**data, "fix": skills["fix"]}
+        return data
 
 
 def parse_repo_config(text: str | None) -> tuple[RepoConfig, str | None]:
@@ -160,6 +156,29 @@ def parse_repo_config(text: str | None) -> tuple[RepoConfig, str | None]:
         errors = e.errors()
         where = ".".join(str(p) for p in errors[0]["loc"])
         return RepoConfig(), f"`{where}` 값 오류 ({errors[0]['msg']})"
+
+
+def settings_notes(text: str | None) -> list[str]:
+    """코멘트의 "설정:"에 알릴 옛 키 (10절 "v1 스키마에서 바뀐 키"). 읽지 못하는 파일은 빈 목록이다.
+
+    읽지 못한 이유는 `parse_repo_config`가 따로 알린다.
+    """
+    try:
+        data = yaml.safe_load(text) if text else None
+    except yaml.YAMLError:
+        return []
+    skills = data.get("skills") if isinstance(data, dict) else None
+    if isinstance(skills, dict) and "fix" in skills:
+        return [
+            "`skills.fix`는 `fix`로 바뀌었습니다. "
+            "2단계 동안은 `fix`가 없으면 `skills.fix`를 읽습니다"
+        ]
+    return []
+
+
+def fix_limits(requested: FixSettings, *, max_retries: int = MAX_RETRIES_CAP) -> FixSettings:
+    """리포가 요청한 수정 설정. 파이프라인 쪽 최댓값을 넘는 값은 그 값으로 줄인다 (9.2, T23)."""
+    return requested.model_copy(update={"max_retries": min(requested.max_retries, max_retries)})
 
 
 def memory_limit(requested_gb: float, max_gb: float) -> float:

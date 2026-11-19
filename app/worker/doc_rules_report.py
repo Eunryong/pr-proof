@@ -89,6 +89,8 @@ _FIX_FAILED: Final[Mapping[str, str]] = {
     "refused": "모델을 실행하지 않음",
 }
 MAX_PATCH_CHARS: Final = 6000
+# `/fix`는 PR 호출 상한을 한 번 더 받아 남은 수정 판단과 수정을 이어 한다 (4.9, 9.2)
+RERUN_HINT: Final = "`/fix`로 다시 돌릴 수 있습니다."
 FixState = Literal["running", "approval", "merged", "open", "rejected", "done"]
 
 
@@ -221,14 +223,12 @@ def _decision_summary(decisions: Decided | None) -> list[str]:
     if skips:
         line += f" ({', '.join(f'{label} {n}건' for label, n in skips.items())})"
     line += f" · 모델 호출 {decisions.calls}회 · 저장된 판단 {decisions.cached}건 사용"
+    if decisions.calls:
+        line += f" · 토큰 입력 {decisions.input_tokens}, 출력 {decisions.output_tokens}"
     lines = ["", line]
     capped = sum(1 for d in decisions.decisions if d.reason == "call_limit")
     if capped:
-        lines += [
-            "",
-            f"모델 호출 상한에 걸려 처리하지 못함: 수정 판단 {capped}건. "
-            "다음 검사(새 커밋이나 `/recheck`)가 다시 정합니다.",
-        ]
+        lines += ["", f"모델 호출 상한에 걸려 처리하지 못함: 수정 판단 {capped}건. {RERUN_HINT}"]
     return lines
 
 
@@ -244,7 +244,7 @@ def _fix_lines(view: FixView | None) -> list[str]:
         case "approval":
             line = (
                 "base의 `.pipeline.yaml`이 `require_approval: true`라 문서 규칙 위반의 수정안을 "
-                "만들지 않았습니다. 이 묶음을 승인하는 명령은 아직 없습니다."
+                "아직 만들지 않았습니다. `/fix model`을 달면 만듭니다."
             )
         case "merged":
             line = (
@@ -269,7 +269,7 @@ def _fix_result(view: FixView) -> list[str]:
     if fix.status == "budget":
         line = (
             f"모델 호출 상한에 걸려 처리하지 못함: 수정 {len(fix.targets)}건 "
-            f"({inline_code(fix.detail, MAX_DETAIL_CHARS)})."
+            f"({inline_code(fix.detail, MAX_DETAIL_CHARS)}). {RERUN_HINT}"
         )
     elif not fix.ready:
         line = f"수정안을 만들지 못함: {_FIX_FAILED[fix.status]}"

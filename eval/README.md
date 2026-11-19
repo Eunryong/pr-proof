@@ -74,10 +74,15 @@ fix:                       # 가짜 수정 모델 (실제 모델로 돌리면 �
     summary: 요약
     changes: [{file: 경로, line: 13, rule: 0, why: 이유}]
 expect:
-  fix: ready               # ready | failed | none (none: 수정 모델을 부르지 않음)
+  fix: ready               # ready | failed | budget | none (budget: 호출 상한, none: 부르지 않음)
   fix_file: 경로           # ready일 때 수정안 브랜치에서 바뀐 유일한 파일
   same_as_base: true       # 그 파일이 base와 같아야 함
   pushed_contains: [...]   # 그 파일에 있어야 할 글
   pr_contains: [...]       # 수정안 PR 본문에 있어야 할 글
   pr_absent: [...]
+  fix_command:             # (선택) 결과 코멘트 뒤에 명령을 달고 다시 본다 (14: 2-11)
+    command: /fix
+    fix: ready             # 그 뒤의 수정 결과. fix_file 등 위와 같은 키를 쓴다
+    contains: [...]        # 그 뒤 문서 규칙 절에 있어야 할 글
+    absent: [...]
 ```

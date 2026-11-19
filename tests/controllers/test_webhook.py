@@ -94,9 +94,13 @@ def test_command_comment(comment_created: dict) -> None:
         (lambda p: p["comment"].update(body="좋아요"), "명령이 아닌"),
         (lambda p: p["comment"].update(author_association="CONTRIBUTOR"), "권한 없음"),
         (lambda p: p["comment"].update(author_association="NONE"), "권한 없음"),
+        (lambda p: p["comment"].update(body="/fix model", author_association="CONTRIBUTOR"),
+         "권한 없음"),
+        (lambda p: p["comment"].update(body="/fix", author_association="FIRST_TIMER"), "권한 없음"),
     ],
-    ids=["edited", "issue", "own-comment", "not-command", "contributor", "none"],
-)
+    ids=["edited", "issue", "own-comment", "not-command", "contributor", "none",
+         "fix-model-contributor", "fix-first-timer"],
+)  # fmt: skip
 def test_ignored_comment_cases(comment_created: dict, change, reason: str) -> None:
     change(comment_created)
     assert reason in _ignored("issue_comment", comment_created)

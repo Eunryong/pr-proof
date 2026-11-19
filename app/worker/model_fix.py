@@ -182,10 +182,12 @@ def fix_violations(
     models: ModelSettings,
     max_attempts: int,
     tools: FixTools,
+    generation: int = rules.GENERATION,
 ) -> ModelFix | None:
     """picked.targets를 모델로 고치고 검증한다. 새 커밋이 와서 중단되면 None.
 
     found는 수정 전 위반 전체, picked는 `model_fix.pick_targets`의 결과다(대상이 하나 이상).
+    generation은 시도 세대다. `/fix`가 다시 돌릴 때마다 올라 저장된 수정 작성을 쓰지 않는다 (4.9).
     """
     by_rule = {o.rule.id: o.rule for o in found.outcomes}
     targets = picked.targets
@@ -220,7 +222,9 @@ def fix_violations(
         attempt, tier = state["attempt"], state["tier"]
         model = models.heavy if tier == "heavy" else models.light
         feedback = state.get("feedback", [])
-        key = rules.write_key(targets, start, _file_hashes(worktree, allowed), feedback, model)
+        key = rules.write_key(
+            targets, start, _file_hashes(worktree, allowed), feedback, model, generation
+        )
         entry = store.cached_result(key)
         if entry is not None:
             written = rules.written_from_json(entry.result_json)

@@ -24,7 +24,7 @@ from app.models.job import PRJob
 from app.models.model_fix import Explanation, ModelFix
 from app.models.proposal import ProposalResult
 from app.worker import records, repo
-from app.worker.github import GitHub
+from app.worker.github import GitHub, GitHubError, ReviewComment
 from app.worker.markdown import inline_code
 from app.worker.report import code_fence, format_test_line
 from app.worker.state import Store
@@ -32,6 +32,11 @@ from app.worker.state import Store
 # 모델 수정 묶음 (DESIGN.md 4.9, 3.1의 C7). 브랜치는 pipeline/pr-<n>-fix-model
 MODEL_BUNDLE: Final = "model"
 MAX_LISTED_TARGETS: Final = 30
+MAX_REVIEW_RULE_CHARS: Final = 300
+REVIEW_BODY: Final = (
+    "모델이 바꾼 줄마다 규칙과 이유를 남겼습니다. 이유는 모델이 쓴 글이니 diff와 같이 확인해 "
+    "주세요."
+)
 FORK_NO_PR: Final = "포크에서 온 PR이라 수정안 PR을 열 수 없음 (수정 내용은 결과 코멘트에)"
 
 log = logging.getLogger(__name__)
@@ -236,6 +241,50 @@ def model_fix_body(job: PRJob, fix: ModelFix, found: Found, skipped: int) -> str
     return "\n".join(lines) + "\n"
 
 
+def review_comments(fix: ModelFix, found: Found) -> list[ReviewComment]:
+    """설명 JSON의 changes마다 그 줄에 다는 "규칙, 이유" (4.9). 모델의 글은 코드 스팬 안에만 둔다.
+
+    (file, line)은 검증(4.8의 4번)이 이 수정의 바뀐 줄을 가리키는지 확인한 값이다.
+    """
+    if fix.explanation is None:
+        return []
+    texts = {o.rule.id: o.rule.text for o in found.outcomes}
+    return [
+        ReviewComment(
+            c.file, c.line,
+            f"규칙 {inline_code(c.rule, 100)} "
+            f"{inline_code(texts.get(c.rule, ''), MAX_REVIEW_RULE_CHARS)}\n\n"
+            f"이유 (모델의 설명): {inline_code(c.why or '이유 없음', 300)}",
+        )
+        for c in fix.explanation.changes
+    ]  # fmt: skip
+
+
+def post_review(
+    github: GitHub, repo_name: str, number: int, comments: Sequence[ReviewComment], patch: str,
+    secrets: Sequence[str],
+) -> None:  # fmt: skip
+    """줄 리뷰 코멘트를 리뷰 하나로 단다. 같은 패치의 리뷰가 이미 있으면 달지 않는다 (5.6).
+
+    전달을 다시 시도해도 두 번 달리지 않는다. GitHub이 줄을 받지 않으면(422) 수정안 PR은 그대로 두고
+    리뷰만 빠진다.
+    """
+    if not comments:
+        return
+    marker = rules.review_marker(patch)
+    if github.has_review(repo_name, number, marker):
+        return
+    if rules.find_secret_in_text("\n".join(c.body for c in comments), secrets) is not None:
+        log.warning("줄 리뷰 코멘트를 달지 않음 %s#%s: 비밀값", repo_name, number)
+        return
+    try:
+        github.create_review(repo_name, number, f"{marker}\n{REVIEW_BODY}", comments)
+    except GitHubError as e:
+        if "422" not in str(e):
+            raise
+        log.warning("줄 리뷰 코멘트를 GitHub이 받지 않음 %s#%s: %s", repo_name, number, e)
+
+
 def open_model_proposal(
     job: PRJob,
     worktree: Path,
@@ -289,6 +338,7 @@ def open_model_proposal(
         job.repo, job.pr_number, MODEL_BUNDLE, job.head_sha, branch, number,
         attempt_id=fix.attempt_id,
     )  # fmt: skip
+    post_review(github, job.repo, number, review_comments(fix, found), patch, secrets)
     return ProposalResult(
         number=number,
         url=f"https://github.com/{job.repo}/pull/{number}",

@@ -29,7 +29,7 @@ MAX_CHANGES: Final = 200  # 설명의 changes 수. 넘으면 형식이 틀린 �
 MAX_FEEDBACK_ITEMS: Final = 20
 MAX_PROBLEMS: Final = 20
 MAX_DIFF_IN_PROMPT: Final = 20_000  # 재시도 프롬프트에 넣는 지금까지의 diff (글자 수)
-# /fix로 다시 돌릴 때 올린다 (4.9 명령). 그 명령이 들어오기 전까지는 0이다
+# 시도 세대의 처음 값. `/fix`가 PR 상한을 더 줄 때마다 하나씩 오른다 (4.9 명령, `call_grants`)
 GENERATION: Final = 0
 
 

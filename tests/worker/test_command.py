@@ -6,7 +6,7 @@ import pytest
 
 from app.models.command import parse_command
 from app.models.job import PRJob
-from app.worker import command, repo, retry
+from app.worker import command, retry
 from app.worker.github import GitHubError
 
 from .helpers import PASSED, bodies, use_runner
@@ -24,19 +24,16 @@ def _replies(gh) -> list[str]:
     return [json.loads(stdin)["body"] for _, stdin in gh.calls if is_reply(stdin)]
 
 
-def _base_yaml(env, text: str | None) -> None:
-    files = {} if text is None else {".pipeline.yaml": text}
-    env["monkeypatch"].setattr(repo, "read_base_files_from_cache", lambda *a, **k: files)
-
-
 @pytest.mark.parametrize(
     ("text", "name", "arg"),
     [
         ("/recheck", "recheck", ""),
         ("/ReCheck", "recheck", ""),
         ("/fix lint", "fix", "lint"),
-        ("/mutate", "extension", "mutation"),
-        ("/generate-tests", "extension", "ai_tests"),
+        ("/fix Model", "fix", "model"),
+        ("/fix", "fix", ""),
+        ("/mutate", "unknown", ""),
+        ("/generate-tests", "unknown", ""),
         ("/cc @someone", "unknown", ""),
     ],
 )
@@ -72,36 +69,14 @@ def test_recheck_on_closed_pr_does_nothing(env) -> None:
     assert main.handle(_command("/recheck"), env["deps"]) == "closed"
 
 
-@pytest.mark.parametrize(
-    "yaml_text",
-    [None, "extensions:\n  mutation:\n    enabled: false\n", "extensions: ["],
-    ids=["no-config", "disabled", "broken-config"],
-)
-def test_disabled_extension_says_off(env, yaml_text) -> None:
+@pytest.mark.parametrize("text", ["/cc @someone", "/mutate", "/generate-tests"])
+def test_unknown_command_gets_no_reply(env, text: str) -> None:
+    """확장 명령(v1 F13)은 범위에서 뺐다. 다른 모르는 명령처럼 답하지 않고 GitHub도 보지 않는다."""
     from app.worker import main
 
-    _base_yaml(env, yaml_text)
-    assert main.handle(_command("/mutate"), env["deps"]) == "extension_off"
-    (body,) = _replies(env["gh"])
-    assert "`/mutate`는 이 리포에서 꺼져 있습니다 (`extensions.mutation.enabled`)" in body
-    # 같은 안내를 두 번 달지 않는다
-    assert main.handle(_command("/mutate"), env["deps"]) == "duplicate"
-    assert len(_replies(env["gh"])) == 1
-
-
-def test_enabled_extension_is_not_supported_yet(env) -> None:
-    from app.worker import main
-
-    _base_yaml(env, "extensions:\n  ai_tests:\n    enabled: true\n")
-    assert main.handle(_command("/generate-tests"), env["deps"]) == "extension_unsupported"
-    assert "아직 이 파이프라인에서 지원하지 않습니다" in _replies(env["gh"])[0]
-
-
-def test_unknown_command_gets_no_reply(env) -> None:
-    from app.worker import main
-
-    assert main.handle(_command("/cc @someone"), env["deps"]) == "unknown_command"
+    assert main.handle(_command(text), env["deps"]) == "unknown_command"
     assert env["gh"].calls == []
+    assert env["deps"].store.command_handled(9)  # 동기화가 같은 코멘트를 다시 넣지 않는다
 
 
 @pytest.mark.parametrize("final", [False, True])
@@ -111,14 +86,17 @@ def test_github_failure_retries_and_releases_on_last(env, final: bool) -> None:
 
     env["gh"].head_error = "gh: 502"
     env["monkeypatch"].setattr(retry, "attempt", lambda: (4 if final else 1, final))
-    job = PRJob.model_validate_json(_command("/mutate"))
+    job = PRJob.model_validate_json(_command("/fix model"))
     env["redis"].set(state_keys.job(job.dedup_key), "1")
     with pytest.raises(GitHubError):
-        main.handle(_command("/mutate"), env["deps"])
+        main.handle(_command("/fix model"), env["deps"])
     # 마지막 시도면 실패로 적는다. 적지 않으면 동기화가 주기마다 다시 넣는다
     assert env["deps"].store.command_handled(9) == final
     assert (env["redis"].get(state_keys.job(job.dedup_key)) is None) == final
 
 
 def test_messages_quote_the_command() -> None:
-    assert command.extension_off_message("/mutate", "mutation").startswith("> /mutate\n")
+    assert command.fix_unsupported_message("/fix", "structure").startswith("> /fix structure\n")
+    message = command.no_pending_fix_message("a" * 40, skill="lint", typed="mechanical")
+    assert message.startswith("> /fix mechanical\n")
+    assert command.no_pending_fix_message("a" * 40, skill="").startswith("> /fix\n")

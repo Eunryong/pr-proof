@@ -6,6 +6,7 @@
 
 import json
 from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final
 
@@ -14,15 +15,25 @@ from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 
 from app.models import model_fix as model_fix_rules
 from app.models import state_keys
+from app.models.db import ModelCall
+from app.models.finding import Finding, SkillResult
 from app.models.job import PRJob
-from app.models.repo_config import CallSettings, ModelSettings, RepoConfig, SkillsSettings
+from app.models.repo_config import (
+    CallSettings,
+    FixSettings,
+    ModelSettings,
+    RepoConfig,
+    SkillsSettings,
+)
 from app.models.rule import rule_id
 from app.models.test_run import ReportSummary
-from app.worker import graph, repo, update
+from app.worker import graph, main, repo, retry, update
 from app.worker.ai import claude_cli
 from app.worker.ai.claude_cli import AIErrorKind, ClaudeResult
+from app.worker.github import GitHubError
 from app.worker.markdown import inline_code
 from app.worker.proposal import FORK_NO_PR
+from app.worker.skills import lint
 
 from .helpers import PASSED, bodies, use_runner
 from .test_doc_rules_flow import (  # noqa: F401
@@ -38,6 +49,8 @@ from .test_doc_rules_flow import (  # noqa: F401
     use_config,
     use_model,
 )
+from .test_doc_rules_report import _outside_code
+from .test_github import is_reply
 
 RID: Final = rule_id("README.md", PRINT_RULE)
 BRANCH: Final = "pipeline/pr-1-fix-model"
@@ -274,14 +287,179 @@ def test_same_commit_again_reuses_the_saved_fix_without_calls(fix_env, tmp_path:
     assert again["model_fix"].calls == 0
 
 
-def test_require_approval_keeps_the_model_fix_from_running(fix_env, tmp_path: Path) -> None:
-    use_model(fix_env, FakeModel(rule_answer(print_rule())))
-    use_config(fix_env, AUTO.model_copy(update={"skills": SkillsSettings(
-        enabled=[], fix={"require_approval": True})}))  # fmt: skip
+def _command(text: str, comment_id: int) -> str:
+    return PRJob(repo="o/r", pr_number=1, kind="command", command=text, comment_id=comment_id,
+                 source="webhook").model_dump_json()  # fmt: skip
+
+
+def _replies(env) -> list[str]:
+    return [json.loads(stdin)["body"] for _, stdin in env["gh"].calls if is_reply(stdin)]
+
+
+def test_require_approval_waits_and_fix_model_resumes(fix_env, tmp_path: Path) -> None:
+    """`require_approval: true`면 모델 묶음은 승인을 기다리고(interrupt), `/fix model`이 그 thread를
+    이어 수정안 PR까지 간다 (5.2). `/fix lint`는 이 묶음을 승인하지 않는다."""
+    use_model(fix_env, FakeModel(rule_answer(print_rule()), decide=first_fix_then_skip))
+    use_config(fix_env, AUTO.model_copy(update={"fix": FixSettings(require_approval=True)}))
     fixer = use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation(("orders/a.py", 2))]))
     state = run(fix_env, tmp_path)
+    assert "model_fix" not in state and fixer.calls == [] and fix_env["gh"].pulls == {}
+    assert "아직 만들지 않았습니다. `/fix model`을 달면 만듭니다." in _comment(fix_env)
+    assert update.pending_fix(state["job"], fix_env["deps"], "model") == "awaiting"
+
+    deps = fix_env["deps"]
+    assert main.handle(_command("/fix lint", 70), deps) == "no_pending_fix"
+    assert fixer.calls == []
+    assert main.handle(_command("/fix model", 71), deps) == "fix:ready"
+    assert len(fixer.calls) == 1 and list(fix_env["gh"].pulls) == [900]
+    comment = _comment(fix_env)
+    assert "수정안 PR #900을 열었습니다." in comment and "`/fix model`을 달면" not in comment
+    assert deps.store.call_grants("o/r", 1) == 0  # 승인은 상한을 더 주지 않는다
+    assert main.handle(_command("/fix model", 72), deps) == "no_pending_fix"
+    assert "model 제안 PR #900이 이미 열려 있습니다" in _replies(fix_env)[-1]
+
+
+def test_capped_fix_is_shown_and_fix_processes_the_rest(fix_env, tmp_path: Path) -> None:
+    """2-11(흐름): `pr_max`를 3으로 낮추면 수정 판단 1회와 수정 작성 2회 뒤 상한에 걸려 처리하지
+    못한 수정 건수가 코멘트에 나온다. `/fix`는 PR 상한을 한 번 더 받고 시도 세대를 올려, 저장된
+    작성 결과를 쓰지 않고 가벼운 모델의 첫 회차부터 다시 고친다."""
+    use_model(fix_env, FakeModel(rule_answer(print_rule()), decide=first_fix_then_skip))
+    use_config(fix_env, AUTO.model_copy(update={"model": ModelSettings(
+        calls=CallSettings(pr_max=3))}))  # fmt: skip
+    answer = _explanation(("orders/a.py", 2))
+    fixer = use_fixer(fix_env, FakeFixer([{}, {}, FIX_LINE_2], [answer]))
+    state = run(fix_env, tmp_path)
+    assert state["model_fix"].status == "budget" and len(fixer.calls) == 2
+    comment = _comment(fix_env)
+    assert "모델 호출 상한에 걸려 처리하지 못함: 수정 1건" in comment
+    assert "`/fix`로 다시 돌릴 수 있습니다." in comment and fix_env["gh"].pulls == {}
+
+    deps = fix_env["deps"]
+    assert main.handle(_command("/fix", 80), deps) == "fix:ready"
+    assert len(fixer.calls) == 3 and fixer.calls[-1]["model"] == "haiku"
+    assert deps.store.call_grants("o/r", 1) == 1
+    ((number, pull),) = fix_env["gh"].pulls.items()
+    assert pull["head"] == BRANCH
+    comment = _comment(fix_env)
+    assert f"수정안 PR #{number}을 열었습니다." in comment
+    assert "수정 작성: 모델 호출 1회, 회차 1" in comment and "처리하지 못함" not in comment
+    pr_calls = [c for c in deps.store.model_calls("o/r", 1) if c.ruleset_key is None]
+    assert sum(c.counted for c in pr_calls) == 4  # 판단 1 + 작성 2, `/fix` 뒤 작성 1
+    # 같은 명령을 다시 처리해도(재시도) 상한을 두 번 받지 않고, 할 일이 없다고 답한다
+    assert main.handle(_command("/fix", 81), deps) == "no_pending_fix"
+    assert deps.store.call_grants("o/r", 1) == 1 and len(fixer.calls) == 3
+
+
+def test_fix_reasks_decisions_left_by_the_call_cap(fix_env, tmp_path: Path) -> None:
+    """수정 판단이 상한에 걸려 정하지 못한 위반은 `/fix`가 수정 판단부터 다시 돌려 정하고 고친다.
+    테스트는 다시 돌리지 않는다."""
+    model = use_model(fix_env, FakeModel(rule_answer(print_rule()), decide=first_fix_then_skip))
+    use_config(fix_env, AUTO.model_copy(update={"model": ModelSettings(
+        calls=CallSettings(pr_max=2))}))  # fmt: skip
+    deps = fix_env["deps"]
+    deps.store.add_model_call(ModelCall(  # 앞 커밋이 이 PR의 상한을 다 썼다
+        repo="o/r", pr_number=1, head_sha="0" * 40, stage="decide", model="sonnet", tier="light",
+        counted=2, ok=True, created_at=datetime.now(UTC),
+    ))  # fmt: skip
+    fixer = use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation(("orders/a.py", 2))]))
+    tests = {"n": 0}
+
+    def runner(*a, **k):
+        tests["n"] += 1
+        return replace(PASSED, coverage_xml=tmp_path / "coverage.xml")
+
+    use_runner(fix_env, runner)
+    state = run(fix_env, tmp_path)
+    assert {d.reason for d in state["fix_decisions"].decisions} == {"call_limit"}
     assert "model_fix" not in state and fixer.calls == []
-    assert "`require_approval: true`라 문서 규칙 위반의 수정안을" in _comment(fix_env)
+    assert "처리하지 못함: 수정 판단 2건. `/fix`로 다시 돌릴 수 있습니다." in _comment(fix_env)
+    before = tests["n"]
+
+    assert main.handle(_command("/fix model", 90), deps) == "fix:ready"
+    assert [kind for kind, _ in model.prompts].count("decide") == 1 and len(fixer.calls) == 1
+    assert tests["n"] == before + 1  # 수정 검증의 테스트만 돈다
+    comment = _comment(fix_env)
+    assert "수정 판단: fix 1건, skip 1건" in comment and "수정안 PR #900을 열었습니다." in comment
+
+
+def test_model_rerun_while_lint_waits_keeps_the_lint_approval(fix_env, tmp_path: Path) -> None:
+    """v1 lint가 승인을 기다리는 동안에도 상한에 걸린 모델 묶음은 `/fix model`로 다시 돌고, 끝나면
+    lint는 다시 승인을 기다린다."""
+    fixable = Finding("orders/a.py", 1, "error", "m", "lint", "x", "F401", fixable=True)
+    fix_env["monkeypatch"].setattr(
+        lint, "run_lint", lambda *a, **k: SkillResult(skill="lint", findings=(fixable,))
+    )
+    use_model(fix_env, FakeModel(rule_answer(print_rule()), decide=first_fix_then_skip))
+    use_config(fix_env, RepoConfig(
+        skills=SkillsSettings(enabled=["lint"]), fix=FixSettings(require_approval=True),
+        model=ModelSettings(calls=CallSettings(pr_max=3)),
+    ))  # fmt: skip
+    fixer = use_fixer(fix_env, FakeFixer([{}, {}, FIX_LINE_2], [_explanation(("orders/a.py", 2))]))
+    state = run(fix_env, tmp_path)
+    assert "model_fix" not in state and "fixes" not in state
+    deps = fix_env["deps"]
+    assert update.pending_fix(state["job"], deps, "lint") == "awaiting"
+    assert update.pending_fix(state["job"], deps, "model") == "awaiting"
+
+    assert main.handle(_command("/fix model", 60), deps) == "fix:budget"
+    assert len(fixer.calls) == 2
+    assert update.pending_fix(state["job"], deps, "lint") == "awaiting"
+    assert update.pending_fix(state["job"], deps, "model") == "rerun"
+
+    assert main.handle(_command("/fix model", 61), deps) == "fix:ready"
+    assert len(fixer.calls) == 3 and list(fix_env["gh"].pulls) == [900]
+    assert update.pending_fix(state["job"], deps, "lint") == "awaiting"
+    assert update.pending_fix(state["job"], deps, "model") is None
+
+
+def test_fix_pull_request_gets_line_review_comments_once(fix_env, tmp_path: Path) -> None:
+    """4.9: 설명 JSON의 changes마다 수정안 PR의 그 줄에 규칙과 이유를 리뷰 하나로 단다. 모델의 글은
+    코드 스팬 밖으로 나오지 못한다. 리뷰를 단 뒤 응답을 받지 못해 전달을 다시 해도 두 번 달리지
+    않는다 (5.6)."""
+    use_model(fix_env, FakeModel(rule_answer(print_rule()), decide=first_fix_then_skip))
+    why = "x` @team <b>로거</b> ``` [y](http://e)"
+    change = {"file": "orders/a.py", "line": 2, "rule": RID, "why": why}
+    answer = json.dumps({"summary": "s", "changes": [change]}, ensure_ascii=False)
+    use_fixer(fix_env, FakeFixer([FIX_LINE_2], [answer]))
+    gh = fix_env["gh"]
+    real = gh._review
+    lost = {"n": 1}
+
+    def accepted_but_lost(number, method, args, stdin):
+        out = real(number, method, args, stdin)
+        if method == "POST" and lost["n"]:
+            lost["n"] -= 1
+            raise GitHubError("gh: 응답을 받지 못함")
+        return out
+
+    gh._review = accepted_but_lost
+    deps = fix_env["deps"]
+    base_sha, head = make_remote(tmp_path / "remote", BASE_FILES, TWO_PRINTS)
+    gh.head, gh.base = head, base_sha
+    job = PRJob(repo="o/r", pr_number=1, kind="update", head_sha=head, base_sha=base_sha,
+                source="webhook")  # fmt: skip
+    with pytest.raises(GitHubError):
+        update.process_update(job, deps)
+    fix_env["monkeypatch"].setattr(retry, "attempt", lambda: (2, True))
+    assert update.process_update(job, deps) == "passed"
+
+    (review,) = gh.reviews[900]
+    assert review["event"] == "COMMENT" and review["body"].startswith("<!-- pr-proof:review ")
+    (line,) = review["comments"]
+    assert (line["path"], line["line"], line["side"]) == ("orders/a.py", 2, "RIGHT")
+    assert line["body"].startswith(f"규칙 `{RID}` `` {PRINT_RULE} ``")
+    assert inline_code(why) in line["body"]
+    outside = _outside_code(line["body"])
+    assert "@" not in outside and "<" not in outside and "](" not in outside
+
+
+def test_review_refused_by_github_keeps_the_fix_pull_request(fix_env, tmp_path: Path) -> None:
+    """GitHub이 리뷰의 줄을 받지 않으면(422) 수정안 PR은 그대로 두고 리뷰만 빠진다."""
+    use_model(fix_env, FakeModel(rule_answer(print_rule()), decide=first_fix_then_skip))
+    use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation(("orders/a.py", 2))]))
+    fix_env["gh"].review_error = "gh api 실패: HTTP 422 Unprocessable Entity"
+    state = run(fix_env, tmp_path)
+    assert state["proposals"]["model"].number == 900 and fix_env["gh"].reviews == {}
 
 
 def test_model_outside_the_tool_list_is_an_environment_error(fix_env, tmp_path: Path) -> None:

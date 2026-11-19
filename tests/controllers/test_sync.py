@@ -128,12 +128,21 @@ def test_missed_command_is_queued(env) -> None:
     [
         _comment(6, "/fix lint", assoc="CONTRIBUTOR"),
         _comment(7, "/fix lint", assoc="NONE"),
+        _comment(12, "/fix model", assoc="CONTRIBUTOR"),
         _comment(8, "<!-- pr-proof -->\n/recheck"),
-        _comment(9, "<!-- pr-proof:reply -->\n> /mutate"),
+        _comment(9, "<!-- pr-proof:reply -->\n> /fix model"),
         _comment(10, "LGTM"),
         _comment(11, "/fix lint", at="2026-11-17T09:59:59Z"),  # 지금 head보다 먼저 단 명령
     ],
-    ids=["contributor", "none", "own-result", "own-reply", "not-command", "before-head"],
+    ids=[
+        "contributor",
+        "none",
+        "fix-model-contributor",
+        "own-result",
+        "own-reply",
+        "not-command",
+        "before-head",
+    ],
 )
 def test_missed_command_filters_like_webhook(env, comment) -> None:
     _sync(env, [_pr()], comments=[comment])

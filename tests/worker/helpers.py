@@ -4,7 +4,7 @@ import json
 from typing import Final
 
 from app.models.finding import Finding
-from app.models.repo_config import FixSettings, RepoConfig, SkillsSettings
+from app.models.repo_config import FixSettings, RepoConfig
 from app.models.test_run import PytestRun, ReportSummary
 from app.worker import graph
 from app.worker.base_config import BaseConfig
@@ -15,7 +15,7 @@ HEAD: Final = "a" * 40
 PASSED: Final = PytestRun(exit_code=0, summary=ReportSummary(passed=9, total=9))
 # 흐름 테스트는 승인 대기(/fix)를 단계별로 보려고 require_approval: true로 둔다.
 # 기본값(자동 수정)의 흐름은 test_fix_flow·test_static_flow의 auto 테스트가 본다
-APPROVAL_REPO: Final = RepoConfig(skills=SkillsSettings(fix=FixSettings(require_approval=True)))
+APPROVAL_REPO: Final = RepoConfig(fix=FixSettings(require_approval=True))
 BASE: Final = BaseConfig(
     repo=APPROVAL_REPO, memory_gb=2, max_memory_gb=4, ruff_config=None, ruff_source="기본 규칙"
 )

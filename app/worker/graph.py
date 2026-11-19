@@ -2,11 +2,11 @@
 
     체크아웃 → 규칙 검사(lint, static) → 테스트 → 코멘트 ─┬─ (제안할 수정 없음) → 끝
                                                    ├─ (기본: 바로 수정)
-                                                   └─ 승인 대기(interrupt) ─ /fix <skill>
+                                                   └─ 승인 대기(interrupt) ─ /fix <묶음>
                                                       (require_approval: true)
-        /fix lint   → 수정(ruff) ─┐
-        /fix static → AI 수정 ────┴→ 제안 PR → 수정 코멘트 ─┬─ (남은 제안 없음) → 끝
-                                                       └─ 다른 스킬의 승인 대기·자동 수정
+        /fix lint   → 수정(ruff) ───────────┐
+        /fix static → AI 수정 ──────────────┼→ 제안 PR → 수정 코멘트 ─┬─ (남은 제안 없음) → 끝
+        /fix model  → 모델 수정 → 수정안 PR ┘                        └─ 다른 묶음의 대기·수정
 
 규칙 검사와 테스트 사이에 문서 규칙 경로가 돈다: 규칙 읽기 → 검사기 작성 → 위반 찾기 (5.1).
 규칙이 없거나 이 경로가 실패하면 그 자리에서 테스트로 넘어간다. 테스트 뒤에 그 위반마다 수정 판단
@@ -15,6 +15,7 @@
 
 스킬마다 수정은 한 번이다. 수정마다 새 worktree에서 시작한다 (앞 수정의 변경이 섞이지 않게).
 수정안을 내지 못하고 끝난 스킬은 `/fix <skill>`로 그 스킬만 다시 돌린다 (사람이 달 때만).
+모델 묶음은 수정 판단부터 다시 돌아 호출 상한으로 남은 판단과 수정을 이어 한다 (4.9 명령).
 
 각 단계 사이에서 이 작업의 커밋이 아직 PR의 최신 커밋인지 확인하고, 낡았으면 멈춘다.
 그래프 상태에는 데이터만 넣고, worktree 같은 자원은 FlowContext가 들고 정리한다.
@@ -93,15 +94,18 @@ FIX_DIR: Final = "fixes"
 AWAIT_FIX: Final = "await_fix"
 FIX: Final = "fix"
 AI_FIX: Final = "ai_fix"
-FIX_NODES: Final[Mapping[str, str]] = {"lint": FIX, "static": AI_FIX}  # 스킬 → 수정 node
 PROPOSE: Final = "propose"
 FIX_COMMENT: Final = "fix_comment"
 LOAD_RULES: Final = "load_rules"
 AUTHOR_CHECKERS: Final = "author_checkers"
 DETECT: Final = "detect"
+TEST: Final = "test"
 DECIDE: Final = "decide"
 FIX_MODEL: Final = "fix_model"
 DELIVER_MODEL: Final = "deliver_model"
+MODEL: Final = proposal.MODEL_BUNDLE
+# v1 스킬과 모델 묶음 → 수정 node. `/fix <묶음>`이 승인하거나 다시 돌린다
+FIX_NODES: Final[Mapping[str, str]] = {"lint": FIX, "static": AI_FIX, MODEL: FIX_MODEL}
 # 작업을 다시 시도할 때 처음부터 하지 않고 이어 가는 node. 앞 node의 결과(검증한 패치)가 저장돼 있다
 RESUMABLE: Final = frozenset({DELIVER_MODEL})
 TOOL_DIR: Final = "tools"  # 도구 캐시 (data_dir 아래, venvs와 같은 자리)
@@ -154,7 +158,9 @@ class FlowState(TypedDict, total=False):
     rule_checks: tuple[RuleOutcome, ...]
     doc_rules: DocRules  # 문서 규칙 경로의 결과. 코멘트의 "문서 규칙" 절은 이 값으로만 그린다
     fix_decisions: Decided  # 문서 규칙 위반마다 수정 판단 (테스트 뒤, 4.6)
-    model_fix: ModelFix  # 모델 수정 묶음의 결과 (4.7, 4.8). 수정안 PR은 proposals["model"]
+    model_fix: ModelFix | None  # 모델 수정 묶음의 결과 (4.7, 4.8). 수정안 PR은 proposals["model"]
+    # 사람이 `/fix`로 이 커밋의 모델 묶음을 승인했거나 다시 돌리게 했다
+    model_requested: bool
     test_run: PytestRun
     commented: bool
     fix_skill: str  # 지금(마지막으로) 수정하는 스킬
@@ -405,11 +411,12 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
         job, found = state["job"], state.get("doc_rules")
         if not isinstance(found, Found) or not found.violations:
             return {}
+        ensure_checkout(job)  # `/fix`가 다시 돌릴 때는 새 프로세스다
         progress(job, "수정 판단")
         rt, run = doc_runtime(job), state["test_run"]
         decided = decide.decide(
             found, SafetyNet(run.status, flaky=bool(run.flaky)), ctx.changes_diff,
-            require_covered=ctx.base.repo.skills.fix.require_covered, store=rt.store,
+            require_covered=ctx.base.repo.fix.require_covered, store=rt.store,
             budget=rt.budget, model=rt.models.decide, ask=rt.ask,
         )  # fmt: skip
         return {"fix_decisions": decided}
@@ -420,7 +427,7 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
             return None
         return code_fix_gate(
             state["test_run"], "static", found.findings,
-            require_covered=ctx.base.repo.skills.fix.require_covered,
+            require_covered=ctx.base.repo.fix.require_covered,
         )  # fmt: skip
 
     def history_or(job: PRJob, skill: str) -> SkillProposal:
@@ -429,7 +436,7 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
         )
         if history:
             return history, number  # 머지해 생긴 커밋, 거절된 제안, 이미 열린 제안
-        return ("approval" if ctx.base.repo.skills.fix.require_approval else "auto"), None
+        return ("approval" if ctx.base.repo.fix.require_approval else "auto"), None
 
     def skill_proposals(state: FlowState) -> dict[str, SkillProposal]:
         """스킬별 수정 제안 상태 (DESIGN.md F8 표). 위반이 없는 스킬은 빠진다."""
@@ -472,15 +479,22 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
             attempt = ctx.store.fix_attempt(done.attempt_id) if done.attempt_id else None
             patch = (attempt.patch or "") if attempt is not None else ""
             return FixView(**counts, state="done", fix=done, proposal=result, patch=patch)
-        job = state["job"]
+        job, requested = state["job"], state.get("model_requested", False)
         history, number = proposal.blocked_by_history(
-            ctx.store, job.repo, job.pr_number, proposal.MODEL_BUNDLE, job.head_sha
+            ctx.store, job.repo, job.pr_number, MODEL, job.head_sha
         )
-        if history:
+        # `/fix`로 다시 돌리면 이 커밋의 열린 수정안 PR을 같은 브랜치로 갱신한다
+        if history and not (history == "open" and requested):
             return FixView(**counts, state=history, number=number)
-        if ctx.base.repo.skills.fix.require_approval:
+        if ctx.base.repo.fix.require_approval and not requested:
             return FixView(**counts, state="approval")
         return FixView(**counts, state="running")
+
+    def awaiting(state: FlowState) -> list[str]:
+        """승인을 기다리는 v1 스킬과 모델 묶음."""
+        view = model_fix_view(state)
+        model = [MODEL] if view is not None and view.state == "approval" else []
+        return open_skills(state, "approval") + model
 
     def render(state: FlowState) -> str:
         job = state["job"]
@@ -520,16 +534,18 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
         view = model_fix_view(state)
         if view is not None and view.state == "running":
             return FIX_MODEL
-        return AWAIT_FIX if open_skills(state, "approval") else END
+        return AWAIT_FIX if awaiting(state) else END
 
     def await_fix(state: FlowState) -> FlowState:
         # 상태를 체크포인트에 남기고 멈춘다. 워커는 다른 작업을 처리한다.
-        # /fix <skill>이 오면 이 node부터 재개된다
+        # /fix <묶음>이 오면 이 node부터 재개된다
         ensure_checkout(state["job"])
-        skills = open_skills(state, "approval")
+        skills = awaiting(state)
         approval = interrupt({"skills": skills, "head_sha": state["job"].head_sha})
         skill = approval.get("skill") if isinstance(approval, dict) else None
-        return {"fix_skill": skill} if skill in skills else {}
+        if skill not in skills:
+            return {"fix_skill": ""}
+        return {"fix_skill": skill, **({"model_requested": True} if skill == MODEL else {})}
 
     def after_await(state: FlowState) -> str:
         return FIX_NODES.get(state.get("fix_skill") or "", END)
@@ -713,7 +729,8 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
             found, picked, worktree=ctx.worktree, merge_base=ctx.merge_base,
             test_before=state["test_run"], lint_before=state.get("lint"), store=rt.store,
             budget=rt.budget, models=ctx.base.repo.model,
-            max_attempts=ctx.base.repo.skills.fix.max_retries, tools=tools,
+            max_attempts=ctx.base.repo.fix.max_retries, tools=tools,
+            generation=ctx.store.call_grants(job.repo, job.pr_number),
         )  # fmt: skip
         if outcome is None:
             return {"stopped": "cancelled"}
@@ -747,7 +764,7 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
                 job, ctx.worktree, ctx.store, ctx.github, fix, state["doc_rules"],
                 patch=stored.patch or "", skipped=skipped,
             )  # fmt: skip
-        return {"proposals": {**state.get("proposals", {}), proposal.MODEL_BUNDLE: result}}
+        return {"proposals": {**state.get("proposals", {}), MODEL: result}}
 
     def propose(state: FlowState) -> FlowState:
         """검증을 통과한 수정안만 제안 PR로 올린다 (F10)."""
@@ -781,7 +798,7 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
     graph.add_node(LOAD_RULES, load_rules)
     graph.add_node(AUTHOR_CHECKERS, author_checkers)
     graph.add_node(DETECT, detect_rules)
-    graph.add_node("test", test)
+    graph.add_node(TEST, test)
     graph.add_node(DECIDE, decide_fixes)
     graph.add_node("comment", comment)
     graph.add_node(AWAIT_FIX, await_fix)
@@ -795,16 +812,16 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
     graph.add_conditional_edges("checkout", route, {"next": "rules", "stop": END})
     graph.add_conditional_edges("rules", route, {"next": LOAD_RULES, "stop": END})
     graph.add_conditional_edges(
-        LOAD_RULES, after_doc_step, {"next": AUTHOR_CHECKERS, "done": "test", "stop": END}
+        LOAD_RULES, after_doc_step, {"next": AUTHOR_CHECKERS, "done": TEST, "stop": END}
     )
     graph.add_conditional_edges(
-        AUTHOR_CHECKERS, after_doc_step, {"next": DETECT, "done": "test", "stop": END}
+        AUTHOR_CHECKERS, after_doc_step, {"next": DETECT, "done": TEST, "stop": END}
     )
-    graph.add_conditional_edges(DETECT, route, {"next": "test", "stop": END})
-    graph.add_conditional_edges("test", route, {"next": DECIDE, "stop": END})
+    graph.add_conditional_edges(DETECT, route, {"next": TEST, "stop": END})
+    graph.add_conditional_edges(TEST, route, {"next": DECIDE, "stop": END})
     graph.add_conditional_edges(DECIDE, route, {"next": "comment", "stop": END})
     graph.add_conditional_edges("comment", next_fix, fix_targets)
-    graph.add_conditional_edges(AWAIT_FIX, after_await, [FIX, AI_FIX, END])
+    graph.add_conditional_edges(AWAIT_FIX, after_await, [FIX, AI_FIX, FIX_MODEL, END])
     graph.add_conditional_edges(FIX, route, {"next": PROPOSE, "stop": END})
     graph.add_conditional_edges(AI_FIX, route, {"next": PROPOSE, "stop": END})
     graph.add_conditional_edges(PROPOSE, route, {"next": FIX_COMMENT, "stop": END})
@@ -848,34 +865,50 @@ def _awaiting_skills(value: object) -> list[str]:
     return [value["skill"]] if "skill" in value else []  # 3단계 전 체크포인트 ({"skill": "lint"})
 
 
+def _model_rerun(values: Mapping[str, Any]) -> bool:
+    """모델 묶음에 `/fix`로 다시 돌릴 것이 있는지: 수정안을 내지 못하고 끝났거나(검증 실패, 호출
+    상한 등), 호출 상한에 걸려 정하지 못한 수정 판단이 있다 (4.9 명령)."""
+    fix, decided = values.get("model_fix"), values.get("fix_decisions")
+    capped = decided is not None and any(d.reason == "call_limit" for d in decided.decisions)
+    return capped or (fix is not None and not fix.ready)
+
+
 def pending_fix(job: PRJob, ctx: FlowContext, saver: SqliteSaver, skill: str) -> PendingFix | None:
-    """이 커밋에 skill의 재개할 수정이 있는지. 승인 대기 중이거나, 수정·제안·수정 코멘트 도중
-    실패해 다시 시도할 수 있다."""
+    """이 커밋에 skill(v1 스킬 또는 모델 묶음)의 재개할 수정이 있는지. 승인 대기 중이거나,
+    수정·제안·수정 코멘트 도중 실패해 다시 시도할 수 있거나, 수정안을 내지 못하고 끝나 다시 돌릴 수
+    있다."""
     snapshot = build_graph(ctx, saver).get_state(thread_config(job))
     if AWAIT_FIX in snapshot.next and snapshot.interrupts:
-        skills = _awaiting_skills(snapshot.interrupts[0].value)
-        return "awaiting" if skill in skills else None
-    if FIX_NODES.get(skill) in snapshot.next:
+        if skill in _awaiting_skills(snapshot.interrupts[0].value):
+            return "awaiting"
+        # 다른 스킬이 승인을 기다려도 모델 묶음은 다시 돌릴 수 있다. 끝나면 다시 그 승인을 기다린다
+        return "rerun" if skill == MODEL and _model_rerun(snapshot.values) else None
+    if FIX_NODES.get(skill) in snapshot.next or (skill == MODEL and DELIVER_MODEL in snapshot.next):
         return "interrupted_fix"
     if (PROPOSE in snapshot.next or FIX_COMMENT in snapshot.next) and snapshot.values.get(
         "fix_skill"
     ) == skill:
         return "interrupted_after_fix"
+    if snapshot.next:
+        return None
+    if skill == MODEL:
+        return "rerun" if _model_rerun(snapshot.values) else None
     done = snapshot.values.get("fixes", {}).get(skill)
-    if not snapshot.next and done is not None and not done.ready:
+    if done is not None and not done.ready:
         return "rerun"  # 끝난 수정이 수정안을 내지 못했다. /fix로 그 스킬만 다시 돌린다
     return None
 
 
-def has_pending_fix(job: PRJob, ctx: FlowContext, skill: str) -> bool:
+def pending_kind(job: PRJob, ctx: FlowContext, skill: str) -> PendingFix | None:
     with ExitStack() as stack:
-        return pending_fix(job, ctx, open_checkpointer(ctx.data_dir, stack), skill) is not None
+        return pending_fix(job, ctx, open_checkpointer(ctx.data_dir, stack), skill)
 
 
 def resume_fix(job: PRJob, ctx: FlowContext, approval: dict[str, Any]) -> FlowState | None:
     """멈춰 있던 그래프를 approval["skill"]의 수정 단계부터 이어서 실행한다. 없으면 None.
 
-    수정안을 내지 못하고 끝난 수정(실패·예산 등)도 그 스킬의 수정 단계부터 다시 돌린다.
+    수정안을 내지 못하고 끝난 수정(실패·예산 등)도 그 스킬의 수정 단계부터 다시 돌린다. 모델 묶음은
+    수정 판단부터 다시 돌아, 호출 상한으로 정하지 못한 판단을 다시 묻고 새 시도 세대로 고친다.
     """
     skill = approval["skill"]
     with ctx.stack:
@@ -890,6 +923,11 @@ def resume_fix(job: PRJob, ctx: FlowContext, approval: dict[str, Any]) -> FlowSt
             # 수정 단계부터 다시 한다. 같은 브랜치라 이미 연 제안 PR은 새로 만들지 않고 갱신한다.
             # fix_skill이 남아 있어 대기 node 다음 경로가 그 스킬의 수정 node로 간다
             config = graph.update_state(config, None, as_node=AWAIT_FIX)
+        elif pending == "rerun" and skill == MODEL:
+            # 테스트 결과와 v1 스킬의 결과는 그대로 두고 수정 판단부터 다시 간다
+            config = graph.update_state(
+                config, {"model_fix": None, "model_requested": True}, as_node=TEST
+            )
         elif pending == "rerun":
             # 끝난 그래프의 그 스킬 결과만 지우고 대기 node 다음(그 스킬의 수정 node)부터 다시 간다.
             # 다른 스킬의 결과와 제안 PR은 그대로 두므로 수정 코멘트에 함께 남는다
@@ -899,6 +937,7 @@ def resume_fix(job: PRJob, ctx: FlowContext, approval: dict[str, Any]) -> FlowSt
             )
         command = Command(resume=approval) if pending == "awaiting" else None
         result = graph.invoke(command, config)
-    if skill not in result.get("fixes", {}):
+    stale = ctx.store.is_stale(job) if skill == MODEL else skill not in result.get("fixes", {})
+    if stale:
         result.setdefault("stopped", "stale")
     return result

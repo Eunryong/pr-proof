@@ -13,7 +13,7 @@ from typing import Final
 import pytest
 
 from app.models.finding import Finding, SkillResult
-from app.models.repo_config import FixSettings, ModelSettings, RepoConfig, SkillsSettings
+from app.models.repo_config import FixSettings, ModelSettings, RepoConfig
 from app.models.test_run import PytestRun, ReportSummary
 from app.worker import repo
 from app.worker.ai.claude_cli import AIErrorKind, ClaudeResult, PermissionDenial
@@ -108,7 +108,7 @@ class Fake:
 
 def _config(retries: int = 3, budget: float = 0.5) -> RepoConfig:
     return RepoConfig(
-        skills=SkillsSettings(fix=FixSettings(max_retries=retries)),
+        fix=FixSettings(max_retries=retries),
         model=ModelSettings(budget_per_pr_usd=budget),
     )
 

@@ -1,9 +1,10 @@
 import json
+import re
 
 import pytest
 
 from app.models.comment import COMMENT_MARKER, REPLY_MARKER
-from app.worker.github import GitHub, GitHubError
+from app.worker.github import GitHub, GitHubError, ReviewComment
 
 
 class FakeGh:
@@ -30,6 +31,9 @@ class FakeGh:
         # 제안 PR: 번호 → {"state", "merged", "merge_commit", "title", "body", "head", "base"}
         self.pulls: dict[int, dict] = {}
         self.deleted_branches: list[str] = []
+        # 제안 PR의 리뷰: 번호 → [{"body", "event", "comments", "login"}]
+        self.reviews: dict[int, list[dict]] = {}
+        self.review_error: str | None = None
 
     def __call__(self, args: list[str], stdin: str | None) -> str:
         self.calls.append((args, stdin))
@@ -46,6 +50,9 @@ class FakeGh:
                 f"{self.head}\t{self.base}\t{self.state}\t{self.head_ref}\t{self.head_repo}"
                 f"\t{self.author_association}\t{self.author_login}\n"
             )
+        review = re.fullmatch(r"repos/o/r/pulls/(\d+)/reviews", path or args[2])
+        if review:
+            return self._review(int(review.group(1)), method, args, stdin)
         if path.startswith("repos/o/r/pulls?"):
             branch = path.split("head=o:")[1]
             found = [
@@ -75,6 +82,19 @@ class FakeGh:
                 raise GitHubError(self.patch_error)
             return "1\n"
         return "555\n"  # 새 코멘트 ID
+
+    def _review(self, number: int, method: str, args: list[str], stdin: str | None) -> str:
+        if method == "POST":
+            if self.review_error:
+                raise GitHubError(self.review_error)
+            self.reviews.setdefault(number, []).append(json.loads(stdin) | {"login": "me"})
+            return f"{700 + len(self.reviews[number])}\n"
+        marker = re.search(r'contains\("([^"]+)"\)', args[args.index("--jq") + 1]).group(1)
+        return "".join(
+            f"{700 + i}\t{r['login']}\n"
+            for i, r in enumerate(self.reviews.get(number, []), 1)
+            if marker in r["body"]
+        )
 
     def kinds(self) -> list[str]:
         """원본 PR(#1)의 결과 코멘트에 대한 호출만."""
@@ -141,3 +161,42 @@ def test_other_patch_errors_propagate() -> None:
     gh = FakeGh(patch_error="gh api 실패: HTTP 401: Bad credentials")
     with pytest.raises(GitHubError):
         GitHub(gh).upsert_comment("o/r", 1, "본문", 42)
+
+
+def test_review_is_posted_once_per_patch_and_ignores_lookalikes() -> None:
+    """같은 패치의 리뷰는 한 번만 단다. 다른 사람이 표시를 흉내 낸 리뷰는 우리 것이 아니다."""
+    from app.worker import proposal
+
+    gh = FakeGh()
+    github = GitHub(gh)
+    marker = proposal.rules.review_marker("patch-1")
+    gh.reviews[900] = [{"body": marker, "login": "someone"}]
+    comments = [ReviewComment("a.py", 2, "규칙 `R` 이유 `w`")]
+    proposal.post_review(github, "o/r", 900, comments, "patch-1", ())
+    proposal.post_review(github, "o/r", 900, comments, "patch-1", ())
+    mine = [r for r in gh.reviews[900] if r["login"] == "me"]
+    assert len(mine) == 1 and mine[0]["body"].startswith(marker)
+    assert mine[0]["comments"] == [{"path": "a.py", "line": 2, "side": "RIGHT",
+                                    "body": "규칙 `R` 이유 `w`"}]  # fmt: skip
+    # 패치가 바뀌면(다시 돌린 수정) 새 리뷰를 단다
+    proposal.post_review(github, "o/r", 900, comments, "patch-2", ())
+    assert len([r for r in gh.reviews[900] if r["login"] == "me"]) == 2
+
+
+def test_review_with_a_secret_or_no_lines_is_not_posted() -> None:
+    from app.worker import proposal
+
+    gh = FakeGh()
+    secret = [ReviewComment("a.py", 2, "ghp_" + "A" * 36)]
+    proposal.post_review(GitHub(gh), "o/r", 900, secret, "p", ())
+    proposal.post_review(GitHub(gh), "o/r", 900, [], "p", ())
+    assert gh.reviews == {}
+
+
+def test_review_errors_other_than_422_propagate() -> None:
+    from app.worker import proposal
+
+    gh = FakeGh()
+    gh.review_error = "gh api 실패: HTTP 502"
+    with pytest.raises(GitHubError):
+        proposal.post_review(GitHub(gh), "o/r", 900, [ReviewComment("a.py", 1, "b")], "p", ())

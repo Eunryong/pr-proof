@@ -73,7 +73,9 @@ def test_update_of_untrusted_author_does_nothing(env, association: str) -> None:
     assert env["redis"].get(state_keys.latest_head("o/r", 1)).decode() == HEAD
 
 
-@pytest.mark.parametrize("text", ["/recheck", "/fix lint", "/fix static", "/mutate"])
+@pytest.mark.parametrize(
+    "text", ["/recheck", "/fix", "/fix lint", "/fix static", "/fix mechanical", "/fix model"]
+)
 def test_command_on_untrusted_authors_pr_does_nothing(env, text: str) -> None:
     """명령을 단 사람이 신뢰돼도 승인이 아니다. 승인은 정식 가드레일에서 넣는다."""
     env["gh"].author_association = "NONE"

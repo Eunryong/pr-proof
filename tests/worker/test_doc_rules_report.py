@@ -257,14 +257,14 @@ def test_each_violation_shows_its_decision_and_the_counts() -> None:
         FixDecision(b.id, "skip", "model", reason="risky", why="출력이 기능이다"),
         FixDecision(c.id, "skip", "pipeline", reason="not_covered", why="테스트가 지나가지 않음"),
         FixDecision(d.id, "fix", "pipeline", method="mechanical"),
-    ), calls=1, cached=2)  # fmt: skip
+    ), calls=1, cached=2, input_tokens=900, output_tokens=70)  # fmt: skip
     text = "\n".join(section(_found(RuleChecked(RULE, REF), violations=(a, b, c, d)), {}, decided))
     assert "  - `orders/a.py:2` · fix (모델 수정: `로거로 바꾼다`)" in text
     assert "  - `orders/a.py:3` · skip (모델: `출력이 기능이다`)" in text
     assert "  - `orders/a.py:4` · skip (테스트가 지나가지 않음)" in text
     assert "  - `orders/a.py:5` · fix (기계적 수정)" in text
     assert ("수정 판단: fix 2건, skip 2건 (모델이 고치지 않기로 함 1건, 테스트가 지나가지 않음 1건)"
-            " · 모델 호출 1회 · 저장된 판단 2건 사용") in text  # fmt: skip
+            " · 모델 호출 1회 · 저장된 판단 2건 사용 · 토큰 입력 900, 출력 70") in text  # fmt: skip
     assert "**수정안:**" not in text  # 모델 수정 묶음의 상태는 따로 넘긴다
     assert "모델 호출 상한에 걸려" not in text
 
@@ -289,6 +289,14 @@ def test_model_reason_cannot_escape_code() -> None:
         outside = _outside_code(text)
         assert "@" not in outside and "<img" not in outside and "](http" not in outside
         assert "\n# 제목" not in text
+
+
+def test_cached_decisions_show_no_token_counts() -> None:
+    """9.4: 토큰 수는 이번에 실제로 부른 호출만 센다. 저장된 판단만 썼으면 토큰 줄이 없다."""
+    v = _violation()
+    decided = Decided((FixDecision(v.id, "skip", "model", reason="risky", why="w"),), cached=1)
+    text = "\n".join(section(_found(RuleChecked(RULE, REF), violations=(v,)), {}, decided))
+    assert "· 모델 호출 0회 · 저장된 판단 1건 사용\n" in text + "\n" and "토큰 입력 0" not in text
 
 
 def test_without_decisions_the_section_is_unchanged() -> None:
@@ -323,7 +331,8 @@ def test_fix_result_names_the_pull_request_and_the_verification() -> None:
 
 def test_fix_states_before_and_without_a_fix(tmp_path) -> None:
     assert "수정안을 만드는 중" in _fix_text(FixView(3, 0, "running"))
-    assert "`require_approval: true`" in _fix_text(FixView(3, 0, "approval"))
+    approval = _fix_text(FixView(3, 0, "approval"))
+    assert "`require_approval: true`" in approval and "`/fix model`을 달면 만듭니다." in approval
     assert "모델 수정안 PR #905이 열려 있습니다" in _fix_text(FixView(3, 0, "open", number=905))
     capped = _fix_text(FixView(20, 4, "running"))
     assert "수정안 크기 상한으로 처리하지 못함: 4건" in capped
@@ -333,9 +342,9 @@ def test_fix_states_before_and_without_a_fix(tmp_path) -> None:
         "**수정안:** 수정안을 만들지 못함: 정해진 회차 안에 검증을 통과하지 못함 (`고친 뒤" in text
     )
     capped_calls = replace(READY, status="budget", detail="호출 상한: PR 상한 (3/3회 사용)")
-    assert "모델 호출 상한에 걸려 처리하지 못함: 수정 2건" in _fix_text(
-        FixView(2, 0, "done", fix=capped_calls)
-    )
+    capped_text = _fix_text(FixView(2, 0, "done", fix=capped_calls))
+    assert "모델 호출 상한에 걸려 처리하지 못함: 수정 2건" in capped_text
+    assert "`/fix`로 다시 돌릴 수 있습니다." in capped_text
 
 
 def test_fork_shows_the_fix_in_the_comment_instead_of_a_pull_request() -> None:
