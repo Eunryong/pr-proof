@@ -79,6 +79,8 @@ def process_command(job: PRJob, deps: Deps) -> str:
         refs = deps.github.pr_refs(job.repo, job.pr_number)
         if not refs.open:
             result = "closed"
+        elif update.untrusted(job, refs):  # 명령을 단 사람이 신뢰돼도 승인으로 치지 않는다 (8.6)
+            result = update.UNTRUSTED_AUTHOR
         elif parsed.name == "recheck":
             result = f"recheck:{update.process_update(_target(job, refs), deps)}"
         elif parsed.name == "fix":

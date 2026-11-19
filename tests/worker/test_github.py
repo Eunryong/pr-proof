@@ -24,6 +24,8 @@ class FakeGh:
         self.state = "open"
         self.head_ref = "feature"
         self.head_repo = "o/r"
+        self.author_association = "OWNER"
+        self.author_login = "author"
         self.head_error: str | None = None
         # 제안 PR: 번호 → {"state", "merged", "merge_commit", "title", "body", "head", "base"}
         self.pulls: dict[int, dict] = {}
@@ -40,7 +42,10 @@ class FakeGh:
         if _is_head_lookup(args):
             if self.head_error:
                 raise GitHubError(self.head_error)
-            return f"{self.head}\t{self.base}\t{self.state}\t{self.head_ref}\t{self.head_repo}\n"
+            return (
+                f"{self.head}\t{self.base}\t{self.state}\t{self.head_ref}\t{self.head_repo}"
+                f"\t{self.author_association}\t{self.author_login}\n"
+            )
         if path.startswith("repos/o/r/pulls?"):
             branch = path.split("head=o:")[1]
             found = [
