@@ -89,7 +89,7 @@ def load_rules(
     budget: CallBudget,
     ask: AskModel = claude_cli.run_structured,
 ) -> RulesResult:
-    """base_sha의 규칙 문서를 읽어 규칙 묶음을 돌려준다. model은 가벼운 모델(`model.light`)이다."""
+    """base_sha의 규칙 문서를 읽어 규칙 묶음을 돌려준다. model은 `model.rules`다."""
     entries = repo.list_base_entries(worktree, base_sha, settings.docs)
     selection = select_documents(settings.docs, entries)
     if not selection.listed:

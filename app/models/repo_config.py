@@ -93,6 +93,11 @@ class ModelSettings(BaseModel):
     """모델과 호출 상한. 백엔드는 claude CLI만 있다."""
 
     model_config = ConfigDict(extra="ignore")
+    # 규칙 읽기와 검사기 작성의 모델 (11.2). 검사기 작성은 실패해도 더 높은 모델로 올리지 않는다:
+    # 3회 안에 안 되면 "검사하지 못한 규칙"으로 두고 4단계의 모델 판단으로 넘긴다 (11.2 D7)
+    rules: str = Field(default="sonnet", pattern=MODEL_NAME_PATTERN)
+    checker: str = Field(default="sonnet", pattern=MODEL_NAME_PATTERN)
+    # 수정 경로의 모델: 가벼운 모델로 시작하고 실패가 이어지면 무거운 모델로 한 번 올린다
     light: str = Field(default="haiku", pattern=MODEL_NAME_PATTERN)
     heavy: str = Field(default="sonnet", pattern=MODEL_NAME_PATTERN)
     budget_per_pr_usd: float = Field(default=0.5, ge=0)  # v1 수정 경로. 2단계에 calls로 옮긴다

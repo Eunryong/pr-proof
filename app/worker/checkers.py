@@ -2,7 +2,7 @@
 
 규칙마다 공용 틀(worker/loop.py)을 한 번 돈다. write는 도구 없이 모델을 부르고 답(초안)을
 `model_cache`에 저장한다. verify는 초안을 샌드박스에서 예시에 돌려 결정적으로 판정한다. 처음
-두 회차는 ast-grep 규칙, 세 번째(무거운 모델)는 Python AST 스크립트다.
+두 회차는 ast-grep 규칙, 세 번째는 Python AST 스크립트다. 모델은 세 회차 모두 `model.checker`다.
 
 결과는 `checkers` 테이블에 규칙의 캐시 키별로 둔다. 채택한 검사기와 끝내 통과하지 못한 기록은
 다시 묻지 않는다. 호출 상한, 모델 호출 실패, 도구 준비 실패로 끝난 규칙은 저장하지 않으므로
@@ -147,11 +147,11 @@ class _Author:
         skipped = plan_check(rule)
         if skipped is not None:
             return skipped
-        key = checker_key(rule, self.models.light, self.models.heavy)
+        key = checker_key(rule, self.models.checker)
         saved = self.store.saved_checker(key)
         if saved is not None:
             self.budget.record_hit(self.scope, stage="checker", tier="light",
-                                   model=self.models.light)  # fmt: skip
+                                   model=self.models.checker)  # fmt: skip
             if saved.accepted and saved.checker_json is not None:
                 return Checked(rule, checker_from_json(saved.checker_json), cached=True)
             return Unchecked(rule, "no_checker", saved.detail)
@@ -203,7 +203,7 @@ class _Author:
         def write(state: LoopState) -> WriteResult:
             attempt, tier = state["attempt"], state["tier"]
             feedback = state.get("feedback", [])
-            model = self.models.light if tier == "light" else self.models.heavy
+            model = self.models.checker  # 더 높은 모델로 올리지 않는다 (11.2 D7)
             kind = kind_for_attempt(attempt, rule)
             artifact = draft_key(key, attempt, model, feedback, prompt_version_for(rule))
             if self.store.cached_result(artifact) is not None:
@@ -270,5 +270,6 @@ class _Author:
             return Verdict("retry", detail=f"예시 {len(problems)}개를 틀리게 가림",
                            feedback=(*problems, previous))  # fmt: skip
 
-        policy = LoopPolicy(max_attempts=MAX_ATTEMPTS, may_call=self.budget.may_call(self.scope))
+        policy = LoopPolicy(max_attempts=MAX_ATTEMPTS, may_call=self.budget.may_call(self.scope),
+                            heavy_after=None)  # fmt: skip
         return build_loop(f"author_checker[{rule.id}]", write, verify, policy)
