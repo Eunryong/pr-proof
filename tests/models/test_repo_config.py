@@ -1,6 +1,7 @@
 import pytest
 
 from app.models.repo_config import (
+    DEFAULT_MIN_SIMILARITY,
     MAX_RETRIES_CAP,
     MIN_MEMORY_GB,
     CallSettings,
@@ -223,3 +224,25 @@ def test_too_many_rule_docs_and_empty_disabled_id_are_problems() -> None:
     many = ", ".join(f"d{i}.md" for i in range(21))
     assert "rules.docs" in parse_repo_config(f"rules:\n  docs: [{many}]\n")[1]
     assert "rules.disabled" in parse_repo_config("rules:\n  disabled: ['  ']\n")[1]
+
+
+def test_rag_defaults_off_and_reads_the_rag_section() -> None:
+    default, _ = parse_repo_config(None)
+    assert default.rag.enabled is False
+    assert (default.rag.top_k, default.rag.max_records) == (20, 3)
+    assert default.rag.min_similarity == DEFAULT_MIN_SIMILARITY
+    got, problem = parse_repo_config(
+        "rag:\n  enabled: true\n  top_k: 5\n  min_similarity: 0.5\n  max_records: 0\n"
+    )
+    assert problem is None
+    rag = got.rag
+    assert (rag.enabled, rag.top_k, rag.min_similarity, rag.max_records) == (True, 5, 0.5, 0)
+
+
+@pytest.mark.parametrize(
+    "text", ["rag:\n  max_records: 11\n", "rag:\n  top_k: 0\n", "rag:\n  min_similarity: 2\n"]
+)
+def test_rag_values_out_of_range_fall_back_to_defaults_with_a_reason(text: str) -> None:
+    got, problem = parse_repo_config(text)
+    assert got.rag.enabled is False
+    assert problem is not None and "rag" in problem

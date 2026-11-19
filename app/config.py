@@ -11,7 +11,9 @@ from pathlib import Path
 from typing import Final
 
 import yaml
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+
+from app.models.rag import E5_SMALL, EMBED_MODELS
 
 DEFAULT_CONFIG_DIR: Final = Path.home() / ".config" / "pipeline"
 CONFIG_DIR_ENV: Final = "PIPELINE_CONFIG_DIR"
@@ -50,13 +52,30 @@ class ModelConfig(BaseModel):
     calls: CallMaxima = CallMaxima()
 
 
+class RagConfig(BaseModel):
+    """과거 기록 검색의 파이프라인 쪽 설정 (DESIGN.md 6.5, 10절). 모델은 `models/rag.py`의
+    `EMBED_MODELS`에 판과 해시를 고정한 것만 받는다."""
+
+    embed_model: str = E5_SMALL
+
+    @field_validator("embed_model")
+    @classmethod
+    def _known(cls, value: str) -> str:
+        if value not in EMBED_MODELS:
+            known = ", ".join(sorted(EMBED_MODELS))
+            raise ValueError(f"받을 수 있는 임베딩 모델이 아님: {value} (가능: {known})")
+        return value
+
+
 class PipelineConfig(BaseModel):
     repos: list[str]  # 처리할 리포 허용 목록 "owner/name"
     redis_url: str = "redis://127.0.0.1:6379/0"
-    data_dir: Path = Path.home() / ".cache" / "pipeline"  # bare 캐시, worktree, .venv, SQLite
+    # bare 캐시, worktree, .venv, SQLite, 검색을 켜면 chroma/와 임베딩 모델(models/)
+    data_dir: Path = Path.home() / ".cache" / "pipeline"
     sync: SyncConfig = SyncConfig()
     sandbox: SandboxConfig = SandboxConfig()
     model: ModelConfig = ModelConfig()
+    rag: RagConfig = RagConfig()
 
     @property
     def db_path(self) -> Path:

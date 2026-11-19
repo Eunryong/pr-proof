@@ -18,6 +18,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# 과거 기록 검색 (docs/DESIGN.md 6.5). rag.enabled인 저장소의 검사에서만 import한다.
+# 임베딩은 onnxruntime과 tokenizers로 로컬에서 계산하고 모델 파일은 판과 해시를 고정해 받는다
+rag = [
+    "chromadb==1.5.9",
+    "onnxruntime==1.31.1",
+    "tokenizers==0.23.3",
+    "numpy==2.4.6",
+]
 dev = [
     "pytest>=8.3",
     "pytest-cov>=6.0",

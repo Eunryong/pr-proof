@@ -323,6 +323,37 @@ class Store:
             session.commit()
             return True
 
+    def records_by_ids(self, ids: Iterable[int]) -> list[Record]:
+        wanted = list(dict.fromkeys(ids))
+        if not wanted:
+            return []
+        with Session(self.engine) as session:
+            return list(session.exec(select(Record).where(Record.id.in_(wanted))))
+
+    def pending_records(self, repo: str) -> list[Record]:
+        """벡터 저장소에 아직 넣지 않은 이 저장소의 기록 (`embedded_at`이 빔, 6.5)."""
+        with Session(self.engine) as session:
+            stmt = select(Record).where(Record.repo == repo, Record.embedded_at.is_(None))
+            return list(session.exec(stmt.order_by(Record.id)))
+
+    def mark_embedded(self, ids: Iterable[int], model: str, at: datetime) -> None:
+        with Session(self.engine) as session:
+            for row in session.exec(select(Record).where(Record.id.in_(list(ids)))):
+                row.embedded_at, row.embed_model = at, model
+                session.add(row)
+            session.commit()
+
+    def clear_embedded(self, repo: str) -> None:
+        with Session(self.engine) as session:
+            for row in session.exec(select(Record).where(Record.repo == repo)):
+                row.embedded_at, row.embed_model = None, None
+                session.add(row)
+            session.commit()
+
+    def record_repos(self) -> list[str]:
+        with Session(self.engine) as session:
+            return sorted(set(session.exec(select(Record.repo))))
+
     def records(self, repo: str, pr_number: int | None = None) -> list[Record]:
         with Session(self.engine) as session:
             stmt = select(Record).where(Record.repo == repo)

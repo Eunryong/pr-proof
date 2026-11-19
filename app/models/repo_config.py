@@ -34,6 +34,10 @@ REMOVED_KEYS: Final[Mapping[tuple[str, str], str]] = {
     ),
 }
 MAX_RULE_DOCS: Final = 20
+# 유사도 기준값의 기본. 6.7의 측정으로 정했다 (multilingual-e5-small, 2026-11-20, 11.1)
+DEFAULT_MIN_SIMILARITY: Final = 0.90
+# 프롬프트에 넣는 기록 수의 상한. 저장소 설정이 프롬프트를 끝없이 늘리지 못하게
+MAX_RECORDS_CAP: Final = 10
 
 
 def _check_doc_path(path: str) -> str:
@@ -117,6 +121,18 @@ class SkillsSettings(BaseModel):
     enabled: list[str] | None = None
 
 
+class RagSettings(BaseModel):
+    """과거 기록 검색 (DESIGN.md 6.4–6.6, 10절 `rag`). 기록 저장은 이 값과 관계없이 한다."""
+
+    model_config = ConfigDict(extra="ignore")
+    enabled: bool = False  # 검색 결과를 프롬프트에 넣을지 (5단계의 비교 뒤 기본값을 정한다)
+    top_k: int = Field(default=20, ge=1, le=200)  # 검색이 가져오는 후보 수
+    # 이 유사도 미만의 기록은 넣지 않는다. recall@k와 관련 없는 짝의 분포로 정한 값 (6.7)
+    min_similarity: float = Field(default=DEFAULT_MIN_SIMILARITY, ge=-1, le=1)
+    # 한 호출의 프롬프트에 넣는 기록 수 상한. top_k와 따로 둔다
+    max_records: int = Field(default=3, ge=0, le=MAX_RECORDS_CAP)
+
+
 class RepoConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
     rules: RulesSettings = RulesSettings()
@@ -124,6 +140,7 @@ class RepoConfig(BaseModel):
     skills: SkillsSettings = SkillsSettings()
     model: ModelSettings = ModelSettings()
     fix: FixSettings = FixSettings()
+    rag: RagSettings = RagSettings()
 
     @model_validator(mode="before")
     @classmethod
