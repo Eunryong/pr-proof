@@ -95,8 +95,8 @@ class PermissionDenial:
 class ClaudeResult:
     """claude 호출 결과. ok는 호출이 정상으로 끝났다는 뜻일 뿐, 수정안의 판정이 아니다.
 
-    cost_usd가 None이면 비용을 알 수 없다 (시간 초과, JSON 없음). 예산 계산에서는 호출당 상한을
-    쓴 것으로 보면 된다.
+    cost_usd가 None이면 비용을 알 수 없다 (시간 초과, JSON 없음). 상한은 호출 수로 세므로 이 값은
+    판단에 쓰지 않는다 (DESIGN 9.2).
     """
 
     ok: bool
