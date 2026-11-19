@@ -40,6 +40,7 @@ from app.models.rule import checked_exclude
 from app.models.rule_reading import apply_disabled
 from app.models.tool_choice import choice_key
 from app.models.tools import RuffSetup, config_rule
+from app.sandbox import docker_cli
 from app.sandbox.docker_cli import SandboxError
 from app.worker import checkers, detect, repo, rules
 from app.worker.budget import CallBudget
@@ -211,8 +212,10 @@ def last_call_id(store: Store, repo: str, pr_number: int) -> int:
     return max((c.id or 0 for c in store.model_calls(repo, pr_number)), default=0)
 
 
-def sandbox_for(tool_cache: Path, ruff: RuffSetup | None = None) -> checkers.FormatsFiles:
-    return checkers.Sandbox(tool_cache, ruff)
+def sandbox_for(
+    tool_cache: Path, ruff: RuffSetup | None = None, image: str = docker_cli.IMAGE
+) -> checkers.FormatsFiles:
+    return checkers.Sandbox(tool_cache, ruff, image)
 
 
 def _first_line(text: str) -> str:

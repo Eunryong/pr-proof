@@ -52,7 +52,9 @@ def test_check_mounts_the_base_config_outside_the_tree_and_paths_after_dashes(
     fake_run, tmp_path: Path
 ) -> None:
     calls, configs = fake_run(_ok())
-    python.ruff_check(tmp_path, ["-a.py"], tool_dir=tmp_path, config=CONFIG, codes=["F401", "T201"])
+    python.ruff_check(
+        tmp_path, ["-a.py"], tool_dir=tmp_path, image="unit", config=CONFIG, codes=["F401", "T201"]
+    )
     (argv,) = calls
     assert argv[argv.index("--config") + 1] == "/config/ruff.toml" and configs == [CONFIG.text]
     assert argv[argv.index("--select") + 1] == "F401,T201"
@@ -64,14 +66,14 @@ def test_check_mounts_the_base_config_outside_the_tree_and_paths_after_dashes(
 
 def test_check_without_config_is_isolated(fake_run, tmp_path: Path) -> None:
     calls, _ = fake_run(_ok())
-    python.ruff_check(tmp_path, ["a.py"], tool_dir=tmp_path, config=None)
+    python.ruff_check(tmp_path, ["a.py"], tool_dir=tmp_path, image="unit", config=None)
     (argv,) = calls
     assert "--isolated" in argv and "--config" not in argv and "--select" not in argv
 
 
 def test_no_files_runs_nothing(fake_run, tmp_path: Path) -> None:
     calls, _ = fake_run(_ok())
-    assert python.ruff_check(tmp_path, [], tool_dir=tmp_path, config=None) == Ran(())
+    assert python.ruff_check(tmp_path, [], tool_dir=tmp_path, image="unit", config=None) == Ran(())
     assert calls == []
 
 
@@ -79,7 +81,9 @@ def test_no_files_runs_nothing(fake_run, tmp_path: Path) -> None:
 def test_violations_are_read_relative_to_the_repo(fake_run, tmp_path: Path, code: int) -> None:
     out = json.dumps([_item("a.py", 3, 5), _item("b.py", 1, code=None)]).encode()
     fake_run(_ok(out, code))
-    run = python.ruff_check(tmp_path, ["a.py", "b.py"], tool_dir=tmp_path, config=None)
+    run = python.ruff_check(
+        tmp_path, ["a.py", "b.py"], tool_dir=tmp_path, image="unit", config=None
+    )
     assert run == Ran(
         (Match("a.py", 3, 5, "msg", "F401"), Match("b.py", 1, 1, "msg", "syntax-error"))
     )
@@ -98,14 +102,14 @@ def test_violations_are_read_relative_to_the_repo(fake_run, tmp_path: Path, code
 )
 def test_unusable_results_fail_the_rule_not_the_job(fake_run, tmp_path: Path, raw, reason) -> None:
     fake_run(raw)
-    run = python.ruff_check(tmp_path, ["a.py"], tool_dir=tmp_path, config=None)
+    run = python.ruff_check(tmp_path, ["a.py"], tool_dir=tmp_path, image="unit", config=None)
     assert isinstance(run, Failed) and reason in run.reason
 
 
 def test_docker_failure_is_environment_error(fake_run, tmp_path: Path) -> None:
     fake_run(RawRun(125, b"", "daemon down"))
     with pytest.raises(SandboxError):
-        python.ruff_check(tmp_path, ["a.py"], tool_dir=tmp_path, config=None)
+        python.ruff_check(tmp_path, ["a.py"], tool_dir=tmp_path, image="unit", config=None)
 
 
 def test_only_safe_fixes_become_edits() -> None:
@@ -132,26 +136,29 @@ def test_format_diff_gives_changed_original_lines() -> None:
 @pytest.mark.parametrize(("code", "expected"), [(0, True), (1, False)])
 def test_format_check(fake_run, tmp_path: Path, code: int, expected: bool) -> None:
     calls, _ = fake_run(_ok(b"", code))
-    assert python.format_check(tmp_path, tool_dir=tmp_path, config=None) is expected
+    assert python.format_check(tmp_path, tool_dir=tmp_path, image="unit", config=None) is expected
     assert "--check" in calls[0] and calls[0][-2:] == ["--", "."]
 
 
 def test_format_apply_is_the_only_writable_mount(fake_run, tmp_path: Path) -> None:
     calls, _ = fake_run(_ok())
-    assert python.format_apply(tmp_path, ["a.py"], tool_dir=tmp_path, config=None) is True
+    assert (
+        python.format_apply(tmp_path, ["a.py"], tool_dir=tmp_path, image="unit", config=None)
+        is True
+    )
     assert f"{tmp_path.resolve()}:/work" in calls[0] and calls[0][-2:] == ["--", "a.py"]
     assert "--network" in calls[0] and "--check" not in calls[0]
 
 
 def test_format_error_is_a_reason(fake_run, tmp_path: Path) -> None:
     fake_run(RawRun(2, b"", "boom"))
-    result = python.format_check(tmp_path, tool_dir=tmp_path, config=None)
+    result = python.format_check(tmp_path, tool_dir=tmp_path, image="unit", config=None)
     assert isinstance(result, str) and "boom" in result
 
 
 def test_rule_exists_passes_only_rule_codes(fake_run, tmp_path: Path) -> None:
     calls, _ = fake_run(_ok(b"", 0))
-    assert python.ruff_rule_exists("--help", tool_dir=tmp_path) is False
+    assert python.ruff_rule_exists("--help", tool_dir=tmp_path, image="unit") is False
     assert calls == []  # 코드 모양이 아니면 ruff에 넘기지 않는다
-    assert python.ruff_rule_exists("F401", tool_dir=tmp_path) is True
+    assert python.ruff_rule_exists("F401", tool_dir=tmp_path, image="unit") is True
     assert calls[0][-2:] == ["rule", "F401"]

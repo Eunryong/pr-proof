@@ -1,7 +1,8 @@
 name: no-rules-at-all
 description: >-
   3-3 뒷부분. README에 규칙이 없고 ruff 설정도 없는 base. 파이프라인이 정한 규칙으로 검사하지 않고
-  "규칙을 찾지 못해 규칙 검사를 하지 않음"을 적는다. 도구는 하나도 받지 않는다.
+  "규칙을 찾지 못해 규칙 검사를 하지 않음"을 적는다. 규칙의 도구(ruff, ast-grep)는 하나도 받지 않는다.
+  테스트가 쓰는 Python 런타임만 받는다(이미지에 언어가 없다, 3-6).
 base:
   - file: README.md
     create: "# orders\n\n파이프라인 평가용 예제 리포다.\n"
@@ -14,4 +15,5 @@ model:
 expect:
   rule_line: "**규칙:** 규칙을 찾지 못해 규칙 검사를 하지 않음"
   contains: ["ruff 설정(`ruff.toml`, `pyproject.toml`의 `[tool.ruff]`)을 두면"]
+  fetched: [python/3.11.18]
   not_fetched: [ruff, ast-grep]

@@ -32,11 +32,13 @@ import os
 import re
 import shlex
 import shutil
+import subprocess
 import tempfile
 import tomllib
 import uuid
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
@@ -51,7 +53,7 @@ from app.models.test_run import KILLED_EXIT, PYTEST_TESTS_FAILED, PytestRun, Rep
 from app.models.text_edit import TextEdit
 from app.models.tools import RUFF_CODE, RuffConfig
 from app.models.violation import Violation
-from app.sandbox import docker_cli
+from app.sandbox import docker_cli, toolcache
 from app.sandbox.checker_runner import (
     MAX_STDERR_CHARS,
     CheckerRun,
@@ -73,6 +75,39 @@ from app.sandbox.container import (
 from app.sandbox.docker_cli import Image
 from app.sandbox.safe_read import read_regular_file
 
+# ---- 런타임 ----
+
+# 런타임을 붙이는 컨테이너 안 경로. .venv의 인터프리터(`pyvenv.cfg`의 home, `bin/python`)가
+# 이 경로에 묶이므로 설치 컨테이너와 테스트 컨테이너가 같아야 한다
+RUNTIME_IN_CONTAINER: Final = "/opt/python"
+PYTHON_IN_CONTAINER: Final = f"{RUNTIME_IN_CONTAINER}/{toolcache.TOOLS[toolcache.PYTHON].binary}"
+
+
+@dataclass(frozen=True)
+class Runtime:
+    """도구 캐시에 받은 Python 런타임. version이 .venv 캐시 키에 들어간다."""
+
+    version: str
+    dir: Path
+
+
+def ensure_runtime(cache_dir: Path, image: str) -> Runtime:
+    """테스트가 쓸 Python 런타임을 도구 캐시에 받는다 (이미 있으면 받지 않는다). image는 빌드된
+    샌드박스 이미지 태그다(받기 컨테이너).
+
+    받지 못하면 SandboxError(환경 오류)다. 이 플랫폼의 배포본이 없거나 해시가 다른 것도 PR 탓이
+    아니라 파이프라인 쪽 문제라서 테스트 결과를 만들지 않고 재시도와 운영 알림으로 보낸다.
+    """
+    version = toolcache.TOOLS[toolcache.PYTHON].default
+    try:
+        path = toolcache.ensure(
+            toolcache.PYTHON, version, cache_dir=cache_dir, download=toolcache.fetcher(image)
+        )
+    except toolcache.ToolUnavailable as e:
+        raise docker_cli.SandboxError(f"Python 런타임을 준비하지 못함: {e}") from e
+    return Runtime(version, path)
+
+
 # ---- 의존성 설치와 캐시 (.venv) ----
 
 VENV_CACHE: Final = Path.home() / ".cache" / "pipeline" / "venvs"
@@ -83,18 +118,18 @@ INSTALL_TIMEOUT: Final = 900
 VENV_IN_CONTAINER: Final = "/work/.venv"
 DEPS_IN_CONTAINER: Final = "/tmp/deps"
 # 설치 방법의 버전. 설치 명령을 바꾸면 올린다 (캐시 키에 들어간다)
-INSTALL_VERSION: Final = "binary-only-1"
+INSTALL_VERSION: Final = "runtime-cache-1"
 # 표준 입력의 {파일 이름: 내용}을 DEPS_IN_CONTAINER에 쓰고, wheel만 설치한다. pip의 자세한
 # 기록(-vv)은 실패했을 때만 줄여서 내보낸다: 건너뛴 링크 줄을 뺀 끝부분과, 소스 배포본만 있어
 # 건너뛴 패키지 이름
 _INSTALL_SCRIPT: Final = """\
-python -c 'import json, os, sys
+{python} -I -c 'import json, os, sys
 files = json.load(sys.stdin)
 os.makedirs(sys.argv[1])
 for name, text in files.items():
     with open(os.path.join(sys.argv[1], os.path.basename(name)), "w", encoding="utf-8") as f:
         f.write(text)' {deps} || exit 3
-python -m venv {venv} || exit 4
+{python} -m venv {venv} || exit 4
 {venv}/bin/pip install -vv --no-cache-dir --only-binary :all: {args} > /tmp/pip.log 2>&1
 rc=$?
 if [ "$rc" -ne 0 ]; then
@@ -210,10 +245,10 @@ def dependency_files(worktree: Path) -> list[Path]:
     return files
 
 
-def cache_key(worktree: Path, image: Image) -> str:
-    """의존성 파일 내용 + 베이스 이미지 id + Python 버전 + 검사 도구 버전 + 설치 방법 버전."""
+def cache_key(worktree: Path, image: Image, runtime_version: str) -> str:
+    """의존성 파일 내용 + 이미지 id + 런타임 버전 + 검사 도구 버전 + 설치 방법 버전."""
     h = hashlib.sha256()
-    for part in (image.id, image.python_version, *TOOL_REQUIREMENTS, INSTALL_VERSION):
+    for part in (image.id, runtime_version, *TOOL_REQUIREMENTS, INSTALL_VERSION):
         h.update(part.encode() + b"\0")
     for path in dependency_files(worktree):
         h.update(path.name.encode() + b"\0" + path.read_bytes() + b"\0")
@@ -237,13 +272,17 @@ def deps_input(worktree: Path) -> tuple[dict[str, str], list[str]]:
 
 def install_script(pip_args: list[str]) -> str:
     return _INSTALL_SCRIPT.format(
-        deps=DEPS_IN_CONTAINER, venv=VENV_IN_CONTAINER, args=shlex.join(pip_args)
+        python=PYTHON_IN_CONTAINER,
+        deps=DEPS_IN_CONTAINER,
+        venv=VENV_IN_CONTAINER,
+        args=shlex.join(pip_args),
     )
 
 
 def ensure_venv(
     worktree: Path,
     image: Image,
+    runtime: Runtime,
     cache_dir: Path = VENV_CACHE,
     tag: str = docker_cli.IMAGE,
     *,
@@ -254,7 +293,7 @@ def ensure_venv(
     임시 폴더에 설치하고 완료 표시를 남긴 뒤 캐시 경로로 옮겨, 실패한 설치가 캐시에 남지 않게 한다.
     docker 자체가 실패하면 SandboxError, pip이 실패하면 DependencyInstallError를 올린다.
     """
-    key = cache_key(worktree, image)
+    key = cache_key(worktree, image, runtime.version)
     target = cache_dir / key
     if (target / ".complete").is_file():
         return target
@@ -268,13 +307,9 @@ def ensure_venv(
         if bad:
             detail = "wheel만 설치하므로 받지 않는 줄:\n" + "\n".join(bad[:20])
             raise DependencyInstallError("disallowed", key, detail[:MAX_DETAIL_CHARS])
-        proc = docker_cli.run(
-            "run", "--rm", "-i", *docker_cli.limits(memory_gb),
-            "--user", docker_cli.user(), "-e", "HOME=/tmp",
-            "-v", f"{build}:{VENV_IN_CONTAINER}",
-            tag, "sh", "-c", install_script(pip_args),
-            timeout=INSTALL_TIMEOUT, check=False, input=json.dumps(files),
-        )  # fmt: skip
+        proc = _run_install(
+            build, runtime, tag, install_script(pip_args), json.dumps(files), memory_gb
+        )
         if proc.returncode in docker_cli.DOCKER_FAILED:
             raise docker_cli.SandboxError(
                 f"설치 컨테이너 실행 실패 ({proc.returncode}): {proc.stderr.strip()[-500:]}"
@@ -297,6 +332,31 @@ def ensure_venv(
         if build.exists():
             shutil.rmtree(build, ignore_errors=True)
     return target
+
+
+def _run_install(
+    build: Path, runtime: Runtime, tag: str, script: str, stdin: str, memory_gb: float
+) -> subprocess.CompletedProcess[str]:
+    """설치 컨테이너를 만들고 런타임을 복사해 넣은 뒤 설치 스크립트를 돌린다.
+
+    런타임은 마운트하지 않고 복사한다. 네트워크가 열린 이 컨테이너에 붙는 호스트 경로는 빈 출력
+    폴더(build) 하나뿐이다 (8.1: 다른 캐시 항목을 마운트하지 않는다).
+    """
+    name = f"pr-proof-install-{uuid.uuid4().hex[:12]}"
+    docker_cli.run(
+        "create", "-i", "--name", name, *docker_cli.limits(memory_gb),
+        "--user", docker_cli.user(), "-e", "HOME=/tmp", "-e", "PYTHONDONTWRITEBYTECODE=1",
+        "-e", "PIP_DISABLE_PIP_VERSION_CHECK=1", "-e", "PIP_NO_INPUT=1",
+        "-v", f"{build}:{VENV_IN_CONTAINER}",
+        tag, "sh", "-c", script,
+    )  # fmt: skip
+    try:
+        docker_cli.run("cp", str(runtime.dir.resolve()), f"{name}:{RUNTIME_IN_CONTAINER}")
+        return docker_cli.run(
+            "start", "-ai", name, timeout=INSTALL_TIMEOUT, check=False, input=stdin
+        )
+    finally:
+        docker_cli.remove_container(name)
 
 
 # ---- 테스트 실행과 결과 읽기 (pytest, report.json) ----
@@ -536,6 +596,7 @@ def _ruff_container(
     root: Path,
     *,
     tool_dir: Path,
+    image: str,
     config: RuffConfig | None,
     writable: bool = False,
     memory_gb: float = docker_cli.MEMORY_LIMIT_GB,
@@ -553,7 +614,7 @@ def _ruff_container(
         docker = [
             "run", "--rm", "-i", "--network", "none", "--read-only", *docker_cli.limits(memory_gb),
             "--user", docker_cli.user(), "-e", "HOME=/tmp", *mounts, "-w", RUFF_WORK,
-            docker_cli.TOOL_IMAGE, f"{RUFF_MOUNT}/ruff",
+            image, f"{RUFF_MOUNT}/ruff",
         ]  # fmt: skip
         yield docker, config_args
 
@@ -579,6 +640,7 @@ def ruff_check(
     files: Sequence[str],
     *,
     tool_dir: Path,
+    image: str,
     config: RuffConfig | None,
     codes: Sequence[str] = (),
     timeout: int = RUFF_TIMEOUT,
@@ -589,7 +651,10 @@ def ruff_check(
     if not files:
         return Ran(())
     select = ["--select", ",".join(codes)] if codes else []
-    with _ruff_container(root, tool_dir=tool_dir, config=config) as (docker, config_args):
+    with _ruff_container(root, tool_dir=tool_dir, image=image, config=config) as (
+        docker,
+        config_args,
+    ):
         argv = [*docker, "check", "--no-cache", "--output-format", "json", "--force-exclude",
                 *config_args, *select, "--", *files]  # fmt: skip
         result = run_bounded(argv, b"", timeout=timeout)
@@ -660,6 +725,7 @@ def format_diff(
     files: Sequence[str],
     *,
     tool_dir: Path,
+    image: str,
     config: RuffConfig | None,
     timeout: int = RUFF_TIMEOUT,
 ) -> CheckerRun:
@@ -667,7 +733,10 @@ def format_diff(
     check_paths(files)
     if not files:
         return Ran(())
-    with _ruff_container(root, tool_dir=tool_dir, config=config) as (docker, config_args):
+    with _ruff_container(root, tool_dir=tool_dir, image=image, config=config) as (
+        docker,
+        config_args,
+    ):
         argv = [*docker, "format", "--no-cache", "--force-exclude", "--diff", *config_args, "--",
                 *files]  # fmt: skip
         result = run_bounded(argv, b"", timeout=timeout)
@@ -711,10 +780,18 @@ def parse_format_diff(diff: str) -> tuple[Match, ...]:
 
 
 def format_check(
-    root: Path, *, tool_dir: Path, config: RuffConfig | None, timeout: int = RUFF_TIMEOUT
+    root: Path,
+    *,
+    tool_dir: Path,
+    image: str,
+    config: RuffConfig | None,
+    timeout: int = RUFF_TIMEOUT,
 ) -> FormatResult:
     """root 전체가 `ruff format --check`를 통과하는지 (4.7: base가 포맷돼 있을 때만 포맷한다)."""
-    with _ruff_container(root, tool_dir=tool_dir, config=config) as (docker, config_args):
+    with _ruff_container(root, tool_dir=tool_dir, image=image, config=config) as (
+        docker,
+        config_args,
+    ):
         argv = [*docker, "format", "--no-cache", "--force-exclude", "--check", *config_args, "--",
                 "."]  # fmt: skip
         result = run_bounded(argv, b"", timeout=timeout)
@@ -729,6 +806,7 @@ def format_apply(
     files: Sequence[str],
     *,
     tool_dir: Path,
+    image: str,
     config: RuffConfig | None,
     timeout: int = RUFF_TIMEOUT,
 ) -> FormatResult:
@@ -736,7 +814,10 @@ def format_apply(
     check_paths(files)
     if not files:
         return True
-    with _ruff_container(root, tool_dir=tool_dir, config=config, writable=True) as (docker, args):
+    with _ruff_container(root, tool_dir=tool_dir, image=image, config=config, writable=True) as (
+        docker,
+        args,
+    ):
         argv = [*docker, "format", "--no-cache", "--force-exclude", *args, "--", *files]
         result = run_bounded(argv, b"", timeout=timeout)
     failed = _ruff_failure(result, timeout, "ruff format")
@@ -745,12 +826,12 @@ def format_apply(
     return result.returncode == 0 or f"ruff format 종료 코드 {result.returncode}"
 
 
-def ruff_rule_exists(code: str, *, tool_dir: Path, timeout: int = 30) -> bool:
+def ruff_rule_exists(code: str, *, tool_dir: Path, image: str, timeout: int = 30) -> bool:
     """`ruff rule <코드>`가 그 규칙을 아는지 (4.4: 모델이 고른 코드가 실재하는지)."""
     if not RUFF_CODE.match(code):  # 형식이 맞는 코드만 인자로 넘긴다 (`-`로 시작하는 옵션이 아님)
         return False
     with tempfile.TemporaryDirectory(prefix="pipeline-ruff-") as tmp:
-        with _ruff_container(Path(tmp), tool_dir=tool_dir, config=None) as (docker, _):
+        with _ruff_container(Path(tmp), tool_dir=tool_dir, image=image, config=None) as (docker, _):
             result = run_bounded([*docker, "rule", code], b"", timeout=timeout)
     if result.returncode in docker_cli.DOCKER_FAILED:
         raise docker_cli.SandboxError(f"docker run 실패 ({result.returncode}): {result.stderr}")

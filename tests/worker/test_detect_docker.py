@@ -27,11 +27,11 @@ def worktree(tmp_path: Path) -> Path:
 
 @pytest.mark.parametrize(("kind", "body"), [("ast-grep", PRINT_RULE), ("python-ast", PRINT_SCRIPT)])
 def test_real_checker_reports_only_the_changed_line(
-    worktree: Path, tool_cache: Path, kind: str, body: str
+    worktree: Path, tool_cache: Path, sandbox_image: str, kind: str, body: str
 ) -> None:
     check = replace(CHECKED, checker=replace(CHECKER, kind=kind, body=body))
     changed = added_lines(_diff("orders/services/pricing.py", 4, 1))
-    result = detect([check], worktree, changed, sandbox=Sandbox(tool_cache))
+    result = detect([check], worktree, changed, sandbox=Sandbox(tool_cache, image=sandbox_image))
     assert [(v.file, v.line, v.line_text) for v in result.violations] == [
         ("orders/services/pricing.py", 4, "print('pr')")
     ]

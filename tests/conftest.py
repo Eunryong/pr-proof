@@ -62,3 +62,13 @@ def worktree(eval_repo: Path, tmp_path: Path) -> Path:
 def tool_cache(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """docker 테스트가 같이 쓰는 도구 캐시. 세션에 한 번 실제로 받는다."""
     return tmp_path_factory.mktemp("tools")
+
+
+@pytest.fixture(scope="session")
+def sandbox_image() -> str:
+    """테스트용 태그로 빌드한 샌드박스 이미지. 받기 컨테이너도 이 이미지의 curl을 쓴다."""
+    from app.sandbox import docker_cli
+    from tests.sandbox_names import TEST_NAMES
+
+    docker_cli.ensure_image(TEST_NAMES.image)
+    return TEST_NAMES.image

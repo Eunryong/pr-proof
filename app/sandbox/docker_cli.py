@@ -3,20 +3,18 @@
 호스트에서는 docker CLI만 부른다. subprocess에는 최소 환경만 넘긴다.
 """
 
-import json
 import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
+# 모든 샌드박스 컨테이너(도구 받기, .venv 설치, 검사기·ruff, 테스트)의 이미지. 언어와 무관한
+# 최소 이미지이고 런타임과 도구는 도구 캐시에서 붙인다 (DESIGN 2.3, 8.1, docker/sandbox/Dockerfile)
 IMAGE: Final = "pipeline-sandbox"
-# 도구 설치와 검사기 실행 컨테이너의 이미지 (docs/DESIGN.md 2.3, 8.1). 대상 리포의 것을 넣지 않는다.
-# glibc(도구 캐시의 gnu 빌드), 인증서(설치 컨테이너의 https), Python(받기 스크립트)이 든다
-TOOL_IMAGE: Final = "python:3.11-slim"
 # 작업 컨테이너 이름 접두어. 이름 뒤에는 runs ID가 붙는다
 CONTAINER_PREFIX: Final = "pr-proof-job"
-# 베이스 이미지 Dockerfile과 컨테이너에 읽기 전용으로 넣는 파이프라인 설정(coveragerc)
+# 이미지 Dockerfile과 컨테이너에 읽기 전용으로 넣는 파이프라인 설정(coveragerc)
 IMAGE_DIR: Final = Path(__file__).resolve().parents[2] / "docker" / "sandbox"
 
 # 설치·작업 컨테이너 공통 자원 제한. 메모리는 대상 리포의 sandbox.memory_gb로 바꿀 수 있다
@@ -37,10 +35,9 @@ class SandboxError(RuntimeError):
 
 @dataclass(frozen=True)
 class Image:
-    """샌드박스 베이스 이미지. .venv 캐시 키에 들어간다."""
+    """샌드박스 이미지. id가 .venv 캐시 키에 들어간다 (glibc가 바뀌면 다시 설치한다)."""
 
     id: str
-    python_version: str
 
 
 def limits(memory_gb: float = MEMORY_LIMIT_GB) -> tuple[str, ...]:
@@ -103,11 +100,9 @@ DEFAULT_NAMES: Final = Names()  # 운영 기본값
 
 
 def ensure_image(tag: str = IMAGE) -> Image:
-    """베이스 이미지를 빌드(캐시되면 즉시 끝남)하고 id와 Python 버전을 돌려준다."""
+    """이미지를 빌드(캐시되면 즉시 끝남)하고 id를 돌려준다."""
     run("build", "-q", "-t", tag, str(IMAGE_DIR), timeout=600)
-    info = json.loads(run("image", "inspect", tag, "--format", "{{json .}}").stdout)
-    env = dict(item.split("=", 1) for item in info["Config"]["Env"] if "=" in item)
-    return Image(id=info["Id"], python_version=env.get("PYTHON_VERSION", "unknown"))
+    return Image(id=run("image", "inspect", tag, "--format", "{{.Id}}").stdout.strip())
 
 
 @dataclass(frozen=True)

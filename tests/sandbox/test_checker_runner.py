@@ -78,11 +78,15 @@ def test_limits_and_docker_failures() -> None:
 
 def test_fix_rule_is_rejected_without_docker(tmp_path: Path) -> None:
     body = "id: x\nlanguage: python\nrule: {pattern: print($A)}\nfix: log($A)\n"
-    run = checker_runner.run_checker("ast-grep", body, tmp_path, ["a.py"], tool_dir=tmp_path)
+    run = checker_runner.run_checker(
+        "ast-grep", body, tmp_path, ["a.py"], tool_dir=tmp_path, image="unused"
+    )
     assert isinstance(run, Invalid) and "fix" in run.reason
 
 
 @pytest.mark.parametrize("path", ["/abs.py", "../up.py", "a/../../b.py", ""])
 def test_input_paths_must_be_relative_inside(tmp_path: Path, path: str) -> None:
     with pytest.raises(ValueError):
-        checker_runner.run_checker("python-ast", "x = 1\n", tmp_path, [path])
+        checker_runner.run_checker(
+            "python-ast", "x = 1\n", tmp_path, [path], tool_dir=tmp_path, image="unused"
+        )
