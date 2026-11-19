@@ -2,7 +2,9 @@
 
 규칙마다 공용 틀(worker/loop.py)을 한 번 돈다. write는 도구 없이 모델을 부르고 답(초안)을
 `model_cache`에 저장한다. verify는 초안을 샌드박스에서 예시에 돌려 결정적으로 판정한다. 처음
-두 회차는 ast-grep 규칙, 세 번째는 Python AST 스크립트다. 모델은 세 회차 모두 `model.checker`다.
+두 회차는 ast-grep 규칙, 세 번째는 Python AST 스크립트다. ast-grep 회차에서 모델이 그 형식으로 가릴
+수 없다고 답하면(`unfit`) 그 초안은 돌리지 않고 다음 회차부터 Python AST 스크립트로 쓴다. 모델은 세
+회차 모두 `model.checker`다.
 
 결과는 `checkers` 테이블에 규칙의 캐시 키별로 둔다. 채택한 검사기와 끝내 통과하지 못한 기록은
 다시 묻지 않는다. 호출 상한, 모델 호출 실패, 도구 준비 실패로 끝난 규칙은 저장하지 않으므로
@@ -22,13 +24,13 @@ from app.models.cache_key import text_hash
 from app.models.call_budget import CALL_BUDGET_USD, Denied, RulesetScope
 from app.models.checker import Checker, CheckerKind, checker_id
 from app.models.checker_authoring import (
-    ANSWER_SCHEMA,
     ENGINE_VERSION,
     MAX_ATTEMPTS,
     Checked,
     Draft,
     RuleCheck,
     Unchecked,
+    answer_schema,
     build_prompt,
     checker_from_json,
     checker_key,
@@ -203,7 +205,9 @@ class _Author:
             attempt, tier = state["attempt"], state["tier"]
             feedback = state.get("feedback", [])
             model = self.models.checker  # 더 높은 모델로 올리지 않는다 (11.2 D7)
-            kind = kind_for_attempt(attempt, rule)
+            unfit = any(self._draft(a["artifact"]).unfit
+                        for a in state.get("history", []) if a["artifact"])  # fmt: skip
+            kind = kind_for_attempt(attempt, rule, ast_grep_unfit=unfit)
             artifact = draft_key(key, attempt, model, feedback, prompt_version_for(rule))
             if self.store.cached_result(artifact) is not None:
                 self.budget.record_hit(self.scope, stage="checker", tier=tier, model=model)
@@ -215,7 +219,7 @@ class _Author:
             answer = self.ask(
                 build_prompt(rule, need, feedback),
                 system_prompt=system_prompt(kind),
-                schema=ANSWER_SCHEMA,
+                schema=answer_schema(kind),
                 model=model,
                 max_budget_usd=CALL_BUDGET_USD[tier],
             )
@@ -239,6 +243,7 @@ class _Author:
             draft = Draft(
                 kind=kind, body=parsed.checker, examples=examples,
                 example_problems=tuple(problems), model=answer.model_id or model,
+                unfit=parsed.unfit.strip() if kind == "ast-grep" else "",
             )  # fmt: skip
             self.store.save_result(artifact, stage="checker", model=draft.model,
                                    prompt_version=prompt_version_for(rule),
@@ -247,6 +252,12 @@ class _Author:
 
         def verify(state: LoopState) -> Verdict:
             draft = self._draft(state["artifact"])
+            if draft.unfit:
+                said = f"직전 시도는 이 규칙을 ast-grep으로 가릴 수 없다고 답했다: {draft.unfit}"
+                return Verdict(
+                    "retry", detail=f"ast-grep으로 가릴 수 없다고 답함: {draft.unfit}",
+                    feedback=(f"{said}\n이번에는 Python ast 스크립트로 쓴다.",),
+                )  # fmt: skip
             previous = previous_body_feedback(draft)
             if draft.example_problems:
                 return Verdict("retry", detail=draft.example_problems[0],
