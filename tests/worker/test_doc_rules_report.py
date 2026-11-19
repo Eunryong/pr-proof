@@ -15,6 +15,7 @@ from app.models.doc_rules import (
     RuleChecked,
     RuleUnchecked,
 )
+from app.models.fix_decision import Decided, FixDecision
 from app.models.rule import CheckMethod, Example, Rule, RuleSource, UnreadDoc
 from app.models.test_run import PytestRun
 from app.models.violation import Violation
@@ -245,3 +246,50 @@ def test_folded_list_is_capped_and_says_how_many_are_left_out() -> None:
     assert "의 나머지 501건" in text
     assert "  - 외 201건" in text
     assert len(text) <= doc_rules_report.MAX_SECTION_CHARS
+
+
+def test_each_violation_shows_its_decision_and_the_counts() -> None:
+    a, b, c, d = (_violation(line=n) for n in (2, 3, 4, 5))
+    decided = Decided((
+        FixDecision(a.id, "fix", "model", method="model", why="로거로 바꾼다"),
+        FixDecision(b.id, "skip", "model", reason="risky", why="출력이 기능이다"),
+        FixDecision(c.id, "skip", "pipeline", reason="not_covered", why="테스트가 지나가지 않음"),
+        FixDecision(d.id, "fix", "pipeline", method="mechanical"),
+    ), calls=1, cached=2)  # fmt: skip
+    text = "\n".join(section(_found(RuleChecked(RULE, REF), violations=(a, b, c, d)), {}, decided))
+    assert "  - `orders/a.py:2` · fix (모델 수정: `로거로 바꾼다`)" in text
+    assert "  - `orders/a.py:3` · skip (모델: `출력이 기능이다`)" in text
+    assert "  - `orders/a.py:4` · skip (테스트가 지나가지 않음)" in text
+    assert "  - `orders/a.py:5` · fix (기계적 수정)" in text
+    assert ("수정 판단: fix 2건, skip 2건 (모델이 고치지 않기로 함 1건, 테스트가 지나가지 않음 1건)"
+            " · 모델 호출 1회 · 저장된 판단 2건 사용") in text  # fmt: skip
+    assert doc_rules_report.NOT_CONNECTED in text
+    assert "모델 호출 상한에 걸려" not in text
+
+
+def test_folded_violations_carry_their_decision_too() -> None:
+    violations = tuple(_violation(line=n) for n in range(1, 13))
+    decided = Decided(tuple(FixDecision(v.id, "skip", "model", reason="risky", why="w")
+                            for v in violations))  # fmt: skip
+    text = "\n".join(section(_found(RuleChecked(RULE, REF), violations=violations), {}, decided))
+    assert "  - `orders/a.py:12` · skip (모델: `w`)" in text
+
+
+def test_model_reason_cannot_escape_code() -> None:
+    nasty = "@team <img src=x onerror=alert(1)> ``` [x](http://e) **b**\n# 제목"
+    v = _violation()
+    for decision in (
+        FixDecision(v.id, "skip", "model", reason="risky", why=nasty),
+        FixDecision(v.id, "fix", "model", method="model", why=nasty),
+    ):
+        text = "\n".join(section(_found(RuleChecked(RULE, REF), violations=(v,)), {},
+                                  Decided((decision,))))  # fmt: skip
+        outside = _outside_code(text)
+        assert "@" not in outside and "<img" not in outside and "](http" not in outside
+        assert "\n# 제목" not in text
+
+
+def test_without_decisions_the_section_is_unchanged() -> None:
+    found = _found(RuleChecked(RULE, REF), violations=(_violation(),))
+    assert section(found, {}) == section(found, {}, None)
+    assert "수정 판단" not in _text(found)

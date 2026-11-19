@@ -3,6 +3,7 @@
 실제 git 체크아웃(로컬 원격)과 실제 SQLite, 가짜 모델과 가짜 검사기 샌드박스로 돈다. Docker 없음.
 """
 
+import re
 import subprocess
 from collections.abc import Sequence
 from dataclasses import replace
@@ -14,7 +15,7 @@ import pytest
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from sqlmodel import Session, select
 
-from app.models import rule_reading, state_keys
+from app.models import fix_decision, rule_reading, state_keys
 from app.models.checker import CheckerKind
 from app.models.db import ModelCall
 from app.models.doc_rules import (
@@ -25,8 +26,16 @@ from app.models.doc_rules import (
     RuleChecked,
     RuleUnchecked,
 )
+from app.models.fix_decision import Decided, FixDecision
 from app.models.job import PRJob
-from app.models.repo_config import CallSettings, ModelSettings, RepoConfig, RulesSettings
+from app.models.repo_config import (
+    CallSettings,
+    FixSettings,
+    ModelSettings,
+    RepoConfig,
+    RulesSettings,
+    SkillsSettings,
+)
 from app.models.rule import CheckMethod, Rule, RuleSource, rule_id
 from app.sandbox import checker_runner, toolcache
 from app.sandbox.checker_runner import CheckerRun, Match, Ran
@@ -35,6 +44,8 @@ from app.sandbox.venv import DependencyInstallError
 from app.worker import base_config, doc_rules, graph, repo, update
 from app.worker.ai import claude_cli
 from app.worker.ai.claude_cli import AIErrorKind, StructuredResult
+from app.worker.doc_rules_report import NOT_CONNECTED
+from app.worker.markdown import inline_code
 
 from .helpers import BASE, PASSED, bodies, use_runner
 
@@ -102,13 +113,22 @@ def _ok(data: dict) -> StructuredResult:
 
 
 class FakeModel:
-    """규칙 읽기에는 rules, 검사기 작성에는 checker의 답을 준다. 부른 기록을 남긴다."""
+    """규칙 읽기에는 rules, 검사기 작성에는 checker의 답을 준다. 수정 판단에는 decide(받은 위반
+    id들)가 낸 decisions를 준다. 부른 기록을 남긴다."""
 
-    def __init__(self, rules: StructuredResult, checker: StructuredResult | None = None) -> None:
+    def __init__(
+        self, rules: StructuredResult, checker: StructuredResult | None = None, decide=None
+    ) -> None:
         self.rules, self.checker = rules, checker or checker_answer()
+        self.decide = decide or (lambda ids: [{"id": i, "action": "fix", "why": "고칠 수 있다"}
+                                              for i in ids])  # fmt: skip
         self.prompts: list[tuple[str, str]] = []
 
     def __call__(self, prompt: str, *, schema, **kw) -> StructuredResult:
+        if schema is fix_decision.ANSWER_SCHEMA:
+            self.prompts.append(("decide", prompt))
+            ids = re.findall(r"^<<<VIOLATION id=(\S+) ", prompt, re.M)
+            return _ok({"decisions": self.decide(ids)})
         reading = schema is rule_reading.ANSWER_SCHEMA
         self.prompts.append(("rules" if reading else "checker", prompt))
         return self.rules if reading else self.checker
@@ -302,6 +322,14 @@ def test_new_commit_during_rule_reading_stops_the_path(doc_env, tmp_path: Path) 
     assert state["stopped"] == "stale"
     assert "rule_checks" not in state and "test_run" not in state
     assert [kind for kind, _ in model.prompts] == ["rules"]
+
+
+def test_decisions_survive_checkpoint() -> None:
+    decided = Decided((FixDecision("v1", "skip", "model", reason="risky", why="w"),), calls=1)
+    serde = JsonPlusSerializer(allowed_msgpack_modules=list(graph._STATE_TYPES))
+    restored = serde.loads_typed(serde.dumps_typed({"d": decided}))["d"]
+    (decision,) = restored.decisions
+    assert isinstance(decision, FixDecision) and decision.reason == "risky" and restored.calls == 1
 
 
 def test_doc_rules_state_survives_checkpoint() -> None:
@@ -505,3 +533,87 @@ def test_path_rule_reports_a_misnamed_new_file_per_file(doc_env, tmp_path: Path)
     assert doc_env["sandbox"].files == [["tests/pricing_test.py", "tests/test_cart.py"]]
     assert [kind for kind, _ in model.prompts] == ["rules", "checker"]
     assert "`tests/pricing_test.py` (파일 이름·경로)" in _last_comment(doc_env)
+
+
+TWO_PRINTS: Final = {"orders/a.py": "x = 1\nprint(x)\nprint(x + 1)\n"}
+
+
+def _covered_tests(env, tmp_path: Path, lines: dict[str, list[int]]) -> None:
+    """테스트가 통과하고 coverage.xml이 lines를 지나간 것으로 남긴다."""
+    classes = "".join(
+        f'<class filename="{f}"><lines>'
+        + "".join(f'<line number="{n}" hits="1"/>' for n in ns)
+        + "</lines></class>"
+        for f, ns in lines.items()
+    )
+    xml = tmp_path / "coverage.xml"
+    xml.write_text(f"<coverage><packages><package><classes>{classes}</classes></package>"
+                   "</packages></coverage>")  # fmt: skip
+    use_runner(env, lambda *a, **k: replace(PASSED, coverage_xml=xml))
+
+
+def test_decisions_follow_tests_and_show_in_the_comment(doc_env, tmp_path: Path) -> None:
+    """2-8, 2-9(코멘트): 모델이 skip한 위반은 이유와 함께, 답하지 않은 위반은 skip(모델이 답하지
+    않음)으로 코멘트에 나온다. 넘기지 않은 id의 답은 버린다."""
+    why = "`@team` 이 줄은 <b>디버그용</b>\n[x](http://e)"
+
+    def answer(ids: list[str]) -> list[dict]:
+        return [{"id": ids[0], "action": "skip", "why": why},
+                {"id": "made-up", "action": "fix", "why": "지어낸 위반"}]  # fmt: skip
+
+    model = use_model(doc_env, FakeModel(rule_answer(print_rule()), decide=answer))
+    _covered_tests(doc_env, tmp_path, {"orders/a.py": [1, 2, 3]})
+    state = check(doc_env, tmp_path, BASE_FILES, TWO_PRINTS)
+    found = state["doc_rules"]
+    assert [v.covered for v in found.violations] == [True, True]
+    first, second = found.violations
+    assert state["fix_decisions"] == Decided((
+        FixDecision(first.id, "skip", "model", reason="risky", why=" ".join(why.split())),
+        FixDecision(second.id, "skip", "pipeline", reason="undecided", why="모델이 답하지 않음"),
+    ), calls=1)  # fmt: skip
+    assert [kind for kind, _ in model.prompts] == ["rules", "checker", "decide"]
+    body = _last_comment(doc_env)
+    assert f"  - `orders/a.py:2` · skip (모델: {inline_code(why)})" in body
+    assert "  - `orders/a.py:3` · skip (모델이 답하지 않음)" in body
+    assert ("수정 판단: fix 0건, skip 2건 (모델이 고치지 않기로 함 1건, 수정 판단을 하지 못함 1건)"
+            " · 모델 호출 1회 · 저장된 판단 0건 사용") in body  # fmt: skip
+    assert NOT_CONNECTED in body
+    assert (
+        state["lint"].findings and "fixes" not in state
+    )  # v1 lint 경로는 그대로, 수정은 잇지 않음
+
+
+def test_recheck_of_the_same_commit_makes_no_decision_call(doc_env, tmp_path: Path) -> None:
+    """2-10: 같은 커밋을 다시 검사하면 수정 판단의 모델 호출이 0이다."""
+    model = use_model(doc_env, FakeModel(rule_answer(print_rule())))
+    _covered_tests(doc_env, tmp_path, {"orders/a.py": [1, 2, 3]})
+    first = check(doc_env, tmp_path, BASE_FILES, TWO_PRINTS)
+    job, deps = first["job"], doc_env["deps"]
+    again = graph.run_flow(job, update._context(deps, deps.store.start_run(job), None))
+    assert [kind for kind, _ in model.prompts] == ["rules", "checker", "decide"]
+    assert again["fix_decisions"].decisions == first["fix_decisions"].decisions
+    assert again["fix_decisions"].calls == 0 and again["fix_decisions"].cached == 2
+    assert {d.action for d in again["fix_decisions"].decisions} == {"fix"}
+    assert "저장된 판단 2건 사용" in _last_comment(doc_env)
+
+
+def test_uncovered_violation_is_skipped_without_asking(doc_env, tmp_path: Path) -> None:
+    model = use_model(doc_env, FakeModel(rule_answer(print_rule())))
+    _covered_tests(doc_env, tmp_path, {"orders/a.py": [1]})
+    state = check(doc_env, tmp_path, BASE_FILES, TWO_PRINTS)
+    assert {d.reason for d in state["fix_decisions"].decisions} == {"not_covered"}
+    assert "decide" not in [kind for kind, _ in model.prompts]
+    assert "  - `orders/a.py:2` · skip (테스트가 지나가지 않음)" in _last_comment(doc_env)
+
+
+def test_decision_cap_is_shown_in_the_comment(doc_env, tmp_path: Path) -> None:
+    model = use_model(doc_env, FakeModel(rule_answer(print_rule())))
+    use_config(doc_env, RepoConfig(
+        model=ModelSettings(calls=CallSettings(pr_max=0)),
+        skills=SkillsSettings(fix=FixSettings(require_approval=True)),
+    ))  # fmt: skip
+    _covered_tests(doc_env, tmp_path, {"orders/a.py": [1, 2, 3]})
+    state = check(doc_env, tmp_path, BASE_FILES, TWO_PRINTS)
+    assert {d.reason for d in state["fix_decisions"].decisions} == {"call_limit"}
+    assert "decide" not in [kind for kind, _ in model.prompts]
+    assert "모델 호출 상한에 걸려 처리하지 못함: 수정 판단 2건." in _last_comment(doc_env)

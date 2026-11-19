@@ -123,6 +123,49 @@ def _unquoted(raw: str) -> str:
     return raw
 
 
+def hunk_around(diff: str, file: str, line: int, radius: int) -> str:
+    """file의 head 쪽 line을 담은 hunk에서 그 줄 앞뒤 radius줄과 hunk 헤더. 없으면 "".
+
+    수정 판단(4.6)이 모델에 넘기는 자료다. 큰 새 파일은 hunk 하나가 파일 전체라 줄 수를 자른다.
+    """
+    current: str | None = None
+    old_left = new_left = 0
+    line_no = 0
+    header = ""
+    hunk: list[tuple[int | None, str]] = []
+    for raw in diff.splitlines():
+        if old_left > 0 or new_left > 0:
+            tag = raw[:1]
+            if tag == "-":
+                hunk.append((None, raw))
+                old_left -= 1
+            elif tag == "\\":
+                hunk.append((None, raw))
+            else:
+                hunk.append((line_no, raw))
+                line_no += 1
+                new_left -= 1
+                if tag != "+":
+                    old_left -= 1
+            if old_left <= 0 and new_left <= 0 and current == file:
+                at = next((i for i, (n, _) in enumerate(hunk) if n == line), None)
+                if at is not None:
+                    window = hunk[max(0, at - radius) : at + radius + 1]
+                    return "\n".join([header, *(text for _, text in window)])
+            continue
+        if raw.startswith("diff --git ") or raw == _DELETED:
+            current = None
+        elif raw.startswith(_NEW_FILE_HEADER):
+            current = _new_path(raw)
+        elif match := _HUNK.match(raw):
+            old_count, new_start, new_count = match.groups()
+            old_left = int(old_count) if old_count is not None else 1
+            new_left = int(new_count) if new_count is not None else 1
+            line_no = int(new_start)
+            header, hunk = raw, []
+    return ""
+
+
 def touches(changed: ChangedLines, file: str, start: int, end: int) -> bool:
     """file의 start–end 줄 범위가 PR이 바꾼 줄을 하나라도 포함하는지.
 

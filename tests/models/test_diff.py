@@ -2,7 +2,7 @@ from typing import Final
 
 import pytest
 
-from app.models.diff import added_lines, new_files, touches
+from app.models.diff import added_lines, hunk_around, new_files, touches
 
 MODIFY: Final = """\
 diff --git a/orders/pricing.py b/orders/pricing.py
@@ -191,3 +191,29 @@ deleted file mode 100644
 -x = 1
 """
     assert new_files(diff) == {"tests/pricing_test.py", "orders/empty.py", "orders/moved.py"}
+
+
+def test_hunk_around_returns_the_hunk_with_that_line() -> None:
+    assert hunk_around(MODIFY, "orders/pricing.py", 12, radius=5) == (
+        "@@ -10,2 +11,3 @@ def g():\n     a = 1\n+    b = 2\n     return a"
+    )
+    first = hunk_around(MODIFY, "orders/pricing.py", 3, radius=5)
+    assert first.startswith("@@ -1,4 +1,5 @@\n import math\n-X = 1\n+X = 2\n+Y = 3")
+
+
+def test_hunk_around_cuts_a_long_hunk_to_the_window() -> None:
+    body = "".join(f"+line {n}\n" for n in range(1, 101))
+    diff = f"diff --git a/n.py b/n.py\n--- /dev/null\n+++ b/n.py\n@@ -0,0 +1,100 @@\n{body}"
+    assert hunk_around(diff, "n.py", 50, radius=2) == (
+        "@@ -0,0 +1,100 @@\n+line 48\n+line 49\n+line 50\n+line 51\n+line 52"
+    )
+    assert hunk_around(diff, "n.py", 1, radius=1) == "@@ -0,0 +1,100 @@\n+line 1\n+line 2"
+
+
+@pytest.mark.parametrize(
+    ("file", "line"),
+    [("orders/pricing.py", 0), ("orders/pricing.py", 30), ("other.py", 2)],
+    ids=["file-unit", "line-not-in-any-hunk", "other-file"],
+)
+def test_hunk_around_without_a_matching_hunk_is_empty(file: str, line: int) -> None:
+    assert hunk_around(MODIFY, file, line, radius=3) == ""

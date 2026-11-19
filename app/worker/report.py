@@ -13,6 +13,7 @@ from app.models.coverage import FixGate
 from app.models.doc_rules import DocRules
 from app.models.finding import Finding, SkillResult
 from app.models.fix import FixBlocker, FixOutcome
+from app.models.fix_decision import Decided
 from app.models.install import InstallFailureKind
 from app.models.proposal import ProposalResult
 from app.models.test_run import PytestRun
@@ -382,6 +383,7 @@ def _compose(
     extra: list[str] | None = None,
     doc_rules: DocRules | None = None,
     checkers: Mapping[str, Checker] | None = None,
+    decisions: Decided | None = None,
 ) -> str:
     results = [r for r in (lint, static) if r is not None]
     lines = [HEADER, "", f"**테스트:** {test_line}"]
@@ -390,7 +392,7 @@ def _compose(
     lines += details
     lines += rules_details(results)
     lines += extra or []
-    lines += doc_rules_report.section(doc_rules, checkers or {})
+    lines += doc_rules_report.section(doc_rules, checkers or {}, decisions)
     off = [s for s in ("lint", "static") if base is not None and s not in base.repo.skills.enabled]
     if off:
         lines += [
@@ -435,6 +437,7 @@ def render_result(
     from_sync: bool = False,
     doc_rules: DocRules | None = None,
     checkers: Mapping[str, Checker] | None = None,
+    decisions: Decided | None = None,
     # lint 하나만 쓰던 호출 (2단계)
     proposal: Proposal | None = None,
     proposal_number: int | None = None,
@@ -475,6 +478,7 @@ def render_result(
         extra=extra,
         doc_rules=doc_rules,
         checkers=checkers,
+        decisions=decisions,
     )
 
 
