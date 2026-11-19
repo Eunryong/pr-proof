@@ -158,7 +158,7 @@ def test_recheck_on_the_same_commit_makes_no_model_calls(fix_env, tmp_path: Path
     deps, job = fix_env["deps"], _start(fix_env, tmp_path)
     assert update.process_update(job, deps) == "passed"
     calls, prompts = _made_calls(fix_env), len(model.prompts)
-    assert {kind for kind, _ in model.prompts} == {"rules", "checker", "decide"}
+    assert {kind for kind, _ in model.prompts} == {"rules", "tool", "checker", "decide"}
 
     recheck = PRJob(repo="o/r", pr_number=1, kind="command", command="/recheck", comment_id=77,
                     source="webhook")  # fmt: skip
@@ -166,7 +166,7 @@ def test_recheck_on_the_same_commit_makes_no_model_calls(fix_env, tmp_path: Path
     assert _made_calls(fix_env) == calls and len(model.prompts) == prompts
     assert len(fixer.calls) == 1 and len(fix_env["pushes"]) == 1
     comment = bodies(fix_env["gh"])[-1]
-    assert "모델 호출 0회 / 상한 14회 (규칙 읽기와 검사기 작성) · 저장된 결과 2건 사용" in comment
+    assert "모델 호출 0회 / 상한 14회 (규칙 읽기와 검사기 작성) · 저장된 결과 3건 사용" in comment
     assert "수정 판단: fix 1건, skip 0건 · 모델 호출 0회 · 저장된 판단 1건 사용" in comment
     assert "이 커밋의 모델 수정안 PR #900이 열려 있습니다." in comment
 

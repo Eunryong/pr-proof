@@ -6,7 +6,7 @@ import pytest
 
 from app.models.scope import (
     AI_POLICY,
-    LINT_POLICY,
+    MECHANICAL_POLICY,
     PIPELINE_OUTPUTS,
     StatusEntry,
     is_test_file,
@@ -142,5 +142,5 @@ def test_every_violation_is_listed_and_detail_has_reasons() -> None:
     ],
 )
 def test_lint_policy_modify_only(entry: StatusEntry, labels: list[str]) -> None:
-    result = judge_scope([entry], ["tests/test_a.py"], LINT_POLICY)
+    result = judge_scope([entry], ["tests/test_a.py"], MECHANICAL_POLICY)
     assert [v.label for v in result.violations] == labels

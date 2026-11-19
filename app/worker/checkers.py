@@ -1,18 +1,25 @@
-"""검사기 작성 (docs/DESIGN.md 4.4, 5.3 (a)): 규칙마다 모델이 쓴 검사기를 예시로 확인해 채택한다.
+"""검사 방법 정하기 (docs/DESIGN.md 4.4, 5.3 (a)): 규칙마다 저장소의 도구, 모델이 쓴 검사기 순서로
+확인 방법을 정하고 예시로 확인해 채택한다.
 
-규칙마다 공용 틀(worker/loop.py)을 한 번 돈다. write는 도구 없이 모델을 부르고 답(초안)을
-`model_cache`에 저장한다. verify는 초안을 샌드박스에서 예시에 돌려 결정적으로 판정한다. 처음
-두 회차는 ast-grep 규칙, 세 번째는 Python AST 스크립트다. ast-grep 회차에서 모델이 그 형식으로 가릴
-수 없다고 답하면(`unfit`) 그 초안은 돌리지 않고 다음 회차부터 Python AST 스크립트로 쓴다. 모델은 세
-회차 모두 `model.checker`다.
+도구 설정에서 온 규칙 묶음(ruff 설정)은 모델 없이 ruff로 정한다. 문서 규칙은 먼저 모델에게 도구
+목록(ruff, ruff-format)에서 맞는 도구를 묻는다(`_choose_tool`). 고른 도구는 검사기와 같은 예시
+확인을 통과해야 채택하고, 모델이 고른 ruff 코드는 `ruff rule`로 실재하는지 본다. 맞는 도구가 없거나
+확인을 통과하지 못하면 검사기를 작성한다. 도구 선택의 결과도 `checkers` 테이블에 그 키로 둔다.
+저장소가 고정한 ruff 버전을 파이프라인이 받을 수 없으면 도구 목록을 내밀지 않는다.
 
-결과는 `checkers` 테이블에 규칙의 캐시 키별로 둔다. 채택한 검사기와 끝내 통과하지 못한 기록은
-다시 묻지 않는다. 호출 상한, 모델 호출 실패, 도구 준비 실패로 끝난 규칙은 저장하지 않으므로
-다음 검사가 이어 한다. 호출은 규칙 묶음 상한(9.2)에서 세고 재시도도 센다.
+검사기 작성은 규칙마다 공용 틀(worker/loop.py)을 한 번 돈다. write는 도구 없이 모델을 부르고
+답(초안)을 `model_cache`에 저장한다. verify는 초안을 샌드박스에서 예시에 돌려 결정적으로
+판정한다. 처음 두 회차는 ast-grep 규칙, 세 번째는 Python AST 스크립트다. ast-grep 회차에서
+모델이 그 형식으로 가릴 수 없다고 답하면(`unfit`) 그 초안은 돌리지 않고 다음 회차부터 Python AST
+스크립트로 쓴다. 모델은 세 회차 모두 `model.checker`다. 결과는 `checkers` 테이블에 규칙의 캐시
+키별로 둔다. 채택한 검사기와 끝내 통과하지 못한 기록은 다시 묻지 않는다. 호출 상한, 모델 호출
+실패, 도구 준비 실패로 끝난 규칙은 저장하지 않으므로 다음 검사가 이어 한다. 호출은 규칙 묶음
+상한(9.2)에서 세고 재시도도 센다.
 """
 
 import json
 import logging
+import tempfile
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -20,12 +27,14 @@ from typing import Protocol
 
 from langgraph.graph.state import CompiledStateGraph
 
+from app.models import tool_choice
 from app.models.cache_key import text_hash
 from app.models.call_budget import CALL_BUDGET_USD, Denied, RulesetScope
-from app.models.checker import Checker, CheckerKind, checker_id
+from app.models.checker import TOOL_KINDS, Checker, CheckerKind, checker_id, tool_codes
 from app.models.checker_authoring import (
     ENGINE_VERSION,
     MAX_ATTEMPTS,
+    Answer,
     Checked,
     Draft,
     RuleCheck,
@@ -49,8 +58,9 @@ from app.models.checker_authoring import (
     system_prompt,
 )
 from app.models.repo_config import ModelSettings
-from app.models.rule import Rule, normalize
-from app.sandbox import checker_runner, toolcache
+from app.models.rule import Rule, looks_at_paths, normalize
+from app.models.tools import RUFF, RuffSetup, valid_codes
+from app.sandbox import checker_runner, ruff_runner, toolcache
 from app.sandbox.checker_runner import CheckerRun, Failed, Invalid
 from app.worker.ai import claude_cli
 from app.worker.ai.claude_cli import StructuredResult
@@ -71,32 +81,89 @@ class RunsCheckers(Protocol):
         self, kind: CheckerKind, body: str, root: Path, files: Sequence[str]
     ) -> CheckerRun: ...
 
+    def rule_exists(self, code: str) -> bool: ...
+
+
+class FormatsFiles(RunsCheckers, Protocol):
+    """기계적 수정이 쓰는 샌드박스: 도구의 검사에 더해 `ruff format`."""
+
+    def format_check(self, root: Path) -> ruff_runner.FormatResult: ...
+
+    def format_apply(self, root: Path, files: Sequence[str]) -> ruff_runner.FormatResult: ...
+
 
 class Sandbox:
-    """검사기를 샌드박스에서 돌린다. ast-grep은 처음 필요할 때 도구 캐시에 받는다 (2.3).
+    """검사기와 도구를 샌드박스에서 돌린다. 도구는 처음 필요할 때 도구 캐시에 받는다 (2.3).
 
-    받지 못하면 toolcache.ToolUnavailable(그 도구를 쓰는 규칙만 검사하지 못함) 또는
-    SandboxError(환경 오류)가 올라간다.
+    ruff는 이 저장소의 버전(저장소가 고정한 것 먼저)과 base의 설정으로 돈다. 받지 못하면
+    toolcache.ToolUnavailable(그 도구를 쓰는 규칙만 검사하지 못함) 또는 SandboxError(환경 오류)가
+    올라간다.
     """
 
-    def __init__(self, cache_dir: Path = toolcache.TOOL_CACHE) -> None:
+    def __init__(
+        self, cache_dir: Path = toolcache.TOOL_CACHE, ruff: RuffSetup | None = None
+    ) -> None:
         self.cache_dir = cache_dir
-        self._ast_grep: Path | None = None
+        self.ruff = ruff or RuffSetup(toolcache.TOOLS[RUFF].default)
+        self._dirs: dict[str, Path] = {}
 
     def _tool_dir(self, kind: CheckerKind) -> Path | None:
-        if kind != "ast-grep":
+        if kind not in ("ast-grep", *TOOL_KINDS):
             return None
-        if self._ast_grep is None:
-            self._ast_grep = toolcache.ensure("ast-grep", cache_dir=self.cache_dir)
-        return self._ast_grep
+        name = RUFF if kind in TOOL_KINDS else kind
+        if name not in self._dirs:
+            version = self.ruff.version if name == RUFF else None
+            self._dirs[name] = toolcache.ensure(name, version, cache_dir=self.cache_dir)
+        return self._dirs[name]
 
     def on_examples(self, kind: CheckerKind, body: str, snippets: Sequence[str]) -> CheckerRun:
-        return checker_runner.run_on_examples(kind, body, snippets, tool_dir=self._tool_dir(kind))
+        if kind not in TOOL_KINDS:
+            return checker_runner.run_on_examples(
+                kind, body, snippets, tool_dir=self._tool_dir(kind)
+            )
+        with tempfile.TemporaryDirectory(prefix="pipeline-examples-") as tmp:
+            root = Path(tmp)
+            (root / checker_runner.EXAMPLE_DIR).mkdir()
+            for i, code in enumerate(snippets):
+                (root / checker_runner.example_path(i)).write_text(code)
+            files = [checker_runner.example_path(i) for i in range(len(snippets))]
+            # 예시는 저장소 밖의 코드라 base 설정(경로별 끄기, exclude)을 적용하지 않는다
+            return self._tool(kind, body, root, files, isolated=True)
 
     def on_files(
         self, kind: CheckerKind, body: str, root: Path, files: Sequence[str]
     ) -> CheckerRun:
+        if kind in TOOL_KINDS:
+            return self._tool(kind, body, root, files, isolated=False)
         return checker_runner.run_checker(kind, body, root, files, tool_dir=self._tool_dir(kind))
+
+    def _tool(
+        self, kind: CheckerKind, body: str, root: Path, files: Sequence[str], *, isolated: bool
+    ) -> CheckerRun:
+        tool_dir = self._tool_dir(kind)
+        assert tool_dir is not None
+        config = None if isolated else self.ruff.config
+        if kind == "ruff-format":
+            return ruff_runner.format_diff(root, files, tool_dir=tool_dir, config=config)
+        return ruff_runner.check(
+            root, files, tool_dir=tool_dir, config=config, codes=tool_codes(body)
+        )
+
+    def rule_exists(self, code: str) -> bool:
+        tool_dir = self._tool_dir("ruff")
+        assert tool_dir is not None
+        return ruff_runner.rule_exists(code, tool_dir=tool_dir)
+
+    def format_check(self, root: Path) -> ruff_runner.FormatResult:
+        """root 전체가 base 설정의 `ruff format`을 따르는지 (4.7)."""
+        tool_dir = self._tool_dir("ruff-format")
+        assert tool_dir is not None
+        return ruff_runner.format_check(root, tool_dir=tool_dir, config=self.ruff.config)
+
+    def format_apply(self, root: Path, files: Sequence[str]) -> ruff_runner.FormatResult:
+        tool_dir = self._tool_dir("ruff-format")
+        assert tool_dir is not None
+        return ruff_runner.format_apply(root, files, tool_dir=tool_dir, config=self.ruff.config)
 
 
 class _CapHit(Exception):
@@ -118,16 +185,32 @@ def plan_and_author(
     models: ModelSettings,
     ask: AskModel = claude_cli.run_structured,
     sandbox: RunsCheckers | None = None,
+    ruff: RuffSetup | None = None,
 ) -> tuple[RuleCheck, ...]:
-    """규칙마다 검사 방법을 정하고, 검사기가 필요한 규칙은 검사기를 작성해 예시로 확인한다.
+    """규칙마다 검사 방법을 정하고, 도구나 검사기가 필요한 규칙은 예시로 확인한다.
 
     ruleset_key는 규칙 읽기의 캐시 키(`RulesFound.key`)다. 규칙 묶음 상한이 이 키로 센다.
+    ruff는 이 저장소의 ruff다. 없거나 받을 수 없는 버전이면 문서 규칙에 도구 목록을 내밀지 않는다.
     """
     sandbox = sandbox or Sandbox()
     scope = RulesetScope(ruleset_key, len(rules))
     author = _Author(store=store, budget=budget, scope=scope, models=models, ask=ask,
-                     sandbox=sandbox)  # fmt: skip
+                     sandbox=sandbox, ruff=ruff)  # fmt: skip
     return tuple(author.check(rule) for rule in rules)
+
+
+def config_checker(rule: Rule, ruff: RuffSetup) -> Checker:
+    """도구 설정에서 온 규칙 묶음의 확인 방법: base 설정의 규칙 전부로 ruff를 돌린다 (4.3)."""
+    body = json.dumps({"codes": []})
+    return Checker(
+        id=checker_id(body), rule_id=rule.id, rule_text_hash=text_hash(normalize(rule.text)),
+        kind="ruff", body=body, examples=(), engine_version=f"ruff-{ruff.version}",
+    )  # fmt: skip
+
+
+def config_key(rule: Rule, ruff: RuffSetup) -> str:
+    """도구 설정 규칙의 `checkers` 키. 설정 파일의 blob과 ruff 버전으로 정해진다."""
+    return f"tool-config:{rule.source.file}:{rule.source.blob_sha}:ruff-{ruff.version}"
 
 
 class _Author:
@@ -140,14 +223,22 @@ class _Author:
         models: ModelSettings,
         ask: AskModel,
         sandbox: RunsCheckers,
+        ruff: RuffSetup | None = None,
     ) -> None:
         self.store, self.budget, self.scope = store, budget, scope
         self.models, self.ask, self.sandbox = models, ask, sandbox
+        self.ruff = ruff
 
     def check(self, rule: Rule) -> RuleCheck:
         skipped = plan_check(rule)
         if skipped is not None:
             return skipped
+        if rule.origin == "tool_config":
+            return self._config(rule)
+        if self.ruff is not None and self.ruff.available and not looks_at_paths(rule):
+            chosen = self._choose_tool(rule)
+            if chosen is not None:
+                return chosen
         key = checker_key(rule, self.models.checker)
         saved = self.store.saved_checker(key)
         if saved is not None:
@@ -181,6 +272,114 @@ class _Author:
         self.store.save_checker(key, rule_id=rule.id, accepted=False, checker_json=None,
                                 detail=detail, attempts_json=attempts)  # fmt: skip
         return Unchecked(rule, "no_checker", detail)
+
+    def _config(self, rule: Rule) -> RuleCheck:
+        """도구 설정의 규칙 묶음. 모델을 부르지 않는다. 받을 수 없는 ruff 버전이면 검사하지
+        못한다."""
+        if self.ruff is None or not self.ruff.available:
+            label = self.ruff.label if self.ruff is not None else "ruff"
+            detail = f"도구를 준비하지 못함: {label}은 파이프라인이 해시를 고정한 버전이 아님"
+            return Unchecked(rule, "tool_unavailable", detail)
+        checker = config_checker(rule, self.ruff)
+        self.store.save_checker(config_key(rule, self.ruff), rule_id=rule.id, accepted=True,
+                                checker_json=checker_to_json(checker), detail="",
+                                attempts_json="[]")  # fmt: skip
+        return Checked(rule, checker, cached=True)
+
+    def _choose_tool(self, rule: Rule) -> RuleCheck | None:
+        """도구 목록에서 이 규칙을 확인할 도구를 고른다 (4.4 (a)). 채택하면 Checked, 호출 상한·모델
+        실패·도구 준비 실패면 Unchecked(저장하지 않아 다음 검사가 다시 묻는다), 맞는 도구가 없거나
+        예시 확인을 통과하지 못하면 None(검사기 작성으로 넘어간다)."""
+        assert self.ruff is not None
+        model = self.models.checker
+        key = tool_choice.choice_key(rule, model, self.ruff.version)
+        saved = self.store.saved_checker(key)
+        if saved is not None:
+            self.budget.record_hit(self.scope, stage="checker", tier="light", model=model)
+            if saved.accepted and saved.checker_json is not None:
+                return Checked(rule, checker_from_json(saved.checker_json), cached=True)
+            return None
+        call = self.budget.begin(self.scope, stage="checker", tier="light", model=model)
+        if isinstance(call, Denied):
+            return Unchecked(rule, "cap", call.reason)
+        answer = self.ask(
+            tool_choice.build_prompt(rule, shortfall(rule.examples)),
+            system_prompt=tool_choice.SYSTEM_PROMPT,
+            schema=tool_choice.ANSWER_SCHEMA,
+            model=model,
+            max_budget_usd=CALL_BUDGET_USD["light"],
+        )
+        failure = None if answer.ok else f"모델 호출 실패: {answer.error}: {answer.detail}"
+        parsed = None
+        if failure is None:
+            try:
+                parsed = tool_choice.parse_answer(answer.data or {})
+            except ValueError as e:
+                failure = f"도구 선택의 답 형식이 틀림: {str(e).splitlines()[0]}"
+        self.budget.finish(
+            call, ok=parsed is not None, error=failure, model_id=answer.model_id,
+            input_tokens=answer.input_tokens, output_tokens=answer.output_tokens,
+            permission_denials=answer.permission_denials,
+        )  # fmt: skip
+        if not answer.ok:
+            return Unchecked(rule, "model_failed", failure or "")
+        try:
+            verdict = (
+                self._verify_choice(rule, parsed, answer.model_id or model)
+                if parsed is not None else failure or ""
+            )  # fmt: skip
+        except toolcache.ToolUnavailable as e:
+            return Unchecked(rule, "tool_unavailable", f"도구를 준비하지 못함: {e}")
+        said = parsed.model_dump() if parsed is not None else {}
+        attempts = json.dumps([{"answer": said}], ensure_ascii=False)
+        if isinstance(verdict, Checker):
+            self.store.save_checker(key, rule_id=rule.id, accepted=True,
+                                    checker_json=checker_to_json(verdict), detail="",
+                                    attempts_json=attempts)  # fmt: skip
+            return Checked(rule, verdict, cached=False)
+        log.info("도구로 확인하지 않음 (%s): %s", rule.id, verdict)
+        self.store.save_checker(key, rule_id=rule.id, accepted=False, checker_json=None,
+                                detail=verdict, attempts_json=attempts)  # fmt: skip
+        return None
+
+    def _verify_choice(self, rule: Rule, answer: tool_choice.Answer, model: str) -> Checker | str:
+        """고른 도구를 결정적으로 확인한다. 채택하면 검사기, 아니면 그 이유."""
+        assert self.ruff is not None
+        if answer.tool == tool_choice.NO_TOOL:
+            return f"맞는 도구가 없음 ({answer.reason})" if answer.reason else "맞는 도구가 없음"
+        kind: CheckerKind = "ruff" if answer.tool == RUFF else "ruff-format"
+        codes: tuple[str, ...] = ()
+        if kind == "ruff":
+            checked = valid_codes(answer.codes)
+            if checked is None:
+                return f"ruff 규칙 코드의 형식이 틀림: {', '.join(answer.codes) or '없음'}"
+            missing = [c for c in checked if not self.sandbox.rule_exists(c)]
+            if missing:
+                return f"ruff {self.ruff.version}에 없는 규칙 코드: {', '.join(missing)}"
+            codes = checked
+        raw = Answer(checker="", examples=[e.model_dump() for e in answer.examples])
+        examples, problems = model_examples(rule.examples, raw)
+        if problems:
+            return f"모델이 쓴 예시를 쓸 수 없음: {problems[0]}"
+        body = json.dumps({"codes": list(codes)}) if kind == "ruff" else "{}"
+        cases = (*rule.examples, *examples)
+        run = self.sandbox.on_examples(kind, body, [e.code for e in cases])
+        if isinstance(run, Invalid | Failed):
+            first = run.reason.strip().splitlines()[0] if run.reason.strip() else ""
+            return f"도구 실행이 실패함: {first}"
+        spans = [
+            [(m.line, m.end_line) for m in run.matches
+             if m.file == checker_runner.example_file(kind, i, e.code)]
+            for i, e in enumerate(cases)
+        ]  # fmt: skip
+        wrong = judge_examples(cases, spans)
+        if wrong:
+            return f"예시 {len(wrong)}개를 틀리게 가림: {wrong[0].splitlines()[0]}"
+        return Checker(
+            id=checker_id(body), rule_id=rule.id, rule_text_hash=text_hash(normalize(rule.text)),
+            kind=kind, body=body, examples=cases, engine_version=f"ruff-{self.ruff.version}",
+            model=model, verified_at=datetime.now(UTC),
+        )  # fmt: skip
 
     def _draft(self, artifact: str) -> Draft:
         entry = self.store.cached_result(artifact)

@@ -3,6 +3,7 @@
 import hashlib
 import io
 import os
+import tarfile
 import zipfile
 from pathlib import Path
 from typing import Final
@@ -29,8 +30,21 @@ ARCHIVE: Final = _zip()
 
 
 def _tools(sha256: str = hashlib.sha256(ARCHIVE).hexdigest()) -> dict[str, Tool]:
-    asset = Asset("https://example.invalid/fake.zip", sha256)
-    return {"fake": Tool("fake", "1.0", "fake", {PLATFORM: asset})}
+    asset = Asset("https://example.invalid/fake.zip", sha256, "fake")
+    return {"fake": Tool("fake", "fake", "1.0", {"1.0": {PLATFORM: asset}})}
+
+
+def _tar(member: str, binary: bytes = BINARY, *, link: bool = False) -> bytes:
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as t:
+        info = tarfile.TarInfo(member)
+        if link:
+            info.type, info.linkname = tarfile.SYMTYPE, "/etc/passwd"
+            t.addfile(info)
+        else:
+            info.size = len(binary)
+            t.addfile(info, io.BytesIO(binary))
+    return buf.getvalue()
 
 
 class FakeDownload:
@@ -80,9 +94,16 @@ def test_download_failure_is_environment_error_and_leaves_nothing(tmp_path: Path
     assert list((tmp_path / "fake" / "1.0").iterdir()) == []
 
 
-def test_unknown_tool_and_platform_are_unavailable(tmp_path: Path) -> None:
+def test_unknown_tool_version_and_platform_are_unavailable(tmp_path: Path) -> None:
     with pytest.raises(ToolUnavailable, match="목록에 없음"):
         toolcache.ensure("semgrep", cache_dir=tmp_path, platform=PLATFORM)
+    download = FakeDownload()
+    with pytest.raises(ToolUnavailable, match="해시를 고정한 버전이 아님"):
+        toolcache.ensure(
+            "fake", "9.9", cache_dir=tmp_path, platform=PLATFORM, tools=_tools(),
+            download=download,
+        )  # fmt: skip
+    assert download.calls == []  # 고정하지 않은 버전은 받지도 않는다
     with pytest.raises(ToolUnavailable, match="배포본이 없음"):
         toolcache.ensure(
             "fake", cache_dir=tmp_path, platform="linux-riscv64-gnu", tools=_tools(),
@@ -143,6 +164,41 @@ def test_platform_key_rejects_unknown_arch() -> None:
 
 def test_registry_pins_every_asset() -> None:
     for tool in toolcache.TOOLS.values():
-        assert tool.assets
-        for asset in tool.assets.values():
-            assert asset.url.startswith("https://") and len(asset.sha256) == 64
+        assert tool.default in tool.releases
+        for release in tool.releases.values():
+            assert set(release) == {"linux-arm64-gnu", "linux-amd64-gnu"}
+            for asset in release.values():
+                assert asset.url.startswith("https://") and len(asset.sha256) == 64
+
+
+def test_requested_version_has_its_own_folder(tmp_path: Path) -> None:
+    """저장소가 고정한 버전은 기본 버전과 다른 폴더다. 두 버전이 함께 캐시에 있다 (3-4)."""
+    data = _tar("pkg/fake")
+    sha = hashlib.sha256(data).hexdigest()
+    url = "https://example.invalid/fake.tar.gz"
+    tools = {"fake": Tool("fake", "fake", "1.0", {
+        v: {PLATFORM: Asset(url, sha, "pkg/fake")} for v in ("1.0", "2.0")
+    })}  # fmt: skip
+    download = FakeDownload(data)
+    one = toolcache.ensure("fake", cache_dir=tmp_path, platform=PLATFORM, download=download,
+                           tools=tools)  # fmt: skip
+    two = toolcache.ensure("fake", "2.0", cache_dir=tmp_path, platform=PLATFORM,
+                           download=download, tools=tools)  # fmt: skip
+    assert (one.parent.name, two.parent.name) == ("1.0", "2.0")
+    assert (two / "fake").read_bytes() == BINARY and len(download.calls) == 2
+
+
+def test_tar_member_that_is_a_link_is_rejected(tmp_path: Path) -> None:
+    data = _tar("pkg/fake", link=True)
+    tools = {"fake": Tool("fake", "fake", "1.0", {"1.0": {PLATFORM: Asset(
+        "https://example.invalid/fake.tar.gz", hashlib.sha256(data).hexdigest(), "pkg/fake",
+    )}})}  # fmt: skip
+    with pytest.raises(ToolUnavailable, match="일반 파일이 아님"):
+        toolcache.ensure("fake", cache_dir=tmp_path, platform=PLATFORM,
+                         download=FakeDownload(data), tools=tools)  # fmt: skip
+    assert list((tmp_path / "fake" / "1.0").iterdir()) == []
+
+
+def test_known_versions() -> None:
+    assert toolcache.is_known("ruff", "0.17.5") and toolcache.is_known("ruff", "0.17.4")
+    assert not toolcache.is_known("ruff", "0.1.0") and not toolcache.is_known("semgrep", "1")

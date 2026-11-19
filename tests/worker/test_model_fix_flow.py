@@ -16,14 +16,12 @@ from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from app.models import model_fix as model_fix_rules
 from app.models import state_keys
 from app.models.db import ModelCall
-from app.models.finding import Finding, SkillResult
 from app.models.job import PRJob
 from app.models.repo_config import (
     CallSettings,
     FixSettings,
     ModelSettings,
     RepoConfig,
-    SkillsSettings,
 )
 from app.models.rule import rule_id
 from app.models.test_run import ReportSummary
@@ -33,7 +31,6 @@ from app.worker.ai.claude_cli import AIErrorKind, ClaudeResult
 from app.worker.github import GitHubError
 from app.worker.markdown import inline_code
 from app.worker.proposal import FORK_NO_PR
-from app.worker.skills import lint
 
 from .helpers import PASSED, bodies, use_runner
 from .test_doc_rules_flow import (  # noqa: F401
@@ -54,8 +51,8 @@ from .test_github import is_reply
 
 RID: Final = rule_id("README.md", PRINT_RULE)
 BRANCH: Final = "pipeline/pr-1-fix-model"
-# v1 lint를 끄고 기본값(바로 수정)으로 둔다. 문서 규칙 경로만 본다
-AUTO: Final = RepoConfig(skills=SkillsSettings(enabled=[]))
+# 기본값(바로 수정). base에 ruff 설정이 없어 문서 규칙 경로만 본다
+AUTO: Final = RepoConfig()
 FIX_LINE_2: Final = {"orders/a.py": [("print(x)\n", "log(x)\n")]}
 
 
@@ -150,7 +147,7 @@ def test_fix_decided_violation_reaches_a_fix_pull_request(fix_env, tmp_path: Pat
     first, second = state["doc_rules"].violations
     assert fix.ready and fix.targets == (first.id,) and fix.attempts == 1
     assert fix.verification == model_fix_rules.Verification(
-        tests=9, resolved=1, rules_rechecked=1, lint_rechecked=False, files=1, lines=2
+        tests=9, resolved=1, rules_rechecked=1, files=1, lines=2
     )
     ((push),) = fix_env["pushes"]
     assert push["paths"] == ["orders/a.py"] and push["branch"] == BRANCH
@@ -167,11 +164,11 @@ def test_fix_decided_violation_reaches_a_fix_pull_request(fix_env, tmp_path: Pat
     assert "  - `orders/a.py:2`" in body and "orders/a.py:3" not in body
     assert "수정 판단이 skip한 위반 1건은 이 수정안에 넣지 않았습니다" in body
     assert "- 테스트: 수정 전후 테스트 9개가 같은 결과로 통과" in body
-    assert "- 규칙 재검사: 대상 위반 1건 해소, 새 위반 없음 (검사기 1개를 다시 돌림)" in body
+    assert "- 규칙 재검사: 대상 위반 1건 해소, 새 위반 없음 (도구·검사기 1개를 다시 돌림)" in body
     assert "**모델의 설명** (모델이 쓴 글입니다)" in body and "print를 로거 호출로 바꿈" in body
 
     comment = _comment(fix_env)
-    assert "**수정안:** 위반 1건을 고쳤습니다." in comment
+    assert "**모델 수정안:** 위반 1건을 고쳤습니다." in comment
     assert f"수정안 PR #{number}을 열었습니다." in comment
     assert f"  - `orders/a.py:3` · skip (모델: {inline_code('출력이 기능이다')})" in comment
     assert "아직 만들지 않습니다" not in comment
@@ -200,8 +197,9 @@ def test_explanation_pointing_at_an_unchanged_line_is_dropped(fix_env, tmp_path:
     assert "설명이 바뀌지 않은 줄을 가리킴: orders/a.py:1" in fix.detail
     assert "설명이 바뀌지 않은 줄을 가리킴: orders/a.py:1" in fixer.calls[1]["prompt"]
     assert fix_env["gh"].pulls == {} and fix_env["pushes"] == []
-    assert "**수정안:** 수정안을 만들지 못함: 정해진 회차 안에 검증을 통과하지 못함" in _comment(
-        fix_env
+    assert (
+        "**모델 수정안:** 수정안을 만들지 못함: 정해진 회차 안에 검증을 통과하지 못함"
+        in _comment(fix_env)
     )
 
 
@@ -236,7 +234,7 @@ def test_change_outside_the_allowed_files_is_dropped_without_retry(fix_env, tmp_
     fix = state["model_fix"]
     assert fix.status == "dropped" and len(fixer.calls) == 1
     assert "tests/test_a.py" in fix.detail and fix_env["gh"].pulls == {}
-    assert "**수정안:** 수정안을 만들지 못함: 수정안을 버림" in _comment(fix_env)
+    assert "**모델 수정안:** 수정안을 만들지 못함: 수정안을 버림" in _comment(fix_env)
 
 
 def test_skipped_and_uncovered_violations_never_reach_the_fixer(fix_env, tmp_path) -> None:
@@ -246,7 +244,7 @@ def test_skipped_and_uncovered_violations_never_reach_the_fixer(fix_env, tmp_pat
     fixer = use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation(("orders/a.py", 2))]))
     state = run(fix_env, tmp_path)
     assert "model_fix" not in state and fixer.calls == [] and fix_env["gh"].pulls == {}
-    assert "**수정안:**" not in _comment(fix_env)
+    assert "**모델 수정안:**" not in _comment(fix_env)
 
 
 def test_fork_pull_request_gets_no_fix_pull_request(fix_env, tmp_path: Path) -> None:
@@ -298,7 +296,7 @@ def _replies(env) -> list[str]:
 
 def test_require_approval_waits_and_fix_model_resumes(fix_env, tmp_path: Path) -> None:
     """`require_approval: true`면 모델 묶음은 승인을 기다리고(interrupt), `/fix model`이 그 thread를
-    이어 수정안 PR까지 간다 (5.2). `/fix lint`는 이 묶음을 승인하지 않는다."""
+    이어 수정안 PR까지 간다 (5.2). `/fix mechanical`은 이 묶음을 승인하지 않는다."""
     use_model(fix_env, FakeModel(rule_answer(print_rule()), decide=first_fix_then_skip))
     use_config(fix_env, AUTO.model_copy(update={"fix": FixSettings(require_approval=True)}))
     fixer = use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation(("orders/a.py", 2))]))
@@ -308,7 +306,7 @@ def test_require_approval_waits_and_fix_model_resumes(fix_env, tmp_path: Path) -
     assert update.pending_fix(state["job"], fix_env["deps"], "model") == "awaiting"
 
     deps = fix_env["deps"]
-    assert main.handle(_command("/fix lint", 70), deps) == "no_pending_fix"
+    assert main.handle(_command("/fix mechanical", 70), deps) == "no_pending_fix"
     assert fixer.calls == []
     assert main.handle(_command("/fix model", 71), deps) == "fix:ready"
     assert len(fixer.calls) == 1 and list(fix_env["gh"].pulls) == [900]
@@ -382,33 +380,65 @@ def test_fix_reasks_decisions_left_by_the_call_cap(fix_env, tmp_path: Path) -> N
     assert "수정 판단: fix 1건, skip 1건" in comment and "수정안 PR #900을 열었습니다." in comment
 
 
-def test_model_rerun_while_lint_waits_keeps_the_lint_approval(fix_env, tmp_path: Path) -> None:
-    """v1 lint가 승인을 기다리는 동안에도 상한에 걸린 모델 묶음은 `/fix model`로 다시 돌고, 끝나면
-    lint는 다시 승인을 기다린다."""
-    fixable = Finding("orders/a.py", 1, "error", "m", "lint", "x", "F401", fixable=True)
-    fix_env["monkeypatch"].setattr(
-        lint, "run_lint", lambda *a, **k: SkillResult(skill="lint", findings=(fixable,))
-    )
+class RuffAndGrep:
+    """도구 설정의 규칙(ruff)은 가짜 ruff로, 문서 규칙의 검사기는 grep 샌드박스로 돌린다."""
+
+    def __init__(self, grep) -> None:
+        from .test_mechanical_flow import FakeRuff
+
+        self.grep, self.ruff = grep, FakeRuff()
+
+    def on_examples(self, kind, body, snippets):
+        return self.grep.on_examples(kind, body, snippets)
+
+    def on_files(self, kind, body, root, files):
+        target = self.ruff if kind == "ruff" else self.grep
+        return target.on_files(kind, body, root, files)
+
+    def rule_exists(self, code: str) -> bool:
+        return True
+
+    def format_check(self, root):
+        return self.ruff.format_check(root)
+
+    def format_apply(self, root, files):
+        return self.ruff.format_apply(root, files)
+
+
+def test_model_rerun_while_mechanical_waits_keeps_its_approval(fix_env, tmp_path: Path) -> None:
+    """기계적 수정 묶음이 승인을 기다리는 동안에도 상한에 걸린 모델 묶음은 `/fix model`로 다시 돌고,
+    끝나면 기계적 수정 묶음은 다시 승인을 기다린다."""
+    from app.models.tools import RuffConfig, RuffSetup
+    from app.worker import base_config, doc_rules
+
+    from .helpers import BASE
+
+    sandbox = RuffAndGrep(fix_env["sandbox"])
+    fix_env["monkeypatch"].setattr(doc_rules, "sandbox_for", lambda *a: sandbox)
     use_model(fix_env, FakeModel(rule_answer(print_rule()), decide=first_fix_then_skip))
-    use_config(fix_env, RepoConfig(
-        skills=SkillsSettings(enabled=["lint"]), fix=FixSettings(require_approval=True),
-        model=ModelSettings(calls=CallSettings(pr_max=3)),
-    ))  # fmt: skip
-    fixer = use_fixer(fix_env, FakeFixer([{}, {}, FIX_LINE_2], [_explanation(("orders/a.py", 2))]))
-    state = run(fix_env, tmp_path)
-    assert "model_fix" not in state and "fixes" not in state
+    config = RepoConfig(
+        fix=FixSettings(require_approval=True), model=ModelSettings(calls=CallSettings(pr_max=3))
+    )
+    ruff = RuffSetup("0.17.5", config=RuffConfig("ruff.toml", "", "0" * 40))
+    fix_env["monkeypatch"].setattr(
+        base_config, "load", lambda *a, **k: replace(BASE, repo=config, ruff=ruff)
+    )
+    fixer = use_fixer(fix_env, FakeFixer([{}, {}, FIX_LINE_2], [_explanation(("orders/a.py", 3))]))
+    pr = {**TWO_PRINTS, "orders/a.py": "import os\n" + TWO_PRINTS["orders/a.py"]}
+    state = run(fix_env, tmp_path, pr=pr)
+    assert "model_fix" not in state and "mechanical_fix" not in state
     deps = fix_env["deps"]
-    assert update.pending_fix(state["job"], deps, "lint") == "awaiting"
+    assert update.pending_fix(state["job"], deps, "mechanical") == "awaiting"
     assert update.pending_fix(state["job"], deps, "model") == "awaiting"
 
     assert main.handle(_command("/fix model", 60), deps) == "fix:budget"
     assert len(fixer.calls) == 2
-    assert update.pending_fix(state["job"], deps, "lint") == "awaiting"
+    assert update.pending_fix(state["job"], deps, "mechanical") == "awaiting"
     assert update.pending_fix(state["job"], deps, "model") == "rerun"
 
     assert main.handle(_command("/fix model", 61), deps) == "fix:ready"
     assert len(fixer.calls) == 3 and list(fix_env["gh"].pulls) == [900]
-    assert update.pending_fix(state["job"], deps, "lint") == "awaiting"
+    assert update.pending_fix(state["job"], deps, "mechanical") == "awaiting"
     assert update.pending_fix(state["job"], deps, "model") is None
 
 

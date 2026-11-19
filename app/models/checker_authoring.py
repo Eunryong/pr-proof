@@ -25,7 +25,9 @@ from app.models.rule_reading import prompt_version
 # 예시 확인(judge_examples, model_examples)의 규칙을 바꾸면 올린다 (캐시 키에 들어간다).
 # 프롬프트와 스키마의 버전은 그 글에서 만든다 (PROMPT_VERSION)
 JUDGE_VERSION: Final = "1"
-# 도구 목록의 버전. 이 단계의 도구 목록은 비어 있다 (기존 도구는 3단계)
+# 검사기 작성 키의 도구 부분. 검사기는 도구 선택(models/tool_choice.py)이 맞는 도구가 없다고 정한
+# 뒤에만 쓰므로 도구 목록의 버전은 도구 선택의 키에 둔다. 이 값을 바꾸면 모든 저장소가 검사기를 다시
+# 쓴다
 TOOLS_VERSION: Final = "none-1"
 # 검사 엔진 버전 (7.2). sandbox/toolcache.py의 ast-grep 버전, TOOL_IMAGE의 Python과 맞춘다
 ENGINE_VERSION: Final[Mapping[str, str]] = {
@@ -89,9 +91,8 @@ def plan_check(rule: Rule) -> Unchecked | None:
     """검사기를 작성하지 않을 규칙이면 Unchecked, 작성할 규칙이면 None.
 
     확인 대상이 코드 줄인 규칙만 검사한다. PR 단위 규칙과 사람이 확인하는 규칙은 목록으로만 보인다.
-    4.4의 순서는 기존 도구 → 검사기 → 모델 판단이다. 이 단계에는 도구가 없으므로 코드 규칙은 모두
-    검사기부터 시도한다. 규칙 읽기의 힌트가 "model"인 규칙도 코드 모양으로 가릴 수 있으면 검사기가
-    더 싸다 (9.3).
+    4.4의 순서는 기존 도구 → 검사기 → 모델 판단이다 (worker/checkers.py). 규칙 읽기의 힌트가
+    "model"인 규칙도 도구나 코드 모양으로 가릴 수 있으면 그쪽이 더 싸다 (9.3).
     """
     if rule.target != "code":
         return Unchecked(rule, rule.target, rule.check.reason)
@@ -118,7 +119,7 @@ def prompt_version_for(rule: Rule) -> str:
 # --- 캐시 키 ---
 
 
-def _example_parts(examples: Sequence[Example]) -> list[list[str]]:
+def example_parts(examples: Sequence[Example]) -> list[list[str]]:
     return [[e.code, ",".join(map(str, e.expect_lines))] for e in examples]
 
 
@@ -126,7 +127,7 @@ def checker_key(rule: Rule, model: str) -> str:
     """규칙별 검사기의 캐시 키 (9.1): 규칙 원문 + 문서 예시 + 도구 목록 버전 + 엔진 버전 + 모델."""
     parts = {
         "rule_text": text_hash(normalize(rule.text)),
-        "examples": _example_parts(rule.examples),
+        "examples": example_parts(rule.examples),
         "tools": TOOLS_VERSION,
         "engines": [f"{k}={ENGINE_VERSION[k]}" for k in sorted(kinds_for(rule))],
         "judge": JUDGE_VERSION,

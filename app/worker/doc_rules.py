@@ -1,16 +1,18 @@
-"""문서 규칙 경로 (docs/DESIGN.md 5.1, 13절 1단계): 규칙 읽기 → 검사기 작성 → 위반 찾기.
+"""규칙 경로 (docs/DESIGN.md 5.1): 규칙 읽기 → 검사 방법 정하기(도구, 검사기 작성) → 위반 찾기.
 
-v1의 lint와 따로 돌고, 찾기만 한다(수정은 worker/model_fix.py). 이 경로의 실패(모델 호출 실패, 호출
-상한, 도구 준비 실패, 샌드박스 오류)는 작업을 실패시키지 않고 `NotRun`이나 규칙별 "검사하지
-못함"으로 남는다. 테스트와 v1 결과는 그대로 나온다.
+규칙은 base의 문서(모델이 읽음)와 도구 설정(ruff 설정, 결정적으로 읽음)에서 나온다. 둘 다 없으면
+규칙 검사를 하지 않는다 (2.2). 찾기만 한다(수정은 worker/mechanical_fix.py, worker/model_fix.py).
+이 경로의 실패(모델 호출 실패, 호출 상한, 도구 준비 실패, 샌드박스 오류)는 작업을 실패시키지 않고
+`NotRun`이나 규칙별 "검사하지 못함"으로 남는다. 규칙 문서를 읽지 못해도 도구 설정의 규칙은 검사한다
+(4.3 "실패 시"). 테스트 결과는 그대로 나온다.
 """
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from app.models.call_budget import RulesetScope, limits_for
-from app.models.checker import Checker
+from app.models.checker import TOOL_KINDS, Checker, tool_codes
 from app.models.checker_authoring import (
     Checked,
     RuleCheck,
@@ -35,10 +37,12 @@ from app.models.doc_rules import (
 )
 from app.models.repo_config import ModelSettings, RulesSettings
 from app.models.rule import checked_exclude
+from app.models.rule_reading import apply_disabled
+from app.models.tool_choice import choice_key
+from app.models.tools import RuffSetup, config_rule
 from app.sandbox.docker_cli import SandboxError
 from app.worker import checkers, detect, repo, rules
 from app.worker.budget import CallBudget
-from app.worker.checkers import RunsCheckers
 from app.worker.repo import GitError
 from app.worker.state import Store
 
@@ -51,13 +55,31 @@ class Runtime:
     budget: CallBudget
     models: ModelSettings
     ask: rules.AskModel
-    sandbox: RunsCheckers
+    sandbox: checkers.FormatsFiles
+    ruff: RuffSetup | None = None  # 이 저장소의 ruff (base 설정, 버전)
+    disabled: frozenset[str] = frozenset()  # `rules.disabled`. 도구 설정 규칙의 ruff 코드를 끈다
 
 
 def read(
     worktree: Path, base_sha: str, settings: RulesSettings, rt: Runtime
 ) -> RulesRead | DocRules:
-    """base의 규칙 문서를 읽는다. 검사할 규칙이 있으면 RulesRead, 없거나 못 읽었으면 끝난 결과."""
+    """base의 규칙 문서와 도구 설정을 읽는다. 검사할 규칙이 있으면 RulesRead, 없으면 끝난 결과."""
+    configured = (config_rule(rt.ruff.config),) if rt.ruff and rt.ruff.config else ()
+    tool_rules = apply_disabled(configured, settings.disabled)
+    docs = _read_documents(worktree, base_sha, settings, rt)
+    if isinstance(docs, RulesRead):
+        return replace(docs, rules=(*docs.rules, *tool_rules),
+                       disabled=docs.disabled + len(configured) - len(tool_rules))  # fmt: skip
+    if not tool_rules:
+        return docs
+    note = docs.reason if isinstance(docs, NotRun) else ""
+    return RulesRead("", tool_rules, disabled=0, note=note)
+
+
+def _read_documents(
+    worktree: Path, base_sha: str, settings: RulesSettings, rt: Runtime
+) -> RulesRead | DocRules:
+    """규칙 문서를 모델로 읽는다. 규칙이 있으면 RulesRead, 없거나 못 읽었으면 끝난 결과."""
     try:
         result = rules.load_rules(
             worktree, base_sha, settings, model=rt.models.rules, store=rt.store,
@@ -92,20 +114,31 @@ def author(read: RulesRead, rt: Runtime) -> tuple[RuleOutcome, ...] | NotRun:
     try:
         checks = checkers.plan_and_author(
             read.rules, ruleset_key=read.key, store=rt.store, budget=rt.budget,
-            models=rt.models, ask=rt.ask, sandbox=rt.sandbox,
+            models=rt.models, ask=rt.ask, sandbox=rt.sandbox, ruff=rt.ruff,
         )  # fmt: skip
     except SandboxError as e:
         log.warning("검사기 확인 샌드박스 실패: %s", e)
         return NotRun(f"검사기를 확인하는 샌드박스가 실패함: {_first_line(str(e))}")
-    return tuple(_outcome(c, rt.models) for c in checks)
+    return tuple(_outcome(c, rt.models, rt.ruff) for c in checks)
 
 
-def _outcome(check: RuleCheck, models: ModelSettings) -> RuleOutcome:
+def _outcome(check: RuleCheck, models: ModelSettings, ruff: RuffSetup | None) -> RuleOutcome:
     if isinstance(check, Unchecked):
         return RuleUnchecked(check.rule, check.kind, check.detail)
-    key = checker_key(check.rule, models.checker)
-    ref = CheckerRef(key=key, id=check.checker.id, kind=check.checker.kind, cached=check.cached)
+    key = _saved_key(check, models, ruff)
+    codes = tool_codes(check.checker.body) if check.checker.kind == "ruff" else ()
+    ref = CheckerRef(key=key, id=check.checker.id, kind=check.checker.kind, cached=check.cached,
+                     codes=codes)  # fmt: skip
     return RuleChecked(check.rule, ref)
+
+
+def _saved_key(check: Checked, models: ModelSettings, ruff: RuffSetup | None) -> str:
+    """채택한 확인 방법을 저장한 `checkers`의 키: 도구 설정, 도구 선택, 또는 검사기 작성."""
+    if check.rule.origin == "tool_config" and ruff is not None:
+        return checkers.config_key(check.rule, ruff)
+    if check.checker.kind in TOOL_KINDS and ruff is not None:
+        return choice_key(check.rule, models.checker, ruff.version)
+    return checker_key(check.rule, models.checker)
 
 
 def find(
@@ -125,8 +158,9 @@ def find(
     diff = changes_diff.decode("utf-8", errors="replace")
     try:
         found = detect.detect(
-            checks, worktree, added_lines(diff), new_files=new_files(diff), sandbox=rt.sandbox
-        )
+            checks, worktree, added_lines(diff), new_files=new_files(diff), sandbox=rt.sandbox,
+            disabled=rt.disabled,
+        )  # fmt: skip
     except SandboxError as e:
         log.warning("검사기 실행 샌드박스 실패: %s", e)
         return NotRun(f"검사기를 돌리는 샌드박스가 실패함: {_first_line(str(e))}")
@@ -141,6 +175,7 @@ def find(
         violations=found.violations,
         disabled=read.disabled,
         usage=call_usage(calls, limit),
+        note=read.note,
     )
 
 
@@ -176,8 +211,8 @@ def last_call_id(store: Store, repo: str, pr_number: int) -> int:
     return max((c.id or 0 for c in store.model_calls(repo, pr_number)), default=0)
 
 
-def sandbox_for(tool_cache: Path) -> RunsCheckers:
-    return checkers.Sandbox(tool_cache)
+def sandbox_for(tool_cache: Path, ruff: RuffSetup | None = None) -> checkers.FormatsFiles:
+    return checkers.Sandbox(tool_cache, ruff)
 
 
 def _first_line(text: str) -> str:

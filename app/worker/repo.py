@@ -14,7 +14,7 @@ import os
 import shutil
 import subprocess
 import uuid
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -138,31 +138,6 @@ def fetch_pr(bare: Path, pr_number: int, base_sha: str) -> None:
     )  # fmt: skip
 
 
-def read_base_files(worktree: Path, base_sha: str, names: tuple[str, ...]) -> dict[str, str]:
-    """base 커밋의 리포 최상위 파일 중 있는 것만 {이름: 내용}으로 읽는다.
-
-    설정과 규칙은 PR head가 아니라 base에서 읽는다 (PR이 자기 검사 기준을 바꾸지 못하게).
-    """
-    return _read_base_files(lambda *a: _tree_git(worktree, *a), base_sha, names)
-
-
-def _read_base_files(
-    git: Callable[..., str], base_sha: str, names: tuple[str, ...]
-) -> dict[str, str]:
-    listed = git("ls-tree", "--name-only", "-z", base_sha, "--", *names)
-    present = [name for name in listed.split("\0") if name in names]
-    return {name: git("show", f"{base_sha}:{name}") for name in present}
-
-
-def read_base_files_from_cache(
-    data_dir: Path, repo: str, base_sha: str, names: tuple[str, ...], *, url: str | None = None
-) -> dict[str, str]:
-    """worktree 없이 bare 캐시에서 base 커밋의 파일을 읽는다 (명령 처리용)."""
-    bare = ensure_bare(data_dir, repo, url)
-    _git("fetch", "--quiet", "--no-tags", "origin", base_sha, cwd=bare)
-    return _read_base_files(lambda *a: _git(*a, cwd=bare), base_sha, names)
-
-
 def list_base_entries(worktree: Path, base_sha: str, paths: Sequence[str]) -> dict[str, TreeEntry]:
     """base 커밋에서 paths 중 있는 것의 (모드, blob 해시, 크기). 경로가 정확히 같은 것만 남긴다.
 
@@ -172,12 +147,20 @@ def list_base_entries(worktree: Path, base_sha: str, paths: Sequence[str]) -> di
         return {}
     listed = _tree_git(worktree, "ls-tree", "-l", "-z", base_sha, "--", *paths)
     wanted = set(paths)
+    return {path: e for path, e in _tree_entries(listed).items() if path in wanted}
+
+
+def base_root_entries(worktree: Path, base_sha: str) -> dict[str, TreeEntry]:
+    """base 커밋 루트의 모든 항목 (모드, blob 해시, 크기). 설정 파일을 고를 때 쓴다."""
+    return _tree_entries(_tree_git(worktree, "ls-tree", "-l", "-z", base_sha))
+
+
+def _tree_entries(listed: str) -> dict[str, TreeEntry]:
     entries = {}
     for record in filter(None, listed.split("\0")):
         meta, _, path = record.partition("\t")
         mode, _kind, sha, size = meta.split()
-        if path in wanted:
-            entries[path] = TreeEntry(path, mode, sha, int(size) if size != "-" else None)
+        entries[path] = TreeEntry(path, mode, sha, int(size) if size != "-" else None)
     return entries
 
 

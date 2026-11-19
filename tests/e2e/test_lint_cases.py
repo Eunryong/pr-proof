@@ -1,12 +1,18 @@
-"""2단계 평가 케이스 E2E (eval/lint/*.yaml).
+"""도구 설정의 규칙과 기계적 수정 묶음 E2E (eval/lint/*.yaml, 13절 3단계의 3-1).
 
-예제 리포에 케이스의 위반을 넣은 PR을 로컬 git 원격으로 만들고, 워커 작업을 처음부터 끝까지 돌린다.
-update: 체크아웃 → ruff → 샌드박스 테스트 → 코멘트 → 승인 대기.
-/fix lint: 수정 → 검증 → 제안 PR 푸시.
-GitHub만 가짜(FakeGh)이고 git·ruff·Docker는 진짜다. 제안 브랜치는 로컬 원격에 실제로 푸시된다.
+v1 lint 단계의 케이스 다섯 개를 새 구조로 돌린다. 예제 리포에 케이스의 위반을 넣은 PR을 로컬 git
+원격으로 만들고, 워커 작업을 처음부터 끝까지 돌린다: 체크아웃 → 도구 설정의 규칙 묶음(ruff) →
+위반 찾기 → 샌드박스 테스트 → 수정 판단 → 기계적 수정 → 검증 → 수정안 PR 푸시.
+GitHub만 가짜(FakeGh)이고 git·ruff(도구 캐시에 받음)·Docker는 진짜다. 수정안 브랜치는 로컬 원격에
+실제로 푸시된다.
+
+예제 리포에는 ruff 설정이 없다. v1은 그런 base에 ruff 기본 규칙을 썼지만 파이프라인이 정한 규칙은
+없앴다(3-3). 그래서 이 케이스의 base에는 빈 `ruff.toml`(ruff의 기본 설정)을 둔다. 케이스 파일은 v1
+그대로다. 바뀐 것은 수정안 브랜치의 이름(`fix-lint` → `fix-mechanical`)뿐이다.
 """
 
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -30,7 +36,11 @@ from ..worker.test_github import FakeGh
 CASES_DIR: Final = Path(__file__).resolve().parents[2] / "eval" / "lint"
 CASES: Final = sorted(CASES_DIR.glob("*.yaml"))
 REPO: Final = "o/r"
-BRANCH: Final = "pipeline/pr-1-fix-lint"
+BRANCH: Final = "pipeline/pr-1-fix-mechanical"
+# 저장소가 ruff를 쓴다는 설정. 내용이 비면 ruff의 기본 설정이다
+RUFF_SETTINGS: Final = "ruff.toml"
+# 규칙별 위반 목록의 머리 줄: "- `F401` `ruff.toml의 설정대로 ruff를 통과한다` · 2건"
+_GROUP: Final = re.compile(r"^- `([^`]+)` .* · (\d+)건$")
 
 
 def _git(cwd: Path, *args: str) -> str:
@@ -61,6 +71,7 @@ def _remote(tmp_path: Path, eval_repo: Path, case: dict) -> dict:
     _git(path, "init", "-q", "-b", "main")
     _git(path, "config", "uploadpack.allowAnySHA1InWant", "true")
     _apply(path, case.get("base"))
+    (path / RUFF_SETTINGS).write_text("")
     _git(path, "add", "-A")
     _git(path, "commit", "-q", "-m", "base")
     base = _git(path, "rev-parse", "HEAD")
@@ -89,11 +100,12 @@ def _bodies(gh: FakeGh) -> list[str]:
 
 
 def _finding_codes(body: str) -> list[str]:
-    """코멘트의 위반 목록 줄(- `파일:줄` `코드` 메시지)에서 규칙 코드."""
+    """코멘트의 규칙별 위반 목록에서 규칙 id(도구 설정의 규칙은 ruff 코드)를 건수만큼."""
     return sorted(
-        line.split("` `")[1].split("`")[0]
+        code
         for line in body.splitlines()
-        if line.startswith("- `") and "` `" in line
+        if (m := _GROUP.match(line))
+        for code in [m.group(1)] * int(m.group(2))
     )
 
 
@@ -129,7 +141,7 @@ def test_lint_case(case_path: Path, eval_repo: Path, shared_venvs: Path, tmp_pat
     redis.set(state_keys.latest_head(REPO, 1), remote["head"])
 
     status = main.handle(update.model_dump_json(), deps)
-    body = _bodies(gh)[-1]
+    body = [b for b in _bodies(gh) if "### pr-proof" in b][-1]
     rules = next(line for line in body.splitlines() if line.startswith("**규칙:**"))
     assert _finding_codes(body) == sorted(expect["findings"]), body
 
@@ -141,15 +153,15 @@ def test_lint_case(case_path: Path, eval_repo: Path, shared_venvs: Path, tmp_pat
             assert "자동 수정" not in rules
         case "tests":
             assert status == "failed" and "자동 수정" not in rules
-            assert "테스트가 통과하지 않아 자동 수정을 제안하지 않습니다" in body
+            assert "skip (테스트가 실패함)" in body and "**기계적 수정안:**" not in body
     if expect["proposal"] != "auto":
         assert _git(remote["path"], "branch", "--list", BRANCH) == ""
         return
 
     fixed_body = body
-    assert expect["fix"] == "ready" and "**lint 수정안:**" in fixed_body, fixed_body
+    assert expect["fix"] == "ready" and "**기계적 수정안:**" in fixed_body, fixed_body
     ((number, pull),) = gh.pulls.items()
-    assert f"제안 PR #{number}을 열었습니다." in fixed_body, fixed_body
+    assert f"수정안 PR #{number}을 열었습니다." in fixed_body, fixed_body
     assert (pull["base"], pull["head"]) == ("feature", BRANCH)
 
     # 로컬 원격에 실제로 푸시된 제안 브랜치를 확인한다

@@ -74,9 +74,9 @@ def _context(deps: Deps, run_id: int, comment_id: int | None) -> graph.FlowConte
     )
 
 
-def pending_fix(job: PRJob, deps: Deps, skill: str = "lint") -> graph.PendingFix | None:
-    """이 커밋에 `/fix`로 재개할 skill의 수정이 있으면 그 종류 (승인 대기, 실패, 다시 돌리기)."""
-    return graph.pending_kind(job, _context(deps, run_id=0, comment_id=None), skill)
+def pending_fix(job: PRJob, deps: Deps, bundle: str) -> graph.PendingFix | None:
+    """이 커밋에 `/fix`로 재개할 묶음의 수정이 있으면 그 종류 (승인 대기, 실패, 다시 돌리기)."""
+    return graph.pending_kind(job, _context(deps, run_id=0, comment_id=None), bundle)
 
 
 def resume_fix(job: PRJob, deps: Deps, approval: dict[str, Any]) -> str:
@@ -101,12 +101,9 @@ def resume_fix(job: PRJob, deps: Deps, approval: dict[str, Any]) -> str:
     if result.get("stopped"):
         store.finish_run(run_id, "cancelled", comment_id=ctx.comment_id)
         return "stale"
-    if approval["skill"] == graph.MODEL:
-        # 다시 돌린 수정 판단이 모두 skip이면 모델 수정이 돌지 않는다
-        done = result.get("model_fix")
-        status = done.status if done is not None else "no_targets"
-    else:
-        status = result["fixes"][approval["skill"]].status
+    # 다시 돌린 수정 판단이 모두 skip이면 그 묶음의 수정이 돌지 않는다
+    done = result.get(graph.STATE_KEYS[approval["skill"]][0])
+    status = done.status if done is not None else "no_targets"
     store.finish_run(run_id, "done", test_status=status, comment_id=ctx.comment_id)
     return f"fix:{status}"
 
@@ -132,7 +129,7 @@ def process_update(job: PRJob, deps: Deps) -> str:
     except DependencyInstallError as e:
         if install_failure_outcome(e.kind, attempt) == "unrunnable":
             body = report.render_install_failure(
-                job.head_sha, e.detail, lint=ctx.lint, base=ctx.base,
+                job.head_sha, e.detail, base=ctx.base,
                 doc_rules=ctx.doc_rules,
                 checkers=doc_rules.shown_checkers(ctx.doc_rules, store), kind=e.kind,
                 packages=e.packages,

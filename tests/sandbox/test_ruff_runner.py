@@ -1,12 +1,18 @@
-"""app/sandbox/ruff_runner.py 단위 테스트. docker 없이 run_in_sandbox 결과를 정해 둔다."""
+"""app/sandbox/ruff_runner.py 단위 테스트. docker 없이 run_bounded의 결과를 정해 둔다."""
 
 import json
+from pathlib import Path
+from typing import Final
 
 import pytest
 
+from app.models.text_edit import TextEdit
+from app.models.tools import RuffConfig
 from app.sandbox import ruff_runner
-from app.sandbox.container import ExecResult
+from app.sandbox.checker_runner import Failed, Match, Ran, RawRun
 from app.sandbox.docker_cli import SandboxError
+
+CONFIG: Final = RuffConfig("ruff.toml", "line-length = 90\n", "b" * 40)
 
 
 def _item(file: str, row: int, end_row: int | None = None, code: str | None = "F401") -> dict:
@@ -20,123 +26,132 @@ def _item(file: str, row: int, end_row: int | None = None, code: str | None = "F
 
 
 @pytest.fixture
-def fake_exec(monkeypatch):
+def fake_run(monkeypatch, tmp_path: Path):
     calls: list[list[str]] = []
+    seen_config: list[str] = []
 
-    def install(result: ExecResult) -> list[list[str]]:
-        def run(container, argv, **kwargs):
+    def install(result: RawRun):
+        def run(argv, stdin, *, timeout):
             calls.append(argv)
+            if "--config" in argv:  # 설정 사본은 임시 폴더에 있다가 실행이 끝나면 지워진다
+                mount = next(a for a in argv if a.endswith(f":{ruff_runner.CONFIG_MOUNT}:ro"))
+                seen_config.append((Path(mount.split(":")[0]) / CONFIG.name).read_text())
             return result
 
-        monkeypatch.setattr(ruff_runner, "run_in_sandbox", run)
-        return calls
+        monkeypatch.setattr(ruff_runner, "run_bounded", run)
+        return calls, seen_config
 
     return install
 
 
-def test_argv_uses_base_config_or_isolated() -> None:
-    with_config = ruff_runner.ruff_argv(["a.py"], ".pipeline-out/base/pyproject.toml")
-    assert with_config[with_config.index("--config") + 1] == ".pipeline-out/base/pyproject.toml"
-    assert "--isolated" not in with_config
-    # 설정이 없으면 PR head의 설정을 읽지 않게 격리한다
-    assert "--isolated" in ruff_runner.ruff_argv(["a.py"], None)
-    for argv in (with_config, ruff_runner.ruff_argv(["a.py"], None)):
-        assert "--no-cache" in argv  # worktree에 .ruff_cache를 남기지 않는다
-        assert "--force-exclude" in argv
-        assert argv[-2:] == ["--", "a.py"]
+def _ok(stdout: bytes = b"[]", code: int = 0) -> RawRun:
+    return RawRun(code, stdout, "")
 
 
-def test_parse_output_relative_paths_and_ranges() -> None:
-    out = json.dumps([_item("orders/a.py", 3, 5), _item("b.py", 1, code=None)])
-    v1, v2 = ruff_runner.parse_output(out)
-    assert (v1.file, v1.line, v1.end_line, v1.code) == ("orders/a.py", 3, 5, "F401")
-    assert v2.code == ruff_runner.SYNTAX_ERROR_CODE
+def test_check_mounts_the_base_config_outside_the_tree_and_paths_after_dashes(
+    fake_run, tmp_path: Path
+) -> None:
+    calls, configs = fake_run(_ok())
+    ruff_runner.check(tmp_path, ["-a.py"], tool_dir=tmp_path, config=CONFIG, codes=["F401", "T201"])
+    (argv,) = calls
+    assert argv[argv.index("--config") + 1] == "/config/ruff.toml" and configs == [CONFIG.text]
+    assert argv[argv.index("--select") + 1] == "F401,T201"
+    assert argv[-2:] == ["--", "-a.py"]
+    assert "--network" in argv and argv[argv.index("--network") + 1] == "none"
+    assert f"{tmp_path.resolve()}:/work:ro" in argv  # 검사할 폴더는 읽기 전용
+    assert "--read-only" in argv and "--cap-drop" in argv
 
 
-def test_no_files_skips_container(fake_exec) -> None:
-    calls = fake_exec(ExecResult(0, "[]", ""))
-    assert ruff_runner.run_ruff("c", [], None) == ruff_runner.RuffRun()
+def test_check_without_config_is_isolated(fake_run, tmp_path: Path) -> None:
+    calls, _ = fake_run(_ok())
+    ruff_runner.check(tmp_path, ["a.py"], tool_dir=tmp_path, config=None)
+    (argv,) = calls
+    assert "--isolated" in argv and "--config" not in argv and "--select" not in argv
+
+
+def test_no_files_runs_nothing(fake_run, tmp_path: Path) -> None:
+    calls, _ = fake_run(_ok())
+    assert ruff_runner.check(tmp_path, [], tool_dir=tmp_path, config=None) == Ran(())
     assert calls == []
 
 
 @pytest.mark.parametrize("code", [0, 1])
-def test_ok_exit_codes(fake_exec, code: int) -> None:
-    fake_exec(ExecResult(code, json.dumps([_item("a.py", 1)] if code else []), ""))
-    run = ruff_runner.run_ruff("c", ["a.py"], None)
-    assert run.error is None and len(run.violations) == code
-
-
-def test_ruff_error_is_unchecked_not_environment(fake_exec) -> None:
-    fake_exec(ExecResult(2, "", "ruff failed: unknown field `foo`"))
-    run = ruff_runner.run_ruff("c", ["a.py"], None)
-    assert run.error is not None and "unknown field" in run.error
-
-
-def test_docker_failure_is_environment_error(fake_exec) -> None:
-    fake_exec(ExecResult(125, "", "daemon gone"))
-    with pytest.raises(SandboxError):
-        ruff_runner.run_ruff("c", ["a.py"], None)
-
-
-def test_timeout_and_cancel(fake_exec) -> None:
-    fake_exec(ExecResult(124, "", "", timed_out=True))
-    assert "초 안에" in ruff_runner.run_ruff("c", ["a.py"], None).error
-    fake_exec(ExecResult(None, "", "", cancelled=True))
-    assert ruff_runner.run_ruff("c", ["a.py"], None).cancelled
-
-
-def test_broken_json(fake_exec) -> None:
-    fake_exec(ExecResult(1, "{nope", ""))
-    assert "출력을 읽지 못함" in ruff_runner.run_ruff("c", ["a.py"], None).error
-
-
-def _fix(applicability: str) -> dict:
-    return {
-        "applicability": applicability,
-        "message": "Remove unused import",
-        "edits": [
-            {"content": "", "location": {"row": 1, "column": 1},
-             "end_location": {"row": 2, "column": 1}},
-        ],
-    }  # fmt: skip
-
-
-def test_only_safe_fixes_become_edits() -> None:
-    safe = _item("a.py", 1) | {"fix": _fix("safe")}
-    unsafe = _item("a.py", 2) | {"fix": _fix("unsafe")}
-    display = _item("a.py", 3) | {"fix": _fix("display-only")}
-    none = _item("a.py", 4) | {"fix": None}
-    v_safe, v_unsafe, v_display, v_none = ruff_runner.parse_output(
-        json.dumps([safe, unsafe, display, none])
+def test_violations_are_read_relative_to_the_repo(fake_run, tmp_path: Path, code: int) -> None:
+    out = json.dumps([_item("a.py", 3, 5), _item("b.py", 1, code=None)]).encode()
+    fake_run(_ok(out, code))
+    run = ruff_runner.check(tmp_path, ["a.py", "b.py"], tool_dir=tmp_path, config=None)
+    assert run == Ran(
+        (Match("a.py", 3, 5, "msg", "F401"), Match("b.py", 1, 1, "msg", "syntax-error"))
     )
-    assert v_safe.fixable and v_safe.edits[0].end_row == 2
-    assert not v_unsafe.fixable and not v_display.fixable and not v_none.fixable
-
-
-def test_format_argv() -> None:
-    argv = ruff_runner.format_argv(["a.py"], None, check=True)
-    assert argv[:2] == ["ruff", "format"] and "--check" in argv and "--isolated" in argv
-    assert "--check" not in ruff_runner.format_argv(["a.py"], "c.toml", check=False)
 
 
 @pytest.mark.parametrize(
-    ("code", "check", "expected"),
-    [(0, True, True), (1, True, False), (0, False, True)],
-    ids=["formatted", "would-reformat", "applied"],
+    ("raw", "reason"),
+    [
+        (RawRun(2, b"", "bad config"), "ruff 실행 오류: bad config"),
+        (RawRun(137, b"", ""), "메모리"),
+        (RawRun(None, b"", "", timed_out=True), "초 안에 끝나지 않음"),
+        (RawRun(0, b"{", ""), "ruff 출력을 읽지 못함"),
+        (RawRun(1, json.dumps([_item("other.py", 1)]).encode(), ""), "넘기지 않은 파일"),
+    ],
+    ids=["config-error", "killed", "timeout", "broken-json", "outside"],
 )
-def test_format_exit_codes(fake_exec, code: int, check: bool, expected) -> None:
-    fake_exec(ExecResult(code, "", ""))
-    assert ruff_runner.run_format("c", ["."], None, check=check) is expected
+def test_unusable_results_fail_the_rule_not_the_job(fake_run, tmp_path: Path, raw, reason) -> None:
+    fake_run(raw)
+    run = ruff_runner.check(tmp_path, ["a.py"], tool_dir=tmp_path, config=None)
+    assert isinstance(run, Failed) and reason in run.reason
 
 
-@pytest.mark.parametrize("check", [True, False])
-def test_format_error_is_reason_not_environment(fake_exec, check: bool) -> None:
-    fake_exec(ExecResult(2, "", "error: Failed to parse a.py"))
-    result = ruff_runner.run_format("c", ["a.py"], None, check=check)
-    assert isinstance(result, str) and "Failed to parse" in result
-
-
-def test_format_docker_failure_is_environment_error(fake_exec) -> None:
-    fake_exec(ExecResult(125, "", "daemon gone"))
+def test_docker_failure_is_environment_error(fake_run, tmp_path: Path) -> None:
+    fake_run(RawRun(125, b"", "daemon down"))
     with pytest.raises(SandboxError):
-        ruff_runner.run_format("c", ["."], None, check=True)
+        ruff_runner.check(tmp_path, ["a.py"], tool_dir=tmp_path, config=None)
+
+
+def test_only_safe_fixes_become_edits() -> None:
+    edit = {"location": {"row": 1, "column": 1}, "end_location": {"row": 2, "column": 1},
+            "content": ""}  # fmt: skip
+    safe = {**_item("a.py", 1), "fix": {"applicability": "safe", "edits": [edit]}}
+    unsafe = {**_item("a.py", 2), "fix": {"applicability": "unsafe", "edits": [edit]}}
+    first, second = ruff_runner.parse_check(json.dumps([safe, unsafe]))
+    assert first.edits == (TextEdit(1, 1, 2, 1, ""),) and second.edits == ()
+
+
+def test_format_diff_gives_changed_original_lines() -> None:
+    diff = (
+        "--- /work/pkg/a.py\n+++ /work/pkg/a.py\n@@ -1,4 +1,4 @@\n import os\n-x=1\n+x = 1\n"
+        " y = 2\n-print( 1 )\n+print(1)\n--- b.py\n+++ b.py\n@@ -3,2 +3,3 @@\n a\n+\n b\n"
+    )
+    assert ruff_runner.parse_format_diff(diff) == (
+        Match("pkg/a.py", 2, 2, ruff_runner.FORMAT_MESSAGE, ruff_runner.FORMAT_CODE),
+        Match("pkg/a.py", 4, 4, ruff_runner.FORMAT_MESSAGE, ruff_runner.FORMAT_CODE),
+        Match("b.py", 3, 3, ruff_runner.FORMAT_MESSAGE, ruff_runner.FORMAT_CODE),
+    )
+
+
+@pytest.mark.parametrize(("code", "expected"), [(0, True), (1, False)])
+def test_format_check(fake_run, tmp_path: Path, code: int, expected: bool) -> None:
+    calls, _ = fake_run(_ok(b"", code))
+    assert ruff_runner.format_check(tmp_path, tool_dir=tmp_path, config=None) is expected
+    assert "--check" in calls[0] and calls[0][-2:] == ["--", "."]
+
+
+def test_format_apply_is_the_only_writable_mount(fake_run, tmp_path: Path) -> None:
+    calls, _ = fake_run(_ok())
+    assert ruff_runner.format_apply(tmp_path, ["a.py"], tool_dir=tmp_path, config=None) is True
+    assert f"{tmp_path.resolve()}:/work" in calls[0] and calls[0][-2:] == ["--", "a.py"]
+    assert "--network" in calls[0] and "--check" not in calls[0]
+
+
+def test_format_error_is_a_reason(fake_run, tmp_path: Path) -> None:
+    fake_run(RawRun(2, b"", "boom"))
+    result = ruff_runner.format_check(tmp_path, tool_dir=tmp_path, config=None)
+    assert isinstance(result, str) and "boom" in result
+
+
+def test_rule_exists_passes_only_rule_codes(fake_run, tmp_path: Path) -> None:
+    calls, _ = fake_run(_ok(b"", 0))
+    assert ruff_runner.rule_exists("--help", tool_dir=tmp_path) is False
+    assert calls == []  # 코드 모양이 아니면 ruff에 넘기지 않는다
+    assert ruff_runner.rule_exists("F401", tool_dir=tmp_path) is True
+    assert calls[0][-2:] == ["rule", "F401"]

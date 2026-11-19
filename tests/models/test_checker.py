@@ -89,3 +89,23 @@ def test_path_pattern_declaration_passes() -> None:
 )
 def test_path_pattern_is_rejected_before_running(body: str, reason: str) -> None:
     assert reason in (validate_body("path-pattern", body) or "")
+
+
+@pytest.mark.parametrize(
+    ("kind", "body", "problem"),
+    [
+        ("ruff", '{"codes": ["F401", "T201"]}', None),
+        ("ruff", '{"codes": []}', None),
+        ("ruff-format", "{}", None),
+        ("ruff", '{"codes": ["--fix"]}', "ruff 규칙 코드의 목록"),
+        ("ruff", '{"codes": ["F401"], "fix": true}', "쓸 수 없는 키"),
+        ("ruff-format", '{"codes": ["F401"]}', "쓸 수 없는 키"),
+        ("ruff", "[]", "최상위가 객체가 아님"),
+    ],
+)
+def test_tool_declarations_are_checked_before_running(kind, body, problem) -> None:
+    """도구의 선언은 모델이 고른 것이라 실행 전에 모양을 본다. 코드가 옵션처럼 읽히지 못한다."""
+    from app.models.checker import validate_body
+
+    result = validate_body(kind, body)
+    assert (result is None) if problem is None else (problem in result)

@@ -50,10 +50,12 @@ def test_reads_base_not_head(repo_dir: Path) -> None:
     )
     config = base_config.load(repo_dir, base, max_memory_gb=4)
     assert config.memory_gb == 2
-    assert config.ruff_source == "pyproject.toml"
-    written = repo_dir / config.ruff_config
-    assert written.read_text() == '[tool.ruff.lint]\nselect = ["F"]\n'
+    ruff = config.ruff.config
+    assert ruff is not None and ruff.name == "pyproject.toml"
+    assert ruff.text == '[tool.ruff.lint]\nselect = ["F"]\n'
     assert config.problems == ()
+    # 설정은 worktree에 꺼내지 않는다. 샌드박스의 ruff에는 검사할 폴더 밖의 사본으로 넘긴다
+    assert not (repo_dir / ".pipeline-out").exists()
 
 
 def test_head_only_config_is_ignored(repo_dir: Path) -> None:
@@ -62,28 +64,77 @@ def test_head_only_config_is_ignored(repo_dir: Path) -> None:
         repo_dir, {"ruff.toml": "select = []\n", ".pipeline.yaml": "sandbox:\n  memory_gb: 4\n"}
     )
     config = base_config.load(repo_dir, base, max_memory_gb=4)
-    assert config.ruff_config is None
-    assert config.ruff_source == base_config.RUFF_DEFAULT_SOURCE
+    assert config.ruff.config is None  # ruff 설정이 없으면 도구 설정의 규칙도 없다
     assert config.memory_gb == 1
 
 
 def test_ruff_toml_takes_precedence_over_pyproject(repo_dir: Path) -> None:
     base = _commit(repo_dir, {"ruff.toml": "line-length = 90\n", "pyproject.toml": "[tool.ruff]\n"})
     config = base_config.load(repo_dir, base, max_memory_gb=4)
-    assert config.ruff_source == "ruff.toml"
-    assert config.ruff_config == f"{base_config.BASE_DIR}/ruff.toml"
+    assert config.ruff.config is not None and config.ruff.config.name == "ruff.toml"
 
 
-def test_pyproject_without_ruff_section_uses_defaults(repo_dir: Path) -> None:
+def test_pyproject_without_ruff_section_is_not_a_ruff_setting(repo_dir: Path) -> None:
     base = _commit(repo_dir, {"pyproject.toml": "[project]\nname = 'x'\n"})
-    assert base_config.load(repo_dir, base, max_memory_gb=4).ruff_config is None
+    assert base_config.load(repo_dir, base, max_memory_gb=4).ruff.config is None
 
 
 def test_broken_pyproject_is_reported(repo_dir: Path) -> None:
     base = _commit(repo_dir, {"pyproject.toml": "[tool.ruff\n"})
     config = base_config.load(repo_dir, base, max_memory_gb=4)
-    assert config.ruff_config is None
+    assert config.ruff.config is None
     assert "pyproject.toml" in config.problems[0]
+
+
+def test_settings_that_are_symlinks_are_not_read(repo_dir: Path) -> None:
+    """설정 파일이 링크면 링크가 가리키는 글을 설정으로 읽지 않는다 (T24)."""
+    (repo_dir / "real.yaml").write_text("sandbox:\n  memory_gb: 3\n")
+    (repo_dir / ".pipeline.yaml").symlink_to("real.yaml")
+    (repo_dir / "ruff.toml").symlink_to("real.yaml")
+    base = _commit(repo_dir, {})
+    config = base_config.load(repo_dir, base, max_memory_gb=4)
+    assert config.memory_gb == 1 and config.ruff.config is None
+    assert sorted(config.problems) == [
+        "`.pipeline.yaml`이 일반 파일이 아니라 읽지 않음 (심볼릭 링크, 폴더 등)",
+        "`ruff.toml`이 일반 파일이 아니라 읽지 않음 (심볼릭 링크, 폴더 등)",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("files", "version", "pinned_by"),
+    [
+        ({}, "0.17.5", ""),
+        ({"requirements-dev.txt": "pytest==8.0\nruff==0.17.4  # 린터\n"}, "0.17.4",
+         "requirements-dev.txt"),
+        ({"pyproject.toml": '[dependency-groups]\ndev = ["ruff==0.16.10"]\n'}, "0.16.10",
+         "pyproject.toml"),
+        ({"requirements.txt": "ruff>=0.17\n"}, "0.17.5", ""),  # 정확히 고정한 것만 본다
+    ],
+    ids=["default", "requirements", "dependency-group", "not-pinned"],
+)  # fmt: skip
+def test_ruff_version_pinned_by_the_base_comes_first(
+    repo_dir: Path, files: dict, version: str, pinned_by: str
+) -> None:
+    """의존성 파일이 ruff 버전을 고정했으면 그 버전, 아니면 파이프라인의 기본 버전 (4.4, 3-4)."""
+    base = _commit(repo_dir, files)
+    ruff = base_config.load(repo_dir, base, max_memory_gb=4).ruff
+    assert (ruff.version, ruff.pinned_by, ruff.available) == (version, pinned_by, True)
+
+
+def test_pinned_version_the_pipeline_cannot_verify_is_reported(repo_dir: Path) -> None:
+    base = _commit(repo_dir, {"requirements.txt": "ruff==0.1.0\n"})
+    config = base_config.load(repo_dir, base, max_memory_gb=4)
+    assert config.ruff.version == "0.1.0" and not config.ruff.available
+    assert config.problems == (
+        "ruff 0.1.0 (requirements.txt가 고정)은 파이프라인이 해시를 고정한 버전이 아니라 받지 "
+        "않습니다. ruff를 쓰는 규칙은 검사하지 못합니다",
+    )
+
+
+def test_head_cannot_change_the_pinned_version(repo_dir: Path) -> None:
+    base = _commit(repo_dir, {"requirements.txt": "ruff==0.17.4\n"})
+    _commit(repo_dir, {"requirements.txt": "ruff==0.1.0\n"})
+    assert base_config.load(repo_dir, base, max_memory_gb=4).ruff.version == "0.17.4"
 
 
 def test_memory_is_capped_by_pipeline(repo_dir: Path) -> None:
@@ -103,7 +154,7 @@ def test_broken_pipeline_yaml_falls_back(repo_dir: Path) -> None:
 def test_nested_files_with_same_name_are_not_read(repo_dir: Path) -> None:
     (repo_dir / "sub").mkdir()
     base = _commit(repo_dir, {"sub/ruff.toml": "line-length = 50\n"})
-    assert base_config.load(repo_dir, base, max_memory_gb=4).ruff_config is None
+    assert base_config.load(repo_dir, base, max_memory_gb=4).ruff.config is None
 
 
 def test_fix_settings_come_from_base_and_are_clamped(repo_dir: Path) -> None:
@@ -125,3 +176,12 @@ def test_old_fix_key_is_read_with_a_note(repo_dir: Path) -> None:
     assert config.repo.fix.require_approval is True
     (note,) = config.problems
     assert note.startswith("`skills.fix`는 `fix`로 바뀌었습니다")
+
+
+def test_old_skills_enabled_without_lint_disables_the_ruff_rule_set(repo_dir: Path) -> None:
+    """v1에서 lint를 끈 저장소는 3단계 뒤에도 ruff 규칙이 켜지지 않는다. 새 키를 알린다 (10절)."""
+    base = _commit(repo_dir, {".pipeline.yaml": "skills:\n  enabled: []\n", "ruff.toml": ""})
+    config = base_config.load(repo_dir, base, max_memory_gb=4)
+    assert config.repo.rules.disabled == ["ruff"]
+    (note,) = config.problems
+    assert "`rules.disabled: [ruff]`로 바꿔 주세요" in note

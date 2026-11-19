@@ -1,4 +1,4 @@
-"""도구 캐시 통합 테스트: 실제 설치 컨테이너로 ast-grep을 받아 실행 컨테이너에서 돌린다."""
+"""도구 캐시 통합 테스트: 실제 설치 컨테이너로 ast-grep·ruff를 받아 실행 컨테이너에서 돌린다."""
 
 import subprocess
 from pathlib import Path
@@ -15,7 +15,7 @@ def test_fetches_ast_grep_for_the_docker_platform(tool_cache: Path) -> None:
     platform = toolcache.docker_platform()
     assert path == tool_cache / "ast-grep" / "0.51.3" / platform
     assert (path / toolcache.COMPLETE).is_file()
-    sha = toolcache.TOOLS["ast-grep"].assets[platform].sha256
+    sha = toolcache.TOOLS["ast-grep"].releases["0.51.3"][platform].sha256
     assert (path / toolcache.CHECKSUM_FILE).read_text().startswith(sha)
     proc = subprocess.run(
         ["docker", "run", "--rm", "--network", "none", "--read-only",
@@ -33,3 +33,16 @@ def test_second_ensure_does_not_fetch(tool_cache: Path) -> None:
         raise AssertionError("다시 받으면 안 된다")
 
     assert toolcache.ensure("ast-grep", cache_dir=tool_cache, download=no_download) == first
+
+
+@pytest.mark.parametrize("version", ["0.17.5", "0.17.4"])
+def test_fetches_pinned_ruff_tar_gz(tool_cache: Path, version: str) -> None:
+    """ruff는 tar.gz다. 기본 버전과 저장소가 고정할 수 있는 다른 버전이 각자 폴더에 들어간다."""
+    path = toolcache.ensure("ruff", version, cache_dir=tool_cache)
+    assert path.parent.name == version
+    proc = subprocess.run(
+        ["docker", "run", "--rm", "--network", "none", "--read-only",
+         "-v", f"{path}:/tools/ruff:ro", docker_cli.TOOL_IMAGE, "/tools/ruff/ruff", "--version"],
+        capture_output=True, text=True, timeout=60,
+    )  # fmt: skip
+    assert proc.returncode == 0 and proc.stdout.strip() == f"ruff {version}", proc.stderr

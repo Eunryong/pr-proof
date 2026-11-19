@@ -1,8 +1,8 @@
-"""ruff가 낸 수정 편집을 텍스트에 적용한다 (docs/DESIGN.md F7 lint).
+"""ruff가 낸 수정 편집을 텍스트에 적용한다 (docs/DESIGN.md 4.7 기계적 수정).
 
 `ruff check --fix`는 파일 전체의 위반을 고쳐 PR이 건드리지 않은 줄까지 바꾼다. 그래서 ruff의
-JSON 출력에 든 편집 중 PR이 바꾼 줄의 위반 것만 골라 직접 적용한다. 편집은 텍스트 치환이라
-코드를 실행하지 않는다.
+JSON 출력에 든 편집 중 수정 판단이 고치기로 정한 위반의 것만 골라 직접 적용한다. 편집은 텍스트
+치환이라 코드를 실행하지 않는다.
 """
 
 from collections.abc import Sequence

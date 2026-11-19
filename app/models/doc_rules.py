@@ -1,7 +1,8 @@
-"""문서 규칙 경로의 결과 (docs/DESIGN.md 5.1 load_rules → author_checker → detect, 13절 1단계).
+"""규칙 경로의 결과 (docs/DESIGN.md 5.1 load_rules → author_checker → detect).
 
-그래프 상태에 들어가므로 데이터만 둔다. 검사기 본문은 상태에 넣지 않고 `checkers` 테이블의 키만
-넣는다 (5.5). 결과 코멘트의 "문서 규칙" 절은 `DocRules` 값 하나로만 그린다.
+규칙은 문서에서 읽은 것과 도구 설정에서 온 것(ruff 설정)이다. 그래프 상태에 들어가므로 데이터만
+둔다. 검사기 본문은 상태에 넣지 않고 `checkers` 테이블의 키만 넣는다 (5.5). 결과 코멘트의 규칙 절은
+`DocRules` 값 하나로만 그린다.
 """
 
 from collections.abc import Iterable, Sequence
@@ -22,10 +23,11 @@ DOC_RULE_STAGES: Final = frozenset({"rules", "checker"})
 class CheckerRef:
     """채택한 검사기. 본문과 예시는 `checkers` 테이블에서 key로 찾는다."""
 
-    key: str  # checker_authoring.checker_key
+    key: str  # `checkers` 테이블의 키 (검사기 작성, 도구 선택, 도구 설정)
     id: str
     kind: CheckerKind
     cached: bool  # 저장된 검사기를 썼다 (모델 호출 0)
+    codes: tuple[str, ...] = ()  # 도구(ruff)로 확인하는 문서 규칙의 ruff 코드. 코멘트에 보인다
 
 
 @dataclass(frozen=True)
@@ -46,11 +48,13 @@ RuleOutcome = RuleChecked | RuleUnchecked
 
 @dataclass(frozen=True)
 class RulesRead:
-    """규칙 읽기의 결과. 검사기 작성과 위반 찾기로 넘어간다."""
+    """규칙 읽기의 결과. 검사 방법 정하기와 위반 찾기로 넘어간다."""
 
-    key: str  # 규칙 묶음의 캐시 키
-    rules: tuple[Rule, ...]  # `rules.disabled`를 뺀 것
+    key: str  # 문서 규칙 묶음의 캐시 키. 문서를 읽지 못했으면 ""
+    rules: tuple[Rule, ...]  # `rules.disabled`를 뺀 것. 문서 규칙 다음에 도구 설정의 규칙
     disabled: int  # `rules.disabled`로 뺀 규칙 수
+    # 도구 설정의 규칙만으로 검사할 때 규칙 문서를 읽지 못한 이유 (4.3 "실패 시")
+    note: str = ""
 
 
 @dataclass(frozen=True)
@@ -88,6 +92,7 @@ class Found:
     violations: tuple[Violation, ...]
     disabled: int
     usage: CallUsage
+    note: str = ""  # RulesRead.note
 
 
 DocRules = NotRun | NoRuleDocs | NoRulesFound | Found
@@ -110,6 +115,18 @@ STATE_TYPES: Final = (
     ("app.models.rule", "UnreadDoc"),
     ("app.models.violation", "Violation"),
 )
+
+
+def outcomes_by_rule(found: Found) -> dict[str, RuleOutcome]:
+    """위반의 규칙 id → 그 규칙의 결과. 도구 설정 규칙의 위반은 ruff 코드가 규칙 id라(4.3) 그 코드도
+    도구 설정 규칙을 가리킨다."""
+    by_id = {o.rule.id: o for o in found.outcomes}
+    config = next((o for o in found.outcomes if o.rule.origin == "tool_config"), None)
+    if config is not None:
+        for v in found.violations:
+            if v.rule_id not in by_id and v.rule_id == v.code:
+                by_id[v.rule_id] = config
+    return by_id
 
 
 def with_run_failures(

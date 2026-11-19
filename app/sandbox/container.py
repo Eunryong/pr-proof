@@ -1,6 +1,6 @@
 """작업 컨테이너 띄우기와 그 안에서 명령 실행 (docs/DESIGN.md 보안·인증 > 샌드박스).
 
-작업당 컨테이너 하나를 띄우고 명령은 docker exec로 넣는다. pytest, mutmut, ruff가 모두
+작업당 컨테이너 하나를 띄우고 명령은 docker exec로 넣는다. pytest가
 run_in_sandbox()를 거친다.
 """
 
@@ -43,7 +43,7 @@ class ExecResult:
 @contextmanager
 def running(
     worktree: Path,
-    venv: Path | None,
+    venv: Path,
     *,
     job_id: str | None = None,
     memory_gb: float = docker_cli.MEMORY_LIMIT_GB,
@@ -52,16 +52,14 @@ def running(
     """작업 컨테이너를 띄우고 이름을 돌려준다. 블록을 나가면 지운다.
 
     네트워크 없음, 자원 제한, 호스트 UID·GID. .venv와 파이프라인 설정은 읽기 전용.
-    venv가 None이면 .venv 없이 띄운다 (이미지에 든 ruff만 쓰는 규칙 검사).
     """
     name = f"{names.container_prefix}-{job_id or uuid.uuid4().hex[:12]}"
     (worktree / OUT_DIR).mkdir(exist_ok=True)
-    venv_mount = ("-v", f"{venv.resolve()}:{VENV_IN_CONTAINER}:ro") if venv is not None else ()
     docker_cli.run(
         "run", "-d", "--name", name, "--network", "none", *docker_cli.limits(memory_gb),
         "--user", docker_cli.user(), "-e", "HOME=/tmp",
         "-v", f"{worktree.resolve()}:{WORKDIR}", "-w", WORKDIR,
-        *venv_mount,
+        "-v", f"{venv.resolve()}:{VENV_IN_CONTAINER}:ro",
         "-v", f"{docker_cli.IMAGE_DIR}:{PIPELINE_DIR}:ro",
         names.image, "sleep", "infinity",
     )  # fmt: skip

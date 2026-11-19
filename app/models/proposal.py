@@ -1,13 +1,11 @@
-"""제안 PR 규칙 (docs/DESIGN.md F10): 브랜치 이름, 푸시 조건(상한·비밀값), 본문. 판단만 한다."""
+"""수정안 PR 규칙 (docs/DESIGN.md 4.8, 4.9): 브랜치 이름, 푸시 조건(상한·비밀값). 판단만 한다."""
 
 import re
-from collections import Counter
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import Final
 
 from app.models.cache_key import text_hash
-from app.models.finding import Finding
 
 BRANCH_PREFIX: Final = "pipeline/"
 MAX_FILES: Final = 20
@@ -88,59 +86,6 @@ def push_blocker(patch: str, files: Sequence[str], literals: Iterable[str] = ())
     if kind is not None:
         return f"{SECRET_BLOCKED} ({kind})"
     return None
-
-
-def fixed_codes(before: Sequence[Finding], remaining: Sequence[Finding]) -> Counter:
-    """고친 위반을 규칙 코드별로 센다."""
-    left = Counter(f.code for f in remaining)
-    return Counter(f.code for f in before) - left
-
-
-def title(pr_number: int, skill: str, fixed: int) -> str:
-    what = f"위반 {fixed}건 수정" if fixed else "포맷 정리"
-    return f"[pipeline] #{pr_number} {skill} {what}"
-
-
-def body(
-    pr_number: int,
-    skill: str,
-    head_sha: str,
-    codes: Counter,
-    source: str,
-    tests: str,
-    formatted: int,
-) -> str:
-    lines = [
-        PROPOSAL_MARKER,
-        f"#{pr_number}의 커밋 `{head_sha[:7]}`에서 PR이 바꾼 줄의 {skill} 위반을 고친 "
-        "수정안입니다.",
-        "",
-    ]
-    if codes:
-        lines.append(
-            "고친 위반: " + ", ".join(f"`{code}` {n}건" for code, n in sorted(codes.items()))
-        )
-    lines.append(f"적용한 규칙: ruff ({source}). ruff의 안전한 수정만 썼습니다.")
-    rewrote = sorted(BLOCK_REWRITE_CODES & set(codes))
-    if rewrote:
-        lines.append(
-            f"{', '.join(f'`{c}`' for c in rewrote)}(import 정렬)는 import 블록 전체를 다시 "
-            "정렬했습니다. 블록 안의 기존 줄 순서가 바뀌었을 수 있습니다."
-        )
-    if formatted:
-        lines.append(
-            f"`ruff format`은 PR이 바꾼 파일 {formatted}개의 전체에 적용했습니다. "
-            "base 브랜치가 이미 포맷돼 있어 기존 줄은 대부분 그대로입니다."
-        )
-    if not rewrote and not formatted:
-        lines.append("PR이 건드리지 않은 줄은 바꾸지 않았습니다.")
-    lines += [
-        f"고친 뒤 테스트: {tests} (수정 전과 같은 결과)",
-        "",
-        f"머지하면 #{pr_number}의 브랜치에 들어갑니다. 원하지 않으면 닫아 주세요. "
-        "같은 커밋에는 다시 제안하지 않습니다.",
-    ]
-    return "\n".join(lines) + "\n"
 
 
 @dataclass(frozen=True)

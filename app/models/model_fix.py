@@ -57,10 +57,11 @@ class Verification:
 
     tests: int  # 수정 전후 같은 수가 모두 통과한 테스트 수
     resolved: int  # 해소한 대상 위반 수
-    rules_rechecked: int  # 다시 돌린 검사기 수
-    lint_rechecked: bool  # v1 lint(ruff)도 다시 돌려 새 위반이 없음을 봤다
+    rules_rechecked: int  # 다시 돌린 도구·검사기 수
     files: int
     lines: int
+    # 쓰지 않는다. 3단계 전 체크포인트의 값을 되살리려고 남긴다 (v1 lint를 따로 다시 돌렸는지)
+    lint_rechecked: bool = False
 
 
 ModelFixStatus = Literal[

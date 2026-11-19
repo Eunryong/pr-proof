@@ -1,20 +1,8 @@
 import pytest
 
-from app.models.finding import Finding, SkillResult
-from app.models.fix import (
-    StatusEntry,
-    code_fix_tests_ok,
-    compare,
-    lint_fix_blocker,
-    out_of_scope,
-    parse_porcelain,
-    same_test_result,
-)
+from app.models.fix import code_fix_tests_ok, out_of_scope, same_test_result
+from app.models.scope import StatusEntry, parse_porcelain
 from app.models.test_run import PytestRun, ReportSummary
-
-
-def _f(file="a.py", line=1, code="F401", message="m", fixable=True) -> Finding:
-    return Finding(file, line, "error", message, "lint", "x", code, fixable)
 
 
 def _run(code: int, passed: int = 9, total: int = 9) -> PytestRun:
@@ -49,25 +37,6 @@ def test_out_of_scope(entries, bad) -> None:
     assert out_of_scope(entries, ["a.py"]) == bad
 
 
-def test_compare_ignores_line_shift() -> None:
-    before = [_f(line=3), _f(line=5, code="E711", message="cmp")]
-    after = SkillResult(skill="lint", findings=(_f(line=2, code="E711", message="cmp"),))
-    assert compare(before, after) == (1, [])
-
-
-def test_compare_detects_new_violation() -> None:
-    before = [_f()]
-    new = _f(code="F841", message="unused var")
-    fixed, added = compare(before, SkillResult(skill="lint", findings=(new,)))
-    assert fixed == 1 and added == [new]
-
-
-def test_compare_counts_duplicates() -> None:
-    before = [_f(line=1)]
-    after = SkillResult(skill="lint", findings=(_f(line=1), _f(line=2)))
-    assert compare(before, after)[1] == [_f(line=2)]
-
-
 @pytest.mark.parametrize(
     ("before", "after", "same"),
     [
@@ -81,16 +50,6 @@ def test_compare_counts_duplicates() -> None:
 )
 def test_same_test_result(before, after, same) -> None:
     assert same_test_result(before, after) is same
-
-
-def test_lint_fix_blocker() -> None:
-    lint = SkillResult(skill="lint", findings=(_f(),))
-    assert lint_fix_blocker(lint, _run(0)) is None
-    assert lint_fix_blocker(lint, PytestRun(exit_code=5, summary=ReportSummary())) is None
-    assert lint_fix_blocker(lint, _run(1, passed=8)) == "tests"
-    unfixable = SkillResult(skill="lint", findings=(_f(fixable=False),))
-    assert lint_fix_blocker(unfixable, _run(0)) == "no_fixable"
-    assert lint_fix_blocker(SkillResult(skill="lint"), _run(0)) == "no_fixable"
 
 
 # --- 모델 수정 뒤 테스트 ---

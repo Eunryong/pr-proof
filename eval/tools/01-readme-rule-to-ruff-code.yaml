@@ -1,0 +1,37 @@
+name: readme-rule-to-ruff-code
+description: >-
+  3-2. README에 "안 쓰는 import를 남기지 않는다."를 적은 base. ruff 설정은 없다. 도구 선택이 그
+  규칙을 ruff `F401`로 잇고(`ruff rule`로 있는지 보고 예시로 확인), 위반의 출처는 README로 나온다.
+  규칙이 ruff를 쓰므로 그때 ruff를 받는다. F401은 ruff의 안전한 수정이 있어 기계적 수정안 PR로
+  간다(고친 파일은 base와 같다).
+base:
+  - file: README.md
+    find: "### 출력\n"
+    replace: "### import\n\n- 안 쓰는 import를 남기지 않는다.\n\n### 출력\n"
+pr:
+  - file: orders/services/pricing.py
+    find: "from orders.models.order import Order\n"
+    replace: "import os\n\nfrom orders.models.order import Order\n"
+model:
+  rules:
+    - section: 코드 규칙 > import
+      quote: "안 쓰는 import를 남기지 않는다."
+      tool:
+        tool: ruff
+        codes: [F401]
+        reason: F401이 쓰지 않는 import를 잡는다
+        examples:
+          - {code: "import os\n", violates: true, lines: [1]}
+          - {code: "import json\nx = 1\n", violates: true, lines: [1]}
+          - {code: "import os\nprint(os.sep)\n", violates: false, lines: []}
+          - {code: "x = 1\n", violates: false, lines: []}
+expect:
+  rule_line: "**규칙:** ⚠️ 위반 1건 (규칙 1개) · 수정안 #900"
+  contains:
+    - "`안 쓰는 import를 남기지 않는다.` · 1건"
+    - "출처: `README.md > 코드 규칙 > import` · 도구 `ruff` `F401`"
+    - "`orders/services/pricing.py:1` · fix (기계적 수정)"
+  fetched: [ruff/0.17.5]
+  branch: pipeline/pr-1-fix-mechanical
+  fix_file: orders/services/pricing.py
+  same_as_base: true

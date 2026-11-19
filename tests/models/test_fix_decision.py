@@ -173,3 +173,16 @@ def test_key_changes_with_what_the_model_sees() -> None:
 )
 def test_saved_decision_round_trips(decision: FixDecision) -> None:
     assert decision_from_json("v1", decision_to_json(decision)) == decision
+
+
+def test_tool_settings_violation_without_a_tool_fix_is_notify_only() -> None:
+    """도구 설정의 규칙 묶음은 수정 방법이 기계적 수정이다. 도구의 수정이 없는 위반은 고칠 방법이
+    없으니 알리기만 한다 (모델에 넘기지 않는다)."""
+    from app.models.fix_decision import SafetyNet, decide_by_table
+
+    v = Violation(id="v", rule_id="E741", file="a.py", line=1, message="m", found_by="tool",
+                  code="E741")  # fmt: skip
+    decision = decide_by_table(v, "mechanical", SafetyNet("passed"))
+    assert decision is not None and (decision.action, decision.reason) == ("skip", "notify_only")
+    fixable = replace(v, mechanical_fix=True)
+    assert decide_by_table(fixable, "mechanical", SafetyNet("no_tests")).method == "mechanical"

@@ -63,13 +63,16 @@ def decide_by_table(
     그 위반은 모델이 정한다.
 
     rule_fix는 그 위반의 규칙이 가진 수정 방법이다. 파일 단위 위반(이름·경로)은 고치는 영향이 넓어
-    알리기만 한다.
+    알리기만 한다. 수정 방법이 기계적 수정인 규칙(도구 설정의 규칙 묶음)에서 도구의 수정이 없는
+    위반은 그 위반의 수정 방법이 없는 것이라 알리기만 한다.
     """
     v = violation
     if v.rejected_in is not None:
         return _skip(v, "rejected_before", f"이전에 거절됨 (#{v.rejected_in})")
     if rule_fix == "none" or v.unit == "file":
         return _skip(v, "notify_only", "알리기만 하는 규칙")
+    if rule_fix == "mechanical" and not v.mechanical_fix:
+        return _skip(v, "notify_only", "도구의 자동 수정이 없음")
     if tests.status in _TESTS_BROKEN:
         return _skip(v, "tests_failed", _TESTS_BROKEN[tests.status])
     if v.mechanical_fix:  # 테스트 상태는 passed 또는 no_tests다
