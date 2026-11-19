@@ -22,6 +22,7 @@ from app.models.doc_rules import (
     RuleUnchecked,
 )
 from app.models.rule import Rule
+from app.models.violation import Violation
 from app.worker.markdown import code_fence, inline_code
 
 TITLE: Final = "**문서 규칙:**"
@@ -157,13 +158,19 @@ def _violations(found: Found) -> list[str]:
     for v in found.violations[:MAX_LISTED_VIOLATIONS]:
         outcome = by_rule[v.rule_id]
         lines += [
-            f"- {inline_code(f'{v.file}:{v.line}', 200)} `{v.rule_id}` {_quote(outcome.rule)}",
+            f"- {_where(v)} `{v.rule_id}` {_quote(outcome.rule)}",
             f"  출처: {_source(outcome.rule)} · {_how_checked(outcome)}",
         ]
     hidden = len(found.violations) - MAX_LISTED_VIOLATIONS
     if hidden > 0:
         lines.append(f"- 외 {hidden}건")
     return lines
+
+
+def _where(v: Violation) -> str:
+    if v.unit == "file":
+        return f"{inline_code(v.file, 200)} (파일 이름·경로)"
+    return inline_code(f"{v.file}:{v.line}", 200)
 
 
 def _rule_lines(outcomes: Sequence[RuleUnchecked], *, detail: bool) -> list[str]:
@@ -245,7 +252,8 @@ def _checker_block(rule: Rule, checker: Checker) -> list[str]:
     body = checker.body.rstrip("\n")
     if len(body) > MAX_BODY_CHARS:
         body = body[:MAX_BODY_CHARS] + "\n… (생략)"
-    language = "yaml" if checker.kind == "ast-grep" else "python"
+    by_path = checker.kind == "path-pattern"
+    language = {"ast-grep": "yaml", "python-ast": "python", "path-pattern": "json"}[checker.kind]
     fence = code_fence(body)
     lines = [
         "",
@@ -264,9 +272,13 @@ def _checker_block(rule: Rule, checker: Checker) -> list[str]:
     from_doc = len(checker.examples) - len(by_model)
     lines += ["", f"예시: 문서 {from_doc}개, 모델이 쓴 것 {len(by_model)}개"]
     for e in by_model:
-        kind = f"위반 (줄 {', '.join(map(str, e.expect_lines))})" if e.expect_lines else "정상"
+        if by_path:
+            kind = "어기는 경로" if e.expect_lines else "지키는 경로"
+        else:
+            kind = f"위반 (줄 {', '.join(map(str, e.expect_lines))})" if e.expect_lines else "정상"
         example_fence = code_fence(e.code)
-        lines += ["", f"모델이 쓴 예시, {kind}:", "", f"{example_fence}python", e.code.rstrip("\n"),
+        lines += ["", f"모델이 쓴 예시, {kind}:", "",
+                  f"{example_fence}{'text' if by_path else 'python'}", e.code.rstrip("\n"),
                   example_fence]  # fmt: skip
     return [*lines, "", "</details>"]
 
@@ -288,6 +300,11 @@ def _read_rules(found: Found) -> list[str]:
             if rule.exclude_reason:
                 line += f" · {inline_code(rule.exclude_reason, MAX_DETAIL_CHARS)}"
             lines.append(line)
+        if rule.exclude_dropped:
+            lines.append(
+                "  범위 추정을 버림 (너무 많이 뺌. 규칙은 넓은 범위로 적용): "
+                + inline_code(rule.exclude_dropped, MAX_DETAIL_CHARS)
+            )
     hidden = len(found.outcomes) - MAX_LISTED_RULES
     if hidden > 0:
         lines.append(f"- 외 {hidden}개")

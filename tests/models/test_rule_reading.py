@@ -379,10 +379,6 @@ def test_scopeless_rule_may_be_narrowed_with_a_reason() -> None:
     [
         {"scope": ["orders/**"], "scope_exclude": ["orders/api/**"], "scope_reason": "이유"},
         {"scope_exclude": ["tests/**"], "scope_reason": "  "},
-        {"scope_exclude": ["**"], "scope_reason": "이유"},
-        {"scope_exclude": ["*.py"], "scope_reason": "이유"},
-        {"scope_exclude": ["**/*.py"], "scope_reason": "이유"},
-        {"scope_exclude": ["tests"], "scope_reason": "이유"},
         {"scope_exclude": ["tests/**", "../x/**"], "scope_reason": "이유"},
     ],
 )
@@ -399,3 +395,20 @@ def test_exclusion_can_only_remove_paths_from_the_stated_scope() -> None:
     before = {p for p in paths if applies_to(rules[0], p)}
     after = {p for p in paths if applies_to(narrowed, p)}
     assert after < before and after == {"orders/a.py"}
+
+
+def test_wide_looking_exclusion_is_kept_for_the_effect_check() -> None:
+    # 모양으로 가리지 않는다. 너무 많이 빼는지는 그 PR의 base 파일 목록으로 본다
+    answer = {"scope_exclude": ["**/test_*.py"], "scope_reason": "테스트"}
+    rules, _ = _verify({"section": "출력", "quote": PRINT_RULE, **answer})
+    assert rules[0].exclude == ("**/test_*.py",)
+
+
+def test_path_rule_keeps_the_hint_and_no_code_examples() -> None:
+    example = {"code": "print(1)", "violates": True, "lines": [1]}
+    rules, dropped = _verify(
+        {"section": "출력", "quote": PRINT_RULE, "check": "path", "examples": [example]}
+    )
+    assert not dropped
+    assert rules[0].check.kind == "path"
+    assert rules[0].examples == ()

@@ -197,3 +197,27 @@ def test_install_failure_comment_keeps_doc_rules() -> None:
 def test_result_without_doc_rules_has_no_section() -> None:
     text = report.render_result(PytestRun(exit_code=0, summary=None), "a" * 40, 1.0)
     assert "문서 규칙" not in text
+
+
+def test_file_violation_shows_the_path_without_a_line() -> None:
+    rule = replace(RULE, check=CheckMethod("path"))
+    ref = replace(REF, kind="path-pattern")
+    checker = replace(
+        CHECKER, kind="path-pattern", body='{"condition": "must_match", "pattern": "test_"}',
+        examples=(Example("tests/pricing_test.py", (1,), "model"),
+                  Example("tests/test_a.py", (), "model")),
+    )  # fmt: skip
+    violation = replace(_violation("tests/pricing_test.py", 0), unit="file")
+    text = _text(_found(RuleChecked(rule, ref), violations=(violation,)), {"k1": checker})
+    assert "- `tests/pricing_test.py` (파일 이름·경로) `R-readme-1`" in text
+    assert "pricing_test.py:0" not in text
+    assert "```json" in text
+    assert "모델이 쓴 예시, 어기는 경로:" in text
+    assert "모델이 쓴 예시, 지키는 경로:" in text
+
+
+def test_dropped_exclusion_is_shown_with_the_rule() -> None:
+    rule = replace(RULE, scope=(), exclude_dropped="**/*.py: 적용되는 파일 4개 중 4개를 뺌")
+    text = _text(_found(RuleChecked(rule, REF)))
+    assert "범위 추정을 버림" in text
+    assert "`**/*.py: 적용되는 파일 4개 중 4개를 뺌`" in text

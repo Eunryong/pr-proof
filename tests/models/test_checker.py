@@ -62,3 +62,30 @@ def test_python_script_may_use_stdlib_only() -> None:
 
 def test_checker_id_is_body_hash() -> None:
     assert checker_id("a") == checker_id("a") != checker_id("b")
+
+
+PATH_DECL: Final = (
+    '{"applies_to": "(^|/)tests/[^/]+\\\\.py$", "condition": "must_match", '
+    '"pattern": "(^|/)(test_[^/]+|__init__|conftest)\\\\.py$", "message": "m"}'
+)
+
+
+def test_path_pattern_declaration_passes() -> None:
+    assert validate_body("path-pattern", PATH_DECL) is None
+
+
+@pytest.mark.parametrize(
+    ("body", "reason"),
+    [
+        ("import os", "JSON"),
+        ("[]", "객체"),
+        ('{"condition": "must_match", "pattern": "x", "run": "rm"}', "쓸 수 없는 키: run"),
+        ('{"condition": "maybe", "pattern": "x"}', "condition"),
+        ('{"condition": "must_match"}', "pattern"),
+        ('{"condition": "must_match", "pattern": "("}', "정규식"),
+        ('{"condition": "must_match", "pattern": "x", "applies_to": 3}', "applies_to"),
+        ('{"condition": "must_match", "pattern": "' + "a" * 301 + '"}', "300자"),
+    ],
+)
+def test_path_pattern_is_rejected_before_running(body: str, reason: str) -> None:
+    assert reason in (validate_body("path-pattern", body) or "")

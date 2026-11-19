@@ -68,6 +68,61 @@ def added_lines(diff: str) -> ChangedLines:
     return {path: frozenset(lines) for path, lines in result.items()}
 
 
+def new_files(diff: str) -> frozenset[str]:
+    """PR이 새로 만들거나 이름을 바꿔 생긴 파일(리포 기준 경로). 경로 규칙은 이 파일만 본다:
+    원래 있던 파일의 이름은 PR 작성자의 책임이 아니다.
+
+    hunk 안의 줄은 건너뛴다 (내용이 헤더처럼 보일 수 있다). 빈 새 파일은 `+++` 줄이 없어
+    `diff --git` 줄에서 경로를 읽는다.
+    """
+    result: set[str] = set()
+    git_path: str | None = None
+    is_new = False
+    old_left = new_left = 0
+    for raw in diff.splitlines():
+        if old_left > 0 or new_left > 0:
+            tag = raw[:1]
+            if tag == "+":
+                new_left -= 1
+            elif tag == "-":
+                old_left -= 1
+            elif tag != "\\":
+                old_left -= 1
+                new_left -= 1
+            continue
+        if raw.startswith("diff --git "):
+            git_path, is_new = _same_path(raw[len("diff --git ") :]), False
+        elif raw.startswith("new file mode "):
+            is_new = True
+            if git_path is not None:
+                result.add(git_path)
+        elif raw.startswith("rename to "):
+            result.add(_unquoted(raw[len("rename to ") :]))
+        elif raw.startswith(_NEW_FILE_HEADER) and raw != _DELETED:
+            path = _new_path(raw)
+            if is_new and path is not None:
+                result.add(path)
+        elif match := _HUNK.match(raw):
+            old_count, _, new_count = match.groups()
+            old_left = int(old_count) if old_count is not None else 1
+            new_left = int(new_count) if new_count is not None else 1
+    return frozenset(result)
+
+
+def _same_path(rest: str) -> str | None:
+    """`a/<경로> b/<경로>`에서 두 경로가 같으면 그 경로 (새 파일은 같다). 아니면 None."""
+    size = (len(rest) - 5) // 2
+    path = rest[2 : 2 + size]
+    return path if size > 0 and rest == f"a/{path} b/{path}" else None
+
+
+def _unquoted(raw: str) -> str:
+    raw = raw.removesuffix("\t")
+    if raw.startswith('"') and raw.endswith('"') and len(raw) >= 2:
+        return codecs.escape_decode(raw[1:-1].encode())[0].decode("utf-8", "surrogateescape")
+    return raw
+
+
 def touches(changed: ChangedLines, file: str, start: int, end: int) -> bool:
     """file의 start–end 줄 범위가 PR이 바꾼 줄을 하나라도 포함하는지.
 

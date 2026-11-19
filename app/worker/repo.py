@@ -181,6 +181,12 @@ def list_base_entries(worktree: Path, base_sha: str, paths: Sequence[str]) -> di
     return entries
 
 
+def list_base_files(worktree: Path, base_sha: str) -> tuple[str, ...]:
+    """base 커밋의 모든 파일 경로 (저장소 기준). 내용은 읽지 않는다."""
+    listed = _tree_git(worktree, "ls-tree", "-r", "--name-only", "-z", base_sha)
+    return tuple(filter(None, listed.split("\0")))
+
+
 def read_blob(worktree: Path, sha: str) -> str:
     """blob 하나를 글로 읽는다. 글로 읽을 수 없는 바이트면 UnicodeDecodeError."""
     return _tree_git(worktree, "cat-file", "blob", sha)

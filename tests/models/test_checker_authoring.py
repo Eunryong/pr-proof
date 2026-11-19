@@ -39,7 +39,7 @@ def test_plan_skips_only_rules_that_code_cannot_show() -> None:
 
 
 def test_format_switches_to_python_script_after_two_ast_grep_attempts() -> None:
-    assert [kind_for_attempt(n) for n in (1, 2, 3)] == ["ast-grep", "ast-grep", "python-ast"]
+    assert [kind_for_attempt(n, RULE) for n in (1, 2, 3)] == ["ast-grep", "ast-grep", "python-ast"]
 
 
 def test_checker_key_follows_rule_text_examples_and_models_only() -> None:
@@ -146,3 +146,39 @@ def test_prompt_version_follows_prompt_text() -> None:
     changed = prompt_version("다른 지시", checker_authoring.ANSWER_SCHEMA, "")
     assert len(checker_authoring.PROMPT_VERSION) == 12
     assert checker_authoring.PROMPT_VERSION != changed
+
+
+PATH_RULE: Final = replace(RULE, check=CheckMethod("path"), examples=(), scope=())
+
+
+def test_path_rule_uses_only_the_path_pattern_kind() -> None:
+    assert [kind_for_attempt(n, PATH_RULE) for n in (1, 2, 3)] == ["path-pattern"] * 3
+    assert checker_key(PATH_RULE, "haiku", "sonnet") != checker_key(
+        replace(PATH_RULE, check=CheckMethod("checker")), "haiku", "sonnet"
+    )
+
+
+def test_path_examples_are_paths_and_violations_are_per_file() -> None:
+    answer = Answer(
+        checker="{}",
+        examples=[
+            AnswerExample(code="tests/pricing_test.py", violates=True),
+            AnswerExample(code=" tests/checks.py\n", violates=True, lines=[3]),
+            AnswerExample(code="tests/test_pricing.py", violates=False),
+            AnswerExample(code="tests/__init__.py", violates=False),
+        ],
+    )
+    examples, problems = model_examples((), answer, "path-pattern")
+    assert problems == []
+    assert [(e.code, e.expect_lines) for e in examples] == [
+        ("tests/pricing_test.py", (1,)), ("tests/checks.py", (1,)),
+        ("tests/test_pricing.py", ()), ("tests/__init__.py", ()),
+    ]  # fmt: skip
+
+
+@pytest.mark.parametrize("path", ["../etc/passwd", "/abs/x.py", "a.py b.py", "", "x" * 201])
+def test_path_example_outside_the_repo_shape_is_not_used(path: str) -> None:
+    answer = Answer(checker="{}", examples=[AnswerExample(code=path, violates=True)])
+    examples, problems = model_examples((), answer, "path-pattern")
+    assert examples == ()
+    assert problems

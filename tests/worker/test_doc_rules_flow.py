@@ -123,7 +123,7 @@ class GrepSandbox:
 
     def on_examples(self, kind: CheckerKind, body: str, snippets: Sequence[str]) -> CheckerRun:
         return self._grep(
-            body, [(checker_runner.example_path(i), s) for i, s in enumerate(snippets)]
+            body, [(checker_runner.example_file(kind, i, s), s) for i, s in enumerate(snippets)]
         )
 
     def on_files(
@@ -132,6 +132,8 @@ class GrepSandbox:
         if self.error is not None:
             raise self.error
         self.files.append(list(files))
+        if kind == "path-pattern":  # 경로 규칙은 내용이 아니라 경로를 본다
+            return self._grep(body, [(f, f) for f in files])
         return self._grep(body, [(f, (root / f).read_text()) for f in files])
 
     @staticmethod
@@ -448,3 +450,57 @@ def test_changed_sentence_on_base_reauthors_only_that_rule(doc_env, tmp_path: Pa
     (checker_prompt,) = [p for kind, p in model.prompts[3:] if kind == "checker"]
     assert edited in checker_prompt
     assert [o.checker.cached for o in found.outcomes] == [True, False]
+
+
+def _free_rule(*exclude: str) -> dict:
+    return print_rule(scope=[], scope_exclude=list(exclude), scope_reason="테스트는 대상이 아니다")
+
+
+EFFECT_BASE: Final = {
+    "README.md": README, "orders/a.py": "x = 1\n", "orders/b.py": "x = 1\n",
+    "orders/c.py": "x = 1\n", "orders/test_a.py": "x = 1\n",
+}  # fmt: skip
+EFFECT_PR: Final = {"orders/a.py": "x = 1\nprint(x)\n", "orders/test_a.py": "x = 1\nprint(x)\n"}
+
+
+def test_exclusion_that_removes_few_files_is_applied(doc_env, tmp_path: Path) -> None:
+    use_model(doc_env, FakeModel(rule_answer(_free_rule("**/test_*.py"))))
+    found = check(doc_env, tmp_path, EFFECT_BASE, EFFECT_PR)["doc_rules"]
+    assert [v.file for v in found.violations] == ["orders/a.py"]  # Python 파일 4개 중 1개만 뺀다
+    assert "범위 추정을 버림" not in _last_comment(doc_env)
+
+
+def test_exclusion_that_removes_most_files_is_dropped_and_shown(doc_env, tmp_path: Path) -> None:
+    use_model(doc_env, FakeModel(rule_answer(_free_rule("**/*.py"))))
+    found = check(doc_env, tmp_path, EFFECT_BASE, EFFECT_PR)["doc_rules"]
+    assert [v.file for v in found.violations] == ["orders/a.py", "orders/test_a.py"]
+    comment = _last_comment(doc_env)
+    assert "범위 추정을 버림" in comment
+    assert "적용되는 파일 4개 중 4개를 뺌" in comment
+
+
+PATH_EXAMPLES: Final = [
+    {"code": "tests/pricing_test.py", "violates": True, "lines": []},
+    {"code": "tests/unit/cart_test.py", "violates": True, "lines": []},
+    {"code": "tests/test_pricing.py", "violates": False, "lines": []},
+    {"code": "tests/conftest.py", "violates": False, "lines": []},
+]
+
+
+def test_path_rule_reports_a_misnamed_new_file_per_file(doc_env, tmp_path: Path) -> None:
+    rule = print_rule(scope=[], check="path")
+    answer = _ok({"checker": "grep:_test.py", "examples": PATH_EXAMPLES})
+    model = use_model(doc_env, FakeModel(rule_answer(rule), answer))
+    base = {"README.md": README, "tests/old_test.py": "x = 1\n"}
+    pr = {
+        "tests/old_test.py": "x = 2\n",  # 원래 있던 파일. 이름은 PR의 책임이 아니다
+        "tests/pricing_test.py": "x = 1\n",
+        "tests/test_cart.py": "x = 1\n",
+    }
+    found = check(doc_env, tmp_path, base, pr)["doc_rules"]
+    (outcome,) = found.outcomes
+    assert isinstance(outcome, RuleChecked) and outcome.checker.kind == "path-pattern"
+    assert [(v.file, v.unit) for v in found.violations] == [("tests/pricing_test.py", "file")]
+    assert doc_env["sandbox"].files == [["tests/pricing_test.py", "tests/test_cart.py"]]
+    assert [kind for kind, _ in model.prompts] == ["rules", "checker"]
+    assert "`tests/pricing_test.py` (파일 이름·경로)" in _last_comment(doc_env)
