@@ -178,6 +178,8 @@ class FixAttempt(SQLModel, table=True):
     explanation_json: str | None = None
     file_hashes_json: str | None = None  # 고친 뒤 바뀐 파일의 내용 해시 {경로: 해시}
     created_at: datetime
+    # 검색으로 프롬프트에 넣은 과거 기록 id (JSON 배열). 검색 유무로 채택률을 나눠 센다 (6.7)
+    references_json: str | None = None
 
 
 class SeenViolation(SQLModel, table=True):

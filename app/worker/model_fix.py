@@ -38,9 +38,18 @@ from app.models.model_fix import (
     Written,
 )
 from app.models.proposal import changed_line_count, find_secret, find_secret_in_text
+from app.models.rag import (
+    EMPTY,
+    Selection,
+    merge_retrievals,
+    query_text,
+    render_records,
+    retrieval,
+)
 from app.models.repo_config import ModelSettings
 from app.models.scope import is_pipeline_output, parse_porcelain
 from app.models.test_run import PytestRun
+from app.models.violation import Violation
 from app.sandbox.safe_read import read_regular_file
 from app.worker import repo, scope
 from app.worker.ai.claude_cli import AIEnvironmentError, ClaudeResult, environment_problem
@@ -48,6 +57,7 @@ from app.worker.budget import CallBudget
 from app.worker.detect import Detection, source_lines
 from app.worker.lang.python import read_sources
 from app.worker.loop import LoopPolicy, LoopState, Verdict, WriteFailed, WriteResult, build_loop
+from app.worker.memory import FindsRecords
 from app.worker.proposal import MODEL_BUNDLE
 from app.worker.report import format_test_line
 from app.worker.state import Store
@@ -161,6 +171,9 @@ def save_attempt(
             file_hashes_json=(
                 json.dumps(file_hashes(worktree, fix.changed_files)) if ready else None
             ),
+            references_json=json.dumps(sorted(
+                {ref.record_id for r in fix.retrievals for ref in r.references}
+            )) if fix.retrievals else None,
         )
     )  # fmt: skip
     return replace(fix, attempt_id=attempt_id)
@@ -197,11 +210,15 @@ def fix_violations(
     max_attempts: int,
     tools: FixTools,
     generation: int = rules.GENERATION,
+    retriever: FindsRecords | None = None,
+    context_of: Callable[[Violation], str] = lambda v: "",
 ) -> ModelFix | None:
     """picked.targets를 모델로 고치고 검증한다. 새 커밋이 와서 중단되면 None.
 
     found는 수정 전 위반 전체, picked는 `model_fix.pick_targets`의 결과다(대상이 하나 이상).
     generation은 시도 세대다. `/fix`가 다시 돌릴 때마다 올라 저장된 수정 작성을 쓰지 않는다 (4.9).
+    retriever가 있으면(검색을 켬) 첫 회차에는 비슷한 채택 기록을, 재시도에는 비슷한 실패 기록을
+    참고 자료로 넣는다 (6.2). context_of(위반)는 위반 줄과 앞뒤 5줄이다.
     """
     by_rule = {rule_id: o.rule for rule_id, o in outcomes_by_rule(found).items()}
     targets = picked.targets
@@ -209,15 +226,27 @@ def fix_violations(
     target_rules = frozenset(v.rule_id for v in targets)
     tally = _Tally()
     passed: list[tuple[Explanation, tuple[str, ...], Verification]] = []  # 통과한 회차의 결과
+    found_for: dict[str, Selection] = {}  # 쓰는 곳(fix, fix_retry) → 고른 기록. 한 번만 찾는다
+
+    def records_for(site: str) -> Selection:
+        if retriever is None:
+            return EMPTY
+        if site not in found_for:
+            queries = [query_text(by_rule[v.rule_id].text, context_of(v)) for v in targets]
+            found_for[site] = retriever.find(site, list(dict.fromkeys(queries)))
+        return found_for[site]
 
     def outcome(status: rules.ModelFixStatus, attempts: int, detail: str = "") -> ModelFix:
         explanation, files, verification = passed[-1] if passed else (None, (), None)
+        found = merge_retrievals(retrieval(s, site) for site, s in found_for.items())
+        error = retriever.error if retriever is not None else ""
         return ModelFix(
             status=status, targets=tuple(v.id for v in targets),
             size_capped=tuple(v.id for v in picked.size_capped), detail=detail,
             explanation=explanation, verification=verification, changed_files=files,
             calls=tally.calls, cache_hits=tally.cache_hits, input_tokens=tally.input_tokens,
             output_tokens=tally.output_tokens, models=tuple(tally.models), attempts=attempts,
+            retrievals=tuple(replace(r, error=error) for r in found),
         )  # fmt: skip
 
     outside = repo.outside_symlinks(worktree)
@@ -238,9 +267,12 @@ def fix_violations(
         attempt, tier = state["attempt"], state["tier"]
         model = models.heavy if tier == "heavy" else models.light
         feedback = state.get("feedback", [])
+        chosen = records_for("fix" if attempt == 1 else "fix_retry")
+        records = render_records(chosen.chosen)
         key = rules.write_key(
-            targets, start, file_hashes(worktree, allowed), feedback, model, generation
-        )
+            targets, start, file_hashes(worktree, allowed), feedback, model, generation,
+            records=chosen.ids,
+        )  # fmt: skip
         entry = store.cached_result(key)
         if entry is not None:
             written = rules.written_from_json(entry.result_json)
@@ -257,10 +289,11 @@ def fix_violations(
             raise _CapHit(call.reason)
         prompt = rules.build_prompt(
             asked, constants=constants, feedback=feedback,
-            current_diff=repo.head_diff(worktree) if attempt > 1 else "",
+            current_diff=repo.head_diff(worktree) if attempt > 1 else "", records=records,
         )  # fmt: skip
+        system_prompt = rules.SYSTEM_PROMPT + (rules.RECORDS_NOTE if records else "")
         result = tools.run_model(
-            worktree, prompt, system_prompt=rules.SYSTEM_PROMPT, model=model,
+            worktree, prompt, system_prompt=system_prompt, model=model,
             max_budget_usd=CALL_BUDGET_USD[tier],
         )  # fmt: skip
         failure = None if result.ok else f"모델 호출 실패: {result.error}: {result.detail}"

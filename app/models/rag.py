@@ -11,7 +11,7 @@ Chroma를 쓰므로 worker/memory.py에 있다.
 import hashlib
 import re
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Final, Literal
 
 from app.models.db import Record
@@ -159,7 +159,11 @@ class Chosen:
 @dataclass(frozen=True)
 class Selection:
     chosen: tuple[Chosen, ...]
-    below: int = 0  # 같은 저장소·종류였지만 기준값에 못 미쳐 버린 후보 수
+    below_ids: tuple[int, ...] = ()  # 같은 저장소·종류였지만 기준값에 못 미쳐 버린 후보
+
+    @property
+    def below(self) -> int:
+        return len(self.below_ids)
 
     @property
     def ids(self) -> tuple[int, ...]:
@@ -194,17 +198,17 @@ def select(
     기준값을 넘는 기록이 없으면 아무것도 넣지 않는다. 관련 없는 기록을 채워 넣지 않는다.
     """
     kept: list[Chosen] = []
-    below = 0
+    below: list[int] = []
     for h in hits:
         record = records.get(h.record_id)
         if record is None or record.repo != repo or record.kind not in kinds:
             continue
         if h.similarity < min_similarity:
-            below += 1
+            below.append(h.record_id)
             continue
         kept.append(Chosen(record, h.similarity))
     kept.sort(key=lambda c: (-c.similarity, c.record.id or 0))
-    return Selection(tuple(kept[: max(0, limit)]), below)
+    return Selection(tuple(kept[: max(0, limit)]), tuple(below))
 
 
 # --- 7: 프롬프트 주입 ---
@@ -278,8 +282,12 @@ class Retrieval:
 
     site: str  # UseSite
     references: tuple[Reference, ...] = ()
-    below: int = 0
+    below_ids: tuple[int, ...] = ()  # 기준값에 못 미쳐 넣지 않은 후보 (개수만 보인다)
     error: str = ""  # 검색을 하지 못한 이유 (임베딩 모델을 받지 못함 등)
+
+    @property
+    def below(self) -> int:
+        return len(self.below_ids)
 
 
 def references(selection: Selection, site: str) -> tuple[Reference, ...]:
@@ -294,11 +302,12 @@ def references(selection: Selection, site: str) -> tuple[Reference, ...]:
 
 
 def retrieval(selection: Selection, site: str) -> Retrieval:
-    return Retrieval(site, references(selection, site), selection.below)
+    return Retrieval(site, references(selection, site), selection.below_ids)
 
 
 def merge_retrievals(items: Iterable[Retrieval]) -> tuple[Retrieval, ...]:
-    """쓰는 곳마다 하나로 합친다. 같은 기록은 한 번만 보이고, 버린 후보 수는 더한다."""
+    """쓰는 곳마다 하나로 합친다. 같은 기록은 한 번만 보인다. 넣은 기록은 버린 후보에서 뺀다
+    (다른 위반의 질의에서는 기준값을 넘었다)."""
     by_site: dict[str, Retrieval] = {}
     for item in items:
         old = by_site.get(item.site)
@@ -307,10 +316,15 @@ def merge_retrievals(items: Iterable[Retrieval]) -> tuple[Retrieval, ...]:
             continue
         seen = {r.record_id for r in old.references}
         extra = tuple(r for r in item.references if r.record_id not in seen)
+        below = tuple(dict.fromkeys(old.below_ids + item.below_ids))
         by_site[item.site] = Retrieval(
-            item.site, old.references + extra, old.below + item.below, old.error or item.error
+            item.site, old.references + extra, below, old.error or item.error
         )
-    return tuple(by_site.values())
+    out = []
+    for r in by_site.values():
+        used = {ref.record_id for ref in r.references}
+        out.append(replace(r, below_ids=tuple(i for i in r.below_ids if i not in used)))
+    return tuple(out)
 
 
 # 체크포인트에서 되살릴 수 있게 graph.py가 등록하는 타입

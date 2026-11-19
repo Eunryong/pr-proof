@@ -24,6 +24,7 @@ from app.models.job import PRJob
 from app.models.model_fix import ModelFix
 from app.models.proposal import find_secret_in_text
 from app.models.tools import CONFIG_RULE_ID, RUFF_CODE
+from app.models.violation import Violation
 from app.sandbox.safe_read import read_regular_file
 from app.worker import repo
 from app.worker.repo import GitError
@@ -165,6 +166,17 @@ def after_detect(
         store.replace_violations(job.repo, job.pr_number, job.head_sha, rows)
     except _RECORD_ERRORS:
         log.exception("위반 기록을 남기지 못함 %s#%s", job.repo, job.pr_number)
+
+
+def context_of(worktree: Path) -> Callable[[Violation], str]:
+    """위반 줄과 앞뒤 5줄 (6.1). 검색의 질의 글(6.6의 4번)이 저장한 기록과 같은 틀이 되게 기록을
+    만들 때와 같은 방법으로 읽는다. 파일을 읽지 못하면 ""."""
+    lines_of = _reader(worktree)
+
+    def context(v: Violation) -> str:
+        return rules.context_around(lines_of(v.file) or [], v.line)
+
+    return context
 
 
 def _reader(worktree: Path) -> Callable[[str], list[str] | None]:

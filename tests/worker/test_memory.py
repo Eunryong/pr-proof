@@ -10,6 +10,7 @@ import subprocess
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Final
 
 import fakeredis
 import pytest
@@ -25,7 +26,7 @@ from .rag_helpers import FAKE_SPEC, FakeEncoder
 np = pytest.importorskip("numpy")
 pytest.importorskip("chromadb")
 
-REPO = "o/r"
+REPO: Final = "o/r"
 
 
 def _store(tmp_path: Path) -> Store:

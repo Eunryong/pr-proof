@@ -337,6 +337,14 @@ def reindex(
 # --- 쓰는 곳의 입구 (6.6의 4–6번) ---
 
 
+class FindsRecords(Protocol):
+    """쓰는 곳(수정 판단, 수정 작성, 검사기 작성)이 보는 검색. 테스트는 가짜를 넘긴다."""
+
+    error: str
+
+    def find(self, site: str, queries: Sequence[str]) -> Selection: ...
+
+
 class Retriever:
     """한 검사의 검색. 처음 쓸 때 밀린 기록을 임베딩하고(`prepare`), 쓰는 곳마다 질의를 받아 넣을
     기록을 고른다. 검색이 실패해도 검사를 멈추지 않는다: 빈 선택과 이유(`error`)를 남긴다."""
