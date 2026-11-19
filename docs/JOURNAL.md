@@ -272,3 +272,27 @@
 **모르는 것 (추정).** 실제 모델로 돌리면 MathLLM README의 코드 규칙 중 일부("`print` 대신 `logging`", "비교에 쓰는 기준값은 이름 있는 상수")가 도구 선택에서 ruff `T201`, `PLR2004`로 이어질 수 있다. 그러면 새 구조도 MathLLM에서 ruff를 받고 그 코드의 위반을 낸다. 이번에는 모델을 부르지 않아 재지 않았다(3-7·3-8의 도구 켬·끔 평가에서 같이 잰다).
 
 **확인.** 스크립트는 저장소에 넣지 않았다(scratchpad의 `s3/mathllm_ruff.py`). 셋째 줄의 같음은 정렬한 (파일, 줄, 코드, 메시지) 목록의 비교다.
+
+## 2026-11-20 v2 3단계 최소 이미지와 Python 프로필 (완료 기준 3-6)
+
+**한 것.** 샌드박스 이미지를 `python:3.11-slim`에서 언어와 무관한 최소 이미지(`debian:bookworm-slim`에 curl과 인증서)로 바꿨다. Python 런타임은 python-build-standalone 3.11.18(`install_only_stripped`, 20261026 릴리스)을 도구 캐시에 받는다. arm64·amd64 두 배포본의 SHA256은 직접 받아 계산하고 GitHub 릴리스의 digest와 맞춰 봤다. 받기·설치·검사기·ruff·테스트 컨테이너가 모두 이 이미지 하나다(`docker_cli.TOOL_IMAGE`를 없앴다). Python 전용 코드는 `worker/lang/python.py`로 옮겼다(옮기기만).
+
+**받기에서 Python을 뺀 방법.** 1단계부터 받기 컨테이너는 `python -c`의 urllib 스크립트로 받았다. 이미지에 Python이 없으면 그 스크립트가 돌 수 없다. 이미지에 curl을 넣고 `--proto =https --proto-redir =https --max-filesize`로 받는다. 서버가 크기를 알리지 않는 경우에 대비해 `docker run --ulimit fsize=<상한>`으로 커널의 파일 크기 상한을 같이 건다(이 Docker에서 단위가 바이트인 것을 `head -c`로 확인했다: 1,000,000바이트에서 잘리고 종료 코드 153).
+
+**런타임을 풀 때 링크를 버린 근거.** 런타임 압축 파일에는 일반 파일 3,865개와 심볼릭 링크 1,049개가 있고 폴더 항목은 없다. 링크는 모두 같은 폴더 안의 별칭이다(`bin/python3` → `python3.11`, `lib/libpython3.11.so` → `.so.1.0`, terminfo). 일반 파일만 푼 폴더(89MB)를 `debian:bookworm-slim`에 `/opt/python`으로 읽기 전용으로 붙여 `python3.11 -m venv`, venv의 pip(26.2.2, 자체 certifi)으로 `pytest==8.3.4`를 `--only-binary :all:`로 설치하고 `pytest --version`까지 돌렸다. 시스템 인증서 없이 pip이 https로 받는다.
+
+**설치 컨테이너에 런타임을 넣는 방법.** 8.1은 설치 컨테이너에 다른 캐시 항목을 마운트하지 않고 입력은 복사로 넣는다고 정했다. `docker create -i` → `docker cp <런타임> <이름>:/opt/python` → `docker start -ai`(표준 입력은 의존성 파일)로 했다. 복사는 0.7초다. `.venv`의 `pyvenv.cfg`가 `home = /opt/python/bin`이라 테스트 컨테이너도 같은 경로에 붙인다.
+
+**확인.**
+
+| 무엇 | 결과 |
+| --- | --- |
+| `pytest -m docker tests/e2e` (3-6) | 25/25 통과 (`eval/lint` 5, `eval/rules` 16, `eval/tools` 4), 334초 |
+| 이미지에 언어가 없음 | `test_image_has_no_language_runtime`: python, python3, pip, ruff, ast-grep이 없고 curl, timeout이 있다 |
+| 런타임 | `test_python_runtime_runs_read_only_without_its_links`: 링크 없는 폴더를 읽기 전용으로 붙여 `ssl`, `sqlite3`, `venv`를 import |
+| 런타임은 읽기 전용이고 `.venv`가 그것을 씀 | `test_runtime_is_read_only_and_shared_by_the_venv` |
+| 압축 파일 | `test_tree_member_outside_prefix_rejects_whole_archive`(`..`, 절대 경로, 정한 폴더 밖, 완료 표시 이름), `test_tree_size_and_file_count_limits` |
+
+**그대로 둔 것.** 런타임 버전은 3.11.18 하나다. 저장소의 `requires-python`으로 고르지 않는다(BACKLOG). 판단 규칙(테스트 파일의 정의, coverage.xml 파싱, ruff 설정 읽기, 도구 목록)은 models의 판정이 써서 `models/`에 남았다. diff-cover는 체크포인트의 타입 경로(`app.worker.coverage.DiffCoverage`)를 지키려고 옮기지 않았다. 검사 엔진 버전(`py3.11`)은 그대로라 검사기를 다시 쓰지 않는다.
+
+**올렸을 때 바뀌는 것.** 워커가 처음 돌 때 운영 이미지 `pipeline-sandbox`를 새 Dockerfile로 다시 빌드한다(apt로 curl을 받으므로 네트워크가 필요하다). 저장소마다 첫 테스트에서 Python 런타임(약 31MB)을 받고, `.venv`는 캐시 키(이미지 id, 런타임 버전, 설치 방법 버전 `runtime-cache-1`)가 바뀌어 한 번 다시 설치한다. Python AST 검사기나 경로 패턴 규칙이 있는 저장소는 그 검사에서도 런타임을 쓴다(같은 캐시). 규칙 읽기와 검사기 작성의 모델 호출은 늘지 않는다.

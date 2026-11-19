@@ -60,7 +60,7 @@
 - **상시 서비스도 필요할 때만 띄운다.** 벡터 저장소는 과거 기록 검색을 켤 때까지 띄우지 않는다. 켤 때도 컨테이너를 쓰지 않고 워커 안에서 도는 Chroma 임베디드로 처음 만든다(6.5). 임베딩 모델과 그 라이브러리도 검색을 켤 때 받는다. 항상 떠 있는 컨테이너는 Redis 하나다.
 - **구조는 언어와 무관하게, 구현과 검증은 Python부터.** 규칙, 위반, 수정 판단, 검사기, 그래프, 캐시, 기록에는 언어별 내용을 넣지 않는다. 언어마다 다른 것(설정 파일을 보고 필요한 것을 정하기, 런타임과 도구, 테스트 실행과 결과 읽기, 커버리지 읽기, 테스트 파일의 정의)은 언어 프로필 하나에 모은다(7.7). 프로필은 Python 하나만 만들고, 두 번째 언어는 Python에서 13절의 단계가 끝난 뒤에 정한다. 프로필이 없는 언어의 저장소는 언어와 무관한 부분(규칙 읽기, ast-grep 검사기, 모델 판단)만 돌고 테스트 안전망이 없으므로 모델 수정은 `skip`된다.
 
-이유: 로컬 한 대에서 도는 파이프라인이라 이미지 크기, 상시 메모리, 첫 실행 시간이 곧 쓰는 사람의 비용이다. 쓰지 않는 도구를 미리 넣으면 버전을 맞추고 보안 패치를 따라가는 일도 같이 늘어난다. v1 이미지는 ruff 한 버전을 넣어 두어 저장소가 고정한 ruff 버전과 어긋났다. 3단계에 ruff를 이미지에서 빼 도구 캐시로 옮겼다(2026-11-20).
+이유: 로컬 한 대에서 도는 파이프라인이라 이미지 크기, 상시 메모리, 첫 실행 시간이 곧 쓰는 사람의 비용이다. 쓰지 않는 도구를 미리 넣으면 버전을 맞추고 보안 패치를 따라가는 일도 같이 늘어난다. v1 이미지는 ruff 한 버전을 넣어 두어 저장소가 고정한 ruff 버전과 어긋났다. 3단계에 ruff를 이미지에서 빼 도구 캐시로 옮겼고(2026-11-20), 같은 날 Python 런타임도 빼 이미지가 언어와 무관한 최소 이미지(`debian:bookworm-slim`에 curl과 인증서)가 되었다.
 
 ## 3. 전체 흐름
 
@@ -930,15 +930,17 @@ class Record:
 | 프로필이 답하는 것 | Python 프로필 (처음이자 지금 유일한 구현) |
 | --- | --- |
 | 이 저장소가 이 언어인가, 무엇이 필요한가 | `pyproject.toml`, `requirements*.txt`, `ruff.toml` 등 base의 설정 파일 |
-| 런타임 | Python (저장소가 요구하는 버전) |
+| 런타임 | Python. 도구 캐시의 python-build-standalone 배포본(버전과 SHA256 고정, 3.11.18 하나). 저장소가 요구하는 버전으로 고르는 일은 아직 없다(11.1) |
 | 도구 목록 (모두 밖에서 받아 오는 것) | `ruff`, `ruff-format` |
-| 의존성 설치와 캐시 | `.venv` (4.5) |
+| 의존성 설치와 캐시 | `.venv` (4.5). 캐시 키에 런타임 버전 |
 | 테스트 실행과 결과 읽기 | pytest, `report.json` |
 | 커버리지 읽기와 줄 대응 | coverage.py의 `coverage.xml`, `ast`로 문장 범위 |
 | 테스트 파일의 정의 | `tests/`·`test/` 아래, `test_*.py`, `*_test.py`, `conftest.py` |
 | 검사기의 대안 형식 | Python AST 스크립트 |
 
 프로필 인터페이스를 미리 넓게 설계하지 않는다. 3단계에서는 지금 흩어져 있는 Python 전용 코드를 한 곳으로 모으기만 하고, 인터페이스는 두 번째 언어를 붙일 때 그 차이를 보고 정한다.
+
+3단계(2026-11-20)에 `worker/lang/python.py`로 옮긴 것: 런타임 준비, `.venv` 설치, pytest 실행과 `report.json` 읽기, 위반 줄의 커버리지 읽기, ruff·ruff-format 실행. 판단 규칙(coverage.xml과 문장 범위 파싱 `models/coverage.py`, 테스트 파일의 정의 `models/scope.is_test_file`, ruff 설정·버전 읽기와 도구 목록 `models/tools.py`)은 그 규칙을 쓰는 판정(허용 범위, 도구 선택)이 `models/`에 있어 `models/`에 남았다. 계층이 worker → sandbox → models라 models가 프로필을 부를 수 없다. 참고 지표 diff-cover(`worker/coverage.py`)는 체크포인트의 타입 경로를 지키려고 옮기지 않았다.
 
 ### 7.8 SQLite 테이블
 
@@ -1006,7 +1008,7 @@ class Record:
 | T13 | base README | 팀원·외부 | PR이 README를 고쳐 자기 PR에 적용될 규칙을 지운다 | 저장소 | 규칙 문서·도구 설정·`.pipeline.yaml`은 base 커밋에서만 읽음 (8.3) | 지금 | 있음 |
 | T14 | base README | 팀원 | 긴 문서나 많은 규칙으로 모델 호출을 다 쓰게 한다 | 호출 | 문서 크기 상한, 규칙 묶음 상한, 저장소 하루 상한, 저장소 설정 위의 파이프라인 쪽 최대치 (9.2) | 지금 | 있음 |
 | T15 | PR 코드·base README | 본인·팀원 | 모델이 쓴 검사기가 파일을 고치거나 네트워크를 쓰거나 끝나지 않는다 | 파일 | 본문을 실행 전에 확인(`fix`·`rewriters` 등 거부), 읽기 전용·네트워크 없는 컨테이너, 시간 제한, 출력 크기 상한 (8.1) | 지금 | 있음 |
-| T16 | 도구 받기 | 외부(공급망) | 받은 도구 바이너리가 바뀌어 있다 | 파일 | 버전과 SHA256을 고정하고 호스트에서 해시를 확인한 뒤에만 캐시에 둠. 받는 컨테이너에는 출력 폴더만 붙임. 압축 파일에서는 실행 파일 하나만, 일반 파일인 항목만 꺼냄 (2.3, 8.1) | 지금 | 있음. ast-grep(1단계)과 ruff(3단계, 2026-11-20: 버전 다섯 개를 arm64·amd64로 고정. 저장소가 고정한 버전이 목록에 없으면 받지 않는다. `test_unknown_tool_version_and_platform_are_unavailable`, `test_tar_member_that_is_a_link_is_rejected`) |
+| T16 | 도구 받기 | 외부(공급망) | 받은 도구 바이너리나 런타임이 바뀌어 있다 | 파일 | 버전과 SHA256을 고정하고 호스트에서 해시를 확인한 뒤에만 캐시에 둠. 받는 컨테이너에는 출력 폴더만 붙이고 https만 받음. 압축 파일에서는 실행 파일 하나만, 일반 파일인 항목만 꺼냄. 런타임은 정한 폴더 아래의 일반 파일만 풀고, 그 밖이나 경로가 빠져나가는 항목이 있으면 압축 파일 전체를 거절 (2.3, 8.1) | 지금 | 있음. ast-grep(1단계)과 ruff(3단계, 2026-11-20: 버전 다섯 개를 arm64·amd64로 고정. 저장소가 고정한 버전이 목록에 없으면 받지 않는다. `test_unknown_tool_version_and_platform_are_unavailable`, `test_tar_member_that_is_a_link_is_rejected`). Python 런타임(3단계, 2026-11-20: 3.11.18을 arm64·amd64로 고정. `test_tree_member_outside_prefix_rejects_whole_archive`, `test_tree_tool_extracts_regular_files_and_skips_links`, `test_fetch_is_curl_over_https_only`, `test_fetch_container_gets_only_the_output_folder`) |
 | T17 | 코멘트 | 외부 | 권한 없는 사람이 `/fix`·`/recheck`로 작업을 일으킨다 | 호출·저장소 | 명령은 신뢰된 사람의 것만. 웹훅과 동기화가 같은 함수. 파이프라인 자신의 코멘트는 무시 (4.1, 8.5) | 지금 | 있음 |
 | T18 | 코멘트 | 외부 | 승인 뒤에 커밋을 바꿔 끼워 다른 코드를 실행시킨다 | 파일·호출 | 승인은 명령에 적힌 커밋 하나에만. 지금 head와 다르면 실행하지 않음 (8.6) | 공개 전 | 6단계. 지금은 승인 기능이 없어 이 위협이 생기지 않는다. 신뢰되지 않은 작성자의 PR은 누가 명령을 달아도 돌지 않는다(T2의 임시 가드레일) |
 | T19 | 웹훅 | 외부 | 가짜 웹훅이나 다시 보낸 웹훅으로 작업을 만든다 | 호출 | HMAC 서명 확인, 전달 ID로 중복 제거, 허용 목록의 저장소만 (4.1) | 지금 | 있음 |
@@ -1015,7 +1017,7 @@ class Record:
 | T22 | 실행 환경 | 본인 | 비밀값이 환경변수나 로그, 하위 프로세스로 샌다 | 비밀 | 비밀값은 파일에서 메모리로만. 하위 프로세스에는 최소 환경만. claude에는 로그인에 필요한 변수만 (8.2) | 지금 | 있음 |
 | T23 | 대상 저장소 설정 | 본인·팀원 | base의 `.pipeline.yaml`이 큰 한도를 적어 호출을 많이 쓴다 | 호출 | 호출 상한은 파이프라인 쪽 최대치로 자름. `fix.max_retries`는 5로 자름 (9.2) | 공개 전 | 있음. 호출 상한과 `fix.max_retries`는 2026-11-20(`test_fix_settings_come_from_base_and_are_clamped`). 최대치가 없던 v1 달러 예산(`model.budget_per_pr_usd`)은 2026-11-20에 static과 함께 없앴다. 그 키가 남은 설정은 무시하고 "설정:"에 알린다(`test_removed_static_and_dollar_keys_are_ignored_with_a_note`) |
 | T24 | 대상 저장소 설정 | 팀원 | base의 설정 파일이 심볼릭 링크라 링크 대상의 글을 설정으로 읽는다 | 파일 | 규칙 문서와 설정 파일(`.pipeline.yaml`, ruff 설정, 의존성 파일) 모두 base 트리의 모드를 보고 일반 파일만 읽음 (8.3) | 공개 전 | 있음 (3단계, 2026-11-20. `test_settings_that_are_symlinks_are_not_read`, `test_symlinked_ruff_settings_are_not_read`) |
-| T25 | 실행 환경 | 본인 | 샌드박스 이미지에 보안 패치가 들어오지 않는다. 모델이 목록 밖 도구를 부르려 한 일을 운영자가 모른다 | 파일 | 지금은 로그와 `ai_calls`의 기록(`permission_denials`)뿐이다 | 공개 전 | BACKLOG |
+| T25 | 실행 환경 | 본인 | 샌드박스 이미지와 고정한 도구·런타임 버전에 보안 패치가 들어오지 않는다. 모델이 목록 밖 도구를 부르려 한 일을 운영자가 모른다 | 파일 | 지금은 로그와 `ai_calls`의 기록(`permission_denials`)뿐이다. 이미지는 워커가 돌 때마다 `docker build`로 다시 만들지만 기반 이미지의 새 판을 받지는 않는다. 도구와 런타임은 사람이 `toolcache.TOOLS`의 버전과 해시를 바꿔야 새 판이 된다 | 공개 전 | BACKLOG |
 | T26 | RAG 기록 | 팀원·외부 | 과거 PR의 diff나 글에 든 지시·비밀값이 다른 PR의 프롬프트에 들어간다. 다른 저장소의 코드가 섞인다 | 비밀·저장소 | 검색은 같은 저장소 안에서만, 저장 전 비밀값 검사, 꺼낸 기록은 자료로만 (6.4, 6.5) | 지금 | 저장 전 비밀값 검사는 있음 (2026-11-20, `test_record_with_a_secret_is_not_stored`). 검색과 자료 블록은 5단계에서 함께 넣음 (그 전에는 검색이 없고, 기록은 같은 줄의 거절을 SQL로 찾는 데만 쓴다) |
 | T27 | 커밋 메시지·PR 제목과 본문·브랜치 이름 | 팀원·외부 | PR 단위 확인(4.5)이 작성자의 글을 모델에 주면, 글에 든 지시가 "위반 없음"을 답하게 한다 | 저장소 | 아직 그 글을 읽지 않는다. 설계: 패턴 확인은 글을 모델에 주지 않고, 모델 판단은 자료로만 넣고 도구 없이 부르며 결과는 알리기만 한다(수정안 없음) | 4단계 | 설계만 있음 |
 | T28 | PR 코드 | 팀원·외부 | PR이 넣었거나 샌드박스에서 돈 PR 코드가 남긴 심볼릭 링크를 수정 모델이 따라가, 작업 폴더 밖의 파일을 읽거나 쓴다 | 파일·비밀 | 모델 전용 작업 폴더: worktree의 일반 파일만 새 폴더로 복사하고(링크·특수 파일·링크인 폴더 아래·`.git`·파이프라인 산출물 제외) 그 폴더에서 모델을 돌린다. 바뀐 것은 diff로 뽑아 `git apply`로 worktree에 적용한다(git은 링크 너머에 쓰지 않는다). PreToolUse 경로 감시 훅이 도구가 가리키는 경로의 실제 위치가 폴더 밖이면 거부하고, 훅이 돌지 않았으면 결과를 버린다. CLI의 `--restricted` 제한은 그대로 한 겹 더 있다 (8.4) | 지금 | 있음 (2026-11-19). 실제 CLI 2.1.328로 확인: `tests/worker/ai/test_workdir_real_cli.py` |
@@ -1023,7 +1025,8 @@ class Record:
 ### 8.1 샌드박스
 
 - PR 코드, 모델이 고친 코드, 모델이 쓴 검사기는 Docker 컨테이너에서만 실행한다. 호스트에서 대상 저장소의 pytest를 돌리지 않는다.
-- **기본 이미지는 언어와 무관한 최소 이미지다(2.3).** 런타임과 도구는 호스트의 도구 캐시에서 읽기 전용으로 마운트한다. 도구 캐시도 `.venv`처럼 여러 PR이 같이 쓰므로, 쓰기 가능한 마운트는 설치 컨테이너에만 준다.
+- **기본 이미지는 언어와 무관한 최소 이미지다(2.3).** `docker/sandbox/Dockerfile`: `debian:bookworm-slim`에 curl과 인증서만 더한다(glibc는 도구 캐시의 gnu 빌드에, sh·coreutils는 설치 스크립트와 `timeout`에, curl은 받기 컨테이너에 쓴다). 받기·설치·검사기·ruff·테스트 컨테이너가 모두 이 이미지 하나다(3단계, 2026-11-20). 런타임과 도구는 호스트의 도구 캐시에서 읽기 전용으로 마운트한다. 도구 캐시도 `.venv`처럼 여러 PR이 같이 쓰므로, 쓰기 가능한 마운트는 설치 컨테이너에만 준다.
+- **Python 런타임.** python-build-standalone의 `install_only_stripped` 배포본을 도구 캐시에 받는다(`toolcache.TOOLS`의 `python`, 버전과 플랫폼별 SHA256 고정). 압축 파일의 `python/` 아래 일반 파일만 풀고 링크(`python3` → `python3.11` 같은 별칭)는 만들지 않는다. 테스트 컨테이너에는 `/opt/python`에 읽기 전용으로 붙인다. `.venv`의 인터프리터가 그 경로에 묶이므로 설치 컨테이너도 같은 경로를 쓴다. 설치 컨테이너에는 마운트하지 않고 `docker create` → `docker cp` → `docker start`로 복사해 넣는다(다른 캐시 항목을 마운트하지 않는다). 검사기(Python AST 스크립트, 경로 패턴의 고정 스크립트)는 `/tools/python`에 읽기 전용으로 붙인다.
 - 실행 컨테이너는 `--network none`, `--cap-drop ALL`, `--security-opt no-new-privileges`, `--memory`(기본 1GB), `--cpus 1`, `--pids-limit 256`, 호스트 사용자의 UID·GID, `HOME=/tmp`. 명령마다 시간 제한을 둔다.
 - 작업당 컨테이너 하나, 명령은 `docker exec`로 넣는다. 실행 함수는 `run_in_sandbox()` 하나다.
 - `.venv`와 도구 캐시는 실행 컨테이너에 읽기 전용으로 마운트한다.
@@ -1032,8 +1035,9 @@ class Record:
   - **호스트의 것을 마운트하지 않는다.** worktree, 홈 폴더, docker.sock, 다른 캐시 항목, 비밀값 파일을 마운트하지 않는다. 입력(의존성 파일, 받을 도구와 버전)은 마운트가 아니라 복사로 넣는다. 호스트 경로를 붙이는 곳은 그 설치만의 빈 임시 출력 폴더 하나다. 끝나면 호스트가 완료 표시를 확인하고 캐시 자리로 옮긴다.
   - 권한 제한(`--cap-drop ALL`, `no-new-privileges`, 메모리·CPU·프로세스 수, 시간 제한)은 실행 컨테이너와 같다.
   - **설치할 수 있는 도구는 파이프라인의 도구 목록에 있는 것뿐이다.** 도구마다 받는 곳과 받을 수 있는 버전, 그 버전의 플랫폼별 SHA256을 정해 두고(`sandbox/toolcache.py`의 `TOOLS`), 받은 파일의 해시를 캐시에 적는다. 저장소가 목록 밖의 버전을 고정하면 받지 않는다. 모델이나 PR이 임의의 패키지를 도구로 설치하게 할 수 없다.
-- **도구 실행:** ruff는 도구 캐시의 실행 파일을 읽기 전용으로 붙인 `TOOL_IMAGE` 컨테이너에서 돈다(네트워크 없음, 루트 파일 시스템 읽기 전용, 권한 없음, 자원 제한). 검사할 폴더는 읽기 전용이고, 기계적 수정의 `ruff format`만 쓰기를 연다. 파일 경로는 `--` 뒤에만 둔다(T9).
-  - 설치 도구로 uv를 쓸지는 스파이크로 정한다(11.3). 런타임 받기와 바이너리만 설치하기를 한 도구로 할 수 있는지가 요점이다.
+- **도구 받기:** 받기 컨테이너는 이미지의 curl로 고정한 https URL 하나만 받는다(`--proto =https`, `--proto-redir =https`, `--max-filesize`, 커널의 파일 크기 상한 `--ulimit fsize`). 붙이는 호스트 경로는 빈 출력 폴더 하나, 루트 파일 시스템은 읽기 전용이다. 해시는 호스트가 맞춘다.
+- **도구 실행:** ruff는 도구 캐시의 실행 파일을 읽기 전용으로 붙인 샌드박스 이미지 컨테이너에서 돈다(네트워크 없음, 루트 파일 시스템 읽기 전용, 권한 없음, 자원 제한). 검사할 폴더는 읽기 전용이고, 기계적 수정의 `ruff format`만 쓰기를 연다. 파일 경로는 `--` 뒤에만 둔다(T9).
+  - 설치 도구는 uv가 아니라 런타임에 든 pip이다(3단계, 11.1). 런타임은 uv가 쓰는 것과 같은 python-build-standalone 배포본을 직접 받는다.
 - **검사기 실행:** worktree를 읽기 전용으로, 검사기 파일은 worktree 밖의 경로에서 읽기 전용으로 마운트한다. 출력은 믿지 않는 입력으로 읽는다(4.5).
 - 메모리 한도는 base의 `.pipeline.yaml`이 정하고, 파이프라인 쪽 설정의 상한을 넘지 못한다.
 - 비밀값은 샌드박스에 넣지 않는다. docker.sock을 컨테이너에 마운트하지 않는다.
@@ -1333,6 +1337,9 @@ rag:
 | 검사기 형식을 바꾸는 때 (2026-11-20) | ast-grep 회차에서 모델이 그 형식으로 가릴 수 없다고 답하면(`unfit`) 그 초안은 돌리지 않고 다음 회차부터 Python AST 스크립트로 쓴다. 회차 3회, 모델 고정(D7)은 그대로다 (4.4, 5.3) | 운영자의 프로그램(2단계 마무리 작업)이 완료 기준 2-1을 닫으려고 바꿨다. 사람이 정한 것이 아니고, 운영자가 되돌릴 수 있다. 옛 static 02의 규칙에서 모델이 "이름이 어디서 정의됐는지는 ast-grep으로 가릴 수 없다"며 그 경우를 스스로 빼고 `global` 문만 잡는 검사기를 썼다. 예시도 모델이 쓰므로 그 좁은 검사기가 예시 확인을 통과했다. 정해진 순서(ast-grep 2회, Python AST 1회)로는 형식을 바꿀 기회가 오지 않았다 | 정해진 순서 그대로 (2-1을 README의 어기는 예로만 채움), 더 높은 모델로 올리기 (D7이 금지) |
 | 도구 선택의 저장 키 (2026-11-20) | 문서 규칙의 도구 선택(4.4의 1번)은 검사기 작성과 따로 저장한다. 키에 도구 목록 버전과 저장소의 ruff 버전을 넣고, 검사기 작성의 키는 그대로 둔다 (4.4) | 3단계 작업(운영자의 프로그램)이 정했다. 사람이 정한 것이 아니다. 도구 목록이 생기면 모든 규칙의 검사 방법을 다시 정해야 하지만, 맞는 도구가 없는 규칙의 검사기까지 다시 쓰면 저장소마다 모든 검사기 작성이 다시 돈다. 도구 선택만 다시 묻는 쪽이 규칙당 호출 한 번이다 | 검사기 작성의 키에 도구 목록 버전을 넣기 (모든 검사기를 다시 쓴다), 규칙 읽기의 답에 도구와 코드를 넣기 (규칙 읽기 프롬프트가 바뀌어 모든 저장소가 규칙을 다시 읽고, 예시를 쓸 자리가 없다) |
 | 기계적 수정의 포맷 범위와 남은 대상 (2026-11-20) | `ruff format`은 고친 파일에만 적용한다. 대상 중 고치지 못한 것이 있어도 고친 것만으로 수정안을 낸다(새 위반은 없어야 한다) (4.7) | 3단계 작업이 정했다. v1은 PR이 바꾼 파일 전체를 포맷했다. 규칙이 포맷을 요구하지 않는 파일을 포맷하는 것은 파이프라인이 정한 규칙에 가깝다. 고친 파일의 포맷은 편집이 남긴 빈 줄을 정리하는 데 필요하다(eval/lint 01). 남은 대상은 v1 F7과 같이 알린다 | PR이 바꾼 파일 전체 포맷 (v1), 대상이 하나라도 남으면 수정안을 버리기 |
+| 최소 이미지와 Python 런타임 (2026-11-20) | 이미지는 `debian:bookworm-slim`에 curl과 인증서만 더한다. Python 런타임은 python-build-standalone의 `install_only_stripped`를 도구 캐시에 받고, 버전은 3.11.18 하나다. 설치는 런타임에 든 pip의 `--only-binary :all:` 그대로다(uv를 쓰지 않는다). 도구 받기는 이미지의 curl이 한다 (8.1) | 3단계 작업이 정했다. 받기 스크립트가 Python이라 받기 컨테이너에 언어가 필요했다. curl은 언어와 무관하고 https만·크기 상한을 옵션으로 걸 수 있다. 런타임 버전을 하나로 둔 것은 3단계 전 이미지(3.11)와 같은 버전으로 옮기기만 하기 위해서다. 저장소의 `requires-python`으로 고르는 일은 지정자 해석과 여러 버전의 해시 고정이 따라와 BACKLOG로 미뤘다. uv는 같은 배포본을 받는 도구라, 받기는 도구 캐시가 이미 하고 설치는 pip이 1단계부터 8.1을 채웠다. 도구를 하나 더 고정하면 버전과 해시가 하나 더 는다 | uv로 런타임 받기와 설치, 언어별 공식 이미지(`python:3.11-slim`)를 런타임 층으로 두기, 받기 컨테이너만 Python 이미지로 두기 |
+| Python 런타임을 설치 컨테이너에 넣는 방법 (2026-11-20) | 마운트하지 않고 `docker create` 뒤 `docker cp`로 복사한다. 경로는 테스트 컨테이너와 같은 `/opt/python`이다 (8.1) | 3단계 작업이 정했다. 8.1은 설치 컨테이너에 다른 캐시 항목을 마운트하지 않고 입력은 복사로 넣는다고 정했다. 복사는 0.7초 남짓이다(90MB, 파일 4천 개). `.venv`의 인터프리터가 런타임 경로에 묶이므로 두 컨테이너의 경로가 같아야 한다 | 읽기 전용으로 마운트하기 (8.1과 다르다), 표준 입력으로 tar를 넘기기 (설치 스크립트의 표준 입력을 의존성 파일이 쓴다) |
+| 압축 파일 안의 링크 (2026-11-20) | 런타임 압축 파일의 심볼릭 링크·하드 링크는 풀지 않고 건너뛴다. 정한 폴더(`python/`) 밖이거나 경로가 빠져나가는 일반 파일이 있으면 압축 파일 전체를 거절한다 (T16) | 3단계 작업이 정했다. 런타임 배포본에는 링크가 천 개쯤 있고(`bin/python3` → `python3.11`, terminfo 별칭) 모두 같은 폴더 안의 별칭이다. 실행은 실제 파일 이름(`bin/python3.11`)으로 하므로 링크가 없어도 표준 라이브러리, `venv`, pip이 돈다(`test_python_runtime_runs_read_only_without_its_links`). 링크를 만들지 않으면 호스트의 캐시 폴더에서 밖을 가리키는 경로가 생기지 않는다 | 링크가 있으면 거절 (런타임을 쓸 수 없다), 폴더 안을 가리키는 링크만 만들기 (확인할 경로가 늘고 얻는 것이 없다) |
 | `/fix lint`와 옛 `skills.enabled` (2026-11-20) | `/fix lint`는 지원하지 않는 명령이다(답글이 `/fix mechanical`을 알린다). `skills.enabled`에 lint가 없는 옛 설정은 도구 설정의 규칙 묶음(`ruff`)을 끈다 | 3단계 작업이 정했다. 2단계까지 문서(12.2)가 "`/fix lint`도 그때까지 받는다"고 적었다. 스킬 이름을 명령에 남기면 12.4에서 버린 스킬 체계가 남는다. 옛 설정으로 ruff를 끈 저장소에 ruff가 다시 켜지지 않게 그 뜻만 옮긴다 | `/fix lint`를 `mechanical`의 별칭으로 남기기, `skills.enabled`를 아무 뜻 없이 무시하기 (ruff를 끈 저장소에 ruff가 켜진다) |
 
 **v1에서 그대로 가져온 결정** (이유는 v1 "결정 기록" 표에 있다)
@@ -1369,7 +1376,7 @@ rag:
 
 - [x] claude CLI를 도구 없이 부르는 옵션, `--append-system-prompt`와 `--restricted`를 같이 쓸 때의 동작, 구조화 출력을 받는 방법 (구현 1단계 전 스파이크)
 - [x] ast-grep의 Python 지원 범위와 JSON 출력 형식, 도구 캐시에 받는 방법 (구현 1단계 전 스파이크)
-- [ ] **uv 스파이크** (3단계 전으로 미룸. 1단계는 pip의 `--only-binary :all:`로 ②③을 채웠다. 처음에는 구현 1단계 전): ① uv가 받는 독립 실행형 Python을 도구 캐시에 두고 다른 컨테이너에 읽기 전용으로 마운트해 쓸 수 있는지(경로가 고정되는지) ② `--only-binary :all:`로 저장소 의존성과 ruff를 설치했을 때 eval 저장소와 MathLLM에서 빠지는 패키지가 있는지 ③ 입력을 복사로 넣고 출력 폴더 하나만 붙인 설치가 되는지 ④ 캐시 키의 플랫폼(arm64·amd64, libc)을 무엇으로 잡을지 ⑤ Apple Silicon에서 도는 컨테이너(linux/arm64)에서 wheel이 없는 의존성이 얼마나 되는지: eval 저장소와 MathLLM의 의존성을 linux/arm64와 linux/amd64 양쪽으로 풀어, 바이너리만으로 설치되지 않는 패키지의 수와 이름을 적는다. 개발 기기가 Apple Silicon이라 여기서 빠지는 패키지가 곧 테스트 안전망을 잃는 저장소다. uv가 안 되면 언어별 공식 이미지를 런타임 층으로 쓰는 방식과 pip의 `--only-binary`를 본다
+- [ ] **uv 스파이크** (3단계(2026-11-20)에 ①③④를 정했다: uv를 쓰지 않고 python-build-standalone을 도구 캐시에 직접 받는다. 경로를 `/opt/python`으로 고정해 읽기 전용으로 붙이면 돈다. 입력 복사와 출력 폴더 하나로 설치한다. 플랫폼 키는 `linux-{arm64,amd64}-gnu`다(11.1). ②⑤는 재지 않았다(BACKLOG). 3단계 전으로 미룸. 1단계는 pip의 `--only-binary :all:`로 ②③을 채웠다. 처음에는 구현 1단계 전): ① uv가 받는 독립 실행형 Python을 도구 캐시에 두고 다른 컨테이너에 읽기 전용으로 마운트해 쓸 수 있는지(경로가 고정되는지) ② `--only-binary :all:`로 저장소 의존성과 ruff를 설치했을 때 eval 저장소와 MathLLM에서 빠지는 패키지가 있는지 ③ 입력을 복사로 넣고 출력 폴더 하나만 붙인 설치가 되는지 ④ 캐시 키의 플랫폼(arm64·amd64, libc)을 무엇으로 잡을지 ⑤ Apple Silicon에서 도는 컨테이너(linux/arm64)에서 wheel이 없는 의존성이 얼마나 되는지: eval 저장소와 MathLLM의 의존성을 linux/arm64와 linux/amd64 양쪽으로 풀어, 바이너리만으로 설치되지 않는 패키지의 수와 이름을 적는다. 개발 기기가 Apple Silicon이라 여기서 빠지는 패키지가 곧 테스트 안전망을 잃는 저장소다. uv가 안 되면 언어별 공식 이미지를 런타임 층으로 쓰는 방식과 pip의 `--only-binary`를 본다
 - [ ] chromadb에서 임베딩 함수 없이 컬렉션을 만들고 코사인 거리를 지정하는 방법 (설치하는 버전의 문서로 확인, 5단계 전 스파이크)
 - [ ] 임베딩 모델의 접두어: e5 계열은 `query: `·`passage: `가 필요하다. `embed`가 질의용과 저장용을 구분해 받게 하고(`role`), 접두어를 붙였을 때와 뺐을 때의 recall@k를 비교해 확인한다. 후보 모델마다 요구하는 접두어가 다른지도 본다 (5단계 전 스파이크)
 - [ ] 유사도 기준값 0.80과 top-k 20: 기준값을 정할 때 관련 있는 짝뿐 아니라 관련 없는 짝의 유사도 분포도 같이 잰다. 두 분포가 겹치는 구간을 보고 정한다 (5단계 전 스파이크, 6.7)
@@ -1397,8 +1404,8 @@ rag:
 | `controllers/`, `services/`, `views/` | 그대로 | 수신·동기화·큐 (4.1) |
 | `models/job.py`, `state_keys.py`, `sync_rules.py`, `install.py`, `comment.py` | 그대로 | |
 | `models/test_run.py`, `diff.py`, `text_edit.py`, `coverage.py`, `scope.py` | 그대로 | 테스트 결과, 바뀐 줄, 편집 적용, 커버 여부, 허용 범위 규칙 |
-| `sandbox/container.py`, `pytest_runner.py`, `safe_read.py` | 그대로 | 4.5, 8.1. `container.py`에 읽기 전용 마운트 옵션만 더한다 |
-| `worker/main.py`, `deps.py`, `retry.py`, `repo.py`, `github.py`(코멘트 부분), `state.py`, `preflight.py`, `coverage.py`, `scope.py` | 그대로 | 체크아웃, 재시도, 기록 쓰기, 범위 검사 실행 |
+| `sandbox/container.py`, `safe_read.py` | 그대로 | 4.5, 8.1. `container.py`는 언어 프로필이 넘기는 읽기 전용 마운트(.venv, 런타임)를 붙인다 (3단계) |
+| `worker/main.py`, `deps.py`, `retry.py`, `repo.py`, `github.py`(코멘트 부분), `state.py`, `preflight.py`, `coverage.py`(diff-cover만), `scope.py` | 그대로 | 체크아웃, 재시도, 기록 쓰기, 범위 검사 실행 |
 | `models/finding.py` | 바뀜 | `Finding` → `Violation`: `skill`이 `rule_id`·`found_by`로 (7.3) |
 | `models/repo_config.py` | 바뀜 | 10절의 스키마 |
 | `models/command.py` | 바뀜 | `/fix`의 인자가 스킬에서 묶음으로. 확장 명령 삭제 |
@@ -1417,9 +1424,9 @@ rag:
 | `worker/command.py`, `update.py` | 바뀜 | `/fix` 형식, 시도 세대, 작성자가 직접 고친 위반 알아내기 |
 | `worker/github.py` | 바뀜 | 리뷰(줄 코멘트) 쓰기, 그 브랜치의 열린 PR 찾기 |
 | `worker/ai/claude_cli.py` | 바뀜 | 허용 도구와 시스템 프롬프트를 인자로. 도구 없는 호출 |
-| `docker/sandbox/Dockerfile` | 바뀜 | ruff는 3단계에 뺐다(2026-11-20). Python을 빼고 언어와 무관한 최소 이미지로 바꾸는 것은 3단계의 다음 작업(3-6) |
-| `sandbox/ruff_runner.py` | 바뀜 (3단계, 2026-11-20) | 도구 캐시의 ruff를 실행 컨테이너마다 붙여 돌린다. `check`, `format_diff`, `format_check`, `format_apply`, `rule_exists` |
-| `sandbox/venv.py`, `docker_cli.py` | 바뀜 | 런타임을 이미지가 아니라 도구 캐시에서. 캐시 키에서 이미지의 Python 버전 대신 런타임 버전 (3-6) |
+| `docker/sandbox/Dockerfile` | 바뀜 (3단계, 2026-11-20) | ruff와 Python을 빼고 언어와 무관한 최소 이미지(`debian:bookworm-slim`에 curl과 인증서)로 |
+| `sandbox/pytest_runner.py`, `ruff_runner.py`, `venv.py`, `worker/coverage.py`(위반 줄의 커버리지 읽기) | 옮김 (3단계, 2026-11-20) | Python 프로필 `worker/lang/python.py`로 (7.7). ruff의 `check`·`rule_exists`는 `ruff_check`·`ruff_rule_exists`로 이름만 바꿨다. `.venv`는 도구 캐시의 런타임으로 만들고 캐시 키에 이미지의 Python 버전 대신 런타임 버전이 든다 |
+| `sandbox/docker_cli.py`, `toolcache.py` | 바뀜 (3단계, 2026-11-20) | `TOOL_IMAGE`(`python:3.11-slim`)를 없애고 모든 컨테이너가 샌드박스 이미지 하나를 쓴다. 도구 캐시에 Python 런타임(폴더째 푸는 도구)과 curl로 받는 받기 컨테이너 |
 | `docker-compose.yml` | 그대로 | Redis만. 벡터 저장소는 Chroma 임베디드라 컨테이너를 더하지 않는다 |
 | `models/rule.py`, `checker.py`, `decision.py`, `explain.py`, `record.py`, `cache_key.py` | 새로 | 7절 |
 | `worker/rules.py` | 새로 | 규칙 읽기 (4.3) |
@@ -1436,7 +1443,7 @@ rag:
 
 ### 12.2 지금 코드가 이 문서와 다른 곳
 
-13절의 단계를 끝내기 전까지 아래는 문서에만 있다. 1단계를 끝낸 2026-11-19 기준이고, 2단계의 수정 연결과 기록 저장, 묶음과 `/fix`, 내장 검사기 삭제(2026-11-20), 3단계의 도구 연결(ruff를 새 구조로, v1 lint 삭제, 2026-11-20)에 맞춰 고쳤다.
+13절의 단계를 끝내기 전까지 아래는 문서에만 있다. 1단계를 끝낸 2026-11-19 기준이고, 2단계의 수정 연결과 기록 저장, 묶음과 `/fix`, 내장 검사기 삭제(2026-11-20), 3단계의 도구 연결(ruff를 새 구조로, v1 lint 삭제, 2026-11-20)과 최소 이미지·Python 프로필(3-6, 2026-11-20)에 맞춰 고쳤다.
 
 - 모델의 직접 판단이 없다. 규칙 읽기와 검사기 작성은 1단계에, 수정 판단(4.6)과 모델 수정·수정안 PR은 2단계에, 도구 설정의 규칙 묶음과 문서 규칙의 도구 선택, 기계적 수정 묶음은 3단계에 들어왔다.
 - 파이프라인이 정한 규칙은 없다(3단계에 ruff 기본 규칙까지 없앴다). ruff 설정도 ruff를 쓰는 문서 규칙도 없는 저장소에는 ruff를 받지 않고 돌리지 않는다.
@@ -1445,10 +1452,10 @@ rag:
 - `record` 노드가 따로 없다(5.1). 검증 실패 기록은 `fix_mechanical`·`fix_model`이, 위반과 작성자 수정 기록은 `detect` 뒤에, 머지·거절 기록은 수정안 PR 상태 확인(`proposal.refresh`)이 남긴다.
 - 줄 리뷰 코멘트는 모델 수정안 PR에만 있다(기계적 수정은 모델이 쓰지 않아 설명이 없다). GitHub이 리뷰의 줄을 받지 않으면(422) 리뷰 없이 수정안 PR만 남는다.
 - 저장소 하루 상한에 걸린 뒤의 `/fix`에 "○시 이후에 다시"로 답하지 않는다(9.2). 다시 돌려 같은 상한에 걸리고, 그 사실이 결과 코멘트에 나온다.
-- 샌드박스 이미지는 `python:3.11-slim`이다. ruff는 3단계에 빼 도구 캐시로 옮겼지만 Python 런타임은 아직 이미지에 있다(3단계의 다음 작업, 3-6). 도구를 받는 컨테이너와 검사기·ruff를 돌리는 컨테이너도 `python:3.11-slim`이다.
+- 샌드박스 이미지는 언어와 무관한 최소 이미지이고(3단계, 3-6) Python 런타임은 도구 캐시에서 붙인다. 런타임 버전은 3.11.18 하나이고 저장소가 요구하는 버전(`requires-python`)으로 고르지 않는다(7.7, BACKLOG).
 - 저장소의 ruff 버전 고정은 루트의 `requirements*.txt`와 `pyproject.toml`(PEP 621의 `dependencies`·`optional-dependencies`, PEP 735의 `dependency-groups`)의 `ruff==X.Y.Z`만 읽는다. `.pre-commit-config.yaml`의 `rev`, poetry 표, `~=`·`>=` 같은 범위는 보지 않는다(BACKLOG). 받을 수 있는 ruff 버전은 해시를 고정한 다섯 개다.
 - 도구 설정의 규칙 묶음은 `ruff check`만이다. 포맷은 문서 규칙이 `ruff-format`을 고를 때와, 기계적 수정이 고친 파일을 정리할 때(base가 포맷돼 있을 때만)만 쓴다.
-- Python 전용 코드(pytest 실행, coverage 읽기, 테스트 파일의 정의, ruff)가 여러 모듈에 흩어져 있다(3-6의 `worker/lang/python.py`).
+- Python 전용 코드는 `worker/lang/python.py`에 모였지만 판단 규칙(테스트 파일의 정의, coverage.xml 파싱, ruff 설정 읽기, 도구 목록)은 계층 때문에 `models/`에 남았다(7.7). 언어 프로필이 없는 저장소를 가려 모델 수정을 `skip`하는 일(2.3)과 Python AST 대안을 Python 저장소에만 쓰는 확인은 없다. 지금 대상 저장소가 모두 Python이고 검사기가 `.py`만 다룬다(BACKLOG).
 - RAG 검색과 벡터 저장소가 없다. `violations`와 `records`(채택·거절·실패·작성자 수정)를 SQLite에 남기고, 같은 PR에서 같은 (파일, 규칙, 줄 내용)의 거절만 SQL로 찾아 쓴다. 검사기 기록(`checker`)은 남기지 않는다.
 - 코드의 주석과 독스트링이 "docs/DESIGN.md F7"처럼 v1의 절 번호를 가리킨다. 아래 표로 읽는다.
 
@@ -1634,8 +1641,8 @@ rag:
 
 - [x] 도구 설정에서 온 규칙 묶음(4.3), 도구 목록(`ruff`, `ruff-format`), 문서 규칙을 ruff 코드로 잇는 선택과 예시 확인 (2026-11-20. `models/tools.py`, `models/tool_choice.py`, `worker/checkers.py`. 설정은 base 루트의 일반 파일만 읽는다(T24). 도구 설정의 규칙 묶음의 위반은 ruff 코드가 규칙 id이고 `rules.disabled`로 코드나 묶음(`ruff`)을 끈다)
 - [x] ruff를 이미지에서 빼고 도구 캐시로: 규칙 묶음이 쓸 때만, 저장소가 고정한 버전 먼저 (2026-11-20. `sandbox/toolcache.py`에 ruff 다섯 버전의 SHA256을 고정했다. 받는 컨테이너는 출력 폴더만 붙이고 호스트가 해시를 맞춘 뒤 캐시에 넣는다(T16). ruff는 `sandbox/ruff_runner.py`가 실행 컨테이너마다 붙여 돌린다)
-- [ ] 샌드박스 기본 이미지를 언어와 무관한 최소 이미지로, Python 런타임을 도구 캐시로
-- [ ] Python 전용 코드를 `worker/lang/python.py`로 모음 (옮기기만. 인터페이스를 새로 설계하지 않는다)
+- [x] 샌드박스 기본 이미지를 언어와 무관한 최소 이미지로, Python 런타임을 도구 캐시로 (2026-11-20. `docker/sandbox/Dockerfile`은 `debian:bookworm-slim`에 curl과 인증서뿐이다. 받기·설치·검사기·ruff·테스트 컨테이너가 모두 이 이미지다. Python 런타임은 python-build-standalone 3.11.18을 `toolcache.TOOLS`에 해시로 고정해 테스트나 Python 검사기가 쓸 때 받는다. `.venv` 캐시 키의 Python 버전은 이미지가 아니라 런타임 버전이다. 받기는 이미지의 curl이 한다(11.1))
+- [x] Python 전용 코드를 `worker/lang/python.py`로 모음 (옮기기만. 인터페이스를 새로 설계하지 않는다) (2026-11-20. `sandbox/venv.py`, `sandbox/pytest_runner.py`, `sandbox/ruff_runner.py`와 위반 줄의 커버리지 읽기를 옮겼다. 판단 규칙은 `models/`에 남았다(7.7))
 - [x] 기계적 수정(`mechanical` 묶음)을 새 구조로, v1의 lint 고정 단계 삭제 (2026-11-20. `worker/mechanical_fix.py`, 그래프의 `fix_mechanical`·`deliver_mechanical`. 검증은 4.8의 순서이고 `fix_attempts`·`records`에 남는다. `worker/skills/`, `models/finding.py`, `models/rejection.py`, `report.py`의 v1 절, `/fix lint`를 지웠다. 결과 코멘트의 "규칙:" 줄은 하나로 합쳤다)
 
 **완료 기준** (확정 2026-11-18)
@@ -1645,7 +1652,7 @@ rag:
 - [x] **3-3** (eval) ruff 설정도 ruff를 쓰는 규칙도 없는 base에서는 ruff를 받지 않고, 규칙이 하나도 없는 base에서는 "규칙을 찾지 못해 규칙 검사를 하지 않음"이 나온다. (2026-11-20. `eval/tools/02-no-ruff-rule-no-fetch.yaml`(도구 캐시에 ast-grep만 생기고 F401이 나오지 않는다), `eval/tools/03-no-rules-at-all.yaml`(아무것도 받지 않는다))
 - [x] **3-4** (eval) 의존성 파일이 ruff 버전을 고정한 base에서는 그 버전으로 검사한다. (2026-11-20. `eval/tools/04-pinned-ruff-version.yaml`: `requirements-dev.txt`의 `ruff==0.17.4`. 도구 캐시에 0.17.4만 생기고 수정안 PR 본문에 "ruff 0.17.4 (requirements-dev.txt가 고정)"이 나온다)
 - [x] **3-5** (eval) 두 번째 실행은 아무것도 받지 않는다. (2026-11-20. 같은 케이스에서 같은 데이터 폴더로 두 번째 PR을 검사하면 받기 호출이 늘지 않는다)
-- [ ] **3-6** (eval) 모든 eval 케이스가 최소 이미지에서 통과한다.
+- [x] **3-6** (eval) 모든 eval 케이스가 최소 이미지에서 통과한다. (2026-11-20. `pytest -m docker tests/e2e`: `eval/lint` 5, `eval/rules` 16, `eval/tools` 4, 25개 모두 통과. 테스트 이미지 `pipeline-sandbox-minimal-test`는 `docker/sandbox/Dockerfile`의 최소 이미지이고 Python·pip·ruff·ast-grep이 없다(`test_image_has_no_language_runtime`). 테스트의 `.venv`와 Python 검사기는 도구 캐시의 Python 3.11.18로 돈다(`eval/tools/03`이 `python/3.11.18`을 받는다). 케이스 파일에서 바뀐 것은 `eval/tools/03`의 설명과 받는 것 목록(규칙 도구는 받지 않고 테스트의 런타임만 받는다)이다)
 - [ ] **3-7** (도구를 끈 평가) 도구 켬 / 끔을 같은 케이스로 돌려 재현율·정밀도를 다시 잰다.
 - [ ] **3-8** (도구를 끈 평가) 1단계의 기준선보다 나빠지지 않았는지 본다.
 - [ ] **3-9** (MathLLM) v1 구현과 같은 PR을 돌려 ruff 위반 목록이 같다. (2026-11-20: 채우지 못함, 저장소 주인에게 물음. MathLLM에는 ruff 설정이 없어 v1의 57건은 파이프라인이 고른 ruff 기본 규칙의 결과다. 새 구조는 3-3대로 ruff를 받지 않고 0건이다. base에 빈 `ruff.toml`(같은 기본 규칙)만 더하면 새 구조의 57건이 (파일, 줄, 코드, 메시지)까지 v1과 같다. 글자대로의 3-9와 3-3은 MathLLM 그대로의 base에서 함께 설 수 없다. `docs/JOURNAL.md`)
