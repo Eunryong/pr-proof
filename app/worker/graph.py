@@ -51,7 +51,7 @@ from app.models.repo_config import call_limits
 from app.models.test_run import PytestRun
 from app.sandbox import container, docker_cli, pytest_runner, venv
 from app.worker import ai_fix, base_config, coverage, doc_rules, proposal, repo, report
-from app.worker.ai import claude_cli
+from app.worker.ai import claude_cli, workdir
 from app.worker.ai.claude_cli import ClaudeResult
 from app.worker.base_config import BaseConfig
 from app.worker.budget import CallBudget
@@ -544,7 +544,7 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
                 return lint_for(job, changed)
 
         tools = ai_fix.CodeFixTools(
-            run_ai=lambda wt, prompt, **kw: claude_cli.run_claude(wt, prompt, **kw),
+            run_ai=lambda wt, prompt, **kw: workdir.run_in_model_folder(wt, prompt, **kw),
             recheck=lambda changed: static_for(job, changed),
             recheck_lint=recheck_lint,
             run_tests=lambda: tests_for(job),

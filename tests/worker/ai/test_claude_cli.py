@@ -442,3 +442,29 @@ def test_mismatch_detail_names_extra_tools_and_cli_version() -> None:
     result = _run(FakeRunner(json.dumps(init) + "\n"))
     assert result.error == AIErrorKind.TOOLS
     assert "['Task', 'WebSearch']" in result.detail and "claude CLI 2.1.327" in result.detail
+
+
+def test_settings_file_is_passed_and_tool_uses_are_counted() -> None:
+    """경로 감시 훅의 설정 파일은 --settings로 넘기고, 목록 안 도구의 호출 수를 센다."""
+
+    def use(name: str) -> dict:
+        return {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": name}]}}
+
+    events = [
+        {"type": "system", "subtype": "init", "tools": FILE_TOOLS},
+        use("Read"), use("Edit"), use("Bash"), use("Read"),
+        json.loads(_output(tools=None).splitlines()[-1]),
+    ]  # fmt: skip
+    runner = FakeRunner("".join(json.dumps(e) + "\n" for e in events))
+    result = _run(runner, settings=Path("/tmp/model/settings.json"))
+    args = runner.calls[0][0]
+    assert args[args.index("--settings") + 1] == "/tmp/model/settings.json"
+    assert result.ok and result.tool_uses == 3
+    assert result.unexpected_tools == (("Bash", 1),)
+    assert "--settings" not in _run_args()
+
+
+def _run_args() -> list[str]:
+    runner = FakeRunner(_output())
+    _run(runner)
+    return runner.calls[0][0]
