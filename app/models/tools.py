@@ -1,6 +1,6 @@
 """저장소의 도구 (docs/DESIGN.md 2.3, 4.3 도구 설정, 4.4 도구 목록, 7.7 Python 프로필의 도구).
 
-데이터와 결정적 판단만 한다. 받기와 실행은 sandbox/toolcache.py와 sandbox/ruff_runner.py가 한다.
+데이터와 결정적 판단만 한다. 받기와 실행은 sandbox/toolcache.py와 worker/lang/python.py가 한다.
 
 - 도구 목록(`TOOL_LIST`)은 밖에서 받아 오는 도구뿐이다. 문서 규칙의 확인 방법을 고르는 모델은 이
   목록 안에서만 고른다. 플러그인 로더는 만들지 않는다.

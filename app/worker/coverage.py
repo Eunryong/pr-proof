@@ -1,8 +1,8 @@
-"""안전망 입력 읽기와 참고 지표 diff-cover (docs/DESIGN.md F8).
+"""참고 지표 diff-cover (docs/DESIGN.md F8).
 
-`.pipeline-out/` 아래 파일(coverage.xml, changes.diff)과 worktree의 소스는 샌드박스 안의 PR
-코드가 바꿀 수 있다. 호스트에서 읽을 때 심볼릭 링크·FIFO·장치 파일을 따라가지 않고, worktree
-밖을 가리키는 경로와 큰 파일은 읽지 않는다. 판정 규칙은 `app/models/coverage.py`에 있다.
+`.pipeline-out/` 아래 파일(coverage.xml, changes.diff)은 샌드박스 안의 PR 코드가 바꿀 수 있다.
+호스트에서 읽을 때 심볼릭 링크·FIFO·장치 파일을 따라가지 않고 큰 파일은 읽지 않는다. 위반 줄의
+커버리지 읽기는 Python 프로필(`worker/lang/python.py`)에 있다.
 """
 
 import json
@@ -10,79 +10,20 @@ import os
 import subprocess
 import sys
 import tempfile
-from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
-from app.models.coverage import (
-    MAX_COVERAGE_XML_BYTES,
-    CoverageData,
-    mark_covered,
-    parse_coverage_xml,
-)
-from app.models.violation import Violation
+from app.models.coverage import MAX_COVERAGE_XML_BYTES, parse_coverage_xml
 from app.sandbox.safe_read import read_regular_file
 
 DIFF_COVER_TIMEOUT: Final = 60
-MAX_SOURCE_BYTES: Final = 2 * 1024 * 1024
 MAX_DIFF_BYTES: Final = 20 * 1024 * 1024
 _ENV_PASSTHROUGH: Final = ("PATH",)
 # diff-cover를 격리 모드(-I)로 실행한다. 작업 폴더·PYTHONPATH·사용자 site의 모듈을 import하지 않는다
 _DIFF_COVER_MAIN: Final = (
     "import sys; from diff_cover.diff_cover_tool import main; sys.exit(main())"
 )
-
-
-def read_coverage(
-    coverage_xml: Path | None, *, max_bytes: int = MAX_COVERAGE_XML_BYTES
-) -> CoverageData | None:
-    """샌드박스가 남긴 coverage.xml을 읽는다. 없거나 깨졌으면 None (모름)."""
-    if coverage_xml is None:
-        return None
-    data = read_regular_file(coverage_xml, max_bytes=max_bytes)
-    if data is None:
-        return None
-    return parse_coverage_xml(data, max_bytes=max_bytes)
-
-
-def _inside(worktree: Path, rel: str) -> Path | None:
-    """worktree 안의 실제 경로. 절대 경로이거나 중간 링크가 worktree 밖을 가리키면 None."""
-    if os.path.isabs(rel):
-        return None
-    root = worktree.resolve()
-    path = (root / rel).resolve()
-    return path if path.is_relative_to(root) else None
-
-
-def read_sources(
-    worktree: Path, files: Iterable[str], *, max_bytes: int = MAX_SOURCE_BYTES
-) -> dict[str, str]:
-    """위반이 있는 파일의 소스를 {리포 기준 경로: 내용}으로 읽는다. 못 읽은 파일은 빠진다."""
-    sources: dict[str, str] = {}
-    for rel in dict.fromkeys(files):
-        path = _inside(worktree, rel)
-        if path is None:
-            continue
-        data = read_regular_file(path, max_bytes=max_bytes)
-        if data is None:
-            continue
-        try:
-            sources[rel] = data.decode("utf-8")
-        except UnicodeDecodeError:
-            continue
-    return sources
-
-
-def annotate_coverage(
-    findings: Iterable[Violation], coverage_xml: Path | None, worktree: Path
-) -> tuple[Violation, ...]:
-    """위반에 covered를 채운다. coverage.xml은 `PytestRun.coverage_xml`(수정 전 실행)이다."""
-    findings = tuple(findings)
-    coverage = read_coverage(coverage_xml)
-    if coverage is None:
-        return mark_covered(findings, None)
-    return mark_covered(findings, coverage, read_sources(worktree, (f.file for f in findings)))
 
 
 @dataclass(frozen=True)

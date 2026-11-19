@@ -60,11 +60,12 @@ from app.models.checker_authoring import (
 from app.models.repo_config import ModelSettings
 from app.models.rule import Rule, looks_at_paths, normalize
 from app.models.tools import RUFF, RuffSetup, valid_codes
-from app.sandbox import checker_runner, ruff_runner, toolcache
+from app.sandbox import checker_runner, toolcache
 from app.sandbox.checker_runner import CheckerRun, Failed, Invalid
 from app.worker.ai import claude_cli
 from app.worker.ai.claude_cli import StructuredResult
 from app.worker.budget import CallBudget
+from app.worker.lang import python
 from app.worker.loop import LoopPolicy, LoopState, Verdict, WriteFailed, WriteResult, build_loop
 from app.worker.state import Store
 
@@ -87,9 +88,9 @@ class RunsCheckers(Protocol):
 class FormatsFiles(RunsCheckers, Protocol):
     """기계적 수정이 쓰는 샌드박스: 도구의 검사에 더해 `ruff format`."""
 
-    def format_check(self, root: Path) -> ruff_runner.FormatResult: ...
+    def format_check(self, root: Path) -> python.FormatResult: ...
 
-    def format_apply(self, root: Path, files: Sequence[str]) -> ruff_runner.FormatResult: ...
+    def format_apply(self, root: Path, files: Sequence[str]) -> python.FormatResult: ...
 
 
 class Sandbox:
@@ -144,26 +145,26 @@ class Sandbox:
         assert tool_dir is not None
         config = None if isolated else self.ruff.config
         if kind == "ruff-format":
-            return ruff_runner.format_diff(root, files, tool_dir=tool_dir, config=config)
-        return ruff_runner.check(
+            return python.format_diff(root, files, tool_dir=tool_dir, config=config)
+        return python.ruff_check(
             root, files, tool_dir=tool_dir, config=config, codes=tool_codes(body)
         )
 
     def rule_exists(self, code: str) -> bool:
         tool_dir = self._tool_dir("ruff")
         assert tool_dir is not None
-        return ruff_runner.rule_exists(code, tool_dir=tool_dir)
+        return python.ruff_rule_exists(code, tool_dir=tool_dir)
 
-    def format_check(self, root: Path) -> ruff_runner.FormatResult:
+    def format_check(self, root: Path) -> python.FormatResult:
         """root 전체가 base 설정의 `ruff format`을 따르는지 (4.7)."""
         tool_dir = self._tool_dir("ruff-format")
         assert tool_dir is not None
-        return ruff_runner.format_check(root, tool_dir=tool_dir, config=self.ruff.config)
+        return python.format_check(root, tool_dir=tool_dir, config=self.ruff.config)
 
-    def format_apply(self, root: Path, files: Sequence[str]) -> ruff_runner.FormatResult:
+    def format_apply(self, root: Path, files: Sequence[str]) -> python.FormatResult:
         tool_dir = self._tool_dir("ruff-format")
         assert tool_dir is not None
-        return ruff_runner.format_apply(root, files, tool_dir=tool_dir, config=self.ruff.config)
+        return python.format_apply(root, files, tool_dir=tool_dir, config=self.ruff.config)
 
 
 class _CapHit(Exception):

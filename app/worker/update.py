@@ -7,10 +7,10 @@ from app.models.access import may_run
 from app.models.install import install_failure_outcome
 from app.models.job import PRJob
 from app.sandbox import docker_cli
-from app.sandbox.venv import DependencyInstallError
 from app.worker import doc_rules, graph, proposal, report, retry
 from app.worker.deps import Deps
 from app.worker.github import GitHubError
+from app.worker.lang.python import DependencyInstallError
 
 CLOSED_HEAD: Final = "closed"  # PR이 닫혔다는 Redis 최신 head 표시. 어떤 커밋 SHA와도 같지 않다
 UNTRUSTED_AUTHOR: Final = "untrusted_author"  # 신뢰되지 않은 사람이 연 PR이라 아무것도 하지 않음

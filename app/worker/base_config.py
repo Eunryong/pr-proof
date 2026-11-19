@@ -3,7 +3,7 @@
 
 PR head에서 바꾼 설정은 쓰지 않는다. 저장소 루트의 일반 파일만 읽는다: 심볼릭 링크(120000), 폴더,
 서브모듈인 설정은 읽지 않고 "설정:"에 알린다 (T24). ruff 설정 파일은 worktree에 꺼내지 않고 내용만
-들고 있다가 샌드박스의 ruff에 검사할 폴더 밖의 사본으로 넘긴다 (sandbox/ruff_runner.py).
+들고 있다가 샌드박스의 ruff에 검사할 폴더 밖의 사본으로 넘긴다 (worker/lang/python.py).
 """
 
 from dataclasses import dataclass

@@ -45,8 +45,8 @@ from app.sandbox.safe_read import read_regular_file
 from app.worker import repo, scope
 from app.worker.ai.claude_cli import AIEnvironmentError, ClaudeResult, environment_problem
 from app.worker.budget import CallBudget
-from app.worker.coverage import read_sources
 from app.worker.detect import Detection
+from app.worker.lang.python import read_sources
 from app.worker.loop import LoopPolicy, LoopState, Verdict, WriteFailed, WriteResult, build_loop
 from app.worker.proposal import MODEL_BUNDLE
 from app.worker.report import format_test_line

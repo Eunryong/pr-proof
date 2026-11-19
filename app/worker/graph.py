@@ -49,7 +49,7 @@ from app.models.model_fix import ModelFix, Picked
 from app.models.proposal import ProposalResult
 from app.models.repo_config import call_limits
 from app.models.test_run import PytestRun
-from app.sandbox import container, docker_cli, pytest_runner, venv
+from app.sandbox import container, docker_cli
 from app.worker import (
     base_config,
     coverage,
@@ -70,6 +70,7 @@ from app.worker.coverage import DiffCoverage
 from app.worker.doc_rules import Runtime as DocRuntime
 from app.worker.doc_rules_report import FixView
 from app.worker.github import GitHub
+from app.worker.lang import python
 from app.worker.repo import CHANGES_DIFF
 from app.worker.state import Store
 
@@ -121,23 +122,24 @@ def run_pr_tests(
     *,
     job_id: str | None = None,
     is_stale: Callable[[], bool] | None = None,
-    venv_cache: Path = venv.VENV_CACHE,
+    venv_cache: Path = python.VENV_CACHE,
     memory_gb: float = docker_cli.MEMORY_LIMIT_GB,
     names: docker_cli.Names = docker_cli.DEFAULT_NAMES,
 ) -> PytestRun:
     """테스트 단계: 이미지 준비 → .venv 준비 → 작업 컨테이너에서 pytest → 결과.
 
-    Docker 실패는 docker_cli.SandboxError(환경 오류), pip 실패는 venv.DependencyInstallError로
+    Docker 실패는 docker_cli.SandboxError(환경 오류), pip 실패는 python.DependencyInstallError로
     올라간다. 처리는 worker/update.py가 정한다.
     """
     image = docker_cli.ensure_image(names.image)
-    venv_dir = venv.ensure_venv(
+    venv_dir = python.ensure_venv(
         worktree, image, cache_dir=venv_cache, tag=names.image, memory_gb=memory_gb
     )
+    mounts = [(venv_dir, python.VENV_IN_CONTAINER)]
     with container.running(
-        worktree, venv_dir, job_id=job_id, memory_gb=memory_gb, names=names
+        worktree, mounts, job_id=job_id, memory_gb=memory_gb, names=names
     ) as name:
-        return pytest_runner.run_tests(name, worktree, is_stale=is_stale)
+        return python.run_tests(name, worktree, is_stale=is_stale)
 
 
 class FlowState(TypedDict, total=False):
@@ -322,7 +324,7 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
         out: FlowState = {"test_run": run}
         doc = state.get("doc_rules")
         if isinstance(doc, Found) and doc.violations:  # 위반 줄이 테스트로 실행되는지 (4.5)
-            covered = coverage.annotate_coverage(doc.violations, run.coverage_xml, ctx.worktree)
+            covered = python.annotate_coverage(doc.violations, run.coverage_xml, ctx.worktree)
             ctx.doc_rules = out["doc_rules"] = replace(doc, violations=covered)
         out["diff_coverage"] = (
             coverage.diff_coverage(run.coverage_xml, ctx.changes_diff) if ctx.changes_diff else None
