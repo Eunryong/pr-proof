@@ -36,11 +36,12 @@ MIN_VIOLATING: Final = 2
 MIN_PASSING: Final = 2
 MAX_MODEL_EXAMPLES: Final = 6
 
-# 검사하지 못한 이유. not_code는 "검사 대상 아님", no_checker는 "읽었지만 아직 검사하지 못하는
-# 규칙"(모델 판단은 4단계)이다. 나머지는 저장하지 않으므로 다음 검사가 다시 시도한다.
+# 검사하지 못한 이유. pr·human은 확인 대상이 코드 줄이 아닌 규칙(4.3), no_checker는 "읽었지만
+# 아직 검사하지 못하는 규칙"(모델 판단은 4단계)이다. 나머지는 저장하지 않으므로 다음 검사가
+# 다시 시도한다.
 # run_failed는 채택한 검사기가 이 PR의 파일에서 돌지 못한 것이다 (worker/detect.py)
 UncheckedKind = Literal[
-    "not_code", "no_checker", "cap", "model_failed", "tool_unavailable", "run_failed"
+    "pr", "human", "no_checker", "cap", "model_failed", "tool_unavailable", "run_failed"
 ]
 
 
@@ -77,12 +78,13 @@ def checker_from_json(text: str) -> Checker:
 def plan_check(rule: Rule) -> Unchecked | None:
     """검사기를 작성하지 않을 규칙이면 Unchecked, 작성할 규칙이면 None.
 
-    4.4의 순서는 기존 도구 → 검사기 → 모델 판단 → none이다. 이 단계에는 도구가 없으므로 코드로
-    가릴 수 없는 규칙(none)만 빼고 모두 검사기부터 시도한다. 규칙 읽기의 힌트가 "model"인 규칙도
-    코드 모양으로 가릴 수 있으면 검사기가 더 싸다 (9.3).
+    확인 대상이 코드 줄인 규칙만 검사한다. PR 단위 규칙과 사람이 확인하는 규칙은 목록으로만 보인다.
+    4.4의 순서는 기존 도구 → 검사기 → 모델 판단이다. 이 단계에는 도구가 없으므로 코드 규칙은 모두
+    검사기부터 시도한다. 규칙 읽기의 힌트가 "model"인 규칙도 코드 모양으로 가릴 수 있으면 검사기가
+    더 싸다 (9.3).
     """
-    if rule.check.kind == "none":
-        return Unchecked(rule, "not_code", rule.check.reason or "코드 한 줄로 가릴 수 없는 규칙")
+    if rule.target != "code":
+        return Unchecked(rule, rule.target, rule.check.reason)
     return None
 
 

@@ -31,8 +31,9 @@ RULE: Final = Rule(
 
 
 def test_plan_skips_only_rules_that_code_cannot_show() -> None:
-    none_rule = replace(RULE, check=CheckMethod("none", reason="PR 크기"))
-    assert plan_check(none_rule) == Unchecked(none_rule, "not_code", "PR 크기")
+    for target in ("pr", "human"):
+        other = replace(RULE, target=target, check=CheckMethod("none", reason="PR 크기"))
+        assert plan_check(other) == Unchecked(other, target, "PR 크기")
     assert plan_check(RULE) is None
     assert plan_check(replace(RULE, check=CheckMethod("model", reason="뜻을 읽어야"))) is None
 

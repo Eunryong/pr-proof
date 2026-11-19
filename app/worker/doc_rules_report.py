@@ -49,7 +49,8 @@ MAX_SECTION_CHARS: Final = 30_000
 OMITTED: Final = "… (코멘트 길이 제한으로 나머지를 생략)"
 
 _UNCHECKED_TEXT: Final[Mapping[str, str]] = {
-    "not_code": "검사 대상 아님",
+    "pr": "PR 단위 규칙 (아직 확인하지 않음)",
+    "human": "사람이 확인하는 규칙 (검사하지 않음)",
     "no_checker": "읽었지만 아직 검사하지 못함",
     "cap": "호출 상한에 걸려 이번에 처리하지 못함",
     "model_failed": "검사하지 못함 (모델 호출 실패)",
@@ -57,6 +58,8 @@ _UNCHECKED_TEXT: Final[Mapping[str, str]] = {
     "run_failed": "검사하지 못함 (검사기 실행 실패)",
 }
 _FAILED_KINDS: Final = frozenset({"model_failed", "tool_unavailable", "run_failed"})
+# 확인 대상이 코드 줄이 아닌 규칙 (4.3). 검사하지 못한 것이 아니라 검사 대상이 아니다
+_OTHER_TARGETS: Final = frozenset({"pr", "human"})
 
 
 def section(result: DocRules | None, checkers: Mapping[str, Checker]) -> list[str]:
@@ -86,6 +89,7 @@ def _found(found: Found, checkers: Mapping[str, Checker]) -> list[str]:
         _not_checkable(found.outcomes),
         _failed(found.outcomes),
         _capped(found.outcomes),
+        _other_targets(found.outcomes),
         _checker_details(found, checkers),
         _read_rules(found),
     ]
@@ -95,7 +99,9 @@ def _found(found: Found, checkers: Mapping[str, Checker]) -> list[str]:
 
 def _title_line(found: Found) -> str:
     checked = sum(1 for o in found.outcomes if isinstance(o, RuleChecked))
-    unchecked = len(found.outcomes) - checked
+    pr = len(_unchecked(found.outcomes, frozenset({"pr"})))
+    human = len(_unchecked(found.outcomes, frozenset({"human"})))
+    unchecked = len(found.outcomes) - checked - pr - human
     if found.violations:
         rules = len({v.rule_id for v in found.violations})
         line = f"{VIOLATION} 위반 {len(found.violations)}건 (규칙 {rules}개)"
@@ -105,6 +111,10 @@ def _title_line(found: Found) -> str:
         line = f"검사한 규칙 없음 (읽은 규칙 {len(found.outcomes)}개)"
     if unchecked and (found.violations or checked):
         line += f" · 검사하지 못한 규칙 {unchecked}개"
+    if pr:
+        line += f" · PR 단위 규칙 {pr}개"
+    if human:
+        line += f" · 사람이 확인하는 규칙 {human}개"
     if found.disabled:
         line += f" · `rules.disabled`로 끈 규칙 {found.disabled}개"
     return line
@@ -176,6 +186,23 @@ def _not_checkable(outcomes: Sequence[RuleOutcome]) -> list[str]:
         return []
     head = f"읽었지만 아직 검사하지 못하는 규칙 {len(rules)}개 (예시를 통과하는 검사기가 없음):"
     return ["", head, *_rule_lines(rules, detail=True)]
+
+
+def _other_targets(outcomes: Sequence[RuleOutcome]) -> list[str]:
+    """코드 줄로 확인하지 않는 규칙의 목록. 검사하지 않고 보이기만 한다."""
+    lines: list[str] = []
+    pr = _unchecked(outcomes, frozenset({"pr"}))
+    if pr:
+        head = (
+            f"PR 단위로 확인할 규칙 {len(pr)}개 (커밋 메시지, PR 본문, 브랜치, 바뀐 파일 종류. "
+            "아직 확인하지 않음):"
+        )
+        lines += ["", head, *_rule_lines(pr, detail=True)]
+    human = _unchecked(outcomes, frozenset({"human"}))
+    if human:
+        head = f"사람이 확인하는 규칙 {len(human)}개 (파이프라인이 검사하지 않음):"
+        lines += ["", head, *_rule_lines(human, detail=True)]
+    return lines
 
 
 def _failed(outcomes: Sequence[RuleOutcome]) -> list[str]:

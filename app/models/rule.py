@@ -18,6 +18,10 @@ _EMPHASIS: Final = re.compile(r"[`*]")
 _SPACE: Final = re.compile(r"\s+")
 _NOT_ALNUM: Final = re.compile(r"[^a-z0-9]+")
 
+# 규칙을 무엇을 보고 확인하는지 (4.3). code: 바뀐 코드 줄. pr: PR 자체(커밋 메시지, 제목·본문,
+# 브랜치 이름, 바뀐 파일의 종류). human: 사람이 하는 절차라 PR만 보고는 확인할 수 없다
+Target = Literal["code", "pr", "human"]
+
 
 @dataclass(frozen=True)
 class RuleSource:
@@ -56,6 +60,8 @@ class Rule:
     # 빼는 목록이라 범위를 넓힐 수 없다. 문서가 범위를 밝힌 규칙에는 비어 있다
     exclude: tuple[str, ...] = ()
     exclude_reason: str = ""
+    # 확인 대상. 모델이 고른다. code만 검사하고 pr·human은 코멘트에 목록으로만 보인다
+    target: Target = "code"
 
 
 @dataclass(frozen=True)
