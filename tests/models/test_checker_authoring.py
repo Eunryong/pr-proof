@@ -6,6 +6,7 @@ from typing import Final
 import pytest
 
 from app.models.checker_authoring import (
+    MAX_MODEL_EXAMPLES,
     Answer,
     AnswerExample,
     Shortfall,
@@ -96,6 +97,16 @@ def test_model_examples_fill_the_shortfall() -> None:
         Example("print(1)\n", (1,), "model"),
         Example("log(1)\n", (), "model"),
     )
+
+
+def test_model_examples_beyond_the_shortfall_are_all_checked() -> None:
+    """규칙이 덮는 코드 모양마다 위반 예시를 하나씩 더 쓸 수 있다. 더 쓴 예시도 예시 확인을 거치도록
+    모두 남는다. 상한(MAX_MODEL_EXAMPLES)을 넘는 것만 버린다."""
+    shapes = [(f"x{n} = []\n\n\ndef f():\n    x{n}.append({n})\n", True, [5]) for n in range(6)]
+    passing = [("def g():\n    y = []\n    y.append(1)\n", False, []), ("z = 1\n", False, [])]
+    kept, problems = model_examples((), _answer(*shapes, *passing))
+    assert problems == [] and len(kept) == 8 == MAX_MODEL_EXAMPLES
+    assert sum(1 for e in kept if e.expect_lines) == 6
 
 
 @pytest.mark.parametrize(
