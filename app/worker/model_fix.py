@@ -11,20 +11,24 @@ verify는 모델을 쓰지 않는다. 4.8의 순서대로 하고 앞에서 떨�
 크기 상한(여기는 이유를 다음 회차에 넘긴다). 샌드박스에서 무엇이든 돌리기 전에 앞의 셋을 끝낸다.
 """
 
+import json
 import logging
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Final
 
 from app.models import model_fix as rules
+from app.models import records as record_rules
 from app.models.ai_fix import CALL_BUDGET_USD
 from app.models.cache_key import text_hash
 from app.models.call_budget import Denied, PrScope
+from app.models.db import FixAttempt
 from app.models.diff import ChangedLines, added_lines, change_blocks, new_files
 from app.models.doc_rules import Found
 from app.models.finding import Finding, SkillResult
 from app.models.fix import code_fix_tests_ok, compare
+from app.models.job import PRJob
 from app.models.model_fix import (
     Explanation,
     ModelFix,
@@ -44,6 +48,7 @@ from app.worker.ai_fix import AIEnvironmentError, environment_problem, module_co
 from app.worker.budget import CallBudget
 from app.worker.detect import Detection
 from app.worker.loop import LoopPolicy, LoopState, Verdict, WriteFailed, WriteResult, build_loop
+from app.worker.proposal import MODEL_BUNDLE
 from app.worker.report import format_test_line
 from app.worker.state import Store
 
@@ -97,6 +102,71 @@ def _file_hashes(worktree: Path, files: Sequence[str]) -> dict[str, str]:
         data = read_regular_file(path, max_bytes=MAX_FILE_BYTES) if path is not None else None
         out[rel] = text_hash(data.decode("utf-8", errors="replace")) if data is not None else ""
     return out
+
+
+def notes_for(found: Found, picked: Picked, worktree: Path) -> tuple[record_rules.Target, ...]:
+    """고치기 전에 대상 위반마다 규칙 원문과 위반 줄 앞뒤를 남긴다. 그 수정안이 머지·닫히거나
+    검증에 실패하면 이것으로 기록을 만든다 (4.10)."""
+    texts = {o.rule.id: o.rule.text for o in found.outcomes}
+    lines: dict[str, list[str]] = {}
+    for v in picked.targets:
+        if v.file not in lines:
+            path = repo.worktree_file(worktree, v.file)
+            data = read_regular_file(path, max_bytes=MAX_FILE_BYTES) if path is not None else None
+            lines[v.file] = data.decode("utf-8", errors="replace").split("\n") if data else []
+    return tuple(
+        record_rules.Target(
+            v.id, v.rule_id, texts.get(v.rule_id, ""), v.file, v.line, v.line_text or "",
+            record_rules.context_around(lines[v.file], v.line),
+        )
+        for v in picked.targets
+    )  # fmt: skip
+
+
+def save_attempt(
+    store: Store,
+    job: PRJob,
+    merge_base: str,
+    fix: ModelFix,
+    notes: Sequence[record_rules.Target],
+    worktree: Path,
+) -> ModelFix:
+    """시도 결과를 `fix_attempts`에 저장하고 그 id를 붙인다. 검증을 통과했으면 지금 worktree의
+    패치와 바뀐 파일의 해시도 남긴다. 전달은 이 패치만 올린다 (4.8 끝)."""
+    ready = fix.ready
+    explanation = asdict(fix.explanation) if fix.explanation is not None else None
+    attempt_id = store.save_fix_attempt(
+        FixAttempt(
+            repo=job.repo, pr_number=job.pr_number, head_sha=job.head_sha, merge_base=merge_base,
+            bundle=MODEL_BUNDLE, status=fix.status, attempts=fix.attempts,
+            models_json=json.dumps(list(fix.models)), detail=fix.detail,
+            targets_json=record_rules.targets_to_json(notes),
+            patch=repo.head_diff(worktree) if ready else None,
+            explanation_json=json.dumps(explanation, ensure_ascii=False) if ready else None,
+            file_hashes_json=(
+                json.dumps(_file_hashes(worktree, fix.changed_files)) if ready else None
+            ),
+        )
+    )  # fmt: skip
+    return replace(fix, attempt_id=attempt_id)
+
+
+def reapply(store: Store, attempt_id: int | None, worktree: Path) -> FixAttempt | str:
+    """검증을 통과한 시도의 패치를 새 worktree에 적용하고 바뀐 파일의 해시가 저장한 값과 같은지
+    본다. 모델을 부르지 않는다. 같으면 그 시도, 다르거나 적용하지 못하면 올리지 않는 이유."""
+    attempt = store.fix_attempt(attempt_id) if attempt_id is not None else None
+    if attempt is None or attempt.patch is None or attempt.file_hashes_json is None:
+        return "검증을 통과한 수정안을 저장한 기록이 없음"
+    try:
+        repo.apply_patch(worktree, attempt.patch.encode())
+    except repo.GitError as e:
+        log.warning("저장한 수정안을 다시 적용하지 못함 (시도 %s): %s", attempt_id, e)
+        return "저장한 수정안을 새 worktree에 다시 적용하지 못함"
+    expected = json.loads(attempt.file_hashes_json)
+    if _file_hashes(worktree, sorted(expected)) != expected:
+        log.warning("다시 적용한 수정안의 파일 해시가 다름 (시도 %s)", attempt_id)
+        return "다시 적용한 수정안이 검증한 파일과 다름"
+    return attempt
 
 
 def fix_violations(

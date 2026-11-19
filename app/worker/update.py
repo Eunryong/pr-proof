@@ -123,7 +123,7 @@ def process_update(job: PRJob, deps: Deps) -> str:
         # 이전 커밋의 열린 제안을 정리한다. 머지됐는지도 여기서 알게 된다 (루프 방지에 쓴다)
         proposal.refresh(store, github, job.repo, job.pr_number)
         proposal.supersede(store, github, job.repo, job.pr_number, job.head_sha)
-        result = graph.run_flow(job, ctx)
+        result = graph.run_flow(job, ctx, retry=attempt > 1)
     except DependencyInstallError as e:
         if install_failure_outcome(e.kind, attempt) == "unrunnable":
             body = report.render_install_failure(

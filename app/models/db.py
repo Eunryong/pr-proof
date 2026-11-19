@@ -3,6 +3,7 @@
 from datetime import datetime
 from typing import Literal
 
+from sqlalchemy import UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 # error: 환경 오류가 아닌 예외(파이프라인 버그, 작업 시간 초과). 같은 커밋은 다시 넣지 않는다
@@ -28,6 +29,8 @@ class Proposal(SQLModel, table=True):
     merge_commit: str | None = None
     created_at: datetime
     updated_at: datetime
+    # 이 제안이 올린 수정 시도 (`fix_attempts`). 문서 규칙 경로만 있다. 머지·닫힘의 기록이 읽는다
+    attempt_id: int | None = None
 
 
 class ProposalTarget(SQLModel, table=True):
@@ -168,3 +171,78 @@ class CheckerEntry(SQLModel, table=True):
     detail: str = ""  # 실패한 이유 (마지막 회차)
     attempts_json: str  # worker/loop.py의 Attempt 목록
     created_at: datetime
+
+
+class FixAttempt(SQLModel, table=True):
+    """수정 묶음 하나의 시도 결과 (DESIGN.md 4.8, 7.8). 검증을 통과했으면 그 패치, 설명, 고친 뒤
+    파일의 해시가 있다. 전달이 실패해 다시 올릴 때는 모델을 부르지 않고 이 패치를 새 worktree에
+    적용한 뒤 해시를 맞춰 본다."""
+
+    __tablename__ = "fix_attempts"
+
+    id: int | None = Field(default=None, primary_key=True)
+    repo: str = Field(index=True)
+    pr_number: int = Field(index=True)
+    head_sha: str  # 검증한 원본 PR의 커밋
+    merge_base: str  # 바뀐 줄을 다시 센 기준
+    bundle: str  # 수정 묶음 (지금은 "model")
+    status: str  # model_fix.ModelFixStatus
+    attempts: int  # 작성 회차
+    models_json: str  # 쓴 모델 목록 (JSON 배열)
+    detail: str = ""  # 실패 이유
+    targets_json: str  # records.Target 목록 (JSON)
+    patch: str | None = None  # 검증을 통과한 패치 (`git diff HEAD`). 통과하지 못했으면 None
+    explanation_json: str | None = None
+    file_hashes_json: str | None = None  # 고친 뒤 바뀐 파일의 내용 해시 {경로: 해시}
+    created_at: datetime
+
+
+class SeenViolation(SQLModel, table=True):
+    """검사 한 번에서 찾은 문서 규칙 위반 (DESIGN.md 7.8의 `violations`). 다음 커밋의 검사가
+    "작성자가 직접 고침"을 알아내는 데 쓴다. 같은 커밋을 다시 검사하면 그 커밋의 줄을 바꿔 쓴다."""
+
+    __tablename__ = "violations"
+
+    id: int | None = Field(default=None, primary_key=True)
+    repo: str = Field(index=True)
+    pr_number: int = Field(index=True)
+    head_sha: str = Field(index=True)
+    violation_id: str
+    rule_id: str
+    file: str
+    line: int
+    line_text: str | None = None
+    message: str
+    unit: str  # Violation.unit
+    context: str = ""  # 위반 줄과 앞뒤 5줄 (records.context_around)
+    created_at: datetime
+
+
+class Record(SQLModel, table=True):
+    """팀의 과거 기록 원본 (DESIGN.md 4.10, 6.5, 7.6). 저장소의 글이 들어 있어 믿지 않는 자료다.
+
+    같은 일을 두 번 넣지 않는다: (repo, kind, source_id)가 고유 키다. 검색(임베딩)은 5단계에
+    켠다. 그 전에는 `embedded_at`이 비어 있다.
+    """
+
+    __tablename__ = "records"
+    __table_args__ = (UniqueConstraint("repo", "kind", "source_id"),)
+
+    id: int | None = Field(default=None, primary_key=True)
+    repo: str = Field(index=True)
+    kind: str  # records.RecordKind
+    origin: str  # records.RecordOrigin
+    source_id: str  # 원천 id. 예: "fix_pr:901:<위반 id>"
+    rule_id: str = Field(index=True)
+    rule_text: str
+    file: str
+    line_text: str
+    context: str  # 위반 줄과 앞뒤 5줄
+    diff: str  # 관련 hunk만, 최대 60줄
+    detail: str = ""  # 실패 기록: 실패 이유
+    pr_number: int | None = Field(default=None, index=True)
+    fix_pr_number: int | None = None
+    commit_sha: str | None = None
+    created_at: datetime
+    embedded_at: datetime | None = None
+    embed_model: str | None = None

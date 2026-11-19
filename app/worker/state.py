@@ -15,14 +15,18 @@ from app.models.db import (
     AICall,
     CheckerEntry,
     CommandRecord,
+    FixAttempt,
     ModelCacheEntry,
     ModelCall,
     Proposal,
     ProposalTarget,
+    Record,
     RulesetEntry,
     Run,
+    SeenViolation,
 )
 from app.models.job import PRJob
+from app.models.records import NewRecord
 from app.models.rejection import RejectionKey
 
 
@@ -125,10 +129,12 @@ class Store:
         branch: str,
         number: int,
         targets: Iterable[RejectionKey] = (),
+        attempt_id: int | None = None,
     ) -> None:
         """열린 제안을 기록한다. 같은 스킬의 열린 제안이 있으면 그 기록을 새 커밋·번호로 바꾼다.
 
-        targets는 이 수정안이 고친 위반이다. 기록을 바꿀 때는 이전 목록을 지우고 새로 쓴다.
+        targets는 이 수정안이 고친 위반이다(v1 경로). 기록을 바꿀 때는 이전 목록을 지우고 새로 쓴다.
+        attempt_id는 올린 수정 시도(`fix_attempts`)다(문서 규칙 경로).
         """
         now = _now()
         with Session(self.engine) as session:
@@ -141,9 +147,11 @@ class Store:
                 row = Proposal(
                     repo=repo, pr_number=pr_number, skill=skill, head_sha=head_sha,
                     branch=branch, number=number, state="open", created_at=now, updated_at=now,
+                    attempt_id=attempt_id,
                 )  # fmt: skip
             else:
                 row.head_sha, row.number, row.updated_at = head_sha, number, now
+                row.attempt_id = attempt_id
             session.add(row)
             session.flush()
             old = select(ProposalTarget).where(ProposalTarget.proposal_id == row.id)
@@ -295,6 +303,75 @@ class Store:
         with Session(self.engine) as session:
             session.merge(entry)
             session.commit()
+
+    # --- 수정 시도, 위반, 과거 기록 (fix_attempts, violations, records) ---
+
+    def save_fix_attempt(self, attempt: FixAttempt) -> int:
+        attempt.created_at = _now()
+        with Session(self.engine) as session:
+            session.add(attempt)
+            session.commit()
+            return attempt.id
+
+    def fix_attempt(self, attempt_id: int) -> FixAttempt | None:
+        with Session(self.engine) as session:
+            return session.get(FixAttempt, attempt_id)
+
+    def replace_violations(
+        self, repo: str, pr_number: int, head_sha: str, rows: Iterable[SeenViolation]
+    ) -> None:
+        """이 커밋의 위반 기록을 rows로 바꾼다. 같은 커밋을 다시 검사해도 한 벌만 남는다."""
+        now = _now()
+        with Session(self.engine) as session:
+            stmt = select(SeenViolation).where(
+                SeenViolation.repo == repo, SeenViolation.pr_number == pr_number,
+                SeenViolation.head_sha == head_sha,
+            )  # fmt: skip
+            for old in session.exec(stmt):
+                session.delete(old)
+            for row in rows:
+                row.created_at = now
+                session.add(row)
+            session.commit()
+
+    def previous_violations(self, repo: str, pr_number: int, head_sha: str) -> list[SeenViolation]:
+        """이 PR에서 head_sha가 아닌 커밋 중 가장 최근에 기록한 커밋의 위반."""
+        with Session(self.engine) as session:
+            last = session.exec(
+                select(SeenViolation.head_sha)
+                .where(SeenViolation.repo == repo, SeenViolation.pr_number == pr_number,
+                       SeenViolation.head_sha != head_sha)
+                .order_by(SeenViolation.id.desc())
+            ).first()  # fmt: skip
+            if last is None:
+                return []
+            stmt = select(SeenViolation).where(
+                SeenViolation.repo == repo, SeenViolation.pr_number == pr_number,
+                SeenViolation.head_sha == last,
+            )  # fmt: skip
+            return list(session.exec(stmt.order_by(SeenViolation.id)))
+
+    def add_record(self, new: NewRecord) -> bool:
+        """기록 하나를 넣는다. 같은 (repo, kind, source_id)가 이미 있으면 넣지 않고 False."""
+        with Session(self.engine) as session:
+            exists = session.exec(
+                select(Record.id).where(
+                    Record.repo == new.repo, Record.kind == new.kind,
+                    Record.source_id == new.source_id,
+                )
+            ).first()  # fmt: skip
+            if exists is not None:
+                return False
+            session.add(Record(**vars(new), created_at=_now()))
+            session.commit()
+            return True
+
+    def records(self, repo: str, pr_number: int | None = None) -> list[Record]:
+        with Session(self.engine) as session:
+            stmt = select(Record).where(Record.repo == repo)
+            if pr_number is not None:
+                stmt = stmt.where(Record.pr_number == pr_number)
+            return list(session.exec(stmt.order_by(Record.id)))
 
     def command_handled(self, comment_id: int) -> bool:
         with Session(self.engine) as session:

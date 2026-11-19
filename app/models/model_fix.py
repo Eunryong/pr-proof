@@ -11,7 +11,6 @@ import re
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Final, Literal
 
 from pydantic import BaseModel, ConfigDict, ValidationError
@@ -75,7 +74,8 @@ ModelFixStatus = Literal[
 
 @dataclass(frozen=True)
 class ModelFix:
-    """모델 수정 묶음의 결과 (4.7 출력, 5.5 fixes["model"]). 패치 본문은 파일에 두고 경로만 둔다."""
+    """모델 수정 묶음의 결과 (4.7 출력, 5.5 fixes["model"]). 패치 본문은 상태에 넣지 않고
+    `fix_attempts`의 id만 둔다."""
 
     status: ModelFixStatus
     targets: tuple[str, ...]  # 모델에 넘긴 위반 id
@@ -84,7 +84,7 @@ class ModelFix:
     explanation: Explanation | None = None
     verification: Verification | None = None
     changed_files: tuple[str, ...] = ()
-    patch_path: Path | None = None
+    attempt_id: int | None = None  # 저장한 시도 (`fix_attempts`). 저장하기 전에는 None
     calls: int = 0  # 상한에서 센 값
     cache_hits: int = 0
     input_tokens: int = 0

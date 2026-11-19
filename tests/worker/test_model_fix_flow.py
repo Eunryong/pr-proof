@@ -303,8 +303,7 @@ def test_model_fix_state_survives_checkpoint() -> None:
         explanation=model_fix_rules.Explanation(
             "s", (model_fix_rules.Change("a.py", 2, "R", "w"),)
         ),
-        verification=model_fix_rules.Verification(9, 1, 1, False, 1, 2),
-        patch_path=Path("/tmp/x.patch"),
+        verification=model_fix_rules.Verification(9, 1, 1, False, 1, 2), attempt_id=3,
     )  # fmt: skip
     serde = JsonPlusSerializer(allowed_msgpack_modules=list(graph._STATE_TYPES))
     restored = serde.loads_typed(serde.dumps_typed({"f": fix}))["f"]

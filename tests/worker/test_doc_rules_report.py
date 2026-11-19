@@ -338,15 +338,15 @@ def test_fix_states_before_and_without_a_fix(tmp_path) -> None:
     )
 
 
-def test_fork_shows_the_fix_in_the_comment_instead_of_a_pull_request(tmp_path) -> None:
-    patch = tmp_path / "fix.patch"
-    patch.write_text("--- a/orders/a.py\n+++ b/orders/a.py\n@@ -2 +2 @@\n-print(x)\n+log(x)\n")
-    fix = replace(READY, patch_path=patch)
+def test_fork_shows_the_fix_in_the_comment_instead_of_a_pull_request() -> None:
+    patch = "--- a/orders/a.py\n+++ b/orders/a.py\n@@ -2 +2 @@\n-print(x)\n+log(x)\n"
     fork = ProposalResult(
         reason="포크에서 온 PR이라 수정안 PR을 열 수 없음 (수정 내용은 결과 코멘트에)"
     )
-    text = _fix_text(FixView(2, 0, "done", fix=fix, proposal=fork))
+    text = _fix_text(FixView(2, 0, "done", fix=READY, proposal=fork, patch=patch))
     assert "수정안 PR을 만들지 않았습니다 (포크에서 온 PR" in text
     assert "<details><summary>수정 내용</summary>" in text and "+log(x)" in text
     secret = ProposalResult(reason="비밀값으로 보이는 내용이 있음 (토큰·키 형식)")
-    assert "+log(x)" not in _fix_text(FixView(2, 0, "done", fix=fix, proposal=secret))
+    assert "+log(x)" not in _fix_text(
+        FixView(2, 0, "done", fix=READY, proposal=secret, patch=patch)
+    )
