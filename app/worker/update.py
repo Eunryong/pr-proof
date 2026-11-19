@@ -13,21 +13,28 @@ from app.worker.github import GitHubError
 CLOSED_HEAD: Final = "closed"  # PR이 닫혔다는 Redis 최신 head 표시. 어떤 커밋 SHA와도 같지 않다
 
 
-def _is_current_head(job: PRJob, deps: Deps, final: bool) -> bool:
-    """GitHub에서 PR의 지금 head를 확인하고 Redis의 최신 head를 그 값으로 바로잡는다.
+def _skip_reason(job: PRJob, deps: Deps, final: bool) -> str | None:
+    """GitHub에서 PR의 지금 상태를 확인한다. 검사하지 않을 작업이면 그 이유를, 검사할 작업이면 None.
+
+    닫힌 PR은 검사하지 않는다. 닫히기 전에 등록된 작업이 닫힌 뒤에 실행될 수 있다(워커가 죽어 RQ가
+    나중에 다시 실행한 경우). 그대로 두면 닫힌 PR의 코멘트를 고치고 제안 PR을 연다. 최신 head를
+    닫힘 표시로 되돌려, 이미 돌고 있는 작업도 멈추게 한다.
 
     웹훅은 순서대로 오지 않을 수 있다. 옛 커밋의 웹훅이 늦게 오면 Redis의 최신 head가 옛 커밋으로
-    덮이고, 그대로 두면 옛 커밋의 결과가 PR에 남는다. 확인에 실패하면 환경 오류로 재시도한다
-    (아직 runs 기록 전이므로 마지막 시도면 작업 키만 지운다).
+    덮이고, 그대로 두면 옛 커밋의 결과가 PR에 남는다. 그래서 최신 head를 GitHub의 값으로 바로잡는다.
+    확인에 실패하면 환경 오류로 재시도한다(아직 runs 기록 전이므로 마지막 시도면 작업 키만 지운다).
     """
     try:
-        actual = deps.github.pr_refs(job.repo, job.pr_number).head_sha
+        refs = deps.github.pr_refs(job.repo, job.pr_number)
     except GitHubError:
         if final:
             deps.store.release(job)
         raise
-    deps.store.set_latest_head(job.repo, job.pr_number, actual)
-    return actual == job.head_sha
+    if not refs.open:
+        deps.store.set_latest_head(job.repo, job.pr_number, CLOSED_HEAD)
+        return "closed"
+    deps.store.set_latest_head(job.repo, job.pr_number, refs.head_sha)
+    return None if refs.head_sha == job.head_sha else "stale"
 
 
 def _context(deps: Deps, run_id: int, comment_id: int | None) -> graph.FlowContext:
@@ -80,8 +87,9 @@ def resume_fix(job: PRJob, deps: Deps, approval: dict[str, Any]) -> str:
 def process_update(job: PRJob, deps: Deps) -> str:
     store, github = deps.store, deps.github
     attempt, final = retry.attempt()
-    if not _is_current_head(job, deps, final):
-        return "stale"  # 더 새 커밋이 있다. 그 커밋의 작업(또는 동기화)이 처리한다
+    skip = _skip_reason(job, deps, final)
+    if skip is not None:
+        return skip  # stale: 더 새 커밋의 작업(또는 동기화)이 처리한다. closed: 할 일이 없다
     run_id = store.start_run(job)
     comment_id = store.last_comment_id(job.repo, job.pr_number)
     ctx = _context(deps, run_id, comment_id)

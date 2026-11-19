@@ -9,7 +9,7 @@ from app.models.db import Run
 from app.models.job import PRJob
 from app.sandbox.docker_cli import SandboxError
 from app.sandbox.venv import DependencyInstallError
-from app.worker import main, retry
+from app.worker import main, retry, update
 from app.worker.github import GitHubError
 from app.worker.skills import lint
 
@@ -55,6 +55,17 @@ def test_stale_job_does_nothing(env) -> None:
     assert main.handle(_payload(), env["deps"]) == "stale"
     assert env["gh"].kinds() == []  # 코멘트를 건드리지 않는다
     assert _states(env) == []
+
+
+def test_closed_pr_is_not_checked(env) -> None:
+    """닫히기 전에 등록된 작업이 닫힌 뒤에 실행된다 (워커가 죽어 RQ가 나중에 다시 실행한 경우)."""
+    env["gh"].state = "closed"
+    use_runner(env, lambda *a, **k: pytest.fail("닫힌 PR을 검사하면 안 된다"))
+    assert main.handle(_payload(), env["deps"]) == "closed"
+    assert env["gh"].kinds() == []  # 코멘트도 제안 PR도 건드리지 않는다
+    assert _states(env) == []
+    # 닫힘 표시를 head로 덮지 않는다. 덮으면 돌고 있던 작업이 멈추지 않는다
+    assert env["redis"].get(state_keys.latest_head("o/r", 1)).decode() == update.CLOSED_HEAD
 
 
 def test_late_webhook_for_old_commit_restores_latest_head(env) -> None:
