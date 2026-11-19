@@ -69,12 +69,15 @@ class Runtime:
 
 
 def read(
-    worktree: Path, base_sha: str, settings: RulesSettings, rt: Runtime
+    worktree: Path, base_sha: str, settings: RulesSettings, rt: Runtime, changes_diff: bytes = b""
 ) -> RulesRead | DocRules:
-    """base의 규칙 문서와 도구 설정을 읽는다. 검사할 규칙이 있으면 RulesRead, 없으면 끝난 결과."""
+    """base의 규칙 문서와 도구 설정을 읽는다. 검사할 규칙이 있으면 RulesRead, 없으면 끝난 결과.
+
+    changes_diff(PR의 diff)는 규칙 문서가 400KB를 넘는 저장소에서 관련 절을 찾는 데 쓴다 (6.3).
+    """
     configured = (config_rule(rt.ruff.config),) if rt.ruff and rt.ruff.config else ()
     tool_rules = apply_disabled(configured, settings.disabled)
-    docs = _read_documents(worktree, base_sha, settings, rt)
+    docs = _read_documents(worktree, base_sha, settings, rt, changes_diff)
     if isinstance(docs, RulesRead):
         return replace(docs, rules=(*docs.rules, *tool_rules),
                        disabled=docs.disabled + len(configured) - len(tool_rules))  # fmt: skip
@@ -85,19 +88,19 @@ def read(
 
 
 def _read_documents(
-    worktree: Path, base_sha: str, settings: RulesSettings, rt: Runtime
+    worktree: Path, base_sha: str, settings: RulesSettings, rt: Runtime, changes_diff: bytes
 ) -> RulesRead | DocRules:
     """규칙 문서를 모델로 읽는다. 규칙이 있으면 RulesRead, 없거나 못 읽었으면 끝난 결과."""
     try:
         result = rules.load_rules(
             worktree, base_sha, settings, model=rt.models.rules, store=rt.store,
-            budget=rt.budget, ask=rt.ask,
+            budget=rt.budget, ask=rt.ask, sections=rt.retriever, changes_diff=changes_diff,
         )  # fmt: skip
     except GitError as e:
         log.warning("규칙 문서를 읽지 못함: %s", e)
         return NotRun(f"base의 규칙 문서를 읽지 못함: {_first_line(str(e))}")
     match result:
-        case rules.RulesFound(key=key, ruleset=ruleset, rules=found):
+        case rules.RulesFound(key=key, ruleset=ruleset, rules=found, sections=read_sections):
             if any(r.exclude for r in found):
                 # 범위 추정의 효과 확인. 규칙 묶음은 저장된 것이어도 이 PR의 base 목록으로 매번 본다
                 try:
@@ -106,7 +109,8 @@ def _read_documents(
                     log.warning("base의 파일 목록을 읽지 못함: %s", e)
                     return NotRun(f"base의 파일 목록을 읽지 못함: {_first_line(str(e))}")
                 found = tuple(checked_exclude(r, base_files) for r in found)
-            return RulesRead(key, found, disabled=len(ruleset.rules) - len(found))
+            return RulesRead(key, found, disabled=len(ruleset.rules) - len(found),
+                             sections=read_sections)  # fmt: skip
         case rules.NoRuleDocuments(unread=unread):
             return NoRuleDocs(unread)
         case rules.NoRules(ruleset=ruleset):
@@ -199,6 +203,7 @@ def find(
         usage=call_usage(calls, limit),
         note=read.note,
         retrievals=merge_retrievals(retrievals),
+        sections=read.sections,
     )
 
 

@@ -60,6 +60,11 @@ MANY_VIOLATIONS_NOTE: Final = (
 MAX_LISTED_RULES: Final = 60
 MAX_CHECKER_DETAILS: Final = 10
 MAX_REFERENCES: Final = 30
+MAX_LISTED_SECTIONS: Final = 80
+SECTIONS_NOTE: Final = (
+    "읽지 않은 절의 규칙은 이 PR에 적용되지 않았습니다. `.pipeline.yaml`의 `rules.docs`를 규칙이 "
+    "있는 문서로 좁혀 합계가 400KB 이하가 되면 문서 전체를 읽습니다."
+)
 MAX_BODY_CHARS: Final = 4000
 MAX_QUOTE_CHARS: Final = 500
 MAX_DETAIL_CHARS: Final = 300
@@ -184,6 +189,7 @@ def _found(
          f"({inline_code(found.note, MAX_DETAIL_CHARS)})"]
         if found.note else []
     )  # fmt: skip
+    head += sections_read(found.sections)
     tail = ["", usage_line(found.usage), "", HOW_TO_CORRECT]
     by_id = {d.violation_id: d for d in decisions.decisions} if decisions else {}
     blocks = [
@@ -601,6 +607,19 @@ def _checker_block(rule: Rule, checker: Checker) -> list[str]:
                   f"{example_fence}{'text' if by_path else 'python'}", e.code.rstrip("\n"),
                   example_fence]  # fmt: skip
     return [*lines, "", "</details>"]
+
+
+def sections_read(sections: Sequence[str]) -> list[str]:
+    """규칙 문서가 커서 관련 절만 읽었을 때 (6.3). 읽지 않은 절의 규칙은 이 PR에 적용되지 않았다."""
+    if not sections:
+        return []
+    shown = [f"- {inline_code(s, 200)}" for s in sections[:MAX_LISTED_SECTIONS]]
+    if len(sections) > MAX_LISTED_SECTIONS:
+        shown.append(f"- 외 {len(sections) - MAX_LISTED_SECTIONS}개")
+    return [
+        "", f"규칙 문서가 커서 관련 절 {len(sections)}개만 읽음. {SECTIONS_NOTE}",
+        "", f"<details><summary>읽은 절 {len(sections)}개</summary>", "", *shown, "", "</details>",
+    ]  # fmt: skip
 
 
 def _retrievals(

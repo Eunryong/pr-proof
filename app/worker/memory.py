@@ -368,6 +368,28 @@ class Retriever:
             self.error = _short(e)
             log.warning("밀린 기록을 임베딩하지 못함 %s: %s", self.repo, self.error)
 
+    def find_sections(
+        self, chunks: Sequence[tuple[str, str]], query: str
+    ) -> list[tuple[str, float]]:
+        """큰 규칙 문서의 조각 (6.3). chunks는 (조각 id, 임베딩할 글)이다. 이 저장소의 문서
+        컬렉션에 없는 조각만 임베딩해 넣고(조각 id는 내용 해시라 바뀐 조각만 새로 넣는다), 질의와
+        가까운 조각의 (id, 유사도)를 top-k로 돌려준다. 지금 문서에 없는 옛 조각은 버린다. 실패하면
+        예외."""
+        if self.error:
+            raise SearchUnavailable(self.error)
+        known = self.vectors.known_ids(self.repo, kind="docs")
+        new = [(i, t) for i, t in dict(chunks).items() if i not in known]
+        for start in range(0, len(new), INDEX_BATCH):
+            batch = new[start : start + INDEX_BATCH]
+            embedded = embed(self.encoder, [t for _, t in batch], role="passage")
+            self.vectors.store(self.repo, [i for i, _ in batch], embedded.vectors,
+                               [{"repo": self.repo, "kind": "doc"}] * len(batch),
+                               kind="docs")  # fmt: skip
+        current = {i for i, _ in chunks}
+        vector = embed(self.encoder, [query], role="query").vectors[0]
+        found = self.vectors.search_ids(self.repo, vector, self.settings.top_k, kind="docs")
+        return [(i, s) for i, s in found if i in current]
+
     def find(self, site: str, queries: Sequence[str]) -> Selection:
         """queries(질의 글) 각각의 top-k를 합쳐 site가 쓰는 종류만 기준값으로 고른다."""
         self.prepare()

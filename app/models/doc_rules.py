@@ -75,6 +75,7 @@ class RulesRead:
     disabled: int  # `rules.disabled`로 뺀 규칙 수
     # 도구 설정의 규칙만으로 검사할 때 규칙 문서를 읽지 못한 이유 (4.3 "실패 시")
     note: str = ""
+    sections: tuple[str, ...] = ()  # 규칙 문서가 커서 관련 절만 읽었으면 그 절 (6.3)
 
 
 @dataclass(frozen=True)
@@ -115,6 +116,7 @@ class Found:
     note: str = ""  # RulesRead.note
     judge: JudgeUsage | None = None  # 모델 판단을 한 검사만
     retrievals: tuple[Retrieval, ...] = ()  # 검사기 작성이 넣은 과거 기록 (검색을 켠 저장소)
+    sections: tuple[str, ...] = ()  # RulesRead.sections
 
 
 DocRules = NotRun | NoRuleDocs | NoRulesFound | Found

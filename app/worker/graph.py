@@ -303,7 +303,7 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
         rt = doc_runtime(job)
         if rt.retriever is not None:  # 검색을 켠 첫 검사에서 폴더를 만들고 밀린 기록을 넣는다 (6.5)
             rt.retriever.prepare()
-        read = doc_rules.read(ctx.worktree, job.base_sha, ctx.base.repo.rules, rt)
+        read = doc_rules.read(ctx.worktree, job.base_sha, ctx.base.repo.rules, rt, ctx.changes_diff)
         if isinstance(read, RulesRead):
             return {"rules_read": read}
         return doc_rules_done(read)

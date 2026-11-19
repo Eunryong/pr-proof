@@ -285,15 +285,13 @@ class Section:
     end: int  # 하위 절을 포함한 끝 (다음 같은 단계 이상의 제목 줄)
 
 
-def sections(text: str) -> tuple[str | None, tuple[Section, ...]]:
-    """(맨 위 제목, 절 목록). ATX 제목(#)만 보고, 코드 블록 안의 # 줄은 제목이 아니다.
-
-    문서에 # 제목이 하나뿐이고 다른 제목보다 앞에 있으면 문서 이름으로 보고 경로에서 뺀다.
-    """
-    lines = text.splitlines()
-    headings: list[tuple[int, int, str]] = []  # (줄, 단계, 제목)
+def headings(text: str) -> tuple[tuple[int, int, str] | None, list[tuple[int, int, str]]]:
+    """(맨 위 제목, 나머지 제목들). 제목은 (줄, 단계, 정리한 제목)이다. ATX 제목(#)만 보고, 코드
+    블록 안의 # 줄은 제목이 아니다. 문서에 # 제목이 하나뿐이고 다른 제목보다 앞에 있으면 문서
+    이름(맨 위 제목)으로 보고 나머지에서 뺀다."""
+    found: list[tuple[int, int, str]] = []  # (줄, 단계, 제목)
     fence: str | None = None
-    for i, line in enumerate(lines):
+    for i, line in enumerate(text.splitlines()):
         opened = _FENCE.match(line)
         if fence is not None:
             if opened and opened.group(1)[0] == fence[0] and len(opened.group(1)) >= len(fence):
@@ -304,21 +302,25 @@ def sections(text: str) -> tuple[str | None, tuple[Section, ...]]:
             continue
         heading = _HEADING.match(line)
         if heading:
-            headings.append((i, len(heading.group(1)), normalize(heading.group(2) or "")))
+            found.append((i, len(heading.group(1)), normalize(heading.group(2) or "")))
+    level_ones = [h for h in found if h[1] == 1]
+    if len(level_ones) == 1 and found[0] == level_ones[0]:
+        return found[0], found[1:]
+    return None, found
 
-    title = None
-    level_ones = [h for h in headings if h[1] == 1]
-    if len(level_ones) == 1 and headings[0] == level_ones[0]:
-        title = level_ones[0][2]
-        headings = headings[1:]
 
+def sections(text: str) -> tuple[str | None, tuple[Section, ...]]:
+    """(맨 위 제목, 절 목록). 문서 이름인 맨 위 제목은 경로에서 뺀다 (`headings`)."""
+    lines = text.splitlines()
+    top, found = headings(text)
+    title = top[2] if top is not None else None
     result = [Section((), 0, len(lines))]
     stack: list[tuple[int, str]] = []  # (단계, 제목)
-    for n, (line_no, level, name) in enumerate(headings):
+    for n, (line_no, level, name) in enumerate(found):
         while stack and stack[-1][0] >= level:
             stack.pop()
         stack.append((level, name))
-        end = next((h[0] for h in headings[n + 1 :] if h[1] <= level), len(lines))
+        end = next((h[0] for h in found[n + 1 :] if h[1] <= level), len(lines))
         result.append(Section(tuple(s[1] for s in stack), line_no + 1, end))
     return title, tuple(result)
 
