@@ -76,7 +76,9 @@ class AIErrorKind(StrEnum):
     EXIT = "exit"  # 0이 아닌 종료 코드나 is_error (로그인 풀림 포함)
     BAD_JSON = "bad_json"
     BUDGET = "budget"  # --max-budget-usd를 넘김
-    TOOLS = "tools"  # 모델에 보인 도구 목록이 기대와 다름. 호출을 중단했다
+    # 모델에 보인 도구 목록이 기대와 다르거나, 경로 감시 훅이 돌지 않음. 결과를 쓰지 않는다
+    TOOLS = "tools"
+    APPLY = "apply"  # 모델 폴더의 변경을 worktree에 적용하지 못함
 
 
 @dataclass(frozen=True)
@@ -105,6 +107,8 @@ class ClaudeResult:
     # 모델이 부르려 한, 허용 목록 밖 도구의 (이름, 횟수). 목록에 없는 도구는 CLI가 "없는 도구"로
     # 답해 permission_denials에 잡히지 않으므로 스트림의 tool_use에서 센다
     unexpected_tools: tuple[tuple[str, int], ...] = ()
+    # 모델이 부른, 목록 안 도구의 횟수. 경로 감시 훅이 호출마다 돌았는지 맞춰 보는 데 쓴다
+    tool_uses: int = 0
 
 
 # 표준 출력 한 줄 → 호출을 중단할 이유. 계속해도 되면 None
@@ -234,9 +238,15 @@ def run_claude(
     timeout: float = DEFAULT_TIMEOUT_S,
     runner: Runner = _run,
     environ: Mapping[str, str] | None = None,
+    settings: Path | None = None,
 ) -> ClaudeResult:
-    """worktree를 cwd로 파일 도구만 준 claude를 한 번 실행한다. 셸을 거치지 않는다."""
-    args = build_args("file_tools", model, max_budget_usd)
+    """worktree를 cwd로 파일 도구만 준 claude를 한 번 실행한다. 셸을 거치지 않는다.
+
+    settings는 파이프라인이 쓴 설정 파일(경로 감시 훅)이다. `--restricted`는 사용자·저장소의 설정을
+    읽지 않지만 `--settings`로 넘긴 파일은 읽는다 (2.1.328에서 확인).
+    """
+    extra = () if settings is None else ("--settings", str(settings))
+    args = build_args("file_tools", model, max_budget_usd, extra)
     try:
         watch = _watch_for("file_tools")
         proc = runner(args, prompt, worktree, claude_env(environ), timeout, watch)
@@ -323,6 +333,7 @@ def parse_output(stdout: str, returncode: int, stderr: str = "") -> ClaudeResult
         text=text if isinstance(text, str) else "",
         detail=detail,
         unexpected_tools=_unexpected_tools(stdout, "file_tools"),
+        tool_uses=_expected_tool_uses(stdout, "file_tools"),
     )
 
 
@@ -374,8 +385,8 @@ def _events(stdout: str) -> tuple[dict | None, dict | None]:
     return init, result
 
 
-def _unexpected_tools(stdout: str, shape: CallShape) -> tuple[tuple[str, int], ...]:
-    """assistant 메시지의 tool_use 중 이 모양의 목록에 없는 이름과 횟수 (이름순)."""
+def _tool_counts(stdout: str) -> dict[str, int]:
+    """assistant 메시지의 tool_use를 도구 이름별로 센다."""
     counts: dict[str, int] = {}
     for line in stdout.splitlines():
         event = _json_object(line)
@@ -385,9 +396,18 @@ def _unexpected_tools(stdout: str, shape: CallShape) -> tuple[tuple[str, int], .
             if not isinstance(block, dict) or block.get("type") != "tool_use":
                 continue
             name = str(block.get("name", ""))
-            if name not in _SHAPE_TOOLS[shape]:
-                counts[name] = counts.get(name, 0) + 1
-    return tuple(sorted(counts.items()))
+            counts[name] = counts.get(name, 0) + 1
+    return counts
+
+
+def _unexpected_tools(stdout: str, shape: CallShape) -> tuple[tuple[str, int], ...]:
+    """assistant 메시지의 tool_use 중 이 모양의 목록에 없는 이름과 횟수 (이름순)."""
+    counts = _tool_counts(stdout)
+    return tuple(sorted((n, c) for n, c in counts.items() if n not in _SHAPE_TOOLS[shape]))
+
+
+def _expected_tool_uses(stdout: str, shape: CallShape) -> int:
+    return sum(c for n, c in _tool_counts(stdout).items() if n in _SHAPE_TOOLS[shape])
 
 
 def _checked_status(

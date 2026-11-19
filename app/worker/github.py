@@ -22,6 +22,9 @@ class PullRefs:
     open: bool
     head_ref: str = ""  # PR 브랜치 이름. 제안 PR의 base가 된다
     head_repo: str = ""  # PR 브랜치가 있는 리포. 원본 리포와 다르면 포크 PR
+    # PR 작성자와 저장소의 관계, 로그인 이름. 워커가 체크아웃 전에 이 값으로 실행을 정한다 (8.6)
+    author_association: str = ""
+    author_login: str = ""
 
 
 @dataclass(frozen=True)
@@ -69,13 +72,17 @@ class GitHub:
         return self._login
 
     def pr_refs(self, repo: str, pr_number: int) -> PullRefs:
-        """PR의 지금 head·base SHA와 열림 여부."""
-        jq = '[.head.sha, .base.sha, .state, .head.ref, (.head.repo.full_name // "")] | @tsv'
+        """PR의 지금 head·base SHA, 열림 여부, 작성자. 조회 한 번에서 같이 읽는다."""
+        jq = (
+            '[.head.sha, .base.sha, .state, .head.ref, (.head.repo.full_name // ""), '
+            '(.author_association // ""), (.user.login // "")] | @tsv'
+        )
         out = self._run(["api", f"repos/{repo}/pulls/{pr_number}", "--jq", jq], None)
-        head, base, state, head_ref, head_repo = (out.rstrip("\n").split("\t") + ["", ""])[:5]
+        fields = (out.rstrip("\n").split("\t") + [""] * 4)[:7]
+        head, base, state, head_ref, head_repo, association, login = fields
         return PullRefs(
             head_sha=head, base_sha=base, open=state == "open", head_ref=head_ref,
-            head_repo=head_repo,
+            head_repo=head_repo, author_association=association, author_login=login,
         )  # fmt: skip
 
     # --- 제안 PR (DESIGN.md F10) ---
