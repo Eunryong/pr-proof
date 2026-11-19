@@ -152,8 +152,10 @@ scope_exclude, examples를 빈 목록으로, scope_reason을 빈 문자열로, c
   "checker", 코드의 뜻을 읽어야 가릴 수 있으면 "model". target이 "code"가 아니면 "none".
 - reason: target이 "pr"이나 "human"이면 그렇게 고른 이유 한 줄. target이 "code"이고 check가
   "model"이면 그 이유 한 줄. 그 밖에는 빈 문자열.
-- fix: 어긴 코드를 동작을 바꾸지 않고 그 자리에서 고칠 수 있으면 "model", 고치는 영향이 넓거나
-  (이름 바꾸기 등) 고칠 수 없으면 "none".
+- fix: 어긴 코드를 그 파일 안에서 고칠 수 있으면 "model". 수정안은 파이프라인이 테스트로 확인하고
+  사람이 리뷰한 뒤 머지하므로, 고치면 동작이 달라질 수 있다는 것만으로 "none"을 고르지 않는다.
+  고치려면 다른 파일의 사용처까지 바꿔야 하거나(이름 바꾸기, 파일 옮기기 등) 코드로 고칠 수 없으면
+  "none".
 규칙이 없으면 rules를 빈 목록으로 답한다. 답은 주어진 JSON 스키마로만 한다."""
 
 ANSWER_SCHEMA: Final[Mapping[str, object]] = {
