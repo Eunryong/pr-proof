@@ -60,7 +60,7 @@ def read(
     """base의 규칙 문서를 읽는다. 검사할 규칙이 있으면 RulesRead, 없거나 못 읽었으면 끝난 결과."""
     try:
         result = rules.load_rules(
-            worktree, base_sha, settings, model=rt.models.light, store=rt.store,
+            worktree, base_sha, settings, model=rt.models.rules, store=rt.store,
             budget=rt.budget, ask=rt.ask,
         )  # fmt: skip
     except GitError as e:
@@ -103,7 +103,7 @@ def author(read: RulesRead, rt: Runtime) -> tuple[RuleOutcome, ...] | NotRun:
 def _outcome(check: RuleCheck, models: ModelSettings) -> RuleOutcome:
     if isinstance(check, Unchecked):
         return RuleUnchecked(check.rule, check.kind, check.detail)
-    key = checker_key(check.rule, models.light, models.heavy)
+    key = checker_key(check.rule, models.checker)
     ref = CheckerRef(key=key, id=check.checker.id, kind=check.checker.kind, cached=check.cached)
     return RuleChecked(check.rule, ref)
 

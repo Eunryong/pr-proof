@@ -39,7 +39,14 @@ HOW_TO_CORRECT: Final = (
     "규칙 해석이 틀렸으면 README의 그 문장을 고치거나 "
     "`.pipeline.yaml`의 `rules.disabled`에 규칙 id를 적으세요."
 )
-MAX_LISTED_VIOLATIONS: Final = 30
+# 규칙마다 바로 보이는 위반 수. 나머지는 접는다 (11.2 D6)
+MAX_SHOWN_PER_RULE: Final = 10
+# 접은 목록에 싣는 위반 수의 합. 넘는 것은 건수만 적는다 (코멘트 길이)
+MAX_FOLDED_VIOLATIONS: Final = 300
+MANY_VIOLATIONS_NOTE: Final = (
+    "위반이 많습니다. 규칙이 문서에 새로 추가돼 기존 코드의 위반이 한꺼번에 나온 것일 수 있습니다. "
+    "규칙마다 앞 10건만 보이고 나머지는 접었습니다."
+)
 MAX_LISTED_RULES: Final = 60
 MAX_CHECKER_DETAILS: Final = 10
 MAX_BODY_CHARS: Final = 4000
@@ -151,19 +158,39 @@ def _how_checked(outcome: RuleOutcome) -> str:
 
 
 def _violations(found: Found) -> list[str]:
+    """규칙별 건수와 규칙마다 앞 몇 건. 나머지는 접는다 (4.9, 11.2 D6).
+
+    위반이 많아도 코멘트의 첫 화면에 모든 규칙이 보이게 한다. 접은 목록도 상한이 있다.
+    """
     if not found.violations:
         return []
     by_rule = {o.rule.id: o for o in found.outcomes}
+    grouped: dict[str, list[Violation]] = {}
+    for v in found.violations:
+        grouped.setdefault(v.rule_id, []).append(v)
     lines = ["", "위반:"]
-    for v in found.violations[:MAX_LISTED_VIOLATIONS]:
-        outcome = by_rule[v.rule_id]
+    if any(len(vs) > MAX_SHOWN_PER_RULE for vs in grouped.values()):
+        lines.insert(1, MANY_VIOLATIONS_NOTE)
+        lines.insert(1, "")
+    folded_left = MAX_FOLDED_VIOLATIONS
+    for rule_id, violations in grouped.items():
+        outcome = by_rule[rule_id]
         lines += [
-            f"- {_where(v)} `{v.rule_id}` {_quote(outcome.rule)}",
+            f"- `{rule_id}` {_quote(outcome.rule)} · {len(violations)}건",
             f"  출처: {_source(outcome.rule)} · {_how_checked(outcome)}",
         ]
-    hidden = len(found.violations) - MAX_LISTED_VIOLATIONS
-    if hidden > 0:
-        lines.append(f"- 외 {hidden}건")
+        lines += [f"  - {_where(v)}" for v in violations[:MAX_SHOWN_PER_RULE]]
+        rest = violations[MAX_SHOWN_PER_RULE:]
+        if not rest:
+            continue
+        shown = rest[:folded_left]
+        folded_left -= len(shown)
+        lines += ["", f"<details><summary><code>{rule_id}</code>의 나머지 {len(rest)}건</summary>",
+                  ""]  # fmt: skip
+        lines += [f"  - {_where(v)}" for v in shown]
+        if len(rest) > len(shown):
+            lines.append(f"  - 외 {len(rest) - len(shown)}건")
+        lines += ["", "</details>", ""]
     return lines
 
 

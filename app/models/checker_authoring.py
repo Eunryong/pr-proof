@@ -38,7 +38,8 @@ _CODE_KINDS: Final[tuple[CheckerKind, ...]] = ("ast-grep", "python-ast")
 _PATH_KINDS: Final[tuple[CheckerKind, ...]] = ("path-pattern",)
 MAX_PATH_CHARS: Final = 200
 MAX_ATTEMPTS: Final = 3
-# 이만큼 ast-grep으로 실패하면 Python AST 스크립트로 바꾼다 (5.3 형식 바꾸기, Python 저장소만)
+# 이만큼 ast-grep으로 실패하면 Python AST 스크립트로 바꾼다 (5.3 형식 바꾸기, Python 저장소만).
+# 모델은 바꾸지 않는다: 세 회차 모두 `model.checker`다 (11.2 D7)
 AST_GREP_ATTEMPTS: Final = 2
 MIN_VIOLATING: Final = 2
 MIN_PASSING: Final = 2
@@ -117,17 +118,16 @@ def _example_parts(examples: Sequence[Example]) -> list[list[str]]:
     return [[e.code, ",".join(map(str, e.expect_lines))] for e in examples]
 
 
-def checker_key(rule: Rule, light: str, heavy: str) -> str:
+def checker_key(rule: Rule, model: str) -> str:
     """규칙별 검사기의 캐시 키 (9.1): 규칙 원문 + 문서 예시 + 도구 목록 버전 + 엔진 버전 + 모델."""
     parts = {
         "rule_text": text_hash(normalize(rule.text)),
         "examples": _example_parts(rule.examples),
         "tools": TOOLS_VERSION,
         "engines": [f"{k}={ENGINE_VERSION[k]}" for k in sorted(kinds_for(rule))],
-        "heavy": heavy,
         "judge": JUDGE_VERSION,
     }
-    return model_cache_key("checker", light, prompt_version_for(rule), parts)
+    return model_cache_key("checker", model, prompt_version_for(rule), parts)
 
 
 def draft_key(

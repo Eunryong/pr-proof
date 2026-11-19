@@ -60,9 +60,9 @@ def _outside_code(text: str) -> str:
 def test_violation_lists_location_quote_source_and_checker() -> None:
     text = _text(_found(RuleChecked(RULE, REF), violations=(_violation(),)), {"k1": CHECKER})
     assert "**문서 규칙:** ⚠️ 위반 1건 (규칙 1개)" in text
-    assert (
-        "- `orders/a.py:2` `R-readme-1` `` `orders/` 아래 모듈은 `print`를 쓰지 않는다. ``" in text
-    )
+    assert "- `R-readme-1` `` `orders/` 아래 모듈은 `print`를 쓰지 않는다. `` · 1건" in text
+    assert "  - `orders/a.py:2`" in text
+    assert doc_rules_report.MANY_VIOLATIONS_NOTE not in text
     assert "  출처: `README.md > 코드 규칙 > 출력` · 검사기 `cccccccc` (ast-grep)" in text
     assert "```yaml\nid: no-print\nlanguage: python\nrule:\n  pattern: print($$$A)\n```" in text
     assert "예시: 문서 1개, 모델이 쓴 것 1개" in text
@@ -182,7 +182,7 @@ def test_section_stays_within_size_limit() -> None:
     checkers = {f"k{i}": replace(CHECKER, body="x" * 9000) for i in range(80)}
     text = _text(_found(*outcomes, violations=violations), checkers)
     assert len(text) <= doc_rules_report.MAX_SECTION_CHARS
-    assert "- 외 369건" in text and doc_rules_report.OMITTED in text
+    assert doc_rules_report.OMITTED in text
     assert text.rstrip().endswith(HOW_TO_CORRECT)
 
 
@@ -209,7 +209,7 @@ def test_file_violation_shows_the_path_without_a_line() -> None:
     )  # fmt: skip
     violation = replace(_violation("tests/pricing_test.py", 0), unit="file")
     text = _text(_found(RuleChecked(rule, ref), violations=(violation,)), {"k1": checker})
-    assert "- `tests/pricing_test.py` (파일 이름·경로) `R-readme-1`" in text
+    assert "  - `tests/pricing_test.py` (파일 이름·경로)" in text
     assert "pricing_test.py:0" not in text
     assert "```json" in text
     assert "모델이 쓴 예시, 어기는 경로:" in text
@@ -221,3 +221,27 @@ def test_dropped_exclusion_is_shown_with_the_rule() -> None:
     text = _text(_found(RuleChecked(rule, REF)))
     assert "범위 추정을 버림" in text
     assert "`**/*.py: 적용되는 파일 4개 중 4개를 뺌`" in text
+
+
+def test_many_violations_show_counts_and_first_ten_per_rule_and_fold_the_rest() -> None:
+    other = replace(RULE, id="R-readme-2", text="다른 규칙")
+    violations = (
+        *(_violation(line=n) for n in range(1, 143)),
+        _violation("orders/b.py", 7, rule="R-readme-2"),
+    )
+    text = _text(_found(RuleChecked(RULE, REF), RuleChecked(other, REF), violations=violations))
+    assert "**문서 규칙:** ⚠️ 위반 143건 (규칙 2개)" in text
+    assert doc_rules_report.MANY_VIOLATIONS_NOTE in text
+    assert "· 142건" in text and "- `R-readme-2` `다른 규칙` · 1건" in text
+    head, _, folded = text.partition("<details><summary><code>R-readme-1</code>의 나머지 132건")
+    assert "  - `orders/a.py:10`" in head and "  - `orders/a.py:11`" not in head
+    assert "  - `orders/a.py:11`" in folded and "  - `orders/a.py:142`" in folded
+    assert "  - `orders/b.py:7`" in folded  # 위반이 적은 규칙은 접지 않는다
+
+
+def test_folded_list_is_capped_and_says_how_many_are_left_out() -> None:
+    violations = tuple(_violation(line=n) for n in range(1, 512))
+    text = _text(_found(RuleChecked(RULE, REF), violations=violations))
+    assert "의 나머지 501건" in text
+    assert "  - 외 201건" in text
+    assert len(text) <= doc_rules_report.MAX_SECTION_CHARS

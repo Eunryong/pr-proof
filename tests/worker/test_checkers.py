@@ -21,7 +21,7 @@ from app.worker.checkers import plan_and_author
 from app.worker.state import Store
 
 RULESET: Final = "ruleset-key"
-MODELS: Final = ModelSettings(light="haiku", heavy="sonnet")
+MODELS: Final = ModelSettings(checker="sonnet", heavy="opus")
 NOW: Final = datetime(2026, 11, 18, 12, tzinfo=UTC)
 BAD: Final = Example("def f(o):\n    print(o)\n", (2,), "document")
 GOOD: Final = Example("logger.info('x')\n", (), "document")
@@ -119,7 +119,7 @@ def test_accepts_checker_that_passes_document_and_model_examples(store: Store) -
     assert checker.model == "claude-haiku-5-5" and checker.engine_version == "ast-grep-0.51.3"
     assert sandbox.runs[0][2] == [BAD.code, GOOD.code, "print(1)\n", "log(1)\n"]
     _, kwargs = model.calls[0]
-    assert kwargs["model"] == "haiku" and kwargs["system_prompt"] == SYSTEM_PROMPT["ast-grep"]
+    assert kwargs["model"] == "sonnet" and kwargs["system_prompt"] == SYSTEM_PROMPT["ast-grep"]
     assert _counted(store) == [("light", 1, False)]
 
 
@@ -155,8 +155,10 @@ def test_exhausted_attempts_end_as_not_yet_checkable_and_are_remembered(store: S
     assert isinstance(result, Unchecked) and result.kind == "no_checker"
     assert "3회 안에 예시를 통과하지 못함" in result.detail
     third = model.calls[2][1]
-    assert third["model"] == "sonnet" and third["system_prompt"] == SYSTEM_PROMPT["python-ast"]
-    assert [c[:2] for c in _counted(store)] == [("light", 1), ("light", 1), ("heavy", 3)]
+    # 형식만 바꾸고 모델은 올리지 않는다 (11.2 D7)
+    assert [call[1]["model"] for call in model.calls] == ["sonnet"] * 3
+    assert third["system_prompt"] == SYSTEM_PROMPT["python-ast"]
+    assert [c[:2] for c in _counted(store)] == [("light", 1), ("light", 1), ("light", 1)]
     (again,) = _author(store, FakeModel())
     assert isinstance(again, Unchecked) and again.kind == "no_checker"
     assert _counted(store)[-1] == ("light", 0, True)

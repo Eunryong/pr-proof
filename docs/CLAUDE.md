@@ -63,7 +63,7 @@ BACKLOG.md 형식:
 - 작업은 기능 단위 브랜치와 PR로 진행한다.
 - 첫 대상 리포는 별도 예제 리포 `Eunryong/eval`이다. 이 리포(`pr-proof`)는 자기 PR을 검사하지 않는다.
 - 실제 저장소 `Eunryong/MathLLM`도 허용 목록에 있다. 2026-11-19에 pr-proof#21을 머지한 뒤로 v2 1단계 코드가 두 저장소를 같이 검사한다. MathLLM은 저장소 주인이 실제로 쓰는 코드다.
-- 2026-11-19에 팀의 공개 저장소 `Pig30nidaE/BooBug`를 붙이기로 했고, 그 전에 임시 가드레일(작성자가 OWNER·MEMBER·COLLABORATOR가 아니면 아무것도 하지 않음)과 모델 전용 작업 폴더·경로 감시 훅을 넣었다(DESIGN 8.4, 8.6, 위협 표 T2·T28). 승인 기능은 6단계의 정식 가드레일에서 넣는다. 실제 모델을 부르는 확인은 `PR_PROOF_REAL_AI=1 pytest tests/worker/ai/test_workdir_real_cli.py`다.
+- 2026-11-19에 팀의 공개 저장소 `Pig30nidaE/BooBug`를 붙이기로 했고, 그 전에 임시 가드레일(작성자가 OWNER·MEMBER·COLLABORATOR가 아니면 아무것도 하지 않음)과 모델 전용 작업 폴더·경로 감시 훅을 넣었다(DESIGN 8.4, 8.6, 위협 표 T2·T28). 승인 기능은 6단계의 정식 가드레일에서 넣는다. 실제 모델을 부르는 확인은 `PR_PROOF_REAL_AI=1 pytest tests/worker/ai/test_workdir_real_cli.py`다. 이 저장소에서 운영자의 권한은 쓰기이고, 웹훅은 저장소 주인만 등록할 수 있다.
 
 ## 실행
 

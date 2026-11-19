@@ -38,7 +38,7 @@ REPO: Final = "o/r"
 REAL_MODEL_ENV: Final = "PR_PROOF_REAL_MODEL"
 # v1 스킬을 끈다. 케이스가 `pipeline`을 주면 그 위에 덮는다
 PIPELINE_YAML: Final = {"skills": {"enabled": []}}
-_LOCATION: Final = re.compile(r"^- (`+) ?(.+?) ?\1 `R-")
+_LOCATION: Final = re.compile(r"^- (`+) ?(.+?) ?\1(?: \(파일 이름·경로\))?$")
 
 
 def _apply(root: Path, edits: list[dict] | None) -> None:
@@ -117,11 +117,11 @@ def flagged(section: str) -> list[str]:
     for line in section.splitlines():
         if line == "위반:":
             listing = True
-        elif listing and line.startswith("- "):
-            match = _LOCATION.match(line)
+        elif listing and line.startswith("  - ") and not line.startswith("  - 외 "):
+            match = _LOCATION.match(line.strip())
             assert match, line
             out.append(match.group(2))
-        elif listing and not line.startswith("  "):
+        elif listing and line and not line.startswith(("  ", "- ", "<details>", "</details>")):
             listing = False
     return sorted(out)
 
@@ -203,7 +203,8 @@ def test_case_files_are_well_formed() -> None:
 def test_flagged_reads_locations_from_section() -> None:
     section = (
         "**문서 규칙:** ⚠️ 위반 2건 (규칙 1개)\n\n위반:\n"
-        "- `a/b.py:3` `R-readme-1` `` `x` ``\n  출처: `README.md > 코드 규칙`\n"
-        "- ``a`b.py:4`` `R-readme-1` `y`\n  출처: `README.md`\n\n모델 호출 1회"
+        "- `R-readme-1` `` `x` `` · 2건\n  출처: `README.md > 코드 규칙`\n"
+        "  - `a/b.py:3`\n\n<details><summary><code>R-readme-1</code>의 나머지 1건</summary>\n\n"
+        "  - ``a`b.py:4``\n\n</details>\n\n모델 호출 1회"
     )
     assert flagged(section) == ["a/b.py:3", "a`b.py:4"]

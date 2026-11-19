@@ -43,13 +43,12 @@ def test_format_switches_to_python_script_after_two_ast_grep_attempts() -> None:
 
 
 def test_checker_key_follows_rule_text_examples_and_models_only() -> None:
-    key = checker_key(RULE, "haiku", "sonnet")
-    assert checker_key(replace(RULE, scope=()), "haiku", "sonnet") == key
-    assert checker_key(replace(RULE, id="R-other"), "haiku", "sonnet") == key
-    assert checker_key(replace(RULE, text=RULE.text + " 예외 없음."), "haiku", "sonnet") != key
-    assert checker_key(replace(RULE, examples=(BAD,)), "haiku", "sonnet") != key
-    assert checker_key(RULE, "haiku", "opus") != key
-    assert checker_key(RULE, "sonnet", "sonnet") != key
+    key = checker_key(RULE, "haiku")
+    assert checker_key(replace(RULE, scope=()), "haiku") == key
+    assert checker_key(replace(RULE, id="R-other"), "haiku") == key
+    assert checker_key(replace(RULE, text=RULE.text + " 예외 없음."), "haiku") != key
+    assert checker_key(replace(RULE, examples=(BAD,)), "haiku") != key
+    assert checker_key(RULE, "sonnet") != key
 
 
 @pytest.mark.parametrize(
@@ -153,9 +152,8 @@ PATH_RULE: Final = replace(RULE, check=CheckMethod("path"), examples=(), scope=(
 
 def test_path_rule_uses_only_the_path_pattern_kind() -> None:
     assert [kind_for_attempt(n, PATH_RULE) for n in (1, 2, 3)] == ["path-pattern"] * 3
-    assert checker_key(PATH_RULE, "haiku", "sonnet") != checker_key(
-        replace(PATH_RULE, check=CheckMethod("checker")), "haiku", "sonnet"
-    )
+    as_code = replace(PATH_RULE, check=CheckMethod("checker"))
+    assert checker_key(PATH_RULE, "haiku") != checker_key(as_code, "haiku")
 
 
 def test_path_examples_are_paths_and_violations_are_per_file() -> None:
