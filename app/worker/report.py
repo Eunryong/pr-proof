@@ -109,11 +109,11 @@ def format_test_details(run: PytestRun, memory_gb: float, max_memory_gb: float) 
         ]
     if run.flaky:
         lines += ["", "불안정한 테스트 (처음엔 실패, 다시 돌려 통과):"]
-        lines += [f"- `{t}`" for t in run.flaky[:MAX_LISTED_FAILURES]]
+        lines += [f"- {inline_code(t, 300)}" for t in run.flaky[:MAX_LISTED_FAILURES]]
     still_failed = [t for t in (s.failed_tests if s else ()) if t not in run.flaky]
     if s is not None and still_failed:
         lines += ["", "실패한 테스트:"]
-        lines += [f"- `{t}`" for t in still_failed[:MAX_LISTED_FAILURES]]
+        lines += [f"- {inline_code(t, 300)}" for t in still_failed[:MAX_LISTED_FAILURES]]
         hidden = len(still_failed) - MAX_LISTED_FAILURES
         if hidden > 0:
             lines.append(f"- 외 {hidden}개")
@@ -257,7 +257,7 @@ def gate_details(gate: FixGate | None, skill: str = "static") -> list[str]:
 
 def target_locations(skill: str, targets: Sequence[Finding]) -> str:
     """수정이 고칠 위반의 위치만 한 줄로. 내용은 위 위반 목록에 이미 있다."""
-    shown = ", ".join(f"`{f.file}:{f.line}`" for f in targets[:MAX_LISTED_FINDINGS])
+    shown = ", ".join(_location(f) for f in targets[:MAX_LISTED_FINDINGS])
     hidden = len(targets) - MAX_LISTED_FINDINGS
     more = f" 외 {hidden}건" if hidden > 0 else ""
     return f"`{fix_command(skill)}`이 고칠 위반 {len(targets)}건: {shown}{more}"
@@ -318,8 +318,13 @@ def ai_cost_lines(fix: FixOutcome) -> list[str]:
     return [f"AI 호출 {fix.ai_calls}회 ({models}) · 추정 비용 ${fix.ai_cost_usd:.4f}"]
 
 
+def _location(f: Finding) -> str:
+    """파일 이름은 PR 작성자가 정한다. 백틱이 든 이름이 코드 스팬을 닫지 못하게 한다."""
+    return inline_code(f"{f.file}:{f.line}", 300)
+
+
 def finding_line(f: Finding) -> str:
-    line = f"- `{f.file}:{f.line}` `{f.code}` {f.message}"
+    line = f"- {_location(f)} `{f.code}` {f.message}"
     if f.rejected_in is not None:  # 같은 줄을 고친 제안 PR을 사람이 닫았다. 다시 고치지 않는다
         line += f" · {REJECTED_SHORT} (#{f.rejected_in})"
     return line

@@ -275,3 +275,11 @@ def test_gate_details_lists_fixable_locations_only_once() -> None:
     assert target.startswith(f"`/fix static`이 고칠 위반 {len(fixable)}건: `a.py:0`, `a.py:1`")
     assert target.endswith(" 외 2건") and "repeated" not in target
     assert report.gate_details(FixGate(allowed=True, fixable=fixable)) == []  # 전부 대상이면 생략
+
+
+def test_file_and_test_names_cannot_leave_their_code_span() -> None:
+    """파일 이름과 테스트 이름은 PR 작성자가 정한다. 백틱으로 스팬을 닫고 멘션을 넣지 못한다."""
+    nasty = "orders/`@team`<b>.py"
+    assert report.finding_line(_finding(file=nasty)).startswith(f"- ``{nasty}:3`` `F401` ")
+    assert f"``{nasty}:3``" in report.target_locations("lint", [_finding(file=nasty)])
+    assert report.finding_line(_finding()).startswith("- `orders/a.py:3` `F401` ")
