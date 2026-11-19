@@ -12,8 +12,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Final
 
-from app.models.ai_fix import CALL_BUDGET_USD
-from app.models.call_budget import Denied, PrScope
+from app.models.call_budget import CALL_BUDGET_USD, Denied, PrScope
 from app.models.diff import hunk_around
 from app.models.doc_rules import Found
 from app.models.fix_decision import (

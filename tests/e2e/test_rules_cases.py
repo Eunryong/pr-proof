@@ -1,11 +1,11 @@
 """1단계 평가 케이스 E2E: 문서 규칙 (eval/rules/*.yaml).
 
-lint·static 케이스와 같은 방식이다: 예제 리포의 로컬 git 원격, 실제 샌드박스 테스트, 실제 ast-grep
+lint 케이스와 같은 방식이다: 예제 리포의 로컬 git 원격, 실제 샌드박스 테스트, 실제 ast-grep
 (도구 캐시에 받는다), GitHub만 가짜. 모델(claude)은 기본으로 케이스의 `model` 답을 돌려주는 가짜라
 `pytest -m docker`가 결정적이고 비용이 없다. 원문 확인, 예시 확인, 검사기 실행, 바뀐 줄 거르기는
 모두 진짜다. `PR_PROOF_REAL_MODEL=1`이면 로그인된 claude를 실제로 부른다 (비용이 든다. 비교용).
 
-v1 lint·static은 base의 `.pipeline.yaml`로 끈다. 이 케이스는 문서 규칙 절과 모델 수정안만 본다.
+v1 lint는 base의 `.pipeline.yaml`로 끈다. 이 케이스는 문서 규칙 절과 모델 수정안만 본다.
 수정안 PR의 생애를 보는 케이스는 `deliver_retry`(첫 push를 실패시키고 재시도),
 `recheck_without_calls`(같은 커밋의 `/recheck`), `rejected_next_commit`(수정안 PR을 닫고 새 커밋)을
 차례로 한다. `fix_command`는 결과 코멘트 뒤에 그 명령(`/fix` 등)을 달고 수정 결과를 다시 본다.

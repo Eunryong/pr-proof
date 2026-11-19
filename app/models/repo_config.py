@@ -3,6 +3,7 @@
 지금 단계에서 쓰는 항목만 정의한다. 다른 항목은 무시한다 (스키마 초안의 나머지는 그 단계에서).
 """
 
+from collections.abc import Mapping
 from typing import Annotated, Final
 
 import yaml
@@ -16,8 +17,6 @@ from pydantic import (
     model_validator,
 )
 
-from app.models.finding import Skill
-
 # docker가 받는 최소 메모리보다 넉넉히 크게. 너무 작으면 컨테이너가 뜨지 않아 환경 오류로 보인다
 MIN_MEMORY_GB: Final = 0.5
 DEFAULT_MAX_RETRIES: Final = 3
@@ -26,6 +25,14 @@ MAX_RETRIES_CAP: Final = 5
 # claude --model에 넘기는 이름. `-`로 시작하면 옵션으로 읽히므로 막는다
 MODEL_NAME_PATTERN: Final = r"^[A-Za-z0-9][A-Za-z0-9._\[\]-]*$"
 DEFAULT_RULE_DOCS: Final = ("README.md", "CONTRIBUTING.md")
+LINT: Final = "lint"
+# 2단계에 없앤 설정 (10절 "v1 스키마에서 바뀐 키"). 있으면 무시하고 "설정:"에 알린다
+REMOVED_KEYS: Final[Mapping[tuple[str, str], str]] = {
+    ("skills", "static"): "`skills.static`은 없어졌습니다 (파이프라인 내장 검사기가 없음)",
+    ("model", "budget_per_pr_usd"): (
+        "`model.budget_per_pr_usd`는 없어졌습니다. 호출 수 상한은 `model.calls`입니다"
+    ),
+}
 MAX_RULE_DOCS: Final = 20
 
 
@@ -72,12 +79,6 @@ class FixSettings(BaseModel):
     max_retries: int = Field(default=DEFAULT_MAX_RETRIES, ge=1)
 
 
-class StaticSettings(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-    # 같은 리터럴이 이 횟수 이상 반복되면 위반. None이면 기본값(3)이고 출처는 "기본 규칙"
-    min_repeats: int | None = Field(default=None, ge=2)
-
-
 class CallSettings(BaseModel):
     """모델 호출 수 상한 (docs/DESIGN.md 9.2, 10절 `model.calls`). 판단은 models/call_budget.py.
 
@@ -105,15 +106,15 @@ class ModelSettings(BaseModel):
     # 수정 경로의 모델: 가벼운 모델로 시작하고 실패가 이어지면 무거운 모델로 한 번 올린다
     light: str = Field(default="haiku", pattern=MODEL_NAME_PATTERN)
     heavy: str = Field(default="sonnet", pattern=MODEL_NAME_PATTERN)
-    budget_per_pr_usd: float = Field(default=0.5, ge=0)  # v1 수정 경로. 2단계에 calls로 옮긴다
     calls: CallSettings = CallSettings()
 
 
 class SkillsSettings(BaseModel):
+    """v1의 스킬 설정. 남은 스킬은 lint 하나이고 3단계에 도구 규칙으로 옮긴다 (10절)."""
+
     model_config = ConfigDict(extra="ignore")
-    # 켤 규칙 스킬. lint를 빼면 "테스트만" 돈다. static·structure는 3·4단계에서 붙는다
-    enabled: list[Skill] = Field(default_factory=lambda: ["lint", "static", "structure"])
-    static: StaticSettings = StaticSettings()
+    # lint를 빼면 v1 lint 경로가 돌지 않는다. 옛 이름(static, structure)은 읽기만 하고 쓰지 않는다
+    enabled: list[str] = Field(default_factory=lambda: [LINT])
 
 
 class RepoConfig(BaseModel):
@@ -167,13 +168,25 @@ def settings_notes(text: str | None) -> list[str]:
         data = yaml.safe_load(text) if text else None
     except yaml.YAMLError:
         return []
-    skills = data.get("skills") if isinstance(data, dict) else None
+    if not isinstance(data, dict):
+        return []
+    notes = []
+    skills = data.get("skills")
     if isinstance(skills, dict) and "fix" in skills:
-        return [
+        notes.append(
             "`skills.fix`는 `fix`로 바뀌었습니다. "
             "2단계 동안은 `fix`가 없으면 `skills.fix`를 읽습니다"
-        ]
-    return []
+        )
+    for (section, key), note in REMOVED_KEYS.items():
+        part = data.get(section)
+        if isinstance(part, dict) and key in part:
+            notes.append(note)
+    enabled = skills.get("enabled") if isinstance(skills, dict) else None
+    gone = [s for s in enabled if s != LINT] if isinstance(enabled, list) else []
+    if gone:
+        names = ", ".join(f"`{s}`" for s in gone)
+        notes.append(f"`skills.enabled`에 남은 스킬은 `lint`뿐이라 {names}는 무시합니다")
+    return notes
 
 
 def fix_limits(requested: FixSettings, *, max_retries: int = MAX_RETRIES_CAP) -> FixSettings:

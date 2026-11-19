@@ -87,28 +87,6 @@ class Run(SQLModel, table=True):
     finished_at: datetime | None = None
 
 
-class AICall(SQLModel, table=True):
-    """AI 호출 한 번 (DESIGN.md 비용 최적화). PR당 예산은 이 기록의 합으로 센다."""
-
-    id: int | None = Field(default=None, primary_key=True)
-    repo: str = Field(index=True)
-    pr_number: int = Field(index=True)
-    head_sha: str
-    skill: str
-    model: str
-    attempt: int
-    ok: bool
-    error: str | None = None  # AIErrorKind
-    cost_usd: float | None = None  # claude가 알려준 비용. 모르면 None
-    charged_usd: float  # 예산에서 뺀 비용 (모르면 호출당 상한)
-    permission_denials: int = 0  # 허용 범위 밖이라 거부된 도구 호출 수
-    # 모델이 부르려 한 허용 목록 밖 도구의 이름과 횟수 (JSON 객체). 없으면 None
-    unexpected_tools: str | None = None
-    # 오류의 내용. 도구 목록 확인으로 멈췄으면 더 나온 도구 이름과 claude CLI 버전이 있다
-    detail: str | None = None
-    created_at: datetime | None = None  # Store가 기록할 때 채운다
-
-
 class ModelCacheEntry(SQLModel, table=True):
     """해시 키 → 모델 결과 (DESIGN.md 5.6, 9.1). thread·PR과 무관하게 키가 같으면 같은 결과를 쓴다.
 
@@ -128,8 +106,8 @@ class ModelCacheEntry(SQLModel, table=True):
 class ModelCall(SQLModel, table=True):
     """모델 호출 한 번 (DESIGN.md 7.8의 `ai_calls`, 9.2). 호출 상한은 `counted`의 합으로 센다.
 
-    v1 수정 경로의 달러 기록 `AICall`(테이블 `aicall`)과 다른 테이블이다. 그 경로를 호출 수
-    상한으로 옮기는 2단계에 `AICall`을 없앤다.
+    v1 static 수정 경로의 달러 기록 테이블 `aicall`은 2단계에 그 경로와 함께 없앴다. 예전
+    데이터베이스에 남은 그 테이블은 읽지도 지우지도 않는다.
     """
 
     __tablename__ = "ai_calls"

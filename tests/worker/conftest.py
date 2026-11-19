@@ -1,4 +1,4 @@
-"""워커 흐름 테스트 fixture: 가짜 gh·Redis·체크아웃·설정·lint·static. Docker·GitHub 없이 돈다."""
+"""워커 흐름 테스트 fixture: 가짜 gh·Redis·체크아웃·설정·lint. Docker·GitHub 없이 돈다."""
 
 from contextlib import contextmanager
 from pathlib import Path
@@ -13,7 +13,7 @@ from app.worker import base_config, repo
 from app.worker.deps import Deps
 from app.worker.github import GitHub
 from app.worker.repo import Checkout
-from app.worker.skills import lint, static
+from app.worker.skills import lint
 from app.worker.state import Store
 
 from .helpers import BASE, HEAD, VIOLATION
@@ -45,7 +45,5 @@ def env(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(
         lint, "run_lint", lambda *a, **k: SkillResult(skill="lint", findings=(VIOLATION,))
     )
-    # static은 위반 없음이 기본이다. static 흐름 테스트는 따로 바꾼다
-    monkeypatch.setattr(static, "run_static", lambda *a, **k: SkillResult(skill="static"))
     redis.set(state_keys.latest_head("o/r", 1), HEAD)
     return {"deps": deps, "gh": gh, "redis": redis, "monkeypatch": monkeypatch}

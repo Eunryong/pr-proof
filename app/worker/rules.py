@@ -10,8 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from app.models.ai_fix import CALL_BUDGET_USD
-from app.models.call_budget import Denied, RulesetScope
+from app.models.call_budget import CALL_BUDGET_USD, Denied, RulesetScope
 from app.models.repo_config import RulesSettings
 from app.models.rule import Rule, RuleSet, UnreadDoc
 from app.models.rule_reading import (

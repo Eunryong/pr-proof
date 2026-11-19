@@ -6,7 +6,7 @@ from typing import Final
 
 import pytest
 
-from app.models.finding import Finding
+from app.models.violation import Violation
 from app.worker.coverage import (
     DiffCoverage,
     annotate_coverage,
@@ -98,8 +98,8 @@ def test_read_sources_size_limit(tmp_path: Path) -> None:
     assert read_sources(tmp_path, ["a.py"], max_bytes=5) == {}
 
 
-def _finding(line: int) -> Finding:
-    return Finding("m.py", line, "warning", "w", "static", "기본 규칙")
+def _finding(line: int) -> Violation:
+    return Violation(f"v{line}", "R-readme-1", "m.py", line, "w", "checker")
 
 
 def test_annotate_coverage_uses_source_for_continuation_lines(tmp_path: Path) -> None:

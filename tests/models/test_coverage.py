@@ -5,13 +5,10 @@ import pytest
 from app.models.coverage import (
     CoverageData,
     FileCoverage,
-    blocked_reason,
-    code_fix_gate,
     mark_covered,
     parse_coverage_xml,
 )
-from app.models.finding import Finding
-from app.models.test_run import PytestRun, ReportSummary
+from app.models.violation import Violation
 
 
 def _xml(classes: str) -> bytes:
@@ -121,8 +118,8 @@ SOURCE_COV: Final = FileCoverage(
 )
 
 
-def _finding(line: int, file: str = "m.py", skill: str = "static") -> Finding:
-    return Finding(file, line, "warning", "w", skill, "기본 규칙")  # type: ignore[arg-type]
+def _finding(line: int, file: str = "m.py") -> Violation:
+    return Violation(f"v{line}", "R-readme-1", file, line, "w", "checker")
 
 
 def _covered(line: int, source: str | None = SOURCE) -> bool | None:
@@ -181,72 +178,3 @@ def test_finding_default_is_unknown_and_order_kept() -> None:
     cov = CoverageData({"m.py": SOURCE_COV})
     marked = mark_covered([_finding(19), _finding(2)], cov)
     assert [(f.line, f.covered) for f in marked] == [(19, False), (2, True)]
-
-
-SUMMARY: Final = ReportSummary(passed=1, total=1)
-PASSED: Final = PytestRun(exit_code=0, summary=SUMMARY)
-FLAKY: Final = PytestRun(
-    exit_code=1,
-    summary=ReportSummary(passed=1, failed=1, total=2, failed_tests=("t::a",)),
-    flaky=("t::a",),
-)
-RUNS: Final = {
-    "passed": PASSED,
-    "flaky": FLAKY,
-    "failed": PytestRun(exit_code=1, summary=SUMMARY),
-    "no_tests": PytestRun(exit_code=5, summary=ReportSummary()),
-    "timeout": PytestRun(exit_code=None, summary=None, timed_out=True),
-    "cancelled": PytestRun(exit_code=None, summary=None, cancelled=True),
-    "unrunnable": PytestRun(exit_code=4, summary=None),
-}
-
-
-@pytest.mark.parametrize("name", sorted(RUNS))
-def test_blocked_reason_matches_allows_code_fix(name: str) -> None:
-    run = RUNS[name]
-    reason = blocked_reason(run)
-    assert (reason is None) is run.allows_code_fix
-    assert (reason is None) is (name == "passed")
-
-
-def _marked() -> tuple[Finding, ...]:
-    return (
-        Finding("a.py", 1, "warning", "w", "static", "s", covered=True),
-        Finding("a.py", 2, "warning", "w", "static", "s", covered=False),
-        Finding("a.py", 3, "warning", "w", "static", "s", covered=None),
-        Finding("a.py", 4, "warning", "w", "structure", "s", covered=True),
-    )
-
-
-def test_gate_passed_requires_covered_lines() -> None:
-    gate = code_fix_gate(PASSED, "static", _marked())
-    assert gate.allowed and gate.blocked_reason is None
-    assert [f.line for f in gate.fixable] == [1]
-    assert [f.line for f in gate.uncovered] == [2]
-    assert [f.line for f in gate.unknown] == [3]
-
-
-def test_gate_without_require_covered_takes_all_of_skill() -> None:
-    gate = code_fix_gate(PASSED, "static", _marked(), require_covered=False)
-    assert [f.line for f in gate.fixable] == [1, 2, 3]
-    assert gate.uncovered == gate.unknown == ()
-
-
-def test_gate_filters_by_skill() -> None:
-    gate = code_fix_gate(PASSED, "structure", _marked())
-    assert [f.line for f in gate.fixable] == [4]
-
-
-@pytest.mark.parametrize("name", ["flaky", "failed", "no_tests", "timeout", "cancelled"])
-def test_gate_blocked_by_test_status(name: str) -> None:
-    gate = code_fix_gate(RUNS[name], "static", _marked(), require_covered=False)
-    assert not gate.allowed and gate.blocked_reason
-    assert gate.fixable == ()
-
-
-def test_gate_excludes_previously_rejected_even_when_covered() -> None:
-    rejected = Finding("a.py", 5, "warning", "w", "static", "s", covered=True, rejected_in=901)
-    for require in (True, False):
-        gate = code_fix_gate(PASSED, "static", (*_marked(), rejected), require_covered=require)
-        assert [f.line for f in gate.rejected] == [5]
-        assert 5 not in [f.line for f in gate.fixable + gate.uncovered + gate.unknown]

@@ -66,10 +66,33 @@ def test_skills_enabled_default_and_lint_off() -> None:
     assert config.skills.enabled == [] and problem is None
 
 
-def test_unknown_skill_is_config_problem() -> None:
-    config, problem = parse_repo_config("skills:\n  enabled: [lint, typo]\n")
-    assert "lint" in config.skills.enabled  # 기본값으로 검사한다
-    assert problem is not None and "skills.enabled" in problem
+def test_removed_or_unknown_skill_is_ignored_with_a_note() -> None:
+    """2단계에 static을 없앴다. 옛 이름이나 모르는 이름이 있어도 설정 전체를 기본값으로 되돌리지
+    않고, 그 이름만 무시하고 "설정:"에 알린다 (10절)."""
+    text = "skills:\n  enabled: [lint, static, structure]\nsandbox: {memory_gb: 2}\n"
+    config, problem = parse_repo_config(text)
+    assert problem is None and config.sandbox.memory_gb == 2 and "lint" in config.skills.enabled
+    (note,) = settings_notes(text)
+    assert "`static`, `structure`는 무시합니다" in note
+    off = "skills:\n  enabled: [static]\n"
+    assert "lint" not in parse_repo_config(off)[0].skills.enabled  # lint를 끈 것은 그대로다
+    assert settings_notes("skills:\n  enabled: [lint]\n") == []
+
+
+def test_removed_static_and_dollar_keys_are_ignored_with_a_note() -> None:
+    """`skills.static.min_repeats`와 `model.budget_per_pr_usd`는 2단계에 없앴다. 남은 키는 그대로
+    읽고, 틀린 값이어도 설정 오류가 되지 않는다."""
+    text = (
+        "skills:\n  static: {min_repeats: 1}\n"
+        "model: {light: claude-haiku-5-5, budget_per_pr_usd: -1}\nfix: {max_retries: 2}\n"
+    )
+    config, problem = parse_repo_config(text)
+    assert problem is None
+    assert (config.model.light, config.fix.max_retries) == ("claude-haiku-5-5", 2)
+    notes = settings_notes(text)
+    assert len(notes) == 2
+    assert any("`skills.static`은 없어졌습니다" in n for n in notes)
+    assert any("`model.budget_per_pr_usd`는 없어졌습니다" in n for n in notes)
 
 
 def test_stage3_defaults() -> None:
@@ -77,10 +100,7 @@ def test_stage3_defaults() -> None:
     assert problem is None
     assert (config.fix.require_covered, config.fix.max_retries) == (True, 3)
     assert config.fix.require_approval is False  # 기본: 검사 뒤 바로 수정안까지 간다
-    assert config.skills.static.min_repeats is None
-    assert (config.model.light, config.model.heavy, config.model.budget_per_pr_usd) == (
-        "haiku", "sonnet", 0.5,
-    )  # fmt: skip
+    assert (config.model.light, config.model.heavy) == ("haiku", "sonnet")
 
 
 def test_decision_model_is_its_own_setting() -> None:
@@ -95,14 +115,12 @@ def test_decision_model_is_its_own_setting() -> None:
 def test_stage3_values_are_read() -> None:
     text = (
         "fix: {require_covered: false, max_retries: 5, require_approval: true}\n"
-        "skills:\n  static: {min_repeats: 2}\n"
-        "model: {light: claude-haiku-5-5, heavy: opus, budget_per_pr_usd: 0}\n"
+        "model: {light: claude-haiku-5-5, heavy: opus}\n"
     )
     config, problem = parse_repo_config(text)
     assert problem is None and settings_notes(text) == []
     assert config.fix == FixSettings(require_approval=True, require_covered=False, max_retries=5)
-    assert config.skills.static.min_repeats == 2
-    assert (config.model.light, config.model.budget_per_pr_usd) == ("claude-haiku-5-5", 0)
+    assert (config.model.light, config.model.heavy) == ("claude-haiku-5-5", "opus")
 
 
 def test_old_skills_fix_key_is_read_and_noted_during_stage_2() -> None:
@@ -121,12 +139,10 @@ def test_old_skills_fix_key_is_read_and_noted_during_stage_2() -> None:
 @pytest.mark.parametrize(
     ("text", "where"),
     [
-        ("skills: {static: {min_repeats: 1}}", "skills.static.min_repeats"),
         ("fix: {max_retries: 0}", "fix.max_retries"),
         ("skills: {fix: {max_retries: 0}}", "fix.max_retries"),
         ("model: {light: '--dangerously-skip-permissions'}", "model.light"),  # 옵션으로 읽힘
         ("model: {heavy: 'a b'}", "model.heavy"),
-        ("model: {budget_per_pr_usd: -1}", "model.budget_per_pr_usd"),
     ],
 )
 def test_stage3_bad_values_fall_back_to_defaults(text: str, where: str) -> None:

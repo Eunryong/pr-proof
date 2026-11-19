@@ -22,6 +22,8 @@ DEFAULT_TIMEOUT_S: Final = 600.0
 # --max-budget-usd에 소수 넷째 자리까지 넘기므로 이보다 작으면 0이 된다
 MIN_BUDGET_USD: Final = 0.0001
 
+NOT_LOGGED_IN: Final = "Not logged in"
+
 # 권한 제한 옵션. --restricted가 실행 도구·WebFetch를 빼고, 파일 도구를 cwd 안으로 제한하고,
 # user·project·local 설정 파일(PR이 넣은 .claude/ 포함)과 CLAUDE.md를 읽지 않는다.
 # --allowedTools는 승인만 하고 도구 목록을 줄이지 않으므로(2.1.327에서 WebSearch, Task 등 21개가
@@ -114,6 +116,21 @@ class ClaudeResult:
     output_tokens: int | None = None
     # 모델 폴더에서 worktree에 적용한 diff. `workdir.run_in_model_folder`만 채운다
     applied: bytes = b""
+
+
+class AIEnvironmentError(RuntimeError):
+    """claude를 실행할 수 없다 (명령 없음, 로그인 풀림). PR 탓이 아니라 환경 오류로 재시도한다."""
+
+
+def environment_problem(result: ClaudeResult) -> str | None:
+    """PR과 관계없이 claude를 쓸 수 없는 상태면 그 이유."""
+    if result.error == AIErrorKind.LAUNCH:
+        return f"claude를 실행하지 못함: {result.detail}"
+    if result.error == AIErrorKind.TOOLS:
+        return f"claude 호출을 중단함: {result.detail}"
+    if NOT_LOGGED_IN in result.text or NOT_LOGGED_IN in result.detail:
+        return "claude 로그인이 풀림"
+    return None
 
 
 # 표준 출력 한 줄 → 호출을 중단할 이유. 계속해도 되면 None

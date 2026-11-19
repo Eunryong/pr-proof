@@ -9,7 +9,6 @@ from collections.abc import Mapping, Sequence
 from typing import Final, Literal
 
 from app.models.checker import Checker
-from app.models.coverage import FixGate
 from app.models.doc_rules import DocRules
 from app.models.finding import Finding, SkillResult
 from app.models.fix import FixBlocker, FixOutcome
@@ -40,13 +39,7 @@ _FIX_STATUS_TEXT: Final[Mapping[str, str]] = {
     "out_of_scope": "수정안을 버림: 허용 범위 밖의 파일이 바뀜",
     "tests_changed": "수정안을 버림: 고친 뒤 테스트 결과가 달라짐",
     "unchecked": "수정안을 버림: 고친 뒤 규칙 검사를 하지 못함",
-    "ai_failed": "수정안을 버림: 정해진 횟수 안에 검증을 통과하지 못함",
-    "budget": "PR당 AI 예산을 다 써서 멈춤",
-    "secret": "수정안을 버림: 비밀값으로 보이는 내용이 있음",
-    "refused": "AI를 실행하지 않음",
 }
-_UNCOVERED_SHORT: Final = "테스트가 지나가지 않음"
-_UNKNOWN_SHORT: Final = "커버리지를 알 수 없음"
 REJECTED_SHORT: Final = "이전에 거절됨"
 VIOLATION: Final = "⚠️"
 CLEAN: Final = "✅"
@@ -180,7 +173,6 @@ def proposal_details(
     run: PytestRun,
     number: int | None = None,
     skill: str = "lint",
-    gate: FixGate | None = None,
     lint: SkillResult | None = None,
 ) -> list[str]:
     ref = _pr_ref(number)
@@ -197,14 +189,11 @@ def proposal_details(
     if proposal == "open":
         return ["", f"이 커밋의 {skill} 제안 PR{ref}이 열려 있습니다. 그 PR을 확인해 주세요."]
     if proposal == "tests":
-        if skill != "lint" and gate is not None and gate.blocked_reason:
-            return ["", f"{skill} 자동 수정을 제안하지 않습니다 ({gate.blocked_reason})."]
         return [
             "",
-            f"{'' if skill == 'lint' else skill + ' '}"
             f"테스트가 통과하지 않아 자동 수정을 제안하지 않습니다 ({format_test_line(run)}).",
         ]
-    if proposal == "approval" and skill == "lint":
+    if proposal == "approval":
         findings = lint.findings if lint is not None else ()
         fixable = [f for f in findings if f.fixable and f.rejected_in is None]
         rejected = sum(1 for f in findings if f.fixable and f.rejected_in is not None)
@@ -224,36 +213,7 @@ def proposal_details(
         if lint is not None and len(fixable) < len(findings):
             lines += ["", target_locations("lint", fixable)]
         return lines
-    if proposal == "approval":
-        n = len(gate.fixable) if gate is not None else 0
-        return [
-            "",
-            f"`{fix_command(skill)}`를 코멘트로 달면 AI가 테스트가 지나가는 {skill} 위반 {n}건을 "
-            "고치고, 규칙 재검사와 테스트로 확인한 뒤 수정안을 만듭니다.",
-        ]
     return []
-
-
-def gate_details(gate: FixGate | None, skill: str = "static") -> list[str]:
-    """자동 수정 대상이 아닌 위반은 이유별 개수만, 수정이 실제로 고칠 위반은 위치만 적는다 (F8·F9).
-
-    위반 내용은 위 목록에 이미 있으므로 다시 적지 않는다. 대상이 전부면 따로 적지 않는다.
-    """
-    if gate is None or not gate.allowed:
-        return []
-    reasons = [
-        (len(gate.uncovered), _UNCOVERED_SHORT),
-        (len(gate.unknown), _UNKNOWN_SHORT),
-        (len(gate.rejected), REJECTED_SHORT),
-    ]
-    skipped = sum(n for n, _ in reasons)
-    if not skipped:
-        return []
-    by_reason = ", ".join(f"{why} {n}건" for n, why in reasons if n)
-    lines = ["", f"자동 수정 대상이 아닌 위반 {skipped}건: {by_reason}"]
-    if gate.fixable:
-        lines += ["", target_locations(skill, gate.fixable)]
-    return lines
 
 
 def target_locations(skill: str, targets: Sequence[Finding]) -> str:
@@ -280,9 +240,6 @@ def fix_section(fix: FixOutcome, result: ProposalResult | None = None) -> list[s
         lines = ["", f"**{fix.skill} 수정안:** {reason}"]
         if fix.detail:
             lines[-1] += f" ({fix.detail})"
-        lines += ai_cost_lines(fix)
-        if fix.skill != "lint":  # lint 수정은 결정적이라 같은 커밋에서 다시 돌려도 같다
-            lines.append(f"`{fix_command(fix.skill)}`를 코멘트로 달면 AI 수정을 다시 돌립니다.")
         return lines
     tests = format_test_line(fix.test_run) if fix.test_run else "확인 안 함"
     what = f"위반 {fix.fixed}건을 고쳤습니다" if fix.fixed else "포맷만 고쳤습니다"
@@ -296,11 +253,8 @@ def fix_section(fix: FixOutcome, result: ProposalResult | None = None) -> list[s
         lines.append(f"`ruff format`은 적용하지 않았습니다 ({fix.format_skipped}).")
     if fix.remaining:
         lines.append(f"자동으로 고치지 못한 위반 {len(fix.remaining)}건은 그대로 남습니다.")
-    lines += ai_cost_lines(fix)
     if result is not None and result.secret_blocked:
         return lines  # 비밀값으로 보이는 줄을 코멘트에 옮기지 않는다
-    if fix.explanation:  # AI가 쓴 글이라 코드 블록에 넣는다 (멘션·마크업이 동작하지 않게)
-        lines += _details("AI의 변경 설명", fix.explanation)
     if fix.patch_path is not None and fix.patch_path.is_file():
         patch = fix.patch_path.read_text()
         if len(patch) > MAX_PATCH_CHARS:
@@ -309,14 +263,6 @@ def fix_section(fix: FixOutcome, result: ProposalResult | None = None) -> list[s
         lines += ["", "<details><summary>수정 내용</summary>", "", f"{fence}diff", patch, fence, "",
                   "</details>"]  # fmt: skip
     return lines
-
-
-def ai_cost_lines(fix: FixOutcome) -> list[str]:
-    """이번 검사의 AI 비용 (DESIGN.md 비용 최적화 6). 비용을 모르는 호출은 호출당 상한으로 센다."""
-    if not fix.ai_calls:
-        return []
-    models = ", ".join(fix.models)
-    return [f"AI 호출 {fix.ai_calls}회 ({models}) · 추정 비용 ${fix.ai_cost_usd:.4f}"]
 
 
 def _location(f: Finding) -> str:
@@ -343,8 +289,7 @@ def rules_details(results: list[SkillResult]) -> list[str]:
             hidden = len(r.findings) - MAX_LISTED_FINDINGS
             if hidden > 0:
                 lines.append(f"- 외 {hidden}건")
-    names = {"lint": "ruff", "static": "정적변수"}
-    sources = [f"{names[r.skill]} ({r.source})" for r in results if r.skill in names and r.source]
+    sources = [f"ruff ({r.source})" for r in results if r.skill == "lint" and r.source]
     if sources:
         lines += ["", f"적용한 규칙: {', '.join(sources)} · PR이 바꾼 줄만 검사"]
     return lines
@@ -376,7 +321,6 @@ def _compose(
     *,
     lint: SkillResult | None,
     base: BaseConfig | None,
-    static: SkillResult | None = None,
     seconds: float | None = None,
     from_sync: bool = False,
     suffix: str = "",
@@ -386,7 +330,7 @@ def _compose(
     decisions: Decided | None = None,
     model_fix: doc_rules_report.FixView | None = None,
 ) -> str:
-    results = [r for r in (lint, static) if r is not None]
+    results = [lint] if lint is not None else []
     lines = [HEADER, "", f"**테스트:** {test_line}"]
     if results:
         lines.append(f"**규칙:** {format_rules_line(results)}{suffix}")
@@ -394,12 +338,10 @@ def _compose(
     lines += rules_details(results)
     lines += extra or []
     lines += doc_rules_report.section(doc_rules, checkers or {}, decisions, model_fix)
-    off = [s for s in ("lint", "static") if base is not None and s not in base.repo.skills.enabled]
-    if off:
+    if base is not None and "lint" not in base.repo.skills.enabled:
         lines += [
             "",
-            f"이 리포에서 꺼진 규칙 스킬: {', '.join(off)} "
-            "(base 브랜치 `.pipeline.yaml`의 `skills.enabled`).",
+            "이 리포에서 꺼진 규칙 스킬: lint (base 브랜치 `.pipeline.yaml`의 `skills.enabled`).",
         ]
     if base is not None and base.problems:
         lines += ["", "설정:"] + [f"- {p}" for p in base.problems]
@@ -428,10 +370,8 @@ def render_result(
     seconds: float,
     *,
     lint: SkillResult | None = None,
-    static: SkillResult | None = None,
     base: BaseConfig | None = None,
     proposals: Mapping[str, SkillProposal] | None = None,
-    static_gate: FixGate | None = None,
     diff_coverage: DiffCoverage | None = None,
     fixes: Mapping[str, FixOutcome] | None = None,
     proposal_results: Mapping[str, ProposalResult] | None = None,
@@ -458,21 +398,18 @@ def render_result(
     results = dict(proposal_results or {})
     if proposal_result is not None and fix is not None:
         results.setdefault(fix.skill, proposal_result)
-    extra = gate_details(static_gate) + diff_coverage_line(diff_coverage)
-    for skill in ("lint", "static"):
-        if skill in fixes:
-            extra += fix_section(fixes[skill], results.get(skill))
-        elif skill in proposals:
-            state, number = proposals[skill]
-            gate = static_gate if skill == "static" else None
-            extra += proposal_details(state, run, number, skill, gate, lint=lint)
+    extra = diff_coverage_line(diff_coverage)
+    if "lint" in fixes:
+        extra += fix_section(fixes["lint"], results.get("lint"))
+    elif "lint" in proposals:
+        state, number = proposals["lint"]
+        extra += proposal_details(state, run, number, "lint", lint=lint)
     waiting = {s: v for s, v in proposals.items() if s not in fixes}
     return _compose(
         format_test_line(run, memory_gb),
         format_test_details(run, memory_gb, max_memory_gb),
         head_sha,
         lint=lint,
-        static=static,
         base=base,
         seconds=seconds,
         from_sync=from_sync,
@@ -490,7 +427,6 @@ def render_install_failure(
     detail: str,
     *,
     lint: SkillResult | None = None,
-    static: SkillResult | None = None,
     base: BaseConfig | None = None,
     doc_rules: DocRules | None = None,
     checkers: Mapping[str, Checker] | None = None,
@@ -503,7 +439,6 @@ def render_install_failure(
         _details("pip 출력", detail[-MAX_OUTPUT_CHARS:]),
         head_sha,
         lint=lint,
-        static=static,
         base=base,
         doc_rules=doc_rules,
         checkers=checkers,

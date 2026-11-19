@@ -118,7 +118,7 @@ def open_proposal(
     before: SkillResult,
     secrets: list[str] | None = None,
 ) -> ProposalResult:
-    """검증을 통과한 수정안을 제안 PR로 올린다. 올리지 못하면 이유를 돌려준다."""
+    """검증을 통과한 v1 lint 수정안을 제안 PR로 올린다. 올리지 못하면 이유를 돌려준다."""
     refs = github.pr_refs(job.repo, job.pr_number)
     if refs.head_repo != job.repo:
         return ProposalResult(reason="포크에서 온 PR이라 제안 PR을 열 수 없음 (수정 내용은 위에)")
@@ -130,10 +130,6 @@ def open_proposal(
     if blocker is not None:
         log.warning("제안 PR을 만들지 않음 %s#%s: %s", job.repo, job.pr_number, blocker)
         return ProposalResult(reason=blocker)
-    # AI가 쓴 변경 설명도 같은 검사를 거친다. 그래프가 이미 봤지만 푸시하기 전에 한 번 더 본다
-    if rules.find_secret_in_text(outcome.explanation, secrets) is not None:
-        log.warning("제안 PR을 만들지 않음 %s#%s: AI 변경 설명", job.repo, job.pr_number)
-        return ProposalResult(reason=f"{rules.SECRET_BLOCKED} (AI 변경 설명)")
 
     skill = outcome.skill
     branch = rules.branch_name(job.pr_number, skill)
@@ -145,16 +141,10 @@ def open_proposal(
     codes = rules.fixed_codes(before.findings, outcome.remaining)
     tests = format_test_line(outcome.test_run) if outcome.test_run else "확인 안 함"
     title = rules.title(job.pr_number, skill, outcome.fixed)
-    if skill == "lint":
-        body = rules.body(
-            job.pr_number, skill, job.head_sha, codes, before.source, tests,
-            len(outcome.formatted_files),
-        )  # fmt: skip
-    else:
-        body = rules.ai_body(
-            job.pr_number, skill, job.head_sha, codes, before.source, tests, outcome.models,
-            outcome.explanation, code_fence(outcome.explanation),
-        )  # fmt: skip
+    body = rules.body(
+        job.pr_number, skill, job.head_sha, codes, before.source, tests,
+        len(outcome.formatted_files),
+    )  # fmt: skip
     existing = github.open_pr_for_branch(job.repo, branch)
     if existing is not None:
         github.update_pr(job.repo, existing, title, body)

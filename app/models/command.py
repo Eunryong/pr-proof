@@ -9,14 +9,12 @@ CommandName = Literal["recheck", "fix", "unknown"]
 RECHECK: Final = "/recheck"
 FIX: Final = "/fix"
 # `/fix <인자>` → 다시 돌릴 수정 묶음. 비면 수정할 것이 남은 묶음 전부다 (4.9).
-# `mechanical`은 v1 lint 경로다. 3단계에서 lint를 새 구조로 옮길 때까지 `lint`와 같다.
-# `static`은 v1 static을 지울 때 함께 지운다
+# `mechanical`은 v1 lint 경로다. 3단계에서 lint를 새 구조로 옮길 때까지 `lint`와 같다
 FIX_TARGETS: Final[Mapping[str, tuple[str, ...]]] = {
-    "": ("lint", "static", "model"),
+    "": ("lint", "model"),
     "mechanical": ("lint",),
     "model": ("model",),
     "lint": ("lint",),
-    "static": ("static",),
 }
 
 

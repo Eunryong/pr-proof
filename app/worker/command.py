@@ -3,7 +3,7 @@
 - `/recheck`: PR의 지금 head로 다시 검사한다
 - `/fix <묶음>`: 승인을 기다리는 수정을 승인하고, 이 커밋에서 수정안을 내지 못하고 끝난 수정(검증
   실패, 호출 상한)을 다시 돌린다. 묶음은 `mechanical`·`model`이고, 인자가 없으면 할 일이 남은 묶음
-  전부다. v1 경로의 `/fix lint`(`mechanical`과 같다)와 `/fix static`도 그 경로를 지울 때까지 받는다
+  전부다. v1 경로의 `/fix lint`(`mechanical`과 같다)도 3단계에 그 경로를 옮길 때까지 받는다
 - 모르는 명령은 답하지 않는다 (`/cc` 같은 다른 관례일 수 있다)
 
 처리한 코멘트 ID는 runs와 따로 저장해 같은 코멘트에 두 번 답하지 않는다.
@@ -24,7 +24,7 @@ def fix_unsupported_message(word: str, arg: str) -> str:
     return (
         f"> {target}\n\n`{target}`는 지원하지 않습니다. "
         "`/fix`, `/fix mechanical`, `/fix model`을 쓸 수 있습니다 "
-        "(v1 경로의 `/fix lint`, `/fix static`도 아직 받습니다)."
+        "(v1 경로의 `/fix lint`도 아직 받습니다)."
     )
 
 

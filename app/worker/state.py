@@ -12,7 +12,6 @@ from sqlmodel import Session, SQLModel, create_engine, select
 from app.models import state_keys
 from app.models.call_budget import RulesetScope, Scope, Spent
 from app.models.db import (
-    AICall,
     CallGrant,
     CheckerEntry,
     CommandRecord,
@@ -196,22 +195,6 @@ class Store:
                 row.merge_commit = merge_commit
             session.add(row)
             session.commit()
-
-    # --- AI 비용 ---
-
-    def record_ai_call(self, call: AICall) -> None:
-        call.created_at = _now()
-        with Session(self.engine) as session:
-            session.add(call)
-            session.commit()
-
-    def ai_spent(self, repo: str, pr_number: int) -> float:
-        """이 PR에 지금까지 쓴 AI 비용 (예산에서 뺀 값의 합)."""
-        with Session(self.engine) as session:
-            stmt = select(AICall.charged_usd).where(
-                AICall.repo == repo, AICall.pr_number == pr_number
-            )
-            return float(sum(session.exec(stmt).all()))
 
     # --- 모델 호출 (ai_calls, model_cache) ---
 

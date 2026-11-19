@@ -222,13 +222,12 @@ def test_secret_blocked_proposal_hides_patch(tmp_path) -> None:
     assert "수정 내용" not in text
 
 
-# --- 3단계: static, 커버리지, AI 수정 ---
+# --- 제안 상태, 커버리지 ---
 
 
-def test_suffix_lists_every_waiting_skill() -> None:
-    proposals = {"lint": ("approval", None), "static": ("approval", None)}
-    assert report.proposal_suffix(proposals) == " · 자동 수정 가능: `/fix lint`, `/fix static`"
-    assert report.proposal_suffix({"static": ("tests", None)}) == ""
+def test_suffix_lists_the_waiting_fix() -> None:
+    assert report.proposal_suffix({"lint": ("approval", None)}) == " · 자동 수정 가능: `/fix lint`"
+    assert report.proposal_suffix({"lint": ("tests", None)}) == ""
     assert report.proposal_suffix("approval") == " · 자동 수정 가능: `/fix lint`"  # 2단계 호출
 
 
@@ -240,41 +239,6 @@ def test_diff_coverage_line() -> None:
         "",
         "바뀐 줄 커버리지 (참고): 66.67% (테스트가 센 3줄 중 1줄이 실행되지 않음)",
     ]
-
-
-def test_ai_fix_section_fences_explanation_and_shows_cost() -> None:
-    from app.models.fix import FixOutcome
-
-    fix = FixOutcome(
-        skill="static", status="ready", fixed=1, test_run=PASSED,
-        explanation="```\n@team 끝", ai_calls=3, ai_cost_usd=0.4123,
-        models=("haiku", "haiku", "sonnet"),
-    )  # fmt: skip
-    lines = "\n".join(report.fix_section(fix))
-    assert "AI 호출 3회 (haiku, haiku, sonnet) · 추정 비용 $0.4123" in lines
-    assert "````\n```\n@team 끝\n````" in lines  # 설명 안의 ```가 블록을 닫지 못한다
-    failed = FixOutcome(skill="static", status="ai_failed", detail="남은 위반 1건", ai_calls=3,
-                        ai_cost_usd=0.1, models=("haiku",) * 3)  # fmt: skip
-    text = "\n".join(report.fix_section(failed))
-    assert "정해진 횟수 안에 검증을 통과하지 못함 (남은 위반 1건)" in text and "AI 호출 3회" in text
-
-
-def test_gate_details_lists_fixable_locations_only_once() -> None:
-    from app.models.coverage import FixGate
-
-    def f(line: int) -> Finding:
-        return Finding(
-            "a.py", line, "warning", "repeated `2`", "static", "기본 규칙", "STATIC-REPEAT"
-        )
-
-    fixable = tuple(f(n) for n in range(report.MAX_LISTED_FINDINGS + 2))
-    gate = FixGate(allowed=True, fixable=fixable, uncovered=(f(999),))
-    lines = report.gate_details(gate)
-    assert "자동 수정 대상이 아닌 위반 1건: 테스트가 지나가지 않음 1건" in lines
-    (target,) = [line for line in lines if "이 고칠 위반" in line]
-    assert target.startswith(f"`/fix static`이 고칠 위반 {len(fixable)}건: `a.py:0`, `a.py:1`")
-    assert target.endswith(" 외 2건") and "repeated" not in target
-    assert report.gate_details(FixGate(allowed=True, fixable=fixable)) == []  # 전부 대상이면 생략
 
 
 def test_file_and_test_names_cannot_leave_their_code_span() -> None:

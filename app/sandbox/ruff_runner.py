@@ -42,27 +42,14 @@ class RuffRun:
     cancelled: bool = False
 
 
-def ruff_argv(files: list[str], config: str | None, select: tuple[str, ...] = ()) -> list[str]:
+def ruff_argv(files: list[str], config: str | None) -> list[str]:
     """명시한 파일도 설정의 exclude를 따르게 --force-exclude를 쓴다.
     설정이 없으면 --isolated로 ruff 기본 규칙만 쓴다 (PR head의 설정을 읽지 않게).
-
-    select를 주면 `--select`로 규칙을 파이프라인이 정한다. 명령줄 `--select`는 설정의
-    select·extend-select·ignore를 대신하지만, per-file-ignores·exclude·`# noqa`·규칙별 옵션
-    (`lint.pylint.allow-magic-value-types` 등)은 설정대로 따른다 (static 스킬, DESIGN.md F6).
     """
     config_args = ["--config", config] if config is not None else ["--isolated"]
-    select_args = ["--select", ",".join(select)] if select else []
     return [
         "ruff", "check", "--no-cache", "--output-format", "json", "--force-exclude",
-        *config_args, *select_args, "--", *files,
-    ]  # fmt: skip
-
-
-def show_files_argv(files: list[str], config: str | None) -> list[str]:
-    config_args = ["--config", config] if config is not None else ["--isolated"]
-    return [
-        "ruff", "check", "--no-cache", "--show-files", "--force-exclude", *config_args,
-        "--", *files,
+        *config_args, "--", *files,
     ]  # fmt: skip
 
 
@@ -151,19 +138,14 @@ def run_ruff(
     files: list[str],
     config: str | None,
     *,
-    select: tuple[str, ...] = (),
     timeout: int = LINT_TIMEOUT,
     is_stale: Callable[[], bool] | None = None,
 ) -> RuffRun:
-    """바뀐 파일만 검사한다. docker 자체 실패는 SandboxError로 올린다.
-
-    select가 비어 있으면 설정(또는 ruff 기본 규칙)의 규칙을 쓴다.
-    """
+    """바뀐 파일만 검사한다. 설정(또는 ruff 기본 규칙)의 규칙을 쓴다. docker 자체 실패는
+    SandboxError로 올린다."""
     if not files:
         return RuffRun()
-    result = run_in_sandbox(
-        container, ruff_argv(files, config, select), timeout=timeout, is_stale=is_stale
-    )
+    result = run_in_sandbox(container, ruff_argv(files, config), timeout=timeout, is_stale=is_stale)
     if result.cancelled:
         return RuffRun(cancelled=True)
     if result.timed_out:
@@ -179,37 +161,3 @@ def run_ruff(
         return RuffRun(violations=parse_output(result.stdout))
     except (json.JSONDecodeError, KeyError, TypeError) as e:
         return RuffRun(error=f"ruff 출력을 읽지 못함 ({e})")
-
-
-ShowFilesResult = tuple[str, ...] | str  # 검사 대상 파일(리포 기준 경로), str 오류
-
-
-def run_show_files(
-    container: str,
-    files: list[str],
-    config: str | None,
-    *,
-    timeout: int = LINT_TIMEOUT,
-    is_stale: Callable[[], bool] | None = None,
-) -> ShowFilesResult | None:
-    """files 중 설정의 exclude에 걸리지 않아 ruff가 검사할 파일. 새 커밋이 와서 중단되면 None.
-
-    ruff 밖의 검사(static의 AST 규칙)도 대상 리포가 제외한 파일(생성 코드 등)을 건너뛰게 한다.
-    """
-    if not files:
-        return ()
-    result = run_in_sandbox(
-        container, show_files_argv(files, config), timeout=timeout, is_stale=is_stale
-    )
-    if result.cancelled:
-        return None
-    if result.timed_out:
-        return f"ruff가 {timeout}초 안에 끝나지 않음"
-    if result.returncode in docker_cli.DOCKER_FAILED:
-        raise docker_cli.SandboxError(
-            f"docker exec 실패 ({result.returncode}): {result.stderr.strip()[-MAX_ERROR_CHARS:]}"
-        )
-    if result.returncode != 0:
-        detail = result.stderr.strip()[-MAX_ERROR_CHARS:] or f"종료 코드 {result.returncode}"
-        return f"ruff 실행 오류: {detail}"
-    return tuple(sorted(_repo_path(line) for line in result.stdout.splitlines() if line.strip()))
