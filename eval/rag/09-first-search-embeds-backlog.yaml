@@ -1,0 +1,79 @@
+name: first-search-embeds-backlog
+description: >-
+  5-9. 검색을 켜기 전에 쌓인 기록 세 건(embedded_at 빔)이 있는 저장소에서 검색을 켠 첫 검사. 위반이 없는
+  PR이어도 검사 시작에서 `data_dir/chroma/`가 생기고 세 건이 모두 임베딩된다.
+pipeline:
+  rag: {enabled: true}
+pr:
+  - file: notes.txt
+    create: "파이썬 파일을 바꾸지 않는 PR\n"
+records:
+  - kind: adopted
+    rule: 0
+    file: orders/services/shipping1.py
+    line_text: "if order.weight > 31:"
+    context: |
+      def shipping_fee(order: Order) -> int:
+          if order.weight > 31:
+              return 5000
+    diff: |
+      -    if order.weight > 31:
+      +    if order.weight > MAX_WEIGHT_KG_1:
+    pr_number: 61
+    fix_pr_number: 71
+  - kind: rejected
+    rule: 0
+    file: orders/services/shipping2.py
+    line_text: "if order.weight > 32:"
+    context: |
+      def shipping_fee(order: Order) -> int:
+          if order.weight > 32:
+              return 5000
+    diff: |
+      -    if order.weight > 32:
+      +    if order.weight > MAX_WEIGHT_KG_2:
+    pr_number: 62
+    fix_pr_number: 72
+  - kind: failed
+    rule: 0
+    file: orders/services/shipping3.py
+    line_text: "if order.weight > 33:"
+    context: |
+      def shipping_fee(order: Order) -> int:
+          if order.weight > 33:
+              return 5000
+    diff: |
+      -    if order.weight > 33:
+      +    if order.weight > MAX_WEIGHT_KG_3:
+    pr_number: 63
+    fix_pr_number: 73
+model:
+  rules:
+    - section: 코드 규칙 > 상수
+      quote: "비교에 쓰는 기준값(금액, 비율의 상한)은 숫자를 직접 쓰지 않고 대문자 이름의 모듈 상수로 둔다. `0`, `1`, 퍼센트 계산의 `100`은 예외다."
+      scope: []
+      scope_exclude: ["tests/**"]
+      scope_reason: 테스트는 기대값을 숫자로 직접 적는 코드라 이 규칙의 대상이 아니다
+      checker:
+        body: |
+          id: no-magic-number-in-comparison
+          language: python
+          severity: error
+          message: 비교의 기준값은 대문자 이름의 모듈 상수로 둔다
+          rule:
+            any:
+              - kind: integer
+              - kind: float
+            inside:
+              kind: comparison_operator
+            not:
+              regex: "^(0|1|100)$"
+        examples:
+          - {code: "if price > 50:\n    pass\n", violates: true, lines: [1]}
+          - {code: "ok = total >= 50_000\n", violates: true, lines: [1]}
+          - {code: "if n > 0:\n    pass\n", violates: false, lines: []}
+          - {code: "full = percent == 100\n", violates: false, lines: []}
+expect:
+  violations: []
+  chroma: true
+  embedded: 3
