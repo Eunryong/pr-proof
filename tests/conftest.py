@@ -56,3 +56,9 @@ def worktree(eval_repo: Path, tmp_path: Path) -> Path:
     dest = tmp_path / "wt"
     shutil.copytree(eval_repo, dest, ignore=shutil.ignore_patterns(".git"))
     return dest
+
+
+@pytest.fixture(scope="session")
+def tool_cache(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """docker 테스트가 같이 쓰는 도구 캐시. 세션에 한 번 실제로 받는다."""
+    return tmp_path_factory.mktemp("tools")

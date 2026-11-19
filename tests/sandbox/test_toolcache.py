@@ -1,0 +1,148 @@
+"""app/sandbox/toolcache.py 단위 테스트. 받기는 가짜로 바꾸고 Docker 없이 돈다."""
+
+import hashlib
+import io
+import os
+import zipfile
+from pathlib import Path
+from typing import Final
+
+import pytest
+
+from app.sandbox import toolcache
+from app.sandbox.docker_cli import SandboxError
+from app.sandbox.toolcache import COMPLETE, Asset, Tool, ToolUnavailable
+
+PLATFORM: Final = "linux-arm64-gnu"
+BINARY: Final = b"#!/bin/sh\necho fake\n"
+
+
+def _zip(binary: bytes = BINARY) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("fake", binary)
+        z.writestr("other", b"not extracted")
+    return buf.getvalue()
+
+
+ARCHIVE: Final = _zip()
+
+
+def _tools(sha256: str = hashlib.sha256(ARCHIVE).hexdigest()) -> dict[str, Tool]:
+    asset = Asset("https://example.invalid/fake.zip", sha256)
+    return {"fake": Tool("fake", "1.0", "fake", {PLATFORM: asset})}
+
+
+class FakeDownload:
+    def __init__(self, content: bytes = ARCHIVE) -> None:
+        self.content = content
+        self.calls: list[str] = []
+
+    def __call__(self, asset: Asset, archive: Path) -> None:
+        self.calls.append(asset.url)
+        archive.write_bytes(self.content)
+
+
+def _ensure(cache: Path, download: FakeDownload, tools: dict[str, Tool] | None = None) -> Path:
+    return toolcache.ensure(
+        "fake", cache_dir=cache, platform=PLATFORM, download=download, tools=tools or _tools()
+    )
+
+
+def test_fetches_once_and_marks_complete(tmp_path: Path) -> None:
+    download = FakeDownload()
+    path = _ensure(tmp_path, download)
+    assert path == tmp_path / "fake" / "1.0" / PLATFORM
+    assert (path / "fake").read_bytes() == BINARY
+    assert os.access(path / "fake", os.X_OK)
+    assert (path / COMPLETE).is_file()
+    assert sorted(p.name for p in path.iterdir()) == [COMPLETE, "SHA256", "fake"]
+    assert _ensure(tmp_path, download) == path
+    assert len(download.calls) == 1
+    assert [p.name for p in path.parent.iterdir()] == [PLATFORM]  # 임시 폴더가 남지 않음
+
+
+def test_checksum_mismatch_leaves_no_cache_entry(tmp_path: Path) -> None:
+    download = FakeDownload(_zip(b"tampered"))
+    with pytest.raises(ToolUnavailable, match="해시 불일치"):
+        _ensure(tmp_path, download)
+    assert list((tmp_path / "fake" / "1.0").iterdir()) == []
+    assert _ensure(tmp_path, FakeDownload()).joinpath("fake").read_bytes() == BINARY
+
+
+def test_download_failure_is_environment_error_and_leaves_nothing(tmp_path: Path) -> None:
+    def failing(asset: Asset, archive: Path) -> None:
+        archive.write_bytes(b"partial")
+        raise SandboxError("network down")
+
+    with pytest.raises(SandboxError):
+        _ensure(tmp_path, failing)  # type: ignore[arg-type]
+    assert list((tmp_path / "fake" / "1.0").iterdir()) == []
+
+
+def test_unknown_tool_and_platform_are_unavailable(tmp_path: Path) -> None:
+    with pytest.raises(ToolUnavailable, match="목록에 없음"):
+        toolcache.ensure("semgrep", cache_dir=tmp_path, platform=PLATFORM)
+    with pytest.raises(ToolUnavailable, match="배포본이 없음"):
+        toolcache.ensure(
+            "fake", cache_dir=tmp_path, platform="linux-riscv64-gnu", tools=_tools(),
+            download=FakeDownload(),
+        )  # fmt: skip
+
+
+def test_existing_complete_entry_wins_a_race(tmp_path: Path) -> None:
+    """다른 작업이 먼저 옮긴 완성된 폴더가 있으면 그쪽을 쓴다."""
+    target = tmp_path / "fake" / "1.0" / PLATFORM
+
+    def racing(asset: Asset, archive: Path) -> None:
+        target.mkdir(parents=True)
+        (target / "fake").write_bytes(b"winner")
+        (target / COMPLETE).touch()
+        archive.write_bytes(ARCHIVE)
+
+    assert _ensure(tmp_path, racing) == target  # type: ignore[arg-type]
+    assert (target / "fake").read_bytes() == b"winner"
+    assert [p.name for p in target.parent.iterdir()] == [PLATFORM]
+
+
+def test_incomplete_entry_is_replaced(tmp_path: Path) -> None:
+    target = tmp_path / "fake" / "1.0" / PLATFORM
+    target.mkdir(parents=True)
+    (target / "fake").write_bytes(b"half")
+    assert (_ensure(tmp_path, FakeDownload()) / "fake").read_bytes() == BINARY
+
+
+def test_stale_temp_dirs_are_removed(tmp_path: Path) -> None:
+    parent = tmp_path / "fake" / "1.0"
+    stale, fresh = parent / f".{PLATFORM}.old.tmp", parent / f".{PLATFORM}.new.tmp"
+    stale.mkdir(parents=True)
+    fresh.mkdir()
+    old = stale.stat().st_mtime - toolcache.STALE_TMP_SECONDS - 1
+    os.utime(stale, (old, old))
+    _ensure(tmp_path, FakeDownload())
+    assert not stale.exists() and fresh.exists()
+
+
+@pytest.mark.parametrize(
+    ("os_name", "arch", "key"),
+    [
+        ("linux", "arm64", "linux-arm64-gnu"),
+        ("linux", "aarch64", "linux-arm64-gnu"),
+        ("linux", "amd64", "linux-amd64-gnu"),
+        ("Linux", "x86_64", "linux-amd64-gnu"),
+    ],
+)
+def test_platform_key(os_name: str, arch: str, key: str) -> None:
+    assert toolcache.platform_key(os_name, arch) == key
+
+
+def test_platform_key_rejects_unknown_arch() -> None:
+    with pytest.raises(ToolUnavailable):
+        toolcache.platform_key("linux", "s390x")
+
+
+def test_registry_pins_every_asset() -> None:
+    for tool in toolcache.TOOLS.values():
+        assert tool.assets
+        for asset in tool.assets.values():
+            assert asset.url.startswith("https://") and len(asset.sha256) == 64

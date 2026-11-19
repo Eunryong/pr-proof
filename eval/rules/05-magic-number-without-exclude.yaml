@@ -1,0 +1,41 @@
+name: magic-number-without-exclude
+description: >-
+  04와 같은 PR에서 규칙이 tests/를 빼지 않았으면(모델이 범위를 추정하지 않음) tests/의 바뀐 줄도
+  잡힌다. 범위 추정이 실제로 결과를 바꾸는지 보는 짝 케이스라 가짜 모델로만 돈다.
+scripted_only: true
+pr:
+  - file: orders/services/pricing.py
+    find: "order.coupon_percent > MAX_COUPON_PERCENT"
+    replace: "order.coupon_percent > 50"
+  - file: orders/services/pricing.py
+    append: "\n\ndef is_full_discount(order: Order) -> bool:\n    return order.coupon_percent == 100\n\n\ndef has_items(order: Order) -> bool:\n    return len(order.items) > 0\n"
+  - file: tests/test_pricing.py
+    append: "\n\ndef test_free_shipping_threshold():\n    assert subtotal(order(60_000)) > 50_000\n"
+model:
+  rules:
+    - section: 코드 규칙 > 상수
+      quote: "비교에 쓰는 기준값(금액, 비율의 상한)은 숫자를 직접 쓰지 않고 대문자 이름의 모듈 상수로 둔다. `0`, `1`, 퍼센트 계산의 `100`은 예외다."
+      scope: []
+      checker:
+        body: |
+          id: no-magic-number-in-comparison
+          language: python
+          severity: error
+          message: 비교의 기준값은 대문자 이름의 모듈 상수로 둔다
+          rule:
+            any:
+              - kind: integer
+              - kind: float
+            inside:
+              kind: comparison_operator
+            not:
+              regex: "^(0|1|100)$"
+        examples:
+          - {code: "if price > 50:\n    pass\n", violates: true, lines: [1]}
+          - {code: "ok = total >= 50_000\n", violates: true, lines: [1]}
+          - {code: "if n > 0:\n    pass\n", violates: false, lines: []}
+          - {code: "full = percent == 100\n", violates: false, lines: []}
+expect:
+  violations: ["orders/services/pricing.py:13", "tests/test_pricing.py:44"]
+  not_flagged: ["orders/services/pricing.py:31", "orders/services/pricing.py:35"]
+  absent: ["범위 추정"]

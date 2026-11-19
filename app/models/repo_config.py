@@ -3,10 +3,17 @@
 지금 단계에서 쓰는 항목만 정의한다. 다른 항목은 무시한다 (스키마 초안의 나머지는 그 단계에서).
 """
 
-from typing import Final
+from typing import Annotated, Final
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    ValidationError,
+)
 
 from app.models.finding import Skill
 
@@ -16,6 +23,35 @@ DEFAULT_MAX_RETRIES: Final = 3
 MAX_RETRIES_CAP: Final = 5  # 회차마다 테스트를 다시 돌리므로 리포 설정으로 무한히 늘리지 못하게
 # claude --model에 넘기는 이름. `-`로 시작하면 옵션으로 읽히므로 막는다
 MODEL_NAME_PATTERN: Final = r"^[A-Za-z0-9][A-Za-z0-9._\[\]-]*$"
+DEFAULT_RULE_DOCS: Final = ("README.md", "CONTRIBUTING.md")
+MAX_RULE_DOCS: Final = 20
+
+
+def _check_doc_path(path: str) -> str:
+    """루트 기준 상대 경로만. git 인자와 문서 경계 표시에 그대로 들어가므로 이상한 글자를 막는다."""
+    parts = path.split("/")
+    if (
+        not path
+        or path.startswith(("/", "-"))
+        or any(part in ("", ".", "..") for part in parts)
+        or any(not ch.isprintable() or ch in '\\"' for ch in path)
+    ):
+        raise ValueError(f"루트 기준 상대 경로가 아님: {path!r}")
+    return path
+
+
+DocPath = Annotated[str, AfterValidator(_check_doc_path)]
+RuleId = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+
+class RulesSettings(BaseModel):
+    """규칙 문서와 끈 규칙 (DESIGN.md 4.3, 10절 `rules`). docs를 적으면 기본 목록을 대신한다."""
+
+    model_config = ConfigDict(extra="ignore")
+    docs: list[DocPath] = Field(
+        default_factory=lambda: list(DEFAULT_RULE_DOCS), max_length=MAX_RULE_DOCS
+    )
+    disabled: list[RuleId] = Field(default_factory=list)
 
 
 class SandboxSettings(BaseModel):
@@ -38,13 +74,29 @@ class StaticSettings(BaseModel):
     min_repeats: int | None = Field(default=None, ge=2)
 
 
+class CallSettings(BaseModel):
+    """모델 호출 수 상한 (docs/DESIGN.md 9.2, 10절 `model.calls`). 판단은 models/call_budget.py.
+
+    `pr_base`·`per_violation`은 위반 수에 비례하는 PR 상한을 넣는 4단계에 읽는다. 그때까지
+    PR 상한은 `pr_max`다.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+    pr_max: int = Field(default=150, ge=0)
+    ruleset_base: int = Field(default=10, ge=0)
+    per_rule: int = Field(default=4, ge=0)
+    ruleset_max: int = Field(default=100, ge=0)
+    repo_daily: int = Field(default=500, ge=0)
+
+
 class ModelSettings(BaseModel):
-    """AI 수정에 쓸 모델과 PR당 예산 (DESIGN.md 비용 최적화). 백엔드는 claude CLI만 있다."""
+    """모델과 호출 상한. 백엔드는 claude CLI만 있다."""
 
     model_config = ConfigDict(extra="ignore")
     light: str = Field(default="haiku", pattern=MODEL_NAME_PATTERN)
     heavy: str = Field(default="sonnet", pattern=MODEL_NAME_PATTERN)
-    budget_per_pr_usd: float = Field(default=0.5, ge=0)
+    budget_per_pr_usd: float = Field(default=0.5, ge=0)  # v1 수정 경로. 2단계에 calls로 옮긴다
+    calls: CallSettings = CallSettings()
 
 
 class SkillsSettings(BaseModel):
@@ -70,6 +122,7 @@ class Extensions(BaseModel):
 
 class RepoConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
+    rules: RulesSettings = RulesSettings()
     sandbox: SandboxSettings = SandboxSettings()
     skills: SkillsSettings = SkillsSettings()
     model: ModelSettings = ModelSettings()
@@ -106,6 +159,19 @@ def parse_repo_config(text: str | None) -> tuple[RepoConfig, str | None]:
 def memory_limit(requested_gb: float, max_gb: float) -> float:
     """리포가 요청한 메모리 한도. 파이프라인 쪽 상한을 넘으면 상한으로 줄인다."""
     return min(requested_gb, max_gb)
+
+
+def call_limits(
+    requested: CallSettings, *, max_pr_max: int, max_ruleset_max: int, max_repo_daily: int
+) -> CallSettings:
+    """리포가 요청한 호출 상한. 파이프라인 쪽 최댓값을 넘는 값은 그 값으로 줄인다 (9.2)."""
+    return requested.model_copy(
+        update={
+            "pr_max": min(requested.pr_max, max_pr_max),
+            "ruleset_max": min(requested.ruleset_max, max_ruleset_max),
+            "repo_daily": min(requested.repo_daily, max_repo_daily),
+        }
+    )
 
 
 def _first_line(text: str) -> str:

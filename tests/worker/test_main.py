@@ -29,11 +29,12 @@ def test_passed_run_posts_progress_then_result(env) -> None:
     assert main.handle(_payload(), env["deps"]) == "passed"
     posted = bodies(env["gh"])
     assert "진행 중 (체크아웃)" in posted[0]
-    assert "진행 중 (규칙 검사)" in posted[1] and "진행 중 (테스트 실행)" in posted[2]
+    assert "진행 중 (규칙 검사)" in posted[1] and "진행 중 (문서 규칙)" in posted[2]
+    assert "진행 중 (테스트 실행)" in posted[3]
     assert "**테스트:** 통과 (9개)" in posted[-1]
     assert "**규칙:** ⚠️ 위반 1건 (lint 1)" in posted[-1]
     # 첫 코멘트 뒤에는 같은 코멘트를 고친다
-    assert env["gh"].kinds() == ["find", "create", "patch", "patch", "patch"]
+    assert env["gh"].kinds() == ["find", "create", "patch", "patch", "patch", "patch"]
     assert env["deps"].store.last_comment_id("o/r", 1) == 555
 
 

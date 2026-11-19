@@ -89,3 +89,82 @@ class AICall(SQLModel, table=True):
     # 오류의 내용. 도구 목록 확인으로 멈췄으면 더 나온 도구 이름과 claude CLI 버전이 있다
     detail: str | None = None
     created_at: datetime | None = None  # Store가 기록할 때 채운다
+
+
+class ModelCacheEntry(SQLModel, table=True):
+    """해시 키 → 모델 결과 (DESIGN.md 5.6, 9.1). thread·PR과 무관하게 키가 같으면 같은 결과를 쓴다.
+
+    키는 app/models/cache_key.py가 만든다.
+    """
+
+    __tablename__ = "model_cache"
+
+    key: str = Field(primary_key=True)
+    stage: str  # call_budget.Stage
+    model: str  # 모델이 알려준 전체 id. 모르면 호출한 이름
+    prompt_version: str
+    result_json: str
+    created_at: datetime
+
+
+class ModelCall(SQLModel, table=True):
+    """모델 호출 한 번 (DESIGN.md 7.8의 `ai_calls`, 9.2). 호출 상한은 `counted`의 합으로 센다.
+
+    v1 수정 경로의 달러 기록 `AICall`(테이블 `aicall`)과 다른 테이블이다. 그 경로를 호출 수
+    상한으로 옮기는 2단계에 `AICall`을 없앤다.
+    """
+
+    __tablename__ = "ai_calls"
+
+    id: int | None = Field(default=None, primary_key=True)
+    repo: str = Field(index=True)
+    pr_number: int = Field(index=True)
+    head_sha: str
+    stage: str  # call_budget.Stage
+    # 규칙 묶음 상한에서 센 호출이면 그 묶음의 캐시 키. PR 상한에서 센 호출이면 None
+    ruleset_key: str | None = Field(default=None, index=True)
+    model: str  # claude --model에 넘긴 이름
+    model_id: str = ""  # 모델이 알려준 전체 id (별칭이 가리킨 것)
+    tier: str  # call_budget.Tier
+    attempt: int = 1
+    counted: int  # 상한에서 센 값. 가벼운 모델 1, 무거운 모델 3, 저장된 결과 0
+    cache_hit: bool = False
+    # None: 호출을 시작했고 결과를 아직 적지 못함. 워커가 호출 도중 죽어도 센 값은 남는다
+    ok: bool | None = None
+    error: str | None = None
+    input_tokens: int | None = None  # 캐시 생성·읽기를 합친 입력. 상한에는 쓰지 않는 측정값
+    output_tokens: int | None = None
+    permission_denials: int = 0
+    created_at: datetime = Field(index=True)
+
+
+class RulesetEntry(SQLModel, table=True):
+    """규칙 묶음의 캐시 키 → 원문 확인을 거친 규칙 묶음 JSON (DESIGN.md 4.3, 7.8).
+
+    `rules.disabled`는 적용하기 전의 묶음이다. 끈 규칙은 쓸 때 뺀다.
+    """
+
+    __tablename__ = "rulesets"
+
+    key: str = Field(primary_key=True)
+    ruleset_json: str
+    created_at: datetime
+
+
+class CheckerEntry(SQLModel, table=True):
+    """규칙별 검사기 작성 결과 (DESIGN.md 4.4, 7.8): 채택한 검사기 또는 끝내 통과하지 못한 기록.
+
+    키는 app/models/checker_authoring.py의 `checker_key`다. 회차마다의 답(초안)은 `model_cache`에
+    있고, attempts_json의 각 회차 `artifact`가 그 키다. 호출 상한·모델 호출 실패로 끝난 작성은
+    저장하지 않으므로 다음 검사가 이어 한다.
+    """
+
+    __tablename__ = "checkers"
+
+    key: str = Field(primary_key=True)
+    rule_id: str = Field(index=True)
+    accepted: bool
+    checker_json: str | None = None  # 채택한 Checker. 실패했으면 None
+    detail: str = ""  # 실패한 이유 (마지막 회차)
+    attempts_json: str  # worker/loop.py의 Attempt 목록
+    created_at: datetime

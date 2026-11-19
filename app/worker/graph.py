@@ -8,6 +8,9 @@
         /fix static → AI 수정 ────┴→ 제안 PR → 수정 코멘트 ─┬─ (남은 제안 없음) → 끝
                                                        └─ 다른 스킬의 승인 대기·자동 수정
 
+규칙 검사와 테스트 사이에 문서 규칙 경로가 돈다: 규칙 읽기 → 검사기 작성 → 위반 찾기 (5.1).
+찾기만 하고 고치지 않는다. 규칙이 없거나 이 경로가 실패하면 그 자리에서 테스트로 넘어간다.
+
 스킬마다 수정은 한 번이다. 수정마다 새 worktree에서 시작한다 (앞 수정의 변경이 섞이지 않게).
 수정안을 내지 못하고 끝난 스킬은 `/fix <skill>`로 그 스킬만 다시 돌린다 (사람이 달 때만).
 
@@ -32,22 +35,28 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 
+from app.config import CallMaxima
+from app.models import doc_rules as doc_rule_models
 from app.models import fix as fix_rules
 from app.models import proposal as proposal_rules
 from app.models import rejection
 from app.models.coverage import FixGate, code_fix_gate
 from app.models.db import AICall
+from app.models.doc_rules import DocRules, RuleOutcome, RulesRead
 from app.models.finding import SkillResult
 from app.models.fix import FixOutcome
 from app.models.job import PRJob
 from app.models.proposal import ProposalResult
+from app.models.repo_config import call_limits
 from app.models.test_run import PytestRun
 from app.sandbox import container, docker_cli, pytest_runner, venv
-from app.worker import ai_fix, base_config, coverage, proposal, repo, report
+from app.worker import ai_fix, base_config, coverage, doc_rules, proposal, repo, report
 from app.worker.ai import claude_cli
 from app.worker.ai.claude_cli import ClaudeResult
 from app.worker.base_config import BaseConfig
+from app.worker.budget import CallBudget
 from app.worker.coverage import DiffCoverage
+from app.worker.doc_rules import Runtime as DocRuntime
 from app.worker.github import GitHub
 from app.worker.repo import CHANGES_DIFF
 from app.worker.skills import lint, static
@@ -67,6 +76,10 @@ AI_FIX: Final = "ai_fix"
 FIX_NODES: Final[Mapping[str, str]] = {"lint": FIX, "static": AI_FIX}  # 스킬 → 수정 node
 PROPOSE: Final = "propose"
 FIX_COMMENT: Final = "fix_comment"
+LOAD_RULES: Final = "load_rules"
+AUTHOR_CHECKERS: Final = "author_checkers"
+DETECT: Final = "detect"
+TOOL_DIR: Final = "tools"  # 도구 캐시 (data_dir 아래, venvs와 같은 자리)
 # 체크포인트에서 되살릴 수 있는 상태 타입 (나머지는 langgraph가 막는다)
 _STATE_TYPES: Final = (
     ("app.models.job", "PRJob"),
@@ -77,6 +90,7 @@ _STATE_TYPES: Final = (
     ("app.models.fix", "FixOutcome"),
     ("app.models.proposal", "ProposalResult"),
     ("app.worker.coverage", "DiffCoverage"),
+    *doc_rule_models.STATE_TYPES,
 )
 
 
@@ -109,6 +123,9 @@ class FlowState(TypedDict, total=False):
     lint: SkillResult
     static: SkillResult  # 테스트 뒤에는 위반마다 covered가 채워져 있다
     diff_coverage: DiffCoverage | None
+    rules_read: RulesRead  # 규칙 읽기 → 검사기 작성 → 위반 찾기 사이에만 쓴다
+    rule_checks: tuple[RuleOutcome, ...]
+    doc_rules: DocRules  # 문서 규칙 경로의 결과. 코멘트의 "문서 규칙" 절은 이 값으로만 그린다
     test_run: PytestRun
     commented: bool
     fix_skill: str  # 지금(마지막으로) 수정하는 스킬
@@ -125,6 +142,7 @@ class FlowContext:
     run_id: int
     comment_id: int | None
     max_memory_gb: float
+    call_maxima: CallMaxima = field(default_factory=CallMaxima)
     sandbox_names: docker_cli.Names = docker_cli.DEFAULT_NAMES
     started: float = field(default_factory=time.monotonic)
     stack: ExitStack = field(default_factory=ExitStack)
@@ -134,6 +152,9 @@ class FlowContext:
     # 의존성 설치가 실패해도(그래프 밖 예외) 코멘트에 규칙 결과를 쓰려고 여기에도 둔다
     lint: SkillResult | None = None
     static: SkillResult | None = None
+    doc_rules: DocRules | None = None
+    doc_runtime: DocRuntime | None = None
+    first_call: int = 0  # 문서 규칙 경로를 시작하기 전 마지막 호출 기록의 id
     dirty: bool = False  # 수정이 worktree를 바꿨다. 다음 수정은 새 worktree에서 한다
     changes_diff: bytes = b""  # 테스트 전에 읽은 PR의 diff (테스트 뒤에는 샌드박스가 바꿀 수 있다)
     run_tests: Callable[..., PytestRun] | None = None  # 없으면 run_pr_tests
@@ -267,6 +288,56 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
         except OSError:
             return None
 
+    def doc_runtime(job: PRJob) -> DocRuntime:
+        if ctx.doc_runtime is None:
+            models = ctx.base.repo.model
+            limits = call_limits(models.calls, **ctx.call_maxima.model_dump())
+            ctx.doc_runtime = DocRuntime(
+                store=ctx.store,
+                budget=CallBudget(ctx.store, job.repo, job.pr_number, job.head_sha, limits),
+                models=models,
+                ask=claude_cli.run_structured,
+                sandbox=doc_rules.sandbox_for(ctx.data_dir / TOOL_DIR),
+            )
+        return ctx.doc_runtime
+
+    def doc_rules_done(result: DocRules) -> FlowState:
+        ctx.doc_rules = result  # 의존성 설치가 실패해도(그래프 밖 예외) 코멘트에 보인다
+        return {"doc_rules": result}
+
+    def load_rules(state: FlowState) -> FlowState:
+        """base의 규칙 문서를 읽는다 (5.1 load_rules). 규칙이 없거나 못 읽으면 여기서 끝난다."""
+        job = state["job"]
+        progress(job, "문서 규칙")
+        ctx.first_call = doc_rules.last_call_id(ctx.store, job.repo, job.pr_number)
+        read = doc_rules.read(ctx.worktree, job.base_sha, ctx.base.repo.rules, doc_runtime(job))
+        if isinstance(read, RulesRead):
+            return {"rules_read": read}
+        return doc_rules_done(read)
+
+    def author_checkers(state: FlowState) -> FlowState:
+        """규칙마다 검사기를 작성하거나 저장한 것을 쓴다 (5.1 plan_checks, author_checker)."""
+        job = state["job"]
+        outcomes = doc_rules.author(state["rules_read"], doc_runtime(job))
+        if isinstance(outcomes, tuple):
+            return {"rule_checks": outcomes}
+        return doc_rules_done(outcomes)
+
+    def detect_rules(state: FlowState) -> FlowState:
+        """채택한 검사기를 PR이 바꾼 파일에 돌린다 (5.1 detect). 바뀐 줄의 위반만 남긴다."""
+        job = state["job"]
+        return doc_rules_done(
+            doc_rules.find(
+                state["rules_read"], state["rule_checks"], ctx.worktree, ctx.changes_diff,
+                doc_runtime(job), since_call=ctx.first_call,
+            )
+        )  # fmt: skip
+
+    def after_doc_step(state: FlowState) -> str:
+        if state.get("stopped") or ctx.store.is_stale(state["job"]):
+            return "stop"
+        return "done" if "doc_rules" in state else "next"
+
     def test(state: FlowState) -> FlowState:
         job = state["job"]
         progress(job, "테스트 실행")
@@ -337,6 +408,8 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
             fixes=state.get("fixes"),
             proposal_results=state.get("proposals"),
             from_sync=job.source == "sync",
+            doc_rules=state.get("doc_rules"),
+            checkers=doc_rules.shown_checkers(state.get("doc_rules"), ctx.store),
         )
 
     def comment(state: FlowState) -> FlowState:
@@ -544,6 +617,9 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
     graph = StateGraph(FlowState)
     graph.add_node("checkout", checkout)
     graph.add_node("rules", rules)
+    graph.add_node(LOAD_RULES, load_rules)
+    graph.add_node(AUTHOR_CHECKERS, author_checkers)
+    graph.add_node(DETECT, detect_rules)
     graph.add_node("test", test)
     graph.add_node("comment", comment)
     graph.add_node(AWAIT_FIX, await_fix)
@@ -553,7 +629,14 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
     graph.add_node(FIX_COMMENT, fix_comment)
     graph.add_edge(START, "checkout")
     graph.add_conditional_edges("checkout", route, {"next": "rules", "stop": END})
-    graph.add_conditional_edges("rules", route, {"next": "test", "stop": END})
+    graph.add_conditional_edges("rules", route, {"next": LOAD_RULES, "stop": END})
+    graph.add_conditional_edges(
+        LOAD_RULES, after_doc_step, {"next": AUTHOR_CHECKERS, "done": "test", "stop": END}
+    )
+    graph.add_conditional_edges(
+        AUTHOR_CHECKERS, after_doc_step, {"next": DETECT, "done": "test", "stop": END}
+    )
+    graph.add_conditional_edges(DETECT, route, {"next": "test", "stop": END})
     graph.add_conditional_edges("test", route, {"next": "comment", "stop": END})
     graph.add_conditional_edges("comment", next_fix, fix_targets)
     graph.add_conditional_edges(AWAIT_FIX, after_await, [FIX, AI_FIX, END])

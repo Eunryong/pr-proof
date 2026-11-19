@@ -4,19 +4,23 @@
 ⚠️는 "위반 있음"이라는 뜻으로만 쓴다 (docs/DESIGN.md F9). 그 아래에 상세를 붙인다.
 """
 
-import re
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from typing import Final, Literal
 
+from app.models.checker import Checker
 from app.models.coverage import FixGate
+from app.models.doc_rules import DocRules
 from app.models.finding import Finding, SkillResult
 from app.models.fix import FixBlocker, FixOutcome
+from app.models.install import InstallFailureKind
 from app.models.proposal import ProposalResult
 from app.models.test_run import PytestRun
 from app.sandbox.docker_cli import MEMORY_LIMIT_GB
+from app.worker import doc_rules_report
 from app.worker.base_config import PIPELINE_YAML, BaseConfig
 from app.worker.coverage import DiffCoverage
+from app.worker.markdown import code_fence, inline_code
 
 MAX_LISTED_FAILURES: Final = 10
 MAX_LISTED_FINDINGS: Final = 30
@@ -105,11 +109,11 @@ def format_test_details(run: PytestRun, memory_gb: float, max_memory_gb: float) 
         ]
     if run.flaky:
         lines += ["", "불안정한 테스트 (처음엔 실패, 다시 돌려 통과):"]
-        lines += [f"- `{t}`" for t in run.flaky[:MAX_LISTED_FAILURES]]
+        lines += [f"- {inline_code(t, 300)}" for t in run.flaky[:MAX_LISTED_FAILURES]]
     still_failed = [t for t in (s.failed_tests if s else ()) if t not in run.flaky]
     if s is not None and still_failed:
         lines += ["", "실패한 테스트:"]
-        lines += [f"- `{t}`" for t in still_failed[:MAX_LISTED_FAILURES]]
+        lines += [f"- {inline_code(t, 300)}" for t in still_failed[:MAX_LISTED_FAILURES]]
         hidden = len(still_failed) - MAX_LISTED_FAILURES
         if hidden > 0:
             lines.append(f"- 외 {hidden}개")
@@ -253,7 +257,7 @@ def gate_details(gate: FixGate | None, skill: str = "static") -> list[str]:
 
 def target_locations(skill: str, targets: Sequence[Finding]) -> str:
     """수정이 고칠 위반의 위치만 한 줄로. 내용은 위 위반 목록에 이미 있다."""
-    shown = ", ".join(f"`{f.file}:{f.line}`" for f in targets[:MAX_LISTED_FINDINGS])
+    shown = ", ".join(_location(f) for f in targets[:MAX_LISTED_FINDINGS])
     hidden = len(targets) - MAX_LISTED_FINDINGS
     more = f" 외 {hidden}건" if hidden > 0 else ""
     return f"`{fix_command(skill)}`이 고칠 위반 {len(targets)}건: {shown}{more}"
@@ -314,14 +318,13 @@ def ai_cost_lines(fix: FixOutcome) -> list[str]:
     return [f"AI 호출 {fix.ai_calls}회 ({models}) · 추정 비용 ${fix.ai_cost_usd:.4f}"]
 
 
-def code_fence(text: str) -> str:
-    """text 안의 어떤 백틱 줄보다 긴 코드 울타리. 본문의 ```가 블록을 일찍 닫지 않게 한다."""
-    longest = max((len(m) for m in re.findall(r"`+", text)), default=0)
-    return "`" * max(3, longest + 1)
+def _location(f: Finding) -> str:
+    """파일 이름은 PR 작성자가 정한다. 백틱이 든 이름이 코드 스팬을 닫지 못하게 한다."""
+    return inline_code(f"{f.file}:{f.line}", 300)
 
 
 def finding_line(f: Finding) -> str:
-    line = f"- `{f.file}:{f.line}` `{f.code}` {f.message}"
+    line = f"- {_location(f)} `{f.code}` {f.message}"
     if f.rejected_in is not None:  # 같은 줄을 고친 제안 PR을 사람이 닫았다. 다시 고치지 않는다
         line += f" · {REJECTED_SHORT} (#{f.rejected_in})"
     return line
@@ -377,6 +380,8 @@ def _compose(
     from_sync: bool = False,
     suffix: str = "",
     extra: list[str] | None = None,
+    doc_rules: DocRules | None = None,
+    checkers: Mapping[str, Checker] | None = None,
 ) -> str:
     results = [r for r in (lint, static) if r is not None]
     lines = [HEADER, "", f"**테스트:** {test_line}"]
@@ -385,6 +390,7 @@ def _compose(
     lines += details
     lines += rules_details(results)
     lines += extra or []
+    lines += doc_rules_report.section(doc_rules, checkers or {})
     off = [s for s in ("lint", "static") if base is not None and s not in base.repo.skills.enabled]
     if off:
         lines += [
@@ -427,6 +433,8 @@ def render_result(
     fixes: Mapping[str, FixOutcome] | None = None,
     proposal_results: Mapping[str, ProposalResult] | None = None,
     from_sync: bool = False,
+    doc_rules: DocRules | None = None,
+    checkers: Mapping[str, Checker] | None = None,
     # lint 하나만 쓰던 호출 (2단계)
     proposal: Proposal | None = None,
     proposal_number: int | None = None,
@@ -465,6 +473,8 @@ def render_result(
         from_sync=from_sync,
         suffix=proposal_suffix(waiting),
         extra=extra,
+        doc_rules=doc_rules,
+        checkers=checkers,
     )
 
 
@@ -475,16 +485,31 @@ def render_install_failure(
     lint: SkillResult | None = None,
     static: SkillResult | None = None,
     base: BaseConfig | None = None,
+    doc_rules: DocRules | None = None,
+    checkers: Mapping[str, Checker] | None = None,
+    kind: InstallFailureKind = "unknown",
+    packages: Sequence[str] = (),
 ) -> str:
     """의존성 설치 실패. 규칙 검사는 설치와 따로 돌므로 결과가 있으면 같이 보여준다."""
     return _compose(
-        "실행 불가 (의존성을 설치하지 못함)",
+        f"실행 불가 ({install_failure_reason(kind, packages)})",
         _details("pip 출력", detail[-MAX_OUTPUT_CHARS:]),
         head_sha,
         lint=lint,
         static=static,
         base=base,
+        doc_rules=doc_rules,
+        checkers=checkers,
     )
+
+
+def install_failure_reason(kind: InstallFailureKind, packages: Sequence[str] = ()) -> str:
+    if kind == "source_only" and packages:
+        names = ", ".join(inline_code(p, 100) for p in packages[:10])
+        return f"의존성을 설치하지 못함: 소스 배포본만 있는 패키지 {names}. wheel만 설치합니다"
+    if kind == "disallowed":
+        return "의존성을 설치하지 못함: wheel만 설치하므로 받지 않는 줄이 의존성 파일에 있음"
+    return "의존성을 설치하지 못함"
 
 
 def render_environment_wait(head_sha: str, *, final: bool) -> str:

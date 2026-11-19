@@ -4,6 +4,7 @@
 
 - `lint/*.yaml`: 2단계 컨벤션(lint) 케이스. `tests/e2e/test_lint_cases.py`가 읽어, 로컬 git 원격 + 실제 ruff + 실제 샌드박스 테스트로 처음부터 끝까지 돌린다. GitHub만 가짜로 바꾼다.
 - `static/*.yaml`: 3단계 정적변수(static) 케이스. `tests/e2e/test_static_cases.py`가 같은 방식으로 돌린다. AI는 케이스의 `ai` 편집(회차마다 하나, 모자라면 마지막 것을 다시 씀)을 적용하는 가짜이고, `PR_PROOF_REAL_AI=1`이면 로그인된 claude를 실제로 부른다(비용이 든다). `expect.proposal`은 `auto | uncovered | tests`(auto: 기본값대로 검사 뒤 바로 수정), `expect.fix`는 `ready | ai_failed` 등. `ai_only_scripted: true`인 케이스는 실제 AI로 돌릴 때 건너뛴다.
+- `rules/*.yaml`: v2 1단계 문서 규칙 케이스. 예제 리포 README의 "코드 규칙" 절의 규칙을 읽어 검사기를 만들고 PR이 바꾼 줄의 위반을 찾는지 본다. `tests/e2e/test_rules_cases.py`가 같은 방식으로 돌리고, base에 `.pipeline.yaml`(`skills.enabled: []`)을 넣어 v1 lint·static을 끈다. 모델은 케이스의 `model` 답을 돌려주는 가짜이고(원문 확인, ast-grep 예시 확인, 검사기 실행은 진짜), `PR_PROOF_REAL_MODEL=1`이면 로그인된 claude를 실제로 부른다(비용이 든다. 비교용). `scripted_only: true`인 케이스는 실제 모델로 돌릴 때 건너뛴다.
 - 실행: `pytest -m docker tests/e2e`
 - 6단계에서 케이스를 20–30개로 늘리고, 결과를 `eval_runs`에 남겨 기준선과 비교한다.
 
@@ -29,4 +30,32 @@ expect:
   contains: [...]            # 제안 브랜치의 그 파일에 있어야 할 문자열
   not_contains: [...]
   same_as_base: true         # 제안 브랜치의 그 파일이 base와 같아야 함
+```
+
+## 문서 규칙 케이스 형식 (`rules/`)
+
+```yaml
+name: 케이스 이름
+description: 무엇을 확인하는지
+scripted_only: false     # (선택) 가짜 모델로만 돌린다
+pipeline: {}             # (선택) base의 .pipeline.yaml에 더할 값 (기본은 skills.enabled: [])
+base: [...]              # (선택) base 커밋의 변경. 형식은 위와 같고 create: 내용으로 새 파일을 만든다
+pr: [...]
+model:                   # 가짜 모델의 답 (실제 모델로 돌리면 쓰지 않는다)
+  rules:                 # 규칙 읽기의 답. quote는 base README의 그 절에 있어야 채택된다
+    - section: 코드 규칙 > 출력
+      quote: "`orders/` 아래 모듈은 `print`를 쓰지 않는다."
+      scope: ["orders/**"]          # 문서가 밝힌 범위. 비면 저장소 전체
+      scope_exclude: []             # (선택) 범위가 없는 규칙에서 모델이 뺀 경로
+      scope_reason: ""
+      checker:                      # 이 규칙의 검사기 작성 답 (ast-grep 규칙과 예시)
+        body: |
+          ...
+        examples: [{code: "print(1)\n", violates: true, lines: [1]}, ...]
+expect:
+  violations: [파일:줄, ...]   # 문서 규칙 절의 위반 목록과 정확히 같아야 한다
+  not_flagged: [파일:줄, ...]  # 잡히면 안 되는 바뀐 줄
+  contains: [...]              # 문서 규칙 절에 있어야 할 글
+  absent: [...]                # 없어야 할 글
+  second_pr_without_calls: true  # 같은 base의 두 번째 PR은 모델 호출 0회
 ```

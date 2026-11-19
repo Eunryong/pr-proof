@@ -6,7 +6,7 @@ from app.models.install import install_failure_outcome
 from app.models.job import PRJob
 from app.sandbox import docker_cli
 from app.sandbox.venv import DependencyInstallError
-from app.worker import graph, proposal, report, retry
+from app.worker import doc_rules, graph, proposal, report, retry
 from app.worker.deps import Deps
 from app.worker.github import GitHubError
 
@@ -45,6 +45,7 @@ def _context(deps: Deps, run_id: int, comment_id: int | None) -> graph.FlowConte
         run_id=run_id,
         comment_id=comment_id,
         max_memory_gb=deps.settings.sandbox.max_memory_gb,
+        call_maxima=deps.settings.model.calls,
         sandbox_names=docker_cli.Names(
             image=deps.settings.sandbox.image,
             container_prefix=deps.settings.sandbox.container_prefix,
@@ -104,8 +105,11 @@ def process_update(job: PRJob, deps: Deps) -> str:
     except DependencyInstallError as e:
         if install_failure_outcome(e.kind, attempt) == "unrunnable":
             body = report.render_install_failure(
-                job.head_sha, e.detail, lint=ctx.lint, static=ctx.static, base=ctx.base
-            )
+                job.head_sha, e.detail, lint=ctx.lint, static=ctx.static, base=ctx.base,
+                doc_rules=ctx.doc_rules,
+                checkers=doc_rules.shown_checkers(ctx.doc_rules, store), kind=e.kind,
+                packages=e.packages,
+            )  # fmt: skip
             ctx.comment_id = github.upsert_comment(job.repo, job.pr_number, body, ctx.comment_id)
             store.finish_run(run_id, "done", test_status="unrunnable", comment_id=ctx.comment_id)
             return "unrunnable"

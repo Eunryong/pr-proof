@@ -11,6 +11,9 @@ from pathlib import Path
 from typing import Final
 
 IMAGE: Final = "pipeline-sandbox"
+# 도구 설치와 검사기 실행 컨테이너의 이미지 (docs/DESIGN.md 2.3, 8.1). 대상 리포의 것을 넣지 않는다.
+# glibc(도구 캐시의 gnu 빌드), 인증서(설치 컨테이너의 https), Python(받기 스크립트)이 든다
+TOOL_IMAGE: Final = "python:3.11-slim"
 # 작업 컨테이너 이름 접두어. 이름 뒤에는 runs ID가 붙는다
 CONTAINER_PREFIX: Final = "pr-proof-job"
 # 베이스 이미지 Dockerfile과 컨테이너에 읽기 전용으로 넣는 파이프라인 설정(coveragerc)
@@ -53,11 +56,17 @@ def minimal_env() -> dict[str, str]:
     return {k: os.environ[k] for k in _ENV_PASSTHROUGH if k in os.environ}
 
 
-def run(*args: str, timeout: float = 120, check: bool = True) -> subprocess.CompletedProcess[str]:
-    """`docker <args>`를 실행한다. check면 0이 아닌 종료 코드를 SandboxError로 올린다."""
+def run(
+    *args: str, timeout: float = 120, check: bool = True, input: str | None = None
+) -> subprocess.CompletedProcess[str]:
+    """`docker <args>`를 실행한다. check면 0이 아닌 종료 코드를 SandboxError로 올린다.
+
+    input은 컨테이너의 표준 입력이다 (`docker run -i`와 같이 쓴다).
+    """
     try:
         proc = subprocess.run(
             ["docker", *args],
+            input=input,
             capture_output=True,
             text=True,
             env=minimal_env(),

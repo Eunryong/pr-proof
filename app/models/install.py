@@ -2,7 +2,7 @@
 
 from typing import Final, Literal
 
-InstallFailureKind = Literal["resolution", "network", "unknown"]
+InstallFailureKind = Literal["resolution", "source_only", "disallowed", "network", "unknown"]
 InstallOutcome = Literal["unrunnable", "environment"]
 
 # 원인을 판단할 수 없는 실패가 같은 의존성 해시로 이만큼 연속되면 PR 문제로 본다
@@ -13,10 +13,12 @@ def install_failure_outcome(kind: InstallFailureKind, consecutive_failures: int)
     """설치 실패의 처리.
 
     - resolution: PR의 의존성 파일 문제(없는 패키지, 버전 충돌, 잘못된 형식). 1회에 실행 불가
+    - source_only: wheel이 없고 소스 배포본만 있는 패키지 (8.1). 1회에 실행 불가
+    - disallowed: 의존성 파일에 바이너리만 설치하는 제한을 푸는 옵션이나 주소·경로 의존성 (8.1)
     - network: 환경 오류. 큐에 되돌린다
     - unknown: 판단할 수 없으면 consecutive_failures(이번 실패 포함)가 한도에 닿을 때만 실행 불가
     """
-    if kind == "resolution":
+    if kind in ("resolution", "source_only", "disallowed"):
         return "unrunnable"
     if kind == "network":
         return "environment"

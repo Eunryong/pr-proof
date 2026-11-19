@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
+from app.models.rule_reading import TreeEntry
 from app.sandbox.container import OUT_DIR
 
 CHANGES_DIFF: Final = f"{OUT_DIR}/changes.diff"
@@ -160,6 +161,29 @@ def read_base_files_from_cache(
     bare = ensure_bare(data_dir, repo, url)
     _git("fetch", "--quiet", "--no-tags", "origin", base_sha, cwd=bare)
     return _read_base_files(lambda *a: _git(*a, cwd=bare), base_sha, names)
+
+
+def list_base_entries(worktree: Path, base_sha: str, paths: Sequence[str]) -> dict[str, TreeEntry]:
+    """base 커밋에서 paths 중 있는 것의 (모드, blob 해시, 크기). 경로가 정확히 같은 것만 남긴다.
+
+    내용은 읽지 않는다. 모드로 심볼릭 링크(120000)와 폴더를 가려낸 뒤 `read_blob`으로 읽는다.
+    """
+    if not paths:  # 경로 없이 부르면 루트의 모든 파일이 나온다
+        return {}
+    listed = _tree_git(worktree, "ls-tree", "-l", "-z", base_sha, "--", *paths)
+    wanted = set(paths)
+    entries = {}
+    for record in filter(None, listed.split("\0")):
+        meta, _, path = record.partition("\t")
+        mode, _kind, sha, size = meta.split()
+        if path in wanted:
+            entries[path] = TreeEntry(path, mode, sha, int(size) if size != "-" else None)
+    return entries
+
+
+def read_blob(worktree: Path, sha: str) -> str:
+    """blob 하나를 글로 읽는다. 글로 읽을 수 없는 바이트면 UnicodeDecodeError."""
+    return _tree_git(worktree, "cat-file", "blob", sha)
 
 
 def merge_base(worktree: Path, base_sha: str, head_sha: str) -> str:

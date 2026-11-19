@@ -1,6 +1,12 @@
 import pytest
 
-from app.models.repo_config import MIN_MEMORY_GB, memory_limit, parse_repo_config
+from app.models.repo_config import (
+    MIN_MEMORY_GB,
+    CallSettings,
+    call_limits,
+    memory_limit,
+    parse_repo_config,
+)
 
 
 def test_missing_file_uses_defaults() -> None:
@@ -94,3 +100,64 @@ def test_stage3_bad_values_fall_back_to_defaults(text: str, where: str) -> None:
     config, problem = parse_repo_config(text)
     assert problem is not None and f"`{where}`" in problem
     assert config.model.light == "haiku" and config.skills.fix.max_retries == 3
+
+
+def test_call_limits_default_and_parsed() -> None:
+    calls = parse_repo_config(None)[0].model.calls
+    assert (calls.pr_max, calls.ruleset_base, calls.per_rule, calls.ruleset_max) == (
+        150,
+        10,
+        4,
+        100,
+    )
+    assert calls.repo_daily == 500
+    config, problem = parse_repo_config("model:\n  calls:\n    pr_max: 3\n    repo_daily: 0\n")
+    assert (config.model.calls.pr_max, config.model.calls.repo_daily, problem) == (3, 0, None)
+
+
+def test_negative_call_limit_falls_back_with_reason() -> None:
+    config, problem = parse_repo_config("model:\n  calls:\n    ruleset_max: -1\n")
+    assert config.model.calls.ruleset_max == 100
+    assert problem is not None and "model.calls.ruleset_max" in problem
+
+
+@pytest.mark.parametrize(
+    ("requested", "expected"),
+    [
+        ((500, 300, 2000), (500, 300, 2000)),
+        ((501, 301, 2001), (500, 300, 2000)),
+        ((1, 2, 3), (1, 2, 3)),
+    ],
+)
+def test_call_limits_are_capped_by_pipeline(requested: tuple, expected: tuple) -> None:
+    pr_max, ruleset_max, repo_daily = requested
+    capped = call_limits(
+        CallSettings(pr_max=pr_max, ruleset_max=ruleset_max, repo_daily=repo_daily),
+        max_pr_max=500, max_ruleset_max=300, max_repo_daily=2000,
+    )  # fmt: skip
+    assert (capped.pr_max, capped.ruleset_max, capped.repo_daily) == expected
+
+
+def test_rules_defaults_and_docs_replace_the_default_list() -> None:
+    rules = parse_repo_config(None)[0].rules
+    assert (rules.docs, rules.disabled) == (["README.md", "CONTRIBUTING.md"], [])
+    text = "rules:\n  docs: [docs/rules.md]\n  disabled: [R-readme-3fa9c2d1, ' PLR2004 ']\n"
+    config, problem = parse_repo_config(text)
+    assert config.rules.docs == ["docs/rules.md"] and problem is None
+    assert config.rules.disabled == ["R-readme-3fa9c2d1", "PLR2004"]
+    assert parse_repo_config("rules:\n  docs: []\n")[0].rules.docs == []
+
+
+@pytest.mark.parametrize(
+    "path", ["../x.md", "/etc/passwd", "-x.md", "a//b.md", "./a.md", "a\\\\b.md", "a\\tb.md", ""]
+)
+def test_bad_rule_doc_path_falls_back_with_reason(path: str) -> None:
+    config, problem = parse_repo_config(f'rules:\n  docs: ["{path}"]\n')
+    assert config.rules.docs == ["README.md", "CONTRIBUTING.md"]
+    assert problem is not None and "rules.docs" in problem
+
+
+def test_too_many_rule_docs_and_empty_disabled_id_are_problems() -> None:
+    many = ", ".join(f"d{i}.md" for i in range(21))
+    assert "rules.docs" in parse_repo_config(f"rules:\n  docs: [{many}]\n")[1]
+    assert "rules.disabled" in parse_repo_config("rules:\n  disabled: ['  ']\n")[1]

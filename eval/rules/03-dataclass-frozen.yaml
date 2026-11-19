@@ -1,0 +1,38 @@
+name: dataclass-frozen
+description: >-
+  "`orders/models`의 데이터 클래스는 `@dataclass(frozen=True)`로 선언한다." 규칙. frozen을 뺀
+  선언은 잡히고, PR이 새로 넣은 frozen 선언은 잡히지 않는다.
+pr:
+  - file: orders/models/order.py
+    find: "@dataclass(frozen=True)\nclass Order:"
+    replace: "@dataclass\nclass Order:"
+  - file: orders/models/order.py
+    append: "\n\n@dataclass(frozen=True)\nclass Coupon:\n    percent: int\n"
+model:
+  rules:
+    - section: 코드 규칙 > 모델
+      quote: "`orders/models`의 데이터 클래스는 `@dataclass(frozen=True)`로 선언한다."
+      scope: ["orders/models/**"]
+      checker:
+        body: |
+          id: dataclass-frozen
+          language: python
+          severity: error
+          message: 데이터 클래스는 frozen=True로 선언한다
+          rule:
+            kind: decorator
+            any:
+              - regex: "^@(dataclasses\\.)?dataclass\\s*$"
+              - all:
+                  - regex: "^@(dataclasses\\.)?dataclass\\("
+                  - not:
+                      regex: "frozen\\s*=\\s*True"
+        examples:
+          - {code: "@dataclass\nclass A:\n    x: int\n", violates: true, lines: [1]}
+          - {code: "@dataclass(order=True)\nclass B:\n    x: int\n", violates: true, lines: [1]}
+          - {code: "@dataclass(frozen=True)\nclass C:\n    x: int\n", violates: false, lines: []}
+          - {code: "@dataclass(frozen=True, order=True)\nclass D:\n    x: int\n", violates: false, lines: []}
+expect:
+  violations: ["orders/models/order.py:11"]
+  not_flagged: ["orders/models/order.py:17"]
+  contains: ["출처: `README.md > 코드 규칙 > 모델`"]
