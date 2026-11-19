@@ -27,7 +27,7 @@ import pytest
 import yaml
 
 from app import config
-from app.models import fix_decision, rule_reading, state_keys, tool_choice
+from app.models import fix_decision, judge, rule_reading, state_keys, tool_choice
 from app.models.job import PRJob
 from app.models.rule import rule_id
 from app.worker import main, repo, retry
@@ -117,7 +117,8 @@ _DECIDE_BLOCK: Final = re.compile(
 
 def scripted_model(case: dict):
     """규칙 읽기에는 케이스의 규칙 목록을, 도구 선택에는 그 규칙의 `tool`(없으면 맞는 도구 없음)을,
-    검사기 작성에는 프롬프트에 든 규칙의 검사기를 답한다.
+    검사기 작성에는 프롬프트에 든 규칙의 검사기를 답한다. 모델 판단에는 프롬프트에 든 규칙의
+    `judge` 답 중 프롬프트에 든 파일의 것을 답한다(없으면 위반 없음).
     수정 판단에는 케이스에 `fix`가 있으면 `model.skip`의 위반만 skip, 나머지는 fix로 답한다."""
     skip = case["model"].get("skip") or {}
     rules = case["model"]["rules"]
@@ -135,6 +136,14 @@ def scripted_model(case: dict):
         if schema is tool_choice.ANSWER_SCHEMA:
             (rule,) = [r for r in rules if r["quote"] in prompt]
             return _answer(rule.get("tool") or NO_TOOL)
+        if schema is judge.ANSWER_SCHEMA:
+            files = set(re.findall(r"^파일: (.+)$", prompt, re.M))
+            found = [
+                {"rule_id": rule_id("README.md", r["quote"]), **answer}
+                for r in rules if r["quote"] in prompt
+                for answer in r.get("judge", []) if answer["file"] in files
+            ]  # fmt: skip
+            return _answer({"violations": found})
         if schema is fix_decision.ANSWER_SCHEMA:
             decisions = []
             for vid, file, line in _DECIDE_BLOCK.findall(prompt):

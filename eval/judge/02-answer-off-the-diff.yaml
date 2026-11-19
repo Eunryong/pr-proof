@@ -1,0 +1,45 @@
+name: answer-off-the-diff
+description: >-
+  4-3. 01과 같은 base와 PR. 모델 판단의 가짜 답이 diff에 없는 줄(바꾸지 않은 `def total`)과, 바뀐
+  줄이지만 인용이 다른 답을 함께 낸다. 둘은 결정적 확인이 버리고 맞는 답 하나만 위반이 된다. 수정
+  판단은 skip이라 수정까지 가지 않는다.
+scripted_only: true
+base:
+  - file: README.md
+    create: |
+      # orders
+
+      ## 코드 규칙
+
+      ### 이름
+
+      - 함수 이름은 하는 일을 동사로 시작한다.
+pr:
+  - file: orders/services/pricing.py
+    find: "def subtotal(order: Order) -> int:\n    return sum(item.unit_price * item.quantity for item in order.items)\n"
+    replace: "def _line_amount(item) -> int:\n    return item.unit_price * item.quantity\n\n\ndef subtotal(order: Order) -> int:\n    return sum(_line_amount(item) for item in order.items)\n"
+model:
+  rules:
+    - section: 코드 규칙 > 이름
+      quote: "함수 이름은 하는 일을 동사로 시작한다."
+      checker:
+        body: |
+          id: verb-first
+          language: python
+          severity: error
+          message: 함수 이름은 동사로 시작한다
+          rule:
+            kind: lambda
+        examples:
+          - {code: "def total(order):\n    return 1\n", violates: true, lines: [1]}
+          - {code: "def amount():\n    pass\n", violates: true, lines: [1]}
+          - {code: "def get_total(order):\n    return 1\n", violates: false, lines: []}
+          - {code: "def compute():\n    pass\n", violates: false, lines: []}
+      judge:
+        - {file: orders/services/pricing.py, line: 30, quote: "def total(order: Order) -> int:", why: diff에 없는 줄}
+        - {file: orders/services/pricing.py, line: 8, quote: "def line_amount(item):", why: 인용이 다름}
+        - {file: orders/services/pricing.py, line: 8, quote: "def _line_amount(item) -> int:", why: 명사구로 시작한다}
+expect:
+  violations: ["orders/services/pricing.py:8"]
+  not_flagged: ["orders/services/pricing.py:30"]
+  contains: ["버린 답 2건 (PR이 바꾼 줄을 그대로 인용하지 않음)"]
