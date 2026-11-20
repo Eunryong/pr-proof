@@ -477,3 +477,25 @@
 - 스키마: `fix_attempts.references_json` 하나를 더했다(NULL 허용). 4단계 커밋(7682331)의 `db.py`로 만든 DB에 5단계 코드를 열어 그 열만 더해지고 옛 줄이 읽히는 것을 봤다. 운영 DB(`~/.cache/pipeline/pipeline.db`)는 scratch에 복사한 사본에서만 열었다(원본 해시 그대로).
 - 의존성: 공용 개발 venv에 `uv pip install chromadb==1.5.9 onnxruntime==1.31.1 tokenizers==0.23.3 numpy==2.4.6`(chromadb가 가져오는 55개 포함). onnxruntime 1.32.0은 올라온 지 일주일이라 1.31.1로 고정했다.
 - 임베딩 모델은 scratch에 한 번 받아 해시를 맞췄다(470MB + 17MB, Hugging Face).
+
+## 2026-11-20 v2 6단계 외부 작성자 PR 가드레일 (완료 기준 6-8–6-11)
+
+**상황.** 2026-11-19에 공개 저장소를 붙이기 전에 넣은 임시 가드레일은 신뢰되지 않은 작성자의 PR에 아무것도 하지 않았다. 승인할 방법이 없었고, 봇은 모두 막혔고, 외부 작성자는 PR에서 아무 반응도 보지 못했고, 기록이 없어 동기화가 5분마다 같은 PR을 다시 넣었다. 6단계에서 DESIGN 8.6의 정식 가드레일로 바꿨다.
+
+**한 일.**
+- 판단은 `models/access.py`의 `may_run` 하나다. 값은 워커가 GitHub의 PR 조회 한 번에서 읽은 head·`author_association`·로그인, base `.pipeline.yaml`의 `access`, `approvals`의 승인 기록이다. `PRJob`에 실린 값은 기록용으로 `runs`에 같이 남는다.
+- 워커의 확인은 `worker/guard.py`에 있고 `update`·`command` 작업이 체크아웃 전에 모두 지난다. 통과하지 못하면 결과 코멘트 하나에 안내 한 줄만 달고 `runs`에 `blocked`로 남긴다. 동기화는 `blocked`인 head를 다시 넣지 않는다.
+- `access`는 체크아웃 전에 bare 캐시에서 base 커밋 하나만 받아 `.pipeline.yaml` blob을 읽는다(`base_config.load_access`). PR head는 받지 않는다.
+- 승인은 `/recheck <커밋>`이다. 워커가 코멘트 ID로 GitHub에서 코멘트를 다시 읽어 승인자(관계, 봇이 아님, 그 PR의 코멘트)와 커밋을 확인한다. 지금 head와 맞으면 전체 해시를 `approvals`에 남기고 그 커밋 하나를 검사한다.
+
+**찾은 것.**
+- PR 조회가 빈 응답을 돌려주면 `pr_refs`가 `ValueError`로 죽었다. 필드를 4개만 채워 7개로 나누지 못했다. 환경 오류가 아니라 파이프라인 버그(`error`)로 기록되고 같은 커밋을 다시 넣지 않는 쪽이었다. 이제 head·base가 40자 16진수가 아니면 `GitHubError`(조회 실패)로 본다(`test_unreadable_pr_lookup_is_a_failure`).
+- 짧은 해시를 받는 승인에는 새 위협이 있다(T31). 승인 코멘트의 앞 7자는 28비트라, 코멘트를 본 외부 작성자가 앞자리가 같은 커밋을 만들어 처리 전에 올리면 그 커밋이 승인된다. 8.6과 6-11이 7자를 정했으므로 바꾸지 않고 시점을 물었다.
+- 안내 코멘트가 생기면서 외부 작성자가 PR과 커밋으로 운영자 계정의 코멘트와 GitHub 한도를 쓰게 할 수 있다(T32). 시점을 물었다.
+
+**확인.**
+- 경로마다 api 쪽 코드(웹훅 `webhook.handle`, 동기화 `sync.run_once`, CLI `cli.main(["sync"])`, 동기화의 재등록 두 가지)로 큐에 넣은 작업을 워커가 처리하게 했다. 체크아웃, 그래프, docker, claude가 불리면 실패하게 막고, GitHub에 쓴 것이 안내 한 줄 하나뿐인지 본다(`test_untrusted_pr_from_every_path_leaves_only_the_guide`). RQ 재시도는 `test_resumed_job_after_trust_was_lost_is_blocked`.
+- 테스트가 동작을 잡는지 세 군데를 일부러 깨 봤다. 판단에 작업의 값을 섞으면 3건, head 비교를 빼면 2건, 승인 안 된 `/fix`를 막지 않으면 1건이 실패했다.
+- 예전 데이터베이스: 6단계 전의 `db.py`(e517ab7)로 만든 파일을 새 `Store`로 열어 `run`에 열 네 개가 더해지고 옛 행이 읽히는 것을 저장소 밖 스크립트로 봤다. 같은 것을 `test_existing_runs_table_gets_the_author_columns_and_approvals_is_created`가 SQL로 만든 옛 테이블로 확인한다.
+
+**배운 점.** 사람의 확인을 "짧은 해시"로 받는 순간, 확인과 실행 사이의 시간이 공격 창이 된다. 판단을 처리 때의 값으로 하는 것만으로는 그 창을 닫지 못한다.
