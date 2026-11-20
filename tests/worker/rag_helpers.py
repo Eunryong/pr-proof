@@ -6,11 +6,17 @@
 
 import hashlib
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Final
 
 from app.models.rag import EmbedModel, ModelFile
+from app.models.records import NewRecord
+from app.models.repo_config import RagSettings
+from app.worker.memory import Retriever, VectorStore
+from app.worker.state import Store
 
 FAKE_DIM: Final = 256
+PRINT_RULE: Final = "`orders/` 아래 모듈은 `print`를 쓰지 않는다."
 FAKE_SPEC: Final = EmbedModel(
     name="test/fake-embed",
     revision="0" * 40,
@@ -20,6 +26,28 @@ FAKE_SPEC: Final = EmbedModel(
     tokenizer=ModelFile("tokenizer.json", "0" * 64, 1),
     onnx=ModelFile("model.onnx", "0" * 64, 1),
 )
+
+
+def record(
+    kind: str, n: int, *, repo: str = "o/r", rule_text: str = PRINT_RULE,
+    context: str = "x = 1\nprint(x)", diff: str = "-print(x)\n+log.info(x)", rule_id: str = "R-1",
+) -> NewRecord:  # fmt: skip
+    return NewRecord(
+        repo=repo, kind=kind, origin="fix_pr", source_id=f"{kind}:{n}", rule_id=rule_id,
+        rule_text=rule_text, file=f"orders/m{n}.py", line_text="print(x)", context=context,
+        diff=diff, pr_number=3, fix_pr_number=10 + n,
+    )  # fmt: skip
+
+
+def seeded(
+    store: Store, path: Path, records: Sequence[NewRecord], settings: RagSettings,
+    repo: str = "o/r",
+) -> Retriever:  # fmt: skip
+    """records를 저장한 Store와 그것을 찾는 진짜 Retriever(임시 Chroma, 가짜 모델)."""
+    for r in records:
+        store.add_record(r)
+    vectors = VectorStore(path / "chroma", FAKE_SPEC.name, FAKE_SPEC.dim)
+    return Retriever(store, repo, settings, vectors, FakeEncoder())
 
 
 class FakeEncoder:

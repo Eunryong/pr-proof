@@ -259,3 +259,61 @@ def test_tool_unavailable_marks_rule_and_is_retried_next_time(store: Store) -> N
     assert isinstance(result, Unchecked) and result.kind == "tool_unavailable"
     (retried,) = _author(store, FakeModel(), GrepSandbox())
     assert isinstance(retried, Checked)  # 저장한 1회차 답을 다시 확인해 채택한다
+
+
+# --- 검사기 기록 (4.10 표의 마지막 줄)과 검색 (6.2) ---
+
+
+def test_accepted_checker_is_kept_as_a_checker_record(store: Store) -> None:
+    (result,) = _author(store, FakeModel(_reply()))
+    (record,) = store.records("o/r")
+    assert (record.kind, record.origin, record.rule_id) == ("checker", "ruleset", RULE.id)
+    assert record.rule_text == RULE.text and record.file == "" and record.context == ""
+    assert record.diff.startswith("# 형식: ast-grep\ngrep:print(")
+    assert "# 위반 예시, 어긴 줄 [2]" in record.diff and "# 정상 예시" in record.diff
+    _author(store, FakeModel())  # 저장한 검사기를 다시 쓰면 기록이 늘지 않는다
+    assert len(store.records("o/r")) == 1
+
+
+def test_checker_record_with_a_secret_is_not_kept(store: Store) -> None:
+    secret = "ghp_" + "a" * 36
+    examples = [MODEL_EXAMPLES[0], {"code": f"x = '{secret}'\n", "violates": False, "lines": []}]
+    (result,) = _author(store, FakeModel(_reply(examples=examples)))
+    assert isinstance(result, Checked)
+    assert store.records("o/r") == []
+
+
+class _Found:
+    """정해 둔 기록을 돌려주는 가짜 검색. 받은 질의를 남긴다."""
+
+    def __init__(self, selection) -> None:
+        self.selection, self.error = selection, ""
+        self.queries: list[tuple[str, list[str]]] = []
+
+    def find(self, site: str, queries):
+        self.queries.append((site, list(queries)))
+        return self.selection
+
+
+def test_similar_checker_records_go_into_every_attempt_and_the_draft_key(store: Store) -> None:
+    from app.models.checker_authoring import RECORDS_NOTE
+    from app.models.db import Record
+    from app.models.rag import Chosen, Retrieval, Selection
+
+    old = Record(id=7, repo="o/r", kind="checker", origin="ruleset", source_id="c", rule_id="R-x",
+                 rule_text="서비스는 logging만 쓴다", file="", line_text="", context="",
+                 diff="# 형식: ast-grep\nrule: x", created_at=NOW)  # fmt: skip
+    found = _Found(Selection((Chosen(old, 0.93),), (8,)))
+    seen: list[Retrieval] = []
+    model = FakeModel(_reply(checker="grep:pprint("), _reply())
+    (result,) = plan_and_author(
+        (RULE,), ruleset_key=RULESET, store=store, budget=_budget(store), models=MODELS,
+        ask=model, sandbox=GrepSandbox(), retriever=found, on_retrieval=seen.append,
+    )  # fmt: skip
+    assert isinstance(result, Checked)
+    assert found.queries == [("checker", ["규칙: " + RULE.text])]  # 규칙마다 한 번
+    for prompt, kwargs in model.calls:
+        assert kwargs["system_prompt"] == SYSTEM_PROMPT["ast-grep"] + RECORDS_NOTE
+        assert "<<<RECORDS id=" in prompt and "기록 7 · 검사기 · 규칙 R-x" in prompt
+    (r,) = seen
+    assert [(x.record_id, x.site) for x in r.references] == [(7, "checker")] and r.below == 1

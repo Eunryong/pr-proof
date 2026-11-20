@@ -151,9 +151,10 @@ def test_references_and_merge_keep_one_row_per_record_and_add_below() -> None:
     sel = select([Hit(1, 0.93)], {1: _record(1)}, repo=REPO, kinds=ALL, min_similarity=0.9, limit=3)
     refs = references(sel, "fix")
     assert refs[0].record_id == 1 and refs[0].site == "fix" and refs[0].fix_pr_number == 8
-    merged = merge_retrievals([Retrieval("fix", refs, 2), Retrieval("fix", refs, 1),
-                               Retrieval("decide", (), 4)])  # fmt: skip
-    assert [(m.site, len(m.references), m.below) for m in merged] == [
-        ("fix", 1, 3),
-        ("decide", 0, 4),
+    merged = merge_retrievals([Retrieval("fix", refs, (5, 6)), Retrieval("fix", refs, (6, 1)),
+                               Retrieval("decide", (), (4,))])  # fmt: skip
+    # 버린 후보는 같은 기록을 한 번만 세고, 다른 질의에서 넣은 기록(1)은 빼고 센다
+    assert [(m.site, len(m.references), m.below_ids) for m in merged] == [
+        ("fix", 1, (5, 6)),
+        ("decide", 0, (4,)),
     ]

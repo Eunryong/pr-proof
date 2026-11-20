@@ -35,7 +35,7 @@ REMOVED_KEYS: Final[Mapping[tuple[str, str], str]] = {
 }
 MAX_RULE_DOCS: Final = 20
 # 유사도 기준값의 기본. 6.7의 측정으로 정했다 (multilingual-e5-small, 2026-11-20, 11.1)
-DEFAULT_MIN_SIMILARITY: Final = 0.90
+DEFAULT_MIN_SIMILARITY: Final = 0.91
 # 프롬프트에 넣는 기록 수의 상한. 저장소 설정이 프롬프트를 끝없이 늘리지 못하게
 MAX_RECORDS_CAP: Final = 10
 

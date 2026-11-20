@@ -21,12 +21,15 @@ import json
 import logging
 import tempfile
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final, Protocol
 
 from langgraph.graph.state import CompiledStateGraph
+from sqlalchemy.exc import SQLAlchemyError
 
+from app.models import records as record_rules
 from app.models import tool_choice
 from app.models.cache_key import text_hash
 from app.models.call_budget import CALL_BUDGET_USD, Denied, RulesetScope
@@ -34,6 +37,7 @@ from app.models.checker import TOOL_KINDS, Checker, CheckerKind, checker_id, too
 from app.models.checker_authoring import (
     ENGINE_VERSION,
     MAX_ATTEMPTS,
+    RECORDS_NOTE,
     Answer,
     Checked,
     Draft,
@@ -57,16 +61,19 @@ from app.models.checker_authoring import (
     shortfall,
     system_prompt,
 )
+from app.models.rag import EMPTY, Retrieval, Selection, query_text, render_records, retrieval
 from app.models.repo_config import ModelSettings
 from app.models.rule import Rule, looks_at_paths, normalize
 from app.models.tools import RUFF, RuffSetup, valid_codes
 from app.sandbox import checker_runner, docker_cli, toolcache
 from app.sandbox.checker_runner import CheckerRun, Failed, Invalid
+from app.worker import records
 from app.worker.ai import claude_cli
 from app.worker.ai.claude_cli import StructuredResult
 from app.worker.budget import CallBudget
 from app.worker.lang import python
 from app.worker.loop import LoopPolicy, LoopState, Verdict, WriteFailed, WriteResult, build_loop
+from app.worker.memory import FindsRecords
 from app.worker.state import Store
 
 log = logging.getLogger(__name__)
@@ -210,17 +217,25 @@ def plan_and_author(
     sandbox: RunsCheckers | None = None,
     ruff: RuffSetup | None = None,
     is_stale: Callable[[], bool] = lambda: False,
+    retriever: FindsRecords | None = None,
+    on_retrieval: Callable[[Retrieval], None] = lambda r: None,
+    secrets: Sequence[str] = (),
 ) -> tuple[RuleCheck, ...]:
     """규칙마다 검사 방법을 정하고, 도구나 검사기가 필요한 규칙은 예시로 확인한다.
 
     ruleset_key는 규칙 읽기의 캐시 키(`RulesFound.key`)다. 규칙 묶음 상한이 이 키로 센다.
     ruff는 이 저장소의 ruff다. 없거나 받을 수 없는 버전이면 문서 규칙에 도구 목록을 내밀지 않는다.
     새 커밋이 와서 낡았으면(is_stale) 남은 규칙은 작성하지 않는다. 저장하지 않아 다음 검사가 한다.
+
+    채택한 검사기는 검사기 기록(`records`, 4.10)으로 남긴다(저장 전에 secrets와 토큰 형식을 본다).
+    retriever가 있으면(검색을 켬) 검사기를 쓸 때 비슷한 규칙의 검사기 기록을 참고 자료로 넣고, 넣은
+    것을 on_retrieval로 알린다 (6.2).
     """
     sandbox = sandbox or Sandbox()
     scope = RulesetScope(ruleset_key, len(rules))
     author = _Author(store=store, budget=budget, scope=scope, models=models, ask=ask,
-                     sandbox=sandbox, ruff=ruff)  # fmt: skip
+                     sandbox=sandbox, ruff=ruff, retriever=retriever, on_retrieval=on_retrieval,
+                     secrets=secrets)  # fmt: skip
     out: list[RuleCheck] = []
     for rule in rules:
         if is_stale():
@@ -255,10 +270,34 @@ class _Author:
         ask: AskModel,
         sandbox: RunsCheckers,
         ruff: RuffSetup | None = None,
+        retriever: FindsRecords | None = None,
+        on_retrieval: Callable[[Retrieval], None] = lambda r: None,
+        secrets: Sequence[str] = (),
     ) -> None:
         self.store, self.budget, self.scope = store, budget, scope
         self.models, self.ask, self.sandbox = models, ask, sandbox
         self.ruff = ruff
+        self.retriever, self.on_retrieval, self.secrets = retriever, on_retrieval, secrets
+
+    def _records(self, rule: Rule) -> Selection:
+        """비슷한 규칙의 검사기 기록 (6.2). 검색을 켜지 않았으면 빈 선택."""
+        if self.retriever is None:
+            return EMPTY
+        selection = self.retriever.find("checker", [query_text(rule.text, kind="checker")])
+        self.on_retrieval(replace(retrieval(selection, "checker"), error=self.retriever.error))
+        return selection
+
+    def _remember(self, rule: Rule, checker: Checker) -> None:
+        """채택한 검사기를 검사기 기록으로 남긴다 (4.10 표의 마지막 줄)."""
+        new = record_rules.checker_record(
+            repo=self.budget.repo, rule_id=rule.id, rule_text=rule.text, checker_id=checker.id,
+            kind=checker.kind, body=checker.body,
+            examples=[(e.code, e.expect_lines) for e in checker.examples],
+        )  # fmt: skip
+        try:
+            records.save(self.store, [new], self.secrets)
+        except SQLAlchemyError:
+            log.exception("검사기 기록을 남기지 못함 %s", rule.id)
 
     def check(self, rule: Rule) -> RuleCheck:
         skipped = plan_check(rule)
@@ -297,6 +336,7 @@ class _Author:
             self.store.save_checker(key, rule_id=rule.id, accepted=True,
                                     checker_json=checker_to_json(checker), detail="",
                                     attempts_json=attempts)  # fmt: skip
+            self._remember(rule, checker)
             return Checked(rule, checker, cached=False)
         detail = f"{MAX_ATTEMPTS}회 안에 예시를 통과하지 못함: {final.get('detail', '')}"
         log.info("검사기 작성 실패 (%s): %s", rule.id, detail)
@@ -430,6 +470,12 @@ class _Author:
 
     def _loop(self, rule: Rule, key: str) -> CompiledStateGraph:
         need = shortfall(rule.examples)
+        found: list[Selection] = []  # 검색은 규칙마다 한 번 (회차마다 같은 기록을 넣는다)
+
+        def records() -> Selection:
+            if not found:
+                found.append(self._records(rule))
+            return found[0]
 
         def write(state: LoopState) -> WriteResult:
             attempt, tier = state["attempt"], state["tier"]
@@ -438,7 +484,10 @@ class _Author:
             unfit = any(self._draft(a["artifact"]).unfit
                         for a in state.get("history", []) if a["artifact"])  # fmt: skip
             kind = kind_for_attempt(attempt, rule, ast_grep_unfit=unfit)
-            artifact = draft_key(key, attempt, model, feedback, prompt_version_for(rule))
+            chosen = records()
+            shown = render_records(chosen.chosen)
+            artifact = draft_key(key, attempt, model, feedback, prompt_version_for(rule),
+                                 records=chosen.ids)  # fmt: skip
             if self.store.cached_result(artifact) is not None:
                 self.budget.record_hit(self.scope, stage="checker", tier=tier, model=model)
                 return WriteResult(artifact=artifact)
@@ -447,8 +496,8 @@ class _Author:
             if isinstance(call, Denied):
                 raise _CapHit(call)
             answer = self.ask(
-                build_prompt(rule, need, feedback),
-                system_prompt=system_prompt(kind),
+                build_prompt(rule, need, feedback, shown),
+                system_prompt=system_prompt(kind) + (RECORDS_NOTE if shown else ""),
                 schema=answer_schema(kind),
                 model=model,
                 max_budget_usd=CALL_BUDGET_USD[tier],

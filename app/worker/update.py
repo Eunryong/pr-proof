@@ -67,6 +67,7 @@ def _context(deps: Deps, run_id: int, comment_id: int | None) -> graph.FlowConte
         comment_id=comment_id,
         max_memory_gb=deps.settings.sandbox.max_memory_gb,
         call_maxima=deps.settings.model.calls,
+        rag_model=deps.settings.rag.embed_model,
         sandbox_names=docker_cli.Names(
             image=deps.settings.sandbox.image,
             container_prefix=deps.settings.sandbox.container_prefix,

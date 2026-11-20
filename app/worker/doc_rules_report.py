@@ -29,6 +29,7 @@ from app.models.fix import MECHANICAL_BUNDLE, MechanicalFix
 from app.models.fix_decision import Decided, FixDecision
 from app.models.model_fix import ModelFix
 from app.models.proposal import ProposalResult
+from app.models.rag import KIND_LABEL, SITE_LABEL, Retrieval, merge_retrievals
 from app.models.rule import Rule
 from app.models.violation import Violation
 from app.worker.markdown import code_fence, inline_code
@@ -58,6 +59,12 @@ MANY_VIOLATIONS_NOTE: Final = (
 )
 MAX_LISTED_RULES: Final = 60
 MAX_CHECKER_DETAILS: Final = 10
+MAX_REFERENCES: Final = 30
+MAX_LISTED_SECTIONS: Final = 80
+SECTIONS_NOTE: Final = (
+    "읽지 않은 절의 규칙은 이 PR에 적용되지 않았습니다. `.pipeline.yaml`의 `rules.docs`를 규칙이 "
+    "있는 문서로 좁혀 합계가 400KB 이하가 되면 문서 전체를 읽습니다."
+)
 MAX_BODY_CHARS: Final = 4000
 MAX_QUOTE_CHARS: Final = 500
 MAX_DETAIL_CHARS: Final = 300
@@ -182,6 +189,7 @@ def _found(
          f"({inline_code(found.note, MAX_DETAIL_CHARS)})"]
         if found.note else []
     )  # fmt: skip
+    head += sections_read(found.sections)
     tail = ["", usage_line(found.usage), "", HOW_TO_CORRECT]
     by_id = {d.violation_id: d for d in decisions.decisions} if decisions else {}
     blocks = [
@@ -194,6 +202,7 @@ def _found(
         _capped(found.outcomes),
         _other_targets(found.outcomes),
         _checker_details(found, checkers),
+        references_block(_retrievals(found, decisions, fixes)),
         _read_rules(found),
     ]
     budget = MAX_SECTION_CHARS - _size(head) - _size(tail)
@@ -597,6 +606,61 @@ def _checker_block(rule: Rule, checker: Checker) -> list[str]:
         lines += ["", f"모델이 쓴 예시, {kind}:", "",
                   f"{example_fence}{'text' if by_path else 'python'}", e.code.rstrip("\n"),
                   example_fence]  # fmt: skip
+    return [*lines, "", "</details>"]
+
+
+def sections_read(sections: Sequence[str]) -> list[str]:
+    """규칙 문서가 커서 관련 절만 읽었을 때 (6.3). 읽지 않은 절의 규칙은 이 PR에 적용되지 않았다."""
+    if not sections:
+        return []
+    shown = [f"- {inline_code(s, 200)}" for s in sections[:MAX_LISTED_SECTIONS]]
+    if len(sections) > MAX_LISTED_SECTIONS:
+        shown.append(f"- 외 {len(sections) - MAX_LISTED_SECTIONS}개")
+    return [
+        "", f"규칙 문서가 커서 관련 절 {len(sections)}개만 읽음. {SECTIONS_NOTE}",
+        "", f"<details><summary>읽은 절 {len(sections)}개</summary>", "", *shown, "", "</details>",
+    ]  # fmt: skip
+
+
+def _retrievals(
+    found: Found, decisions: Decided | None, fixes: Mapping[str, FixView]
+) -> tuple[Retrieval, ...]:
+    """이번 검사에서 프롬프트에 넣은 과거 기록 (검사기 작성, 수정 판단, 수정 작성 순서)."""
+    items = list(found.retrievals)
+    if decisions is not None and decisions.retrieval is not None:
+        items.append(decisions.retrieval)
+    for view in fixes.values():
+        if isinstance(view.fix, ModelFix):
+            items += view.fix.retrievals
+    return merge_retrievals(items)
+
+
+def references_block(retrievals: Sequence[Retrieval]) -> list[str]:
+    """참고한 과거 기록 (6.6 끝, 4.9). 건마다 종류, 원래 PR과 수정안 PR의 번호, 규칙 id, 유사도,
+    쓰인 단계. diff는 넣지 않는다(그 PR에 있다). 기준값에 못 미쳐 버린 후보는 개수만 적는다.
+    검색을 켜지 않았으면 retrievals가 비어 아무것도 그리지 않는다."""
+    rows = [(r, ref) for r in retrievals for ref in r.references]
+    below = [(r.site, r.below) for r in retrievals if r.below]
+    errors = sorted({r.error for r in retrievals if r.error})
+    if not rows and not below and not errors:
+        return []
+    distinct = len({ref.record_id for _, ref in rows})
+    lines = ["", f"<details><summary>참고한 과거 기록 {distinct}건</summary>", ""]
+    for r, ref in rows[:MAX_REFERENCES]:
+        line = f"- 기록 {ref.record_id} · {KIND_LABEL.get(ref.kind, ref.kind)}"
+        if ref.pr_number is not None:
+            line += f" · 원래 PR #{ref.pr_number}"
+        if ref.fix_pr_number is not None:
+            line += f" · 수정안 PR #{ref.fix_pr_number}"
+        line += f" · 규칙 {inline_code(ref.rule_id, 80)} · 유사도 {ref.similarity:.2f}"
+        lines.append(line + f" · {SITE_LABEL.get(r.site, r.site)}")
+    if len(rows) > MAX_REFERENCES:
+        lines.append(f"- 외 {len(rows) - MAX_REFERENCES}건")
+    if below:
+        shown = ", ".join(f"{SITE_LABEL.get(site, site)} {n}건" for site, n in below)
+        lines += ["", f"유사도 기준값에 못 미쳐 넣지 않은 후보: {shown}"]
+    for error in errors:
+        lines += ["", f"검색을 하지 못함: {inline_code(error, MAX_DETAIL_CHARS)}"]
     return [*lines, "", "</details>"]
 
 

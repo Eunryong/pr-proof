@@ -41,6 +41,7 @@ from app.models import doc_rules as doc_rule_models
 from app.models import fix as fix_models
 from app.models import fix_decision as fix_decision_models
 from app.models import model_fix as model_fix_models
+from app.models import rag as rag_models
 from app.models.checker_authoring import Checked
 from app.models.doc_rules import DocRules, Found, RuleOutcome, RulesRead
 from app.models.fix import MECHANICAL_BUNDLE, MechanicalFix
@@ -48,6 +49,7 @@ from app.models.fix_decision import Decided, SafetyNet, open_targets
 from app.models.job import PRJob
 from app.models.model_fix import ModelFix, Picked
 from app.models.proposal import ProposalResult
+from app.models.rag import E5_SMALL, EMBED_MODELS, Retrieval
 from app.models.repo_config import call_limits
 from app.models.test_run import PytestRun
 from app.sandbox import container, docker_cli, toolcache
@@ -58,6 +60,7 @@ from app.worker import (
     detect,
     doc_rules,
     mechanical_fix,
+    memory,
     model_fix,
     proposal,
     records,
@@ -116,6 +119,7 @@ _STATE_TYPES: Final = (
     *fix_decision_models.STATE_TYPES,
     *model_fix_models.STATE_TYPES,
     *fix_models.STATE_TYPES,
+    *rag_models.STATE_TYPES,
 )
 
 
@@ -152,6 +156,7 @@ class FlowState(TypedDict, total=False):
     diff_coverage: DiffCoverage | None
     rules_read: RulesRead  # 규칙 읽기 → 검사 방법 정하기 → 위반 찾기 사이에만 쓴다
     rule_checks: tuple[RuleOutcome, ...]
+    checker_retrievals: tuple[Retrieval, ...]  # 검사기 작성에 넣은 과거 기록 (Found로 옮긴다)
     doc_rules: DocRules  # 규칙 경로의 결과. 코멘트의 규칙 절은 이 값으로만 그린다
     fix_decisions: Decided  # 위반마다 수정 판단 (테스트 뒤, 4.6)
     mechanical_fix: MechanicalFix | None  # 기계적 수정 묶음의 결과. 수정안 PR은 proposals에
@@ -187,6 +192,7 @@ class FlowContext:
     dirty: bool = False  # 수정이 worktree를 바꿨다. 다음 수정은 새 worktree에서 한다
     changes_diff: bytes = b""  # 테스트 전에 읽은 PR의 diff (테스트 뒤에는 샌드박스가 바꿀 수 있다)
     run_tests: Callable[..., PytestRun] | None = None  # 없으면 run_pr_tests
+    rag_model: str = E5_SMALL  # 파이프라인 쪽 `rag.embed_model`. 저장소가 검색을 켰을 때만 쓴다
 
 
 def thread_id(repo_name: str, pr_number: int, head_sha: str) -> str:
@@ -270,8 +276,20 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
                 ),
                 ruff=ctx.base.ruff,
                 disabled=frozenset(ctx.base.repo.rules.disabled),
+                retriever=retriever_for(job),
+                secrets=tuple(proposal.pipeline_secrets()),
             )
         return ctx.doc_runtime
+
+    def retriever_for(job: PRJob) -> memory.Retriever | None:
+        """`rag.enabled`인 저장소만 검색한다 (6.5). 꺼져 있으면 memory의 함수를 부르지 않으므로
+        chromadb도 임베딩 모델도 쓰지 않는다 (완료 기준 5-8)."""
+        rag = ctx.base.repo.rag
+        if not rag.enabled:
+            return None
+        return memory.open_retriever(
+            ctx.data_dir, ctx.store, job.repo, rag, EMBED_MODELS[ctx.rag_model]
+        )
 
     def doc_rules_done(result: DocRules) -> FlowState:
         ctx.doc_rules = result  # 의존성 설치가 실패해도(그래프 밖 예외) 코멘트에 보인다
@@ -282,7 +300,10 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
         job = state["job"]
         progress(job, "규칙 읽기")
         ctx.first_call = doc_rules.last_call_id(ctx.store, job.repo, job.pr_number)
-        read = doc_rules.read(ctx.worktree, job.base_sha, ctx.base.repo.rules, doc_runtime(job))
+        rt = doc_runtime(job)
+        if rt.retriever is not None:  # 검색을 켠 첫 검사에서 폴더를 만들고 밀린 기록을 넣는다 (6.5)
+            rt.retriever.prepare()
+        read = doc_rules.read(ctx.worktree, job.base_sha, ctx.base.repo.rules, rt, ctx.changes_diff)
         if isinstance(read, RulesRead):
             return {"rules_read": read}
         return doc_rules_done(read)
@@ -290,11 +311,13 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
     def author_checkers(state: FlowState) -> FlowState:
         """규칙마다 도구나 검사기를 정하거나 저장한 것을 쓴다 (5.1 plan_checks, author_checker)."""
         job = state["job"]
+        used: list[Retrieval] = []
         outcomes = doc_rules.author(
-            state["rules_read"], doc_runtime(job), is_stale=lambda: ctx.store.is_stale(job)
-        )
+            state["rules_read"], doc_runtime(job), is_stale=lambda: ctx.store.is_stale(job),
+            on_retrieval=used.append,
+        )  # fmt: skip
         if isinstance(outcomes, tuple):
-            return {"rule_checks": outcomes}
+            return {"rule_checks": outcomes, "checker_retrievals": tuple(used)}
         return doc_rules_done(outcomes)
 
     def detect_rules(state: FlowState) -> FlowState:
@@ -303,6 +326,7 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
         result = doc_rules.find(
             state["rules_read"], state["rule_checks"], ctx.worktree, ctx.changes_diff,
             doc_runtime(job), since_call=ctx.first_call,
+            retrievals=state.get("checker_retrievals", ()),
         )  # fmt: skip
         return doc_rules_done(result)
 
@@ -365,7 +389,8 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
         decided = decide.decide(
             found, SafetyNet(run.status, flaky=bool(run.flaky)), ctx.changes_diff,
             require_covered=ctx.base.repo.fix.require_covered, store=rt.store,
-            budget=rt.budget, model=rt.models.decide, ask=rt.ask,
+            budget=rt.budget, model=rt.models.decide, ask=rt.ask, retriever=rt.retriever,
+            context_of=records.context_of(ctx.worktree),
         )  # fmt: skip
         return {"fix_decisions": decided}
 
@@ -528,7 +553,8 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
             found, picked, worktree=ctx.worktree, merge_base=ctx.merge_base,
             test_before=state["test_run"], store=rt.store, budget=budget,
             models=ctx.base.repo.model, max_attempts=ctx.base.repo.fix.max_retries, tools=tools,
-            generation=ctx.store.call_grants(job.repo, job.pr_number),
+            generation=ctx.store.call_grants(job.repo, job.pr_number), retriever=rt.retriever,
+            context_of=records.context_of(ctx.worktree),
         )  # fmt: skip
         if outcome is None:
             return {"stopped": "cancelled"}

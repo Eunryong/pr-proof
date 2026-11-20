@@ -67,6 +67,29 @@ def test_chroma_search_matches_numpy_cosine_reference(tmp_path: Path) -> None:
         _same_ranking(got, _reference(matrix, q, 10))
 
 
+def test_nearest_item_is_found_among_many_near_duplicates(tmp_path: Path) -> None:
+    """같은 모양의 문서 절 수백 개 사이의 한 절. 근사 검색의 기본값은 이것을 놓쳤다
+    (memory.HNSW)."""
+    memo = (
+        "## 운영 메모 {n}\n\n이 절은 규칙이 아니라 운영 기록이다. 배포 날짜와 담당자를 적어 둔다."
+    )
+    texts = [memo.replace("{n}", str(n)) for n in range(800)]
+    texts.append(
+        "## 주문 모듈\n\n- `orders/` 아래 모듈은 `print`를 쓰지 않는다. `orders/services/`도."
+    )
+    encoder = FakeEncoder()
+    matrix = memory.embed(encoder, texts, role="passage").vectors
+    q = memory.embed(encoder, ["바뀐 파일: orders/services/pricing.py\nprint(x)"], role="query")
+    q = q.vectors[0]
+    dim = FAKE_SPEC.dim
+    vs = memory.VectorStore(tmp_path / "chroma", "test/model", dim)
+    vs.store(REPO, [str(i) for i in range(len(matrix))], matrix,
+             [{"repo": REPO, "kind": "adopted", "rule_id": "R"}] * len(matrix))  # fmt: skip
+    got = [(h.record_id, h.similarity) for h in vs.search(REPO, q, 20)]
+    _same_ranking(got, _reference(matrix, q, 20))
+    assert got[0][0] == 800
+
+
 def test_embed_normalizes_and_adds_the_role_prefix() -> None:
     encoder = FakeEncoder()
     out = memory.embed(encoder, ["가나다라 마바사", "x"], role="passage")

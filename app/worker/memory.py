@@ -20,7 +20,7 @@ import logging
 import os
 import tempfile
 import urllib.request
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -50,6 +50,14 @@ INDEX_BATCH: Final = 32
 DOWNLOAD_TIMEOUT: Final = 60
 _CHUNK: Final = 1 << 20
 _VERIFIED: Final = ".verified.json"
+# 컬렉션의 거리 함수와 근사 검색의 넓이. 기본값(ef_search 100, 이웃 16)은 비슷한 글이 몰린
+# 컬렉션(같은 모양의 문서 절 수백 개)에서 가장 가까운 조각을 놓쳤다 (5단계 작업, 11.1)
+HNSW: Final[Mapping[str, object]] = {
+    "space": "cosine",
+    "ef_search": 400,
+    "ef_construction": 400,
+    "max_neighbors": 32,
+}
 
 
 class SearchUnavailable(RuntimeError):
@@ -245,7 +253,7 @@ class VectorStore:
             name,
             embedding_function=None,
             metadata={"embed_model": self.model, "dim": self.dim},
-            configuration={"hnsw": {"space": "cosine"}},
+            configuration={"hnsw": dict(HNSW)},
         )
         meta = col.metadata or {}
         if meta.get("embed_model") != self.model or meta.get("dim") != self.dim:
@@ -337,6 +345,14 @@ def reindex(
 # --- 쓰는 곳의 입구 (6.6의 4–6번) ---
 
 
+class FindsRecords(Protocol):
+    """쓰는 곳(수정 판단, 수정 작성, 검사기 작성)이 보는 검색. 테스트는 가짜를 넘긴다."""
+
+    error: str
+
+    def find(self, site: str, queries: Sequence[str]) -> Selection: ...
+
+
 class Retriever:
     """한 검사의 검색. 처음 쓸 때 밀린 기록을 임베딩하고(`prepare`), 쓰는 곳마다 질의를 받아 넣을
     기록을 고른다. 검색이 실패해도 검사를 멈추지 않는다: 빈 선택과 이유(`error`)를 남긴다."""
@@ -359,6 +375,28 @@ class Retriever:
         except Exception as e:  # noqa: BLE001 (모델·Chroma의 실패는 검사를 멈추지 않는다)
             self.error = _short(e)
             log.warning("밀린 기록을 임베딩하지 못함 %s: %s", self.repo, self.error)
+
+    def find_sections(
+        self, chunks: Sequence[tuple[str, str]], query: str
+    ) -> list[tuple[str, float]]:
+        """큰 규칙 문서의 조각 (6.3). chunks는 (조각 id, 임베딩할 글)이다. 이 저장소의 문서
+        컬렉션에 없는 조각만 임베딩해 넣고(조각 id는 내용 해시라 바뀐 조각만 새로 넣는다), 질의와
+        가까운 조각의 (id, 유사도)를 top-k로 돌려준다. 지금 문서에 없는 옛 조각은 버린다. 실패하면
+        예외."""
+        if self.error:
+            raise SearchUnavailable(self.error)
+        known = self.vectors.known_ids(self.repo, kind="docs")
+        new = [(i, t) for i, t in dict(chunks).items() if i not in known]
+        for start in range(0, len(new), INDEX_BATCH):
+            batch = new[start : start + INDEX_BATCH]
+            embedded = embed(self.encoder, [t for _, t in batch], role="passage")
+            self.vectors.store(self.repo, [i for i, _ in batch], embedded.vectors,
+                               [{"repo": self.repo, "kind": "doc"}] * len(batch),
+                               kind="docs")  # fmt: skip
+        current = {i for i, _ in chunks}
+        vector = embed(self.encoder, [query], role="query").vectors[0]
+        found = self.vectors.search_ids(self.repo, vector, self.settings.top_k, kind="docs")
+        return [(i, s) for i, s in found if i in current]
 
     def find(self, site: str, queries: Sequence[str]) -> Selection:
         """queries(질의 글) 각각의 top-k를 합쳐 site가 쓰는 종류만 기준값으로 고른다."""
