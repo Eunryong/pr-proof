@@ -65,3 +65,13 @@ def test_call_maxima_default_and_override(tmp_path: Path) -> None:
     (tmp_path / "config.yaml").write_text("repos: [o/r]\nmodel:\n  calls:\n    max_pr_max: 7\n")
     calls = config.load_config(tmp_path).model.calls
     assert (calls.max_pr_max, calls.max_ruleset_max) == (7, 300)
+
+
+def test_rag_embed_model_must_be_a_pinned_model() -> None:
+    from pydantic import ValidationError
+
+    from app.models.rag import E5_SMALL
+
+    assert config.PipelineConfig(repos=[]).rag.embed_model == E5_SMALL
+    with pytest.raises(ValidationError):
+        config.PipelineConfig(repos=[], rag={"embed_model": "someone/unpinned"})

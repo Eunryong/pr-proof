@@ -17,8 +17,9 @@ from app.models.db import Record, SeenViolation
 from app.models.diff import hunk_removing
 from app.models.violation import Violation
 
-RecordKind = Literal["adopted", "rejected", "failed"]
-RecordOrigin = Literal["fix_pr", "author_commit", "verification"]
+RecordKind = Literal["adopted", "rejected", "failed", "checker"]
+RecordOrigin = Literal["fix_pr", "author_commit", "verification", "ruleset"]
+MAX_CHECKER_CHARS: Final = 8000  # 검사기 기록에 넣는 본문과 예시의 글자 수
 CONTEXT_RADIUS: Final = 5  # 위반 줄 앞뒤 줄 수 (6.1)
 MAX_DIFF_LINES: Final = 60  # 기록에 넣는 관련 hunk의 줄 수 (6.1)
 MAX_DETAIL_CHARS: Final = 2000
@@ -187,6 +188,24 @@ def author_records(
         )
         for v in fixed
     ]  # fmt: skip
+
+
+def checker_record(
+    *, repo: str, rule_id: str, rule_text: str, checker_id: str, kind: str, body: str,
+    examples: Sequence[tuple[str, Sequence[int]]],
+) -> NewRecord:  # fmt: skip
+    """예시 확인을 통과해 채택한 검사기의 기록 (4.10 표의 마지막 줄, 6.1). 검색 키는 규칙 원문이고
+    꺼내 쓰는 것은 검사기 본문과 예시다. 원천 id는 규칙과 검사기 본문의 해시라 같은 검사기를 두 번
+    남기지 않는다."""
+    shown = [f"# 형식: {kind}", body.rstrip()]
+    for code, lines in examples:
+        label = f"위반 예시, 어긴 줄 {list(lines)}" if lines else "정상 예시"
+        shown += ["", f"# {label}", code.rstrip()]
+    return NewRecord(
+        repo=repo, kind="checker", origin="ruleset", source_id=f"checker:{rule_id}:{checker_id}",
+        rule_id=rule_id, rule_text=rule_text, file="", line_text="", context="",
+        diff="\n".join(shown)[:MAX_CHECKER_CHARS],
+    )  # fmt: skip
 
 
 def text_of(record: NewRecord) -> str:
