@@ -4,11 +4,11 @@ description: >-
   아닌 설명 절 수백 개, 그리고 맨 끝에 `print` 규칙이 든 "주문 모듈" 절과 `Decimal` 규칙이 든 "결제
   모듈" 절. 검색을 켜면 제목 단위 조각이 저장소의 문서 컬렉션에 임베딩되고, PR이 바꾼 경로
   (orders/services/pricing.py)와 추가된 줄(print)로 찾은 "주문 모듈" 절이 읽혀 그 규칙이 PR의
-  print를 잡는다. 결제 절과 설명 절은 읽지 않는다. 코멘트에 "규칙 문서가 커서 관련 절 N개만 읽음"과
-  읽은 절의 목록이 나온다. 기준값은 가짜 임베딩 모델의 유사도에 맞춘 값이다.
-fake_embed_only: true
+  print를 잡는다. 검색은 `rag.top_k`(여기서 3)개 절만 꺼내므로 설명 절 대부분은 읽지 않는다. 코멘트에
+  "규칙 문서가 커서 관련 절 N개만 읽음"과 읽은 절의 목록이 나온다. 가짜 임베딩 모델과 실제 모델
+  (multilingual-e5-small, 주문 절이 1위) 모두에서 돈다.
 pipeline:
-  rag: {enabled: true, min_similarity: 0.4}
+  rag: {enabled: true, top_k: 3}
 base:
   - file: README.md
     create_parts:
@@ -49,5 +49,5 @@ expect:
     - "`README.md > 코드 규칙`"
     - "`rules.docs`"
     - "출처: `README.md > 주문 모듈`"
-  absent: ["`README.md > 결제 모듈`", "`README.md > 운영 메모 7`"]
+  absent: ["`README.md > 운영 메모 7`", "`README.md > 운영 메모 400`"]
   doc_collection: true

@@ -138,15 +138,18 @@ def pick(
     *,
     scoped: set[str],
     hits: Sequence[tuple[str, float]],
-    min_similarity: float,
     max_bytes: int = MAX_DOCS_BYTES,
 ) -> tuple[Chunk, ...]:
-    """읽을 조각: 늘 읽는 절, 적용 범위로 고른 절, 검색이 기준값 이상으로 찾은 절(유사도 순)의
-    차례로 합계가 max_bytes 안에 드는 것까지. 결과는 문서와 줄 순서다."""
+    """읽을 조각: 늘 읽는 절, 적용 범위로 고른 절, 검색이 찾은 절(hits, `rag.top_k`개, 유사도 순)의
+    차례로 합계가 max_bytes 안에 드는 것까지. 결과는 문서와 줄 순서다.
+
+    조각에는 기록의 유사도 기준값을 쓰지 않는다. 질의(경로와 바뀐 줄)와 절의 글은 모양이 달라
+    유사도가 기록끼리보다 낮다: multilingual-e5-small에서 맞는 절이 1위였지만 0.893으로 기본
+    기준값 0.91에 못 미쳤다 (5단계, 11.1)."""
     by_id = {c.id: c for c in all_chunks}
     order = [c.id for c in all_chunks if always_read(c)]
     order += [c.id for c in all_chunks if c.id in scoped]
-    order += [i for i, s in sorted(hits, key=lambda h: -h[1]) if s >= min_similarity and i in by_id]
+    order += [i for i, _ in sorted(hits, key=lambda h: -h[1]) if i in by_id]
     chosen: dict[str, Chunk] = {}
     total = 0
     for chunk_id in order:

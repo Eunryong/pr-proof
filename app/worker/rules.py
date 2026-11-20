@@ -14,7 +14,7 @@ from typing import Protocol
 from app.models import doc_sections as sections_rules
 from app.models.call_budget import CALL_BUDGET_USD, Denied, RulesetScope
 from app.models.diff import added_lines
-from app.models.repo_config import RagSettings, RulesSettings
+from app.models.repo_config import RulesSettings
 from app.models.rule import Rule, RuleSet, UnreadDoc
 from app.models.rule_reading import (
     ANSWER_SCHEMA,
@@ -87,8 +87,6 @@ RulesResult = RulesFound | NoRuleDocuments | NoRules | ModelFailed | CapReached
 
 class FindsSections(Protocol):
     """큰 규칙 문서의 조각을 찾는 검색 (6.3). 검색을 켠 저장소만 있다 (worker/memory.Retriever)."""
-
-    settings: RagSettings
 
     def find_sections(
         self, chunks: Sequence[tuple[str, str]], query: str
@@ -221,7 +219,6 @@ def _load_sections(
             saved[c.id] = RuleSet.from_json(text)
     picked = sections_rules.pick(
         all_chunks, scoped=sections_rules.scoped_to(saved, changed), hits=hits,
-        min_similarity=sections.settings.min_similarity,
     )  # fmt: skip
     todo = [c for c in picked if c.id not in saved]
     scope = RulesetScope(key)

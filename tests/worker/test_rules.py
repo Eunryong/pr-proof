@@ -274,18 +274,15 @@ def _big_readme(parts: int = 400) -> str:
 
 
 class FakeSections:
-    """조각마다 유사도를 정해 돌려주는 가짜 검색. 기준값은 0.9다."""
+    """similar의 글이 든 조각만 top-k로 돌려주는 가짜 검색."""
 
     def __init__(self, similar: dict[str, float]) -> None:
-        from app.models.repo_config import RagSettings
-
-        self.settings = RagSettings(enabled=True, min_similarity=0.9)
         self.similar = similar
         self.seen: list[tuple[list[str], str]] = []
 
     def find_sections(self, chunks, query: str):
         self.seen.append(([t.split("\n", 1)[0] for _, t in chunks], query))
-        return [(i, next((s for k, s in self.similar.items() if k in t), 0.5)) for i, t in chunks]
+        return [(i, s) for i, t in chunks for k, s in self.similar.items() if k in t]
 
 
 ORDER_DIFF: Final = (

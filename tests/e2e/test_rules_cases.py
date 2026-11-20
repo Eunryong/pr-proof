@@ -151,7 +151,8 @@ def scripted_model(case: dict):
                 action = "skip" if why or "fix" not in case else "fix"
                 decisions.append({"id": vid, "action": action, "why": why or "케이스"})
             return _answer({"decisions": decisions})
-        (rule,) = [r for r in rules if r["quote"] in prompt]
+        own = prompt.split("<<<RECORDS")[0]  # 검색이 넣은 다른 규칙의 기록은 보지 않는다
+        (rule,) = [r for r in rules if r["quote"] in own]
         return _answer({"checker": rule["checker"]["body"],
                         "examples": rule["checker"]["examples"]})  # fmt: skip
 

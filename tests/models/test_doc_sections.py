@@ -71,13 +71,14 @@ def test_excerpt_keeps_the_section_paths_of_the_whole_document() -> None:
     assert part.path == DOC.path and part.blob_sha == DOC.blob_sha
 
 
-def test_pick_orders_always_scoped_then_hits_and_stops_at_the_byte_cap() -> None:
+def test_pick_orders_always_scoped_then_hits_by_rank_and_stops_at_the_byte_cap() -> None:
     by = _by_heading()
     all_chunks = chunks(DOC)
     hits = [(by[("소개",)].id, 0.95), (by[("주문", "결제")].id, 0.85), ("gone", 0.99)]
-    got = pick(all_chunks, scoped={by[("주문",)].id}, hits=hits, min_similarity=0.9)
-    assert [c.heading for c in got] == [(), ("소개",), ("코드 규칙",), ("주문",)]
-    small = pick(all_chunks, scoped=set(), hits=hits, min_similarity=0.9,
+    got = pick(all_chunks, scoped={by[("주문",)].id}, hits=hits)
+    # 검색이 찾은 절은 유사도와 관계없이 넣는다 (없어진 조각 id는 버린다)
+    assert [c.heading for c in got] == [(), ("소개",), ("코드 규칙",), ("주문",), ("주문", "결제")]
+    small = pick(all_chunks, scoped=set(), hits=hits,
                  max_bytes=by[()].size + by[("코드 규칙",)].size)  # fmt: skip
     assert [c.heading for c in small] == [(), ("코드 규칙",)]
 
