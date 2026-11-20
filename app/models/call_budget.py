@@ -4,8 +4,8 @@
 캐시 키 단위), 저장소 하루 상한(그 저장소의 모든 호출, 최근 24시간). 무거운 모델 호출은 3으로,
 저장된 결과를 쓴 것은 0으로 센다.
 
-이 단계의 PR 상한은 `pr_max`다. 대상 위반 수에 비례하는 부분은 4단계에 넣는다 (9.2 "넣는 순서").
-`/fix`로 다시 돌릴 때마다 PR 상한을 한 번 더 받는다 (9.2 "걸렸을 때"). 저장소 하루 상한은 그대로다.
+PR 상한은 `pr_base` + 대상 위반 수 × `per_violation`이고 `pr_max`에서 멈춘다. `/fix`로 다시 돌릴
+때마다 `pr_max`를 한 번 더 받는다 (9.2 "걸렸을 때"). 저장소 하루 상한은 그대로다.
 """
 
 from collections.abc import Mapping
@@ -88,8 +88,15 @@ class Denied:
         return f"호출 상한: {label} ({self.used}/{self.limit}회 사용, 이 호출 {self.cost}회)"
 
 
-def limits_for(settings: CallSettings, scope: Scope, pr_grants: int = 0) -> CallLimits:
-    """pr_grants는 그 PR에 `/fix`가 PR 상한을 더 준 횟수다. 규칙 묶음 상한에는 쓰지 않는다."""
+def limits_for(
+    settings: CallSettings, scope: Scope, pr_grants: int = 0, targets: int = 0
+) -> CallLimits:
+    """pr_grants는 그 PR에 `/fix`가 PR 상한을 더 준 횟수, targets는 대상 위반 수다 (9.2). 둘 다 규칙
+    묶음 상한에는 쓰지 않는다.
+
+    `/fix`가 더 준 몫은 `pr_max`씩이다: `min(pr_base + targets × per_violation, pr_max)`에
+    `pr_max × pr_grants`를 더한다.
+    """
     if isinstance(scope, RulesetScope):
         if scope.rule_count < 0:
             raise ValueError(f"규칙 수가 음수다: {scope.rule_count}")
@@ -97,7 +104,10 @@ def limits_for(settings: CallSettings, scope: Scope, pr_grants: int = 0) -> Call
         return CallLimits("ruleset", min(cap, settings.ruleset_max), settings.repo_daily)
     if pr_grants < 0:
         raise ValueError(f"상한을 더 준 횟수가 음수다: {pr_grants}")
-    return CallLimits("pr", settings.pr_max * (1 + pr_grants), settings.repo_daily)
+    if targets < 0:
+        raise ValueError(f"대상 위반 수가 음수다: {targets}")
+    cap = min(settings.pr_base + targets * settings.per_violation, settings.pr_max)
+    return CallLimits("pr", cap + settings.pr_max * pr_grants, settings.repo_daily)
 
 
 def decide(limits: CallLimits, spent: Spent, tier: Tier) -> Allowed | Denied:

@@ -73,6 +73,7 @@ log = logging.getLogger(__name__)
 
 # (사용자 메시지, *, system_prompt, schema, model, max_budget_usd) → 결과. 테스트는 가짜를 넘긴다
 AskModel = Callable[..., StructuredResult]
+STALE: Final = "새 커밋이 와서 멈춤"
 # 검사기 종류마다 도구 캐시에서 붙이는 도구. 이미지에는 언어가 없어 Python AST 스크립트와 경로
 # 패턴의 고정 스크립트도 Python 런타임을 받아 붙인다
 KIND_TOOL: Final[Mapping[CheckerKind, str]] = {
@@ -208,17 +209,25 @@ def plan_and_author(
     ask: AskModel = claude_cli.run_structured,
     sandbox: RunsCheckers | None = None,
     ruff: RuffSetup | None = None,
+    is_stale: Callable[[], bool] = lambda: False,
 ) -> tuple[RuleCheck, ...]:
     """규칙마다 검사 방법을 정하고, 도구나 검사기가 필요한 규칙은 예시로 확인한다.
 
     ruleset_key는 규칙 읽기의 캐시 키(`RulesFound.key`)다. 규칙 묶음 상한이 이 키로 센다.
     ruff는 이 저장소의 ruff다. 없거나 받을 수 없는 버전이면 문서 규칙에 도구 목록을 내밀지 않는다.
+    새 커밋이 와서 낡았으면(is_stale) 남은 규칙은 작성하지 않는다. 저장하지 않아 다음 검사가 한다.
     """
     sandbox = sandbox or Sandbox()
     scope = RulesetScope(ruleset_key, len(rules))
     author = _Author(store=store, budget=budget, scope=scope, models=models, ask=ask,
                      sandbox=sandbox, ruff=ruff)  # fmt: skip
-    return tuple(author.check(rule) for rule in rules)
+    out: list[RuleCheck] = []
+    for rule in rules:
+        if is_stale():
+            out.append(Unchecked(rule, "model_failed", STALE))
+            continue
+        out.append(author.check(rule))
+    return tuple(out)
 
 
 def config_checker(rule: Rule, ruff: RuffSetup) -> Checker:

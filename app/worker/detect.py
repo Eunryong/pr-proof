@@ -123,7 +123,7 @@ def _violations(
     by_code = check.rule.origin == "tool_config"
     for match in sorted(matches, key=lambda m: (m.file, m.line, m.end_line)):
         if match.file not in lines_by_file:
-            lines_by_file[match.file] = _lines(worktree, match.file)
+            lines_by_file[match.file] = source_lines(worktree, match.file)
         lines = lines_by_file[match.file]
         if match.line > len(lines):
             continue  # 검사한 뒤 파일이 바뀌었거나 출력이 틀림. 존재하는 줄만 받는다 (4.5)
@@ -145,7 +145,7 @@ def _violations(
     return result
 
 
-def _lines(worktree: Path, rel: str) -> list[str]:
+def source_lines(worktree: Path, rel: str) -> list[str]:
     """ast-grep과 같이 `\\n`으로만 줄을 나눈다. 읽을 수 없으면 빈 목록 (그 파일의 위반은 버린다)."""
     path = repo.worktree_file(worktree, rel)
     data = read_regular_file(path, max_bytes=MAX_SOURCE_BYTES) if path is not None else None

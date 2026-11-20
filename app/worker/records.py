@@ -10,6 +10,7 @@
 
 import logging
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from dataclasses import replace
 from pathlib import Path
 from typing import Final
 
@@ -108,10 +109,7 @@ def mark_rejected(store: Store, job: PRJob, found: Found) -> Found:
     rejected = rules.rejected_lines(store.records(job.repo, job.pr_number))
     if not rejected:
         return found
-    return Found(
-        outcomes=found.outcomes, violations=rules.mark_rejected(found.violations, rejected),
-        disabled=found.disabled, usage=found.usage,
-    )  # fmt: skip
+    return replace(found, violations=rules.mark_rejected(found.violations, rejected))
 
 
 def after_detect(

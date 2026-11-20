@@ -1,6 +1,6 @@
 """워커의 작업 흐름 (LangGraph, docs/DESIGN.md 5.1).
 
-    체크아웃 → 규칙 읽기 → 검사 방법 정하기 → 위반 찾기 → 테스트 → 수정 판단 → 코멘트
+    체크아웃 → 규칙 읽기 → 검사 방법 정하기 → 위반 찾기 → 모델 판단 → 테스트 → 수정 판단 → 코멘트
         ─┬─ (고칠 위반 없음) → 끝
          ├─ (기본: 바로) 기계적 수정 → 수정안 PR ─┬→ 수정 코멘트 ─┬─ (남은 묶음 없음) → 끝
          ├─ (기본: 바로) 모델 수정 → 수정안 PR ───┘              └─ 다른 묶음의 대기·수정
@@ -13,7 +13,8 @@
 
 묶음마다 수정은 한 번이다. 수정마다 새 worktree에서 시작한다 (앞 수정의 변경이 섞이지 않게).
 `/fix`로 다시 돌리면 그 묶음은 수정 판단부터 다시 돈다. 모델 묶음은 호출 상한으로 남은 판단과
-수정을 이어 한다 (4.9 명령).
+수정을 이어 한다 (4.9 명령). 호출 상한으로 남은 모델 판단(4.5)이 있으면 모델 판단부터 다시 돌고
+테스트도 다시 돌린다(새로 찾은 위반 줄의 커버 여부가 필요하다).
 
 각 단계 사이에서 이 작업의 커밋이 아직 PR의 최신 커밋인지 확인하고, 낡았으면 멈춘다.
 그래프 상태에는 데이터만 넣고, worktree 같은 자원은 FlowContext가 들고 정리한다.
@@ -43,7 +44,7 @@ from app.models import model_fix as model_fix_models
 from app.models.checker_authoring import Checked
 from app.models.doc_rules import DocRules, Found, RuleOutcome, RulesRead
 from app.models.fix import MECHANICAL_BUNDLE, MechanicalFix
-from app.models.fix_decision import Decided, SafetyNet
+from app.models.fix_decision import Decided, SafetyNet, open_targets
 from app.models.job import PRJob
 from app.models.model_fix import ModelFix, Picked
 from app.models.proposal import ProposalResult
@@ -83,6 +84,7 @@ FIX_COMMENT: Final = "fix_comment"
 LOAD_RULES: Final = "load_rules"
 AUTHOR_CHECKERS: Final = "author_checkers"
 DETECT: Final = "detect"
+JUDGE: Final = "judge"
 TEST: Final = "test"
 DECIDE: Final = "decide"
 FIX_MECHANICAL: Final = "fix_mechanical"
@@ -288,32 +290,47 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
     def author_checkers(state: FlowState) -> FlowState:
         """규칙마다 도구나 검사기를 정하거나 저장한 것을 쓴다 (5.1 plan_checks, author_checker)."""
         job = state["job"]
-        outcomes = doc_rules.author(state["rules_read"], doc_runtime(job))
+        outcomes = doc_rules.author(
+            state["rules_read"], doc_runtime(job), is_stale=lambda: ctx.store.is_stale(job)
+        )
         if isinstance(outcomes, tuple):
             return {"rule_checks": outcomes}
         return doc_rules_done(outcomes)
 
     def detect_rules(state: FlowState) -> FlowState:
-        """채택한 도구와 검사기를 PR이 바꾼 파일에 돌린다 (5.1 detect). 바뀐 줄의 위반만 남긴다.
-
-        사람이 닫은 수정안이 고친 줄에 표시하고(4.6 표의 첫 줄), 작성자가 고친 이전 위반과 이번
-        위반을 기록한다 (4.10).
-        """
+        """채택한 도구와 검사기를 PR이 바꾼 파일에 돌린다 (5.1 detect). 바뀐 줄의 위반만 남긴다."""
         job = state["job"]
         result = doc_rules.find(
             state["rules_read"], state["rule_checks"], ctx.worktree, ctx.changes_diff,
             doc_runtime(job), since_call=ctx.first_call,
         )  # fmt: skip
-        if isinstance(result, Found):
-            result = records.mark_rejected(ctx.store, job, result)
-            merged_fix = any(
-                p.state == "merged" and p.merge_commit == job.head_sha
-                for p in ctx.store.proposals(job.repo, job.pr_number)
-            )
-            records.after_detect(
-                ctx.store, job, result, ctx.worktree, proposal.pipeline_secrets(),
-                merged_fix=merged_fix,
+        return doc_rules_done(result)
+
+    def judge_rules(state: FlowState) -> FlowState:
+        """검사기를 만들지 못한 규칙을 모델이 바뀐 hunk에 대해 본다 (5.1 detect의 모델 판단, 4.5).
+
+        그 뒤 사람이 닫은 수정안이 고친 줄에 표시하고(4.6 표의 첫 줄), 작성자가 고친 이전 위반과
+        이번 위반을 기록한다 (4.10). `/fix`가 남은 모델 판단을 이어 할 때도 이 node부터 돈다.
+        """
+        job, result = state["job"], state.get("doc_rules")
+        if not isinstance(result, Found):
+            return {}
+        ensure_checkout(job)  # `/fix`가 이어 할 때는 새 프로세스다
+        if any(isinstance(o, doc_rule_models.RuleJudged) for o in result.outcomes):
+            progress(job, "모델 판단")
+            result = doc_rules.judge(
+                result, ctx.worktree, ctx.changes_diff, doc_runtime(job),
+                is_stale=lambda: ctx.store.is_stale(job),
             )  # fmt: skip
+        result = records.mark_rejected(ctx.store, job, result)
+        merged_fix = any(
+            p.state == "merged" and p.merge_commit == job.head_sha
+            for p in ctx.store.proposals(job.repo, job.pr_number)
+        )
+        records.after_detect(
+            ctx.store, job, result, ctx.worktree, proposal.pipeline_secrets(),
+            merged_fix=merged_fix,
+        )  # fmt: skip
         return doc_rules_done(result)
 
     def after_doc_step(state: FlowState) -> str:
@@ -489,6 +506,7 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
         fresh_worktree(job)
         progress(job, "모델 수정")
         rt = doc_runtime(job)
+        budget = rt.budget.with_targets(open_targets(state["fix_decisions"].decisions))
         checks = doc_rules.saved_checks(found, rt.store)
         tools = model_fix.FixTools(
             run_model=workdir.run_in_model_folder,
@@ -508,7 +526,7 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
         notes = model_fix.notes_for(found, picked, ctx.worktree)
         outcome = model_fix.fix_violations(
             found, picked, worktree=ctx.worktree, merge_base=ctx.merge_base,
-            test_before=state["test_run"], store=rt.store, budget=rt.budget,
+            test_before=state["test_run"], store=rt.store, budget=budget,
             models=ctx.base.repo.model, max_attempts=ctx.base.repo.fix.max_retries, tools=tools,
             generation=ctx.store.call_grants(job.repo, job.pr_number),
         )  # fmt: skip
@@ -564,6 +582,7 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
     graph.add_node(LOAD_RULES, load_rules)
     graph.add_node(AUTHOR_CHECKERS, author_checkers)
     graph.add_node(DETECT, detect_rules)
+    graph.add_node(JUDGE, judge_rules)
     graph.add_node(TEST, test)
     graph.add_node(DECIDE, decide_fixes)
     graph.add_node("comment", comment)
@@ -581,7 +600,8 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
     graph.add_conditional_edges(
         AUTHOR_CHECKERS, after_doc_step, {"next": DETECT, "done": TEST, "stop": END}
     )
-    graph.add_conditional_edges(DETECT, route, {"next": TEST, "stop": END})
+    graph.add_conditional_edges(DETECT, route, {"next": JUDGE, "stop": END})
+    graph.add_conditional_edges(JUDGE, route, {"next": TEST, "stop": END})
     graph.add_conditional_edges(TEST, route, {"next": DECIDE, "stop": END})
     graph.add_conditional_edges(DECIDE, route, {"next": "comment", "stop": END})
     graph.add_conditional_edges("comment", next_fix, fix_targets)
@@ -637,7 +657,7 @@ def _rerun(values: Mapping[str, Any], bundle: str) -> bool:
         return failed
     decided = values.get("fix_decisions")
     capped = decided is not None and any(d.reason == "call_limit" for d in decided.decisions)
-    return capped or failed
+    return capped or failed or doc_rules.judge_left(values.get("doc_rules"))
 
 
 def pending_fix(job: PRJob, ctx: FlowContext, saver: SqliteSaver, bundle: str) -> PendingFix | None:
@@ -678,8 +698,11 @@ def resume_fix(job: PRJob, ctx: FlowContext, approval: dict[str, Any]) -> FlowSt
         config = thread_config(job)
         if pending == "rerun":
             result_key, requested_key = STATE_KEYS[bundle]
+            values = graph.get_state(config).values
+            # 호출 상한으로 남은 모델 판단이 있으면 모델 판단부터, 아니면 수정 판단부터 다시 돈다
+            after = DETECT if doc_rules.judge_left(values.get("doc_rules")) else TEST
             config = graph.update_state(
-                config, {result_key: None, requested_key: True}, as_node=TEST
+                config, {result_key: None, requested_key: True}, as_node=after
             )
         command = Command(resume=approval) if pending == "awaiting" else None
         result = graph.invoke(command, config)

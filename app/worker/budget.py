@@ -5,7 +5,7 @@
 """
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 
 from app.models.call_budget import (
@@ -38,12 +38,18 @@ class CallBudget:
     head_sha: str
     settings: CallSettings
     now: Callable[[], datetime] = _utc_now
+    # 대상 위반 수 (9.2): 이 검사에서 찾은 위반 중 수정 판단의 표가 skip으로 정하지 않은 것. PR
+    # 상한이 이만큼 는다. 부르는 쪽이 아는 만큼 `with_targets`로 넘긴다
+    targets: int = 0
+
+    def with_targets(self, targets: int) -> "CallBudget":
+        return replace(self, targets=targets)
 
     def decide(self, scope: Scope, tier: Tier) -> Allowed | Denied:
         since = self.now().astimezone(UTC) - DAILY_WINDOW
         spent = self.store.calls_spent(self.repo, self.pr_number, scope, since)
         grants = self.store.call_grants(self.repo, self.pr_number)
-        return decide(limits_for(self.settings, scope, grants), spent, tier)
+        return decide(limits_for(self.settings, scope, grants, self.targets), spent, tier)
 
     def may_call(self, scope: Scope) -> Callable[[Tier], bool]:
         """worker/loop.py의 `LoopPolicy.may_call`에 넘긴다."""

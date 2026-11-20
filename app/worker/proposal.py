@@ -141,6 +141,16 @@ def fixed_lines(found: Found, ids: Sequence[str]) -> list[str]:
     return lines
 
 
+def _unverified_line(count: int) -> list[str]:
+    """모델이 찾은 위반은 고친 뒤 해소를 결정적으로 다시 확인하지 못한다 (4.8의 5번, 11.2 D2)."""
+    if not count:
+        return []
+    return [
+        f"- 모델 판단으로 찾은 위반 {count}건: 이 규칙은 도구로 재검사하지 못함. 그 줄이 바뀐 "
+        "것까지만 확인했습니다. 해소 여부는 리뷰어가 확인해 주세요"
+    ]
+
+
 def model_fix_body(job: PRJob, fix: ModelFix, found: Found, skipped: int) -> str:
     """모델 수정안 PR의 본문 (4.9). 검증 절은 파이프라인이 쓰고, 모델의 글은 코드 울타리 안에만
     둔다."""
@@ -165,6 +175,7 @@ def model_fix_body(job: PRJob, fix: ModelFix, found: Found, skipped: int) -> str
             "무시된 파일 없음",
             f"- 규칙 재검사: 대상 위반 {check.resolved}건 해소, 새 위반 없음 "
             f"({recheck}를 다시 돌림)",
+            *_unverified_line(check.unverified),
             f"- 테스트: 수정 전후 테스트 {check.tests}개가 같은 결과로 통과",
             f"- 크기: 바뀐 파일 {check.files}개, 바뀐 줄 {check.lines}줄 "
             f"(상한 {rules.MAX_FILES}개, {rules.MAX_CHANGED_LINES}줄)",

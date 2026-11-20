@@ -30,6 +30,7 @@ from app.models.fix_decision import (
     decision_key,
     decision_to_json,
     not_decided,
+    open_targets,
     parse_answer,
     plan,
     reconcile,
@@ -62,6 +63,7 @@ def decide(
         require_covered=require_covered,
     )  # fmt: skip
     decided = {d.violation_id: d for d in planned.decided}
+    budget = budget.with_targets(open_targets(planned.decided) + len(planned.for_model))
     diff = changes_diff.decode("utf-8", errors="replace")
     questions = [
         Question(v, rules[v.rule_id], hunk_around(diff, v.file, v.line, HUNK_RADIUS))

@@ -56,12 +56,14 @@ class Verification:
     """검증을 통과한 수정안의 결정적 결과 (4.8). 수정안 PR의 "검증" 절은 이 값으로만 쓴다."""
 
     tests: int  # 수정 전후 같은 수가 모두 통과한 테스트 수
-    resolved: int  # 해소한 대상 위반 수
+    resolved: int  # 해소한 대상 위반 수 (모델이 찾은 위반 포함)
     rules_rechecked: int  # 다시 돌린 도구·검사기 수
     files: int
     lines: int
     # 쓰지 않는다. 3단계 전 체크포인트의 값을 되살리려고 남긴다 (v1 lint를 따로 다시 돌렸는지)
     lint_rechecked: bool = False
+    # 그중 모델이 찾은 위반 수. 도구로 재검사하지 못하고 그 줄이 바뀐 것만 확인했다 (4.8의 5번)
+    unverified: int = 0
 
 
 ModelFixStatus = Literal[
@@ -365,6 +367,29 @@ def recheck(
         if seen[_key(v)] > before_count[_key(v)]:
             new.append(v)
     return left, new
+
+
+def unchanged_lines(
+    targets: Sequence[Violation],
+    before: Mapping[str, Sequence[str]],
+    after: Mapping[str, Sequence[str]],
+) -> list[Violation]:
+    """모델이 찾은 대상 위반 중 그 줄이 바뀌지 않은 것 (4.8의 5번). 도구로 다시 확인할 수단이 없어
+    "그 줄의 내용이 바뀌었다"까지만 본다.
+
+    before·after는 파일 → 고치기 전후의 줄들이다. 같은 파일에 같은 내용(앞뒤 공백 제외)의 줄이
+    대상 수만큼 줄어야 바뀐 것으로 본다. 줄 번호는 수정으로 밀리므로 쓰지 않는다.
+    """
+    needed = Counter((v.file, v.line_text or "") for v in targets)
+
+    def count(lines: Mapping[str, Sequence[str]], file: str, text: str) -> int:
+        return sum(1 for line in lines.get(file, ()) if line.strip() == text)
+
+    return [
+        v for v in targets
+        if count(after, v.file, v.line_text or "")
+        > count(before, v.file, v.line_text or "") - needed[(v.file, v.line_text or "")]
+    ]  # fmt: skip
 
 
 def violation_feedback(prefix: str, violations: Sequence[Violation]) -> list[str]:

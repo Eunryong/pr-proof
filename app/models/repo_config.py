@@ -80,13 +80,11 @@ class FixSettings(BaseModel):
 
 
 class CallSettings(BaseModel):
-    """모델 호출 수 상한 (docs/DESIGN.md 9.2, 10절 `model.calls`). 판단은 models/call_budget.py.
-
-    `pr_base`·`per_violation`은 위반 수에 비례하는 PR 상한을 넣는 4단계에 읽는다. 그때까지
-    PR 상한은 `pr_max`다.
-    """
+    """모델 호출 수 상한 (docs/DESIGN.md 9.2, 10절 `model.calls`). 판단은 models/call_budget.py."""
 
     model_config = ConfigDict(extra="ignore")
+    pr_base: int = Field(default=20, ge=0)
+    per_violation: int = Field(default=4, ge=0)
     pr_max: int = Field(default=150, ge=0)
     ruleset_base: int = Field(default=10, ge=0)
     per_rule: int = Field(default=4, ge=0)
@@ -103,6 +101,7 @@ class ModelSettings(BaseModel):
     rules: str = Field(default="sonnet", pattern=MODEL_NAME_PATTERN)
     checker: str = Field(default="sonnet", pattern=MODEL_NAME_PATTERN)
     decide: str = Field(default="sonnet", pattern=MODEL_NAME_PATTERN)  # 수정 판단 (4.6)
+    judge: str = Field(default="sonnet", pattern=MODEL_NAME_PATTERN)  # 모델의 직접 판단 (4.5)
     # 수정 경로의 모델: 가벼운 모델로 시작하고 실패가 이어지면 무거운 모델로 한 번 올린다
     light: str = Field(default="haiku", pattern=MODEL_NAME_PATTERN)
     heavy: str = Field(default="sonnet", pattern=MODEL_NAME_PATTERN)

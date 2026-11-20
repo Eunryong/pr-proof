@@ -142,6 +142,19 @@ def not_decided(
     return tuple(FixDecision(v.id, "skip", "pipeline", reason=reason, why=why) for v in asked)
 
 
+# 파이프라인의 표(`decide_by_table`)가 정하는 skip. 호출 상한·모델 실패로 남은 skip은 들지 않는다
+TABLE_SKIPS: Final = frozenset(
+    {"rejected_before", "notify_only", "tests_failed", "no_safety_net", "not_covered",
+     "coverage_unknown"}
+)  # fmt: skip
+
+
+def open_targets(decisions: Sequence[FixDecision]) -> int:
+    """대상 위반 수 (9.2): 파이프라인의 표가 skip으로 확정하지 않은 위반. PR 호출 상한이 이만큼
+    는다."""
+    return sum(1 for d in decisions if not (d.action == "skip" and d.reason in TABLE_SKIPS))
+
+
 @dataclass(frozen=True)
 class Decided:
     """수정 판단 단계의 결과. 그래프 상태에 들어가고 결과 코멘트가 이 값으로 그린다."""

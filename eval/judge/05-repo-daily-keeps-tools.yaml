@@ -1,0 +1,71 @@
+name: repo-daily-keeps-tools
+description: >-
+  4-7. base의 `.pipeline.yaml`이 `repo_daily: 6`이다. 규칙 읽기 1회, 도구 선택 2회(F401로 이어지는
+  규칙과 맞는 도구가 없는 이름 규칙), 이름 규칙의 검사기 작성 3회로 하루 상한을 다 쓴다. 이름 규칙의
+  모델 판단은 저장소 하루 상한에 걸려 하지 못하고 그 사실이 코멘트에 나온다. 도구(ruff `F401`) 검사와
+  기계적 수정은 모델을 쓰지 않으므로 계속되어 기계적 수정안 PR이 열린다.
+scripted_only: true
+pipeline:
+  model:
+    calls:
+      repo_daily: 6
+base:
+  - file: README.md
+    create: |
+      # orders
+
+      ## 코드 규칙
+
+      ### import
+
+      - 안 쓰는 import를 남기지 않는다.
+
+      ### 이름
+
+      - 함수 이름은 하는 일을 동사로 시작한다.
+pr:
+  - file: orders/services/pricing.py
+    find: "from orders.models.order import Order\n"
+    replace: "import os\n\nfrom orders.models.order import Order\n"
+  - file: orders/services/pricing.py
+    find: "def subtotal(order: Order) -> int:\n    return sum(item.unit_price * item.quantity for item in order.items)\n"
+    replace: "def _line_amount(item) -> int:\n    return item.unit_price * item.quantity\n\n\ndef subtotal(order: Order) -> int:\n    return sum(_line_amount(item) for item in order.items)\n"
+model:
+  rules:
+    - section: 코드 규칙 > import
+      quote: "안 쓰는 import를 남기지 않는다."
+      tool:
+        tool: ruff
+        codes: [F401]
+        reason: F401이 쓰지 않는 import를 잡는다
+        examples:
+          - {code: "import os\n", violates: true, lines: [1]}
+          - {code: "import json\nx = 1\n", violates: true, lines: [1]}
+          - {code: "import os\nprint(os.sep)\n", violates: false, lines: []}
+          - {code: "x = 1\n", violates: false, lines: []}
+      checker: {body: "", examples: []}
+    - section: 코드 규칙 > 이름
+      quote: "함수 이름은 하는 일을 동사로 시작한다."
+      checker:
+        body: |
+          id: verb-first
+          language: python
+          severity: error
+          message: 함수 이름은 동사로 시작한다
+          rule:
+            kind: lambda
+        examples:
+          - {code: "def total(order):\n    return 1\n", violates: true, lines: [1]}
+          - {code: "def amount():\n    pass\n", violates: true, lines: [1]}
+          - {code: "def get_total(order):\n    return 1\n", violates: false, lines: []}
+          - {code: "def compute():\n    pass\n", violates: false, lines: []}
+      judge:
+        - {file: orders/services/pricing.py, line: 10, quote: "def _line_amount(item) -> int:", why: 명사구로 시작한다}
+expect:
+  violations: ["orders/services/pricing.py:1"]
+  judge_calls: 0
+  contains:
+    - "`orders/services/pricing.py:1` · fix (기계적 수정)"
+    - "모델 호출 상한에 걸려 처리하지 못함: 위반 판단 1개 규칙 (hunk 1개, `호출 상한: 저장소 하루 상한 (6/6회 사용, 이 호출 1회)`)"
+  mechanical_branch: pipeline/pr-1-fix-mechanical
+  fix_file: orders/services/pricing.py
