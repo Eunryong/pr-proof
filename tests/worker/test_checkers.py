@@ -66,11 +66,13 @@ class GrepSandbox:
 
 
 def _reply(
-    checker: str = "grep:print(", examples: list | None = None, **fields: object
-) -> StructuredResult:
+    checker: str = "grep:print(", examples: list | None = None, unfit: str = "",
+    **fields: object,
+) -> StructuredResult:  # fmt: skip
     values = {
         "ok": True, "error": None,
-        "data": {"checker": checker, "examples": MODEL_EXAMPLES if examples is None else examples},
+        "data": {"checker": checker, "examples": MODEL_EXAMPLES if examples is None else examples,
+                 "unfit": unfit},  # fmt: skip
         "model_id": "claude-haiku-5-5", "input_tokens": 1000, "output_tokens": 100,
         "cost_usd": 0.001, "permission_denials": 0,
     }  # fmt: skip
@@ -162,6 +164,38 @@ def test_exhausted_attempts_end_as_not_yet_checkable_and_are_remembered(store: S
     (again,) = _author(store, FakeModel())
     assert isinstance(again, Unchecked) and again.kind == "no_checker"
     assert _counted(store)[-1] == ("light", 0, True)
+
+
+def test_ast_grep_unfit_answer_switches_to_a_python_script_on_the_next_attempt(
+    store: Store,
+) -> None:
+    unfit = _reply(checker="grep:print(", unfit="이름이 정의된 곳을 따져야 한다")
+    model, sandbox = FakeModel(unfit, _reply()), GrepSandbox()
+    (result,) = _author(store, model, sandbox)
+    assert isinstance(result, Checked) and result.checker.kind == "python-ast"
+    # unfit이라고 답한 ast-grep 초안은 예시를 통과할 수 있어도 돌리지 않는다
+    assert [run[0] for run in sandbox.runs] == ["python-ast"]
+    first, second = (call[1] for call in model.calls)
+    assert first["system_prompt"] == SYSTEM_PROMPT["ast-grep"]
+    assert "unfit" in first["schema"]["required"]
+    assert second["system_prompt"] == SYSTEM_PROMPT["python-ast"]
+    assert "unfit" not in second["schema"]["required"]
+    assert "ast-grep으로 가릴 수 없다고 답했다: 이름이 정의된 곳을 따져야 한다" in model.calls[1][0]
+    assert [call[1]["model"] for call in model.calls] == ["sonnet", "sonnet"]
+    assert [c[:2] for c in _counted(store)] == [("light", 1), ("light", 1)]
+
+
+def test_unfit_rule_that_no_script_catches_still_ends_unchecked_after_three_attempts(
+    store: Store,
+) -> None:
+    wrong = _reply(checker="grep:nothing")
+    model = FakeModel(_reply(unfit="정의된 곳을 따져야 한다"), wrong, wrong)
+    (result,) = _author(store, model)
+    assert isinstance(result, Unchecked) and result.kind == "no_checker"
+    assert [c[1]["system_prompt"] for c in model.calls] == [
+        SYSTEM_PROMPT["ast-grep"], SYSTEM_PROMPT["python-ast"], SYSTEM_PROMPT["python-ast"],
+    ]  # fmt: skip
+    assert [call[1]["model"] for call in model.calls] == ["sonnet"] * 3
 
 
 def test_engine_error_is_fed_back(store: Store) -> None:

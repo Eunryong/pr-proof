@@ -6,11 +6,13 @@ from typing import Final
 import pytest
 
 from app.models.checker_authoring import (
+    ANSWER_SCHEMA,
     MAX_MODEL_EXAMPLES,
     Answer,
     AnswerExample,
     Shortfall,
     Unchecked,
+    answer_schema,
     build_prompt,
     checker_key,
     judge_examples,
@@ -41,6 +43,19 @@ def test_plan_skips_only_rules_that_code_cannot_show() -> None:
 
 def test_format_switches_to_python_script_after_two_ast_grep_attempts() -> None:
     assert [kind_for_attempt(n, RULE) for n in (1, 2, 3)] == ["ast-grep", "ast-grep", "python-ast"]
+
+
+def test_format_switches_early_once_the_model_says_ast_grep_cannot_express_the_rule() -> None:
+    switched = [kind_for_attempt(n, RULE, ast_grep_unfit=True) for n in (2, 3)]
+    assert switched == ["python-ast", "python-ast"]
+    path_rule = replace(RULE, check=CheckMethod("path"), examples=(), scope=())
+    assert kind_for_attempt(2, path_rule, ast_grep_unfit=True) == "path-pattern"
+
+
+def test_unfit_is_asked_only_of_ast_grep_and_leaves_the_path_prompt_version_alone() -> None:
+    assert "unfit" in answer_schema("ast-grep")["required"]
+    assert "unfit" not in answer_schema("python-ast")["required"]
+    assert answer_schema("path-pattern") == ANSWER_SCHEMA
 
 
 def test_checker_key_follows_rule_text_examples_and_models_only() -> None:

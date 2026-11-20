@@ -39,6 +39,7 @@ _PATH_KINDS: Final[tuple[CheckerKind, ...]] = ("path-pattern",)
 MAX_PATH_CHARS: Final = 200
 MAX_ATTEMPTS: Final = 3
 # 이만큼 ast-grep으로 실패하면 Python AST 스크립트로 바꾼다 (5.3 형식 바꾸기, Python 저장소만).
+# 모델이 ast-grep으로 가릴 수 없다고 답하면 그다음 회차에 바로 바꾼다 (4.4, 11.1 2026-11-20).
 # 모델은 바꾸지 않는다: 세 회차 모두 `model.checker`다 (11.2 D7)
 AST_GREP_ATTEMPTS: Final = 2
 MIN_VIOLATING: Final = 2
@@ -101,10 +102,13 @@ def kinds_for(rule: Rule) -> tuple[CheckerKind, ...]:
     return _PATH_KINDS if looks_at_paths(rule) else _CODE_KINDS
 
 
-def kind_for_attempt(attempt: int, rule: Rule) -> CheckerKind:
+def kind_for_attempt(attempt: int, rule: Rule, *, ast_grep_unfit: bool = False) -> CheckerKind:
+    """ast_grep_unfit: 앞 회차에서 모델이 이 규칙을 ast-grep으로 가릴 수 없다고 답했다."""
     if looks_at_paths(rule):
         return "path-pattern"
-    return "ast-grep" if attempt <= AST_GREP_ATTEMPTS else "python-ast"
+    if ast_grep_unfit or attempt > AST_GREP_ATTEMPTS:
+        return "python-ast"
+    return "ast-grep"
 
 
 def prompt_version_for(rule: Rule) -> str:
@@ -161,7 +165,8 @@ _COMMON: Final = """\
   함수 안인지 등)가 위반을 가르면 검사기가 그것을 실제로 따져야 한다.
 - 정상 예시는 규칙을 지키되 겉모양이 비슷해 잘못 잡기 쉬운 코드로 쓴다. lines는 빈 목록.
 이전 시도의 실패가 자료에 있으면 그 실패를 고친 새 검사기를 쓴다.
-규칙 중 코드 모양으로 가릴 수 없는 부분은 무시하고, 가릴 수 있는 위반만 잡는다.
+규칙 중 코드를 읽어서는 가릴 수 없는 부분(실행해 봐야 아는 것, 코드 밖의 사정)만 무시하고, 파일의
+코드를 따져 가릴 수 있는 위반은 모두 잡는다.
 답은 주어진 JSON 스키마로만 한다. checker에는 검사기 본문만 넣고 ``` 표시를 붙이지 않는다."""
 
 SYSTEM_PROMPT: Final[Mapping[str, str]] = {
@@ -179,7 +184,11 @@ SYSTEM_PROMPT: Final[Mapping[str, str]] = {
   import_statement, import_from_statement, dotted_name, decorator, decorated_definition,
   class_definition, function_definition, comparison_operator, binary_operator, integer, float,
   global_statement, assignment, keyword_argument)과 has, inside, not, any, all, regex,
-  stopBy: end, field를 쓸 수 있다.""",
+  stopBy: end, field를 쓸 수 있다.
+- ast-grep 규칙은 잡을 노드와 그 안팎의 노드 모양만 본다. 규칙이 덮는 모양 중 그것만으로 가릴 수
+  없는 것이 있으면(이름이 파일의 어디에 정의됐는지, 앞에서 무엇을 대입했는지를 따져야 하는 경우
+  등) 그 모양을 빼고 쓰지 않는다. 대신 unfit에 무엇을 가릴 수 없는지 한 줄로 적는다. 그러면 다음
+  시도는 같은 규칙을 Python ast 스크립트로 쓴다. 모두 가릴 수 있으면 unfit은 빈 문자열이다.""",
     "python-ast": _COMMON
     + """
 
@@ -220,27 +229,40 @@ def system_prompt(kind: CheckerKind) -> str:
     return SYSTEM_PROMPT_PATH if kind == "path-pattern" else SYSTEM_PROMPT[kind]
 
 
-ANSWER_SCHEMA: Final[Mapping[str, object]] = {
-    "type": "object",
-    "additionalProperties": False,
-    "required": ["checker", "examples"],
-    "properties": {
-        "checker": {"type": "string"},
-        "examples": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["code", "violates", "lines"],
-                "properties": {
-                    "code": {"type": "string"},
-                    "violates": {"type": "boolean"},
-                    "lines": {"type": "array", "items": {"type": "integer"}},
-                },
+_ANSWER_PROPERTIES: Final[Mapping[str, object]] = {
+    "checker": {"type": "string"},
+    "examples": {
+        "type": "array",
+        "items": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["code", "violates", "lines"],
+            "properties": {
+                "code": {"type": "string"},
+                "violates": {"type": "boolean"},
+                "lines": {"type": "array", "items": {"type": "integer"}},
             },
         },
     },
 }
+ANSWER_SCHEMA: Final[Mapping[str, object]] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["checker", "examples"],
+    "properties": _ANSWER_PROPERTIES,
+}
+# ast-grep 회차만 unfit을 받는다. 다른 형식의 스키마는 그대로라 경로 패턴의 프롬프트 버전이
+# 바뀌지 않는다
+AST_GREP_SCHEMA: Final[Mapping[str, object]] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["checker", "examples", "unfit"],
+    "properties": {**_ANSWER_PROPERTIES, "unfit": {"type": "string"}},
+}
+
+
+def answer_schema(kind: CheckerKind) -> Mapping[str, object]:
+    return AST_GREP_SCHEMA if kind == "ast-grep" else ANSWER_SCHEMA
 
 
 @dataclass(frozen=True)
@@ -293,7 +315,7 @@ _FRAME_RULE: Final = Rule(
 # 캐시 키에 들어간다. 프롬프트나 스키마를 한 글자라도 바꾸면 달라져 검사기를 다시 쓴다
 PROMPT_VERSION: Final = prompt_version(
     "\0".join(SYSTEM_PROMPT[k] for k in sorted(SYSTEM_PROMPT)),
-    ANSWER_SCHEMA,
+    {k: answer_schema(k) for k in sorted(SYSTEM_PROMPT)},
     build_prompt(_FRAME_RULE, Shortfall(1, 1), ["피드백"]),
 )
 # 경로 패턴의 프롬프트는 따로 센다. 이것을 바꿔도 내용을 보는 검사기는 다시 쓰지 않는다
@@ -316,6 +338,7 @@ class Answer(BaseModel):
     model_config = ConfigDict(extra="ignore")
     checker: str
     examples: list[AnswerExample] = []
+    unfit: str = ""
 
 
 _FENCE: Final = re.compile(r"^```[\w-]*\n(.*?)\n?```\s*$", re.DOTALL)
@@ -339,6 +362,9 @@ class Draft:
     examples: tuple[Example, ...]  # 모델이 쓴 예시 중 쓸 수 있는 것
     example_problems: tuple[str, ...]  # 모델이 쓴 예시의 문제 (model_examples). 있으면 재시도
     model: str  # 답한 모델의 전체 id
+    # ast-grep 회차에서 모델이 그 형식으로 가릴 수 없다고 답한 이유. 있으면 돌리지 않고 다음 회차를
+    # Python AST 스크립트로 한다
+    unfit: str = ""
 
 
 _DRAFT: Final = TypeAdapter(Draft)
