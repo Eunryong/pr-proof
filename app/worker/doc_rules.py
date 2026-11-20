@@ -144,6 +144,11 @@ def find(
     )
 
 
+def saved_checks(found: Found, store: Store) -> list[RuleCheck]:
+    """found의 규칙마다 저장한 검사기. 수정 뒤 재검사(4.8의 5번)가 같은 검사기를 다시 돌린다."""
+    return [_saved_check(o, store) for o in found.outcomes]
+
+
 def _saved_check(outcome: RuleOutcome, store: Store) -> RuleCheck:
     if isinstance(outcome, RuleUnchecked):
         return Unchecked(outcome.rule, outcome.kind, outcome.detail)

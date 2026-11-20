@@ -109,6 +109,11 @@ class ClaudeResult:
     unexpected_tools: tuple[tuple[str, int], ...] = ()
     # 모델이 부른, 목록 안 도구의 횟수. 경로 감시 훅이 호출마다 돌았는지 맞춰 보는 데 쓴다
     tool_uses: int = 0
+    model_id: str = ""  # 별칭이 가리킨 전체 모델 id. 모르면 ""
+    input_tokens: int | None = None  # 캐시 생성·읽기를 합친 실제 입력. 모르면 None
+    output_tokens: int | None = None
+    # 모델 폴더에서 worktree에 적용한 diff. `workdir.run_in_model_folder`만 채운다
+    applied: bytes = b""
 
 
 # 표준 출력 한 줄 → 호출을 중단할 이유. 계속해도 되면 None
@@ -239,13 +244,18 @@ def run_claude(
     runner: Runner = _run,
     environ: Mapping[str, str] | None = None,
     settings: Path | None = None,
+    system_prompt: str | None = None,
 ) -> ClaudeResult:
     """worktree를 cwd로 파일 도구만 준 claude를 한 번 실행한다. 셸을 거치지 않는다.
 
     settings는 파이프라인이 쓴 설정 파일(경로 감시 훅)이다. `--restricted`는 사용자·저장소의 설정을
     읽지 않지만 `--settings`로 넘긴 파일은 읽는다 (2.1.328에서 확인).
+    system_prompt는 파이프라인의 지시다(`--append-system-prompt`, 8.4). prompt에는 자료만 넣는다.
     """
-    extra = () if settings is None else ("--settings", str(settings))
+    extra: tuple[str, ...] = () if settings is None else ("--settings", str(settings))
+    if system_prompt is not None:
+        _check_system_prompt(system_prompt)
+        extra += ("--append-system-prompt", system_prompt)
     args = build_args("file_tools", model, max_budget_usd, extra)
     try:
         watch = _watch_for("file_tools")
@@ -298,8 +308,7 @@ def run_structured(
     파이프라인의 지시는 system_prompt(--append-system-prompt)로만, 믿지 않는 자료는 prompt(표준
     입력)로만 넘긴다. cwd는 이 호출만의 빈 임시 폴더라 저장소의 파일·설정이 보이지 않는다.
     """
-    if not system_prompt or system_prompt.startswith("-"):
-        raise ValueError("시스템 프롬프트가 비었거나 '-'로 시작한다")
+    _check_system_prompt(system_prompt)
     extra = ("--append-system-prompt", system_prompt, "--json-schema", json.dumps(schema))
     args = build_args("no_tools", model, max_budget_usd, extra)
     try:
@@ -316,6 +325,11 @@ def run_structured(
     return parse_structured_output(proc.stdout, proc.returncode, proc.stderr)
 
 
+def _check_system_prompt(system_prompt: str) -> None:
+    if not system_prompt or system_prompt.startswith("-"):
+        raise ValueError("시스템 프롬프트가 비었거나 '-'로 시작한다")
+
+
 def parse_output(stdout: str, returncode: int, stderr: str = "") -> ClaudeResult:
     """stream-json 출력을 읽는다. 실패해도 결과 줄에 있는 비용과 거부 목록은 남긴다."""
     init, data = _events(stdout)
@@ -324,6 +338,7 @@ def parse_output(stdout: str, returncode: int, stderr: str = "") -> ClaudeResult
     error, detail = _checked_status(init, "file_tools", data, returncode)
     turns = data.get("num_turns")
     text = data.get("result")
+    input_tokens, output_tokens = _usage(data.get("usage"))
     return ClaudeResult(
         ok=error is None,
         error=error,
@@ -334,6 +349,9 @@ def parse_output(stdout: str, returncode: int, stderr: str = "") -> ClaudeResult
         detail=detail,
         unexpected_tools=_unexpected_tools(stdout, "file_tools"),
         tool_uses=_expected_tool_uses(stdout, "file_tools"),
+        model_id=_model_id(data.get("modelUsage")),
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
     )
 
 

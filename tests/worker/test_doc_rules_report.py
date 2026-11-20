@@ -16,11 +16,13 @@ from app.models.doc_rules import (
     RuleUnchecked,
 )
 from app.models.fix_decision import Decided, FixDecision
+from app.models.model_fix import ModelFix, Verification
+from app.models.proposal import ProposalResult
 from app.models.rule import CheckMethod, Example, Rule, RuleSource, UnreadDoc
 from app.models.test_run import PytestRun
 from app.models.violation import Violation
 from app.worker import doc_rules_report, report
-from app.worker.doc_rules_report import HOW_TO_CORRECT, NO_RULES, section
+from app.worker.doc_rules_report import HOW_TO_CORRECT, NO_RULES, FixView, section
 from app.worker.markdown import inline_code
 
 USAGE: Final = CallUsage(calls=3, limit=14, cache_hits=1, models=("claude-haiku-5-5",),
@@ -263,7 +265,7 @@ def test_each_violation_shows_its_decision_and_the_counts() -> None:
     assert "  - `orders/a.py:5` · fix (기계적 수정)" in text
     assert ("수정 판단: fix 2건, skip 2건 (모델이 고치지 않기로 함 1건, 테스트가 지나가지 않음 1건)"
             " · 모델 호출 1회 · 저장된 판단 2건 사용") in text  # fmt: skip
-    assert doc_rules_report.NOT_CONNECTED in text
+    assert "**수정안:**" not in text  # 모델 수정 묶음의 상태는 따로 넘긴다
     assert "모델 호출 상한에 걸려" not in text
 
 
@@ -293,3 +295,58 @@ def test_without_decisions_the_section_is_unchanged() -> None:
     found = _found(RuleChecked(RULE, REF), violations=(_violation(),))
     assert section(found, {}) == section(found, {}, None)
     assert "수정 판단" not in _text(found)
+
+
+READY: Final = ModelFix(
+    status="ready", targets=("v1", "v2"), explanation=None,
+    verification=Verification(tests=9, resolved=2, rules_rechecked=1, lint_rechecked=False,
+                              files=1, lines=4),
+    changed_files=("orders/a.py",), calls=1, input_tokens=1200, output_tokens=80,
+    models=("claude-haiku-5-5",), attempts=1,
+)  # fmt: skip
+
+
+def _fix_text(view: FixView) -> str:
+    found = _found(RuleChecked(RULE, REF), violations=(_violation(),))
+    return "\n".join(section(found, {}, None, view))
+
+
+def test_fix_result_names_the_pull_request_and_the_verification() -> None:
+    """수정안 PR 번호와 파이프라인이 확인한 검증 결과가 보인다 (4.9). 아직 안 만든다는 글은 없다."""
+    text = _fix_text(FixView(2, 0, "done", fix=READY, proposal=ProposalResult(number=901)))
+    assert ("**수정안:** 위반 2건을 고쳤습니다. 검증: 테스트 9개가 수정 전과 같은 결과로 통과, "
+            "대상 위반 2건 해소, 새 위반 없음. 수정안 PR #901을 열었습니다.") in text  # fmt: skip
+    assert ("수정 작성: 모델 호출 1회, 회차 1 · `claude-haiku-5-5` · 저장된 결과 0건 사용 · "
+            "토큰 입력 1200, 출력 80") in text  # fmt: skip
+    assert "아직 만들지 않습니다" not in text
+
+
+def test_fix_states_before_and_without_a_fix(tmp_path) -> None:
+    assert "수정안을 만드는 중" in _fix_text(FixView(3, 0, "running"))
+    assert "`require_approval: true`" in _fix_text(FixView(3, 0, "approval"))
+    assert "모델 수정안 PR #905이 열려 있습니다" in _fix_text(FixView(3, 0, "open", number=905))
+    capped = _fix_text(FixView(20, 4, "running"))
+    assert "수정안 크기 상한으로 처리하지 못함: 4건" in capped
+    failed = replace(READY, status="failed", verification=None, detail="고친 뒤 테스트: 실패")
+    text = _fix_text(FixView(2, 0, "done", fix=failed))
+    assert (
+        "**수정안:** 수정안을 만들지 못함: 정해진 회차 안에 검증을 통과하지 못함 (`고친 뒤" in text
+    )
+    capped_calls = replace(READY, status="budget", detail="호출 상한: PR 상한 (3/3회 사용)")
+    assert "모델 호출 상한에 걸려 처리하지 못함: 수정 2건" in _fix_text(
+        FixView(2, 0, "done", fix=capped_calls)
+    )
+
+
+def test_fork_shows_the_fix_in_the_comment_instead_of_a_pull_request(tmp_path) -> None:
+    patch = tmp_path / "fix.patch"
+    patch.write_text("--- a/orders/a.py\n+++ b/orders/a.py\n@@ -2 +2 @@\n-print(x)\n+log(x)\n")
+    fix = replace(READY, patch_path=patch)
+    fork = ProposalResult(
+        reason="포크에서 온 PR이라 수정안 PR을 열 수 없음 (수정 내용은 결과 코멘트에)"
+    )
+    text = _fix_text(FixView(2, 0, "done", fix=fix, proposal=fork))
+    assert "수정안 PR을 만들지 않았습니다 (포크에서 온 PR" in text
+    assert "<details><summary>수정 내용</summary>" in text and "+log(x)" in text
+    secret = ProposalResult(reason="비밀값으로 보이는 내용이 있음 (토큰·키 형식)")
+    assert "+log(x)" not in _fix_text(FixView(2, 0, "done", fix=fix, proposal=secret))

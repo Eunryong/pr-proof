@@ -67,9 +67,12 @@ def test_model_folder_keeps_the_link_out_and_applies_the_edit(tmp_path: Path, ou
     _git(wt, "commit", "-q", "-m", "init")
     captured: list[str] = []
 
+    # 수정 작성과 같이 지시를 시스템 프롬프트로도 넘긴다 (--append-system-prompt와 --restricted,
+    # 파일 도구, --settings의 훅이 한 호출에서 같이 돈다)
     result = workdir.run_in_model_folder(
-        wt, PROMPT, model="haiku", max_budget_usd=0.5, runner=_capture(captured)
-    )
+        wt, PROMPT, model="haiku", max_budget_usd=0.5, runner=_capture(captured),
+        system_prompt="너는 파이프라인의 시험 단계다. 사용자 메시지가 시키는 도구 호출을 한다.",
+    )  # fmt: skip
 
     assert result.error is None, result.detail
     assert captured and CANARY not in "".join(captured)

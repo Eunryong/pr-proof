@@ -191,7 +191,8 @@ def run_in_model_folder(
     """모델 전용 폴더에서 claude를 한 번 실행하고, 바뀐 것을 worktree에 diff로 적용한다.
 
     훅이 돌지 않았으면(도구 호출 수보다 기록이 적으면) 적용하지 않고 TOOLS 오류로 돌려준다.
-    적용에 실패하면 worktree는 그대로이고 APPLY 오류다. run은 테스트용이다.
+    적용에 실패하면 worktree는 그대로이고 APPLY 오류다. 적용한 diff는 결과의 `applied`에 담는다
+    (수정 작성이 저장해 같은 입력에 다시 쓴다). run은 테스트용이다.
     """
     run = run or claude_cli.run_claude
     with model_folder(worktree, repo.list_files(worktree)) as folder:
@@ -211,4 +212,4 @@ def run_in_model_folder(
     except repo.GitError as e:
         log.warning("모델의 변경을 worktree에 적용하지 못함: %s", e)
         return _failed(result, AIErrorKind.APPLY, f"변경을 적용하지 못함: {e}")
-    return result
+    return replace(result, applied=patch)

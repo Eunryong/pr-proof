@@ -10,19 +10,29 @@
 """
 
 import logging
+from collections.abc import Sequence
 from pathlib import Path
+from typing import Final
 
 from app import config
 from app.models import proposal as rules
 from app.models import rejection
+from app.models.doc_rules import Found
 from app.models.finding import SkillResult
 from app.models.fix import FixOutcome
 from app.models.job import PRJob
+from app.models.model_fix import Explanation, ModelFix
 from app.models.proposal import ProposalResult
 from app.worker import repo
 from app.worker.github import GitHub
+from app.worker.markdown import inline_code
 from app.worker.report import code_fence, format_test_line
 from app.worker.state import Store
+
+# 모델 수정 묶음 (DESIGN.md 4.9, 3.1의 C7). 브랜치는 pipeline/pr-<n>-fix-model
+MODEL_BUNDLE: Final = "model"
+MAX_LISTED_TARGETS: Final = 30
+FORK_NO_PR: Final = "포크에서 온 PR이라 수정안 PR을 열 수 없음 (수정 내용은 결과 코멘트에)"
 
 log = logging.getLogger(__name__)
 
@@ -145,6 +155,131 @@ def open_proposal(
     # 사람이 이 제안을 닫으면 다음 커밋에서 같은 위반을 다시 올리지 않으려고 고친 위반을 남긴다
     targets = rejection.fixed_keys(before.findings, outcome.remaining)
     store.record_proposal(job.repo, job.pr_number, skill, job.head_sha, branch, number, targets)
+    return ProposalResult(
+        number=number,
+        url=f"https://github.com/{job.repo}/pull/{number}",
+        updated=existing is not None,
+    )
+
+
+def explanation_text(explanation: Explanation | None) -> str:
+    """모델의 설명을 글 한 덩어리로. 비밀값 검사와 수정안 PR 본문의 코드 울타리에 쓴다."""
+    if explanation is None:
+        return ""
+    lines = [explanation.summary, ""]
+    lines += [f"- {c.file}:{c.line} {c.rule}: {c.why}" for c in explanation.changes]
+    return "\n".join(lines).strip()
+
+
+def model_fix_body(job: PRJob, fix: ModelFix, found: Found, skipped: int) -> str:
+    """모델 수정안 PR의 본문 (4.9). 검증 절은 파이프라인이 쓰고, 모델의 글은 코드 울타리 안에만
+    둔다."""
+    rules_by_id = {o.rule.id: o.rule for o in found.outcomes}
+    targets = [v for v in found.violations if v.id in set(fix.targets)]
+    check = fix.verification
+    lines = [
+        rules.PROPOSAL_MARKER,
+        f"#{job.pr_number}의 커밋 `{job.head_sha[:7]}`에서 PR이 바꾼 줄의 문서 규칙 위반을 모델이 "
+        "고친 수정안입니다.",
+        "",
+        f"**고친 위반** ({len(targets)}건)",
+    ]
+    by_rule: dict[str, list[str]] = {}
+    for v in targets:
+        by_rule.setdefault(v.rule_id, []).append(inline_code(f"{v.file}:{v.line}", 200))
+    for rule_id, where in by_rule.items():
+        rule = rules_by_id[rule_id]
+        source = rule.source.file
+        if rule.source.section:
+            source += f" > {rule.source.section}"
+        lines.append(
+            f"- `{rule_id}` {inline_code(rule.text, 500)} · 출처: {inline_code(source, 200)}"
+        )
+        lines += [f"  - {w}" for w in where[:MAX_LISTED_TARGETS]]
+        if len(where) > MAX_LISTED_TARGETS:
+            lines.append(f"  - 외 {len(where) - MAX_LISTED_TARGETS}건")
+    if skipped:
+        lines += ["", f"수정 판단이 skip한 위반 {skipped}건은 이 수정안에 넣지 않았습니다. 이유는 "
+                  f"#{job.pr_number}의 결과 코멘트에 있습니다."]  # fmt: skip
+    lines += ["", "**검증** (파이프라인이 확인한 결과)"]
+    if check is not None:
+        files = ", ".join(inline_code(f, 200) for f in fix.changed_files)
+        recheck = f"검사기 {check.rules_rechecked}개" + (", ruff" if check.lint_rechecked else "")
+        lines += [
+            f"- 허용 범위: 위반이 있는 파일만 바뀜 ({files}). 테스트 파일, `.github/`, 새로 생긴 "
+            "무시된 파일 없음",
+            f"- 규칙 재검사: 대상 위반 {check.resolved}건 해소, 새 위반 없음 "
+            f"({recheck}를 다시 돌림)",
+            f"- 테스트: 수정 전후 테스트 {check.tests}개가 같은 결과로 통과",
+            f"- 크기: 바뀐 파일 {check.files}개, 바뀐 줄 {check.lines}줄 "
+            f"(상한 {rules.MAX_FILES}개, {rules.MAX_CHANGED_LINES}줄)",
+            "- 비밀값: 추가된 줄과 모델의 설명에서 찾지 못함",
+            "- 설명 확인: 모델의 설명이 가리키는 줄이 모두 이 수정에서 바뀐 줄이고, 바뀐 곳마다 "
+            "설명이 있음",
+        ]
+    text = explanation_text(fix.explanation)
+    if text:
+        fence = code_fence(text)
+        lines += ["", "**모델의 설명** (모델이 쓴 글입니다)", "", f"{fence}text", text, fence]
+    models = ", ".join(inline_code(m, 80) for m in fix.models) or "저장된 결과"
+    lines += [
+        "",
+        f"모델: {models} · 작성 회차 {fix.attempts}",
+        "",
+        f"머지하면 #{job.pr_number}의 브랜치에 들어갑니다. 모델이 쓴 코드이니 리뷰한 뒤 머지해 "
+        "주세요. 원하지 않으면 닫아 주세요. 같은 커밋에는 다시 제안하지 않습니다.",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def open_model_proposal(
+    job: PRJob,
+    worktree: Path,
+    store: Store,
+    github: GitHub,
+    fix: ModelFix,
+    found: Found,
+    *,
+    skipped: int,
+    secrets: Sequence[str] | None = None,
+) -> ProposalResult:
+    """검증을 통과한 모델 수정안을 수정안 PR로 올린다 (4.9). 올리지 못하면 이유를 돌려준다.
+
+    포크에서 온 PR에는 열지 않는다 (8.5). 그때는 결과 코멘트에 수정 내용만 보인다.
+    """
+    refs = github.pr_refs(job.repo, job.pr_number)
+    if refs.head_repo != job.repo:
+        return ProposalResult(reason=FORK_NO_PR)
+    if refs.head_sha != job.head_sha:
+        return ProposalResult(reason="그 사이 새 커밋이 올라옴")
+    patch = fix.patch_path.read_text() if fix.patch_path else ""
+    secrets = list(pipeline_secrets() if secrets is None else secrets)
+    blocker = rules.push_blocker(patch, fix.changed_files, secrets)
+    if blocker is not None:
+        log.warning("수정안 PR을 만들지 않음 %s#%s: %s", job.repo, job.pr_number, blocker)
+        return ProposalResult(reason=blocker)
+    # 모델의 설명도 푸시하기 전에 한 번 더 본다 (4.8의 3번 "전달 직전에 한 번 더")
+    if rules.find_secret_in_text(explanation_text(fix.explanation), secrets) is not None:
+        log.warning("수정안 PR을 만들지 않음 %s#%s: 모델의 설명", job.repo, job.pr_number)
+        return ProposalResult(reason=f"{rules.SECRET_BLOCKED} (모델의 설명)")
+
+    count = len(fix.targets)
+    branch = rules.branch_name(job.pr_number, MODEL_BUNDLE)
+    message = (
+        f"[pipeline] model: #{job.pr_number} 문서 규칙 위반 {count}건 수정\n\n"
+        f"원본 커밋 {job.head_sha}"
+    )
+    repo.commit_and_push(worktree, fix.changed_files, message, branch, github.identity())
+    title = f"[pipeline] #{job.pr_number} 문서 규칙 위반 {count}건 수정 (모델)"
+    body = model_fix_body(job, fix, found, skipped)
+    existing = github.open_pr_for_branch(job.repo, branch)
+    if existing is not None:
+        github.update_pr(job.repo, existing, title, body)
+        number = existing
+    else:
+        number = github.create_pr(job.repo, refs.head_ref, branch, title, body)
+    # 거절 기록(같은 줄을 다음 커밋에서 다시 고치지 않기)은 기록 저장 단위에서 넣는다
+    store.record_proposal(job.repo, job.pr_number, MODEL_BUNDLE, job.head_sha, branch, number)
     return ProposalResult(
         number=number,
         url=f"https://github.com/{job.repo}/pull/{number}",
