@@ -17,8 +17,10 @@ from app.models import state_keys
 from app.models.checker import CheckerKind, tool_codes
 from app.models.doc_rules import Found, NoRuleDocs, RuleChecked
 from app.models.job import PRJob
+from app.models.ops_alert import Alert
 from app.models.test_run import PytestRun, ReportSummary
 from app.models.text_edit import TextEdit
+from app.notify import slack
 from app.sandbox.checker_runner import CheckerRun, Match, Ran
 from app.worker import base_config, doc_rules, main, proposal, repo, retry
 from app.worker.ai import claude_cli
@@ -359,9 +361,12 @@ def test_secret_on_a_fixed_line_drops_the_fix(mech_env) -> None:
         return Ran((Match("a.py", 1, 1, "unused", "F401", (edit,)),))
 
     mech_env["ruff"].on_files = secret_edit
+    sent: list[Alert] = []
+    mech_env["monkeypatch"].setattr(slack, "send", lambda a, r, **k: sent.append(a) or "sent")
     _update(mech_env)
     body = _comment(mech_env)
     assert mech_env["pushes"] == [] and "비밀값으로 보이는 내용이 있음" in body
+    assert sent == [Alert("secret_blocked", "o/r", 1)]  # 운영 알림 (위협 T21)
     assert token not in body.split("**기계적 수정안:**")[1]
 
 
@@ -446,3 +451,36 @@ def test_found_state_names_the_rule_set_and_codes(mech_env) -> None:
         ("E741", "E741", "tool", False),
     ]
     assert not isinstance(found, NoRuleDocs)
+
+
+class SortingRuff(FakeRuff):
+    """FakeRuff에 I001을 더한다: 파일 앞의 import 줄들이 정렬돼 있지 않으면 블록 전체를 정렬하는
+    안전한 수정."""
+
+    def on_files(self, kind, body, root, files):  # noqa: ANN001, ANN201
+        run = super().on_files(kind, body, root, files)
+        matches = list(run.matches)
+        for f in files:
+            lines = (root / f).read_text().split("\n")
+            block = [n for n, line in enumerate(lines, 1) if line.startswith("import ")]
+            texts = [lines[n - 1] for n in block]
+            if block and texts != sorted(texts):
+                edit = TextEdit(block[0], 1, block[-1] + 1, 1, "\n".join(sorted(texts)) + "\n")
+                matches.append(Match(f, block[0], block[-1], "Import block is un-sorted", "I001",
+                                     (edit,)))  # fmt: skip
+        return Ran(tuple(matches))
+
+
+def test_base_import_moved_by_sorting_is_not_a_new_violation(mech_env) -> None:
+    """BACKLOG(2단계 코드 검증)의 I001 항목: 정렬이 자리만 옮긴 base의 `import sys`는 다음
+    재검사에서 PR이 바꾼 줄이 아니다. 그 줄의 F401(base에 원래 있던 위반)이 "새 위반"으로 잡혀
+    수정안이 버려지지 않고, 대상이 아니라 고치지도 않는다."""
+    mech_env["ruff"].__class__ = SortingRuff
+    _open(mech_env, base={"ruff.toml": "", "a.py": "import sys\nimport os\nx = 1\n"},
+          pr={"a.py": "import abc\nimport sys\nimport os\nx = 1\n"})  # fmt: skip
+    assert _update(mech_env) == "passed"
+    body = _comment(mech_env)
+    assert "**기계적 수정안:** 위반 1건을 고쳤습니다" in body, body
+    (push,) = mech_env["pushes"]
+    assert "import os" in push["diff"] and "import sys" in push["diff"]
+    assert "-import os\n" not in push["diff"].split("@@")[-1].replace("+import os\n", "")

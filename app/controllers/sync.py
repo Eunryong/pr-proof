@@ -16,7 +16,9 @@ from app.config import PipelineConfig
 from app.controllers.webhook import PIPELINE_BRANCH_PREFIX
 from app.models.comment import command_in_comment
 from app.models.job import PRJob
+from app.models.ops_alert import Alert
 from app.models.sync_rules import EnqueueReason, enqueue_reason
+from app.notify import slack
 from app.services import github, queue
 from app.services.history import History
 
@@ -49,6 +51,7 @@ def run_once(
         except github.GitHubReadError as e:
             log.warning("동기화: %s 조회 실패, 다음 주기에 다시 한다: %s", repo, e)
             result.failed_repos.append(repo)
+            slack.send(Alert("sync_failed", repo), redis)
             continue
         open_numbers = {pr.number for pr in prs}
         for number in sorted(history.prs_with_open_proposals(repo) - open_numbers):
@@ -80,6 +83,7 @@ def run_once(
             )
             if reason == "dead_worker":
                 queue.clear_job(redis, job)
+                slack.send(Alert("worker_lost", repo, pr.number), redis)
             if queue.enqueue(redis, job) == "queued":
                 result.enqueued.append((repo, pr.number, reason))
     return result

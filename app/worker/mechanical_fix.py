@@ -21,13 +21,13 @@ from app.models import model_fix as model_fix_rules
 from app.models import records as record_rules
 from app.models.checker_authoring import Checked, RuleCheck
 from app.models.db import FixAttempt
-from app.models.diff import added_lines, new_files
+from app.models.diff import added_lines_except_moved, added_texts, new_files
 from app.models.doc_rules import Found
 from app.models.fix import MECHANICAL_BUNDLE, MechanicalFix, MechanicalStatus, same_test_result
 from app.models.fix_decision import FixDecision
 from app.models.job import PRJob
 from app.models.model_fix import Picked
-from app.models.proposal import changed_line_count, find_secret
+from app.models.proposal import SECRET_BLOCKED, changed_line_count, find_secret
 from app.models.scope import MECHANICAL_POLICY, is_pipeline_output, parse_porcelain
 from app.models.test_run import PytestRun
 from app.models.text_edit import TextEdit, apply_edits
@@ -83,11 +83,14 @@ def fix_violations(
     def outcome(status: MechanicalStatus, detail: str = "", **more) -> MechanicalFix:
         return MechanicalFix(status=status, targets=tuple(sorted(wanted)), detail=detail, **more)
 
+    # 수정 전 PR이 추가한 줄. 정렬 같은 수정이 자리만 옮긴 base의 줄은 PR의 줄로 다시 세지 않는다
+    pr_added = added_texts(repo.working_diff(worktree, merge_base))
+
     def recheck(chosen: Sequence[RuleCheck]) -> detect.Detection:
         diff = repo.working_diff(worktree, merge_base)
         return detect.detect(
-            chosen, worktree, added_lines(diff), new_files=new_files(diff), sandbox=sandbox,
-            disabled=disabled,
+            chosen, worktree, added_lines_except_moved(diff, pr_added),
+            new_files=new_files(diff), sandbox=sandbox, disabled=disabled,
         )  # fmt: skip
 
     touched: set[str] = set()
@@ -126,7 +129,7 @@ def fix_violations(
     patch = repo.head_diff(worktree)
     kind = find_secret(patch, secrets)
     if kind is not None:
-        return outcome("secret", f"비밀값으로 보이는 내용이 있음 ({kind})", **common)
+        return outcome("secret", f"{SECRET_BLOCKED} ({kind})", **common)
     after = recheck(checks)
     if after.unchecked:
         what = "; ".join(f"{u.rule.id}: {u.detail}" for u in after.unchecked)

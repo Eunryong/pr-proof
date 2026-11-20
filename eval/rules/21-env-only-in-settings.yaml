@@ -1,0 +1,50 @@
+name: env-only-in-settings
+description: >-
+  base README에 더한 "환경변수는 `orders/settings.py`에서만 읽는다." 규칙. pricing.py에 PR이 넣은
+  `os.getenv`와 `os.environ`은 잡히고, settings.py에 더한 `os.getenv`는 잡히지 않는다.
+base:
+  - file: README.md
+    find: "### 테스트\n\n- 테스트 파일 이름은 `test_<모듈>.py`다.\n"
+    replace: "### 테스트\n\n- 테스트 파일 이름은 `test_<모듈>.py`다.\n\n### 설정\n\n- 환경변수는 `orders/settings.py`에서만 읽는다. 다른 모듈은 `os.environ`과 `os.getenv`를 쓰지 않는다.\n"
+  - file: orders/settings.py
+    create: "import os\n\nCURRENCY = os.environ.get(\"ORDERS_CURRENCY\", \"KRW\")\n"
+pr:
+  - file: orders/services/pricing.py
+    append: |
+
+
+      def free_shipping_min() -> int:
+          import os
+
+          raw = os.getenv("ORDERS_FREE_SHIPPING_MIN")
+          region = os.environ["ORDERS_REGION"]
+          return int(raw or FREE_SHIPPING_MIN) if region else FREE_SHIPPING_MIN
+  - file: orders/settings.py
+    append: "REGION = os.getenv(\"ORDERS_REGION\", \"kr\")\n"
+model:
+  rules:
+    - section: 코드 규칙 > 설정
+      quote: "환경변수는 `orders/settings.py`에서만 읽는다. 다른 모듈은 `os.environ`과 `os.getenv`를 쓰지 않는다."
+      scope: []
+      scope_exclude: ["orders/settings.py"]
+      scope_reason: 환경변수를 읽으라고 정한 파일 자체다
+      checker:
+        body: |
+          id: env-only-in-settings
+          language: python
+          severity: error
+          message: 환경변수는 orders/settings.py에서만 읽는다
+          rule:
+            any:
+              - pattern: os.getenv($$$ARGS)
+              - pattern: os.environ
+        examples:
+          - {code: "import os\nx = os.getenv('A')\n", violates: true, lines: [2]}
+          - {code: "import os\nx = os.environ['A']\n", violates: true, lines: [2]}
+          - {code: "import os\nx = os.environ.get('A')\n", violates: true, lines: [2]}
+          - {code: "from orders.settings import CURRENCY\nx = CURRENCY\n", violates: false, lines: []}
+          - {code: "import os\npath = os.path.join('a', 'b')\n", violates: false, lines: []}
+expect:
+  violations: ["orders/services/pricing.py:33", "orders/services/pricing.py:34"]
+  not_flagged: ["orders/settings.py:4"]
+  contains: ["출처: `README.md > 코드 규칙 > 설정`"]

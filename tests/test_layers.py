@@ -3,6 +3,7 @@
 - 웹(api) 쪽은 MVC: controllers → services·views → models
 - 워커: worker → sandbox → models
 - 웹 쪽은 sandbox·worker를 import하지 않는다 (api 프로세스는 PR 코드를 실행하지 않는다)
+- 운영 알림(notify)은 models·config만 쓰고, 웹과 워커가 같이 쓴다
 """
 
 import ast
@@ -17,11 +18,13 @@ APP: Final = Path(__file__).resolve().parent.parent / "app"
 # 계층별로 import해도 되는 app 내부 계층
 ALLOWED: Final[Mapping[str, frozenset[str]]] = {
     "models": frozenset({"models"}),
-    "services": frozenset({"models", "services", "config"}),
+    "services": frozenset({"models", "services", "config", "notify"}),
     "views": frozenset({"models", "views"}),
-    "controllers": frozenset({"models", "services", "views", "controllers", "config"}),
+    "controllers": frozenset({"models", "services", "views", "controllers", "config", "notify"}),
     "sandbox": frozenset({"models", "sandbox"}),
-    "worker": frozenset({"models", "sandbox", "worker", "config"}),
+    "worker": frozenset({"models", "sandbox", "worker", "config", "notify"}),
+    # 운영 알림 보내기. 웹(동기화)과 워커가 같이 쓰고, 둘 중 어느 쪽도 import하지 않는다
+    "notify": frozenset({"models", "config", "notify"}),
 }
 
 

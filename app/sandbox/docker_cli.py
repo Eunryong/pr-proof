@@ -3,8 +3,11 @@
 호스트에서는 docker CLI만 부른다. subprocess에는 최소 환경만 넘긴다.
 """
 
+import logging
 import os
 import subprocess
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
@@ -12,6 +15,8 @@ from typing import Final
 # 모든 샌드박스 컨테이너(도구 받기, .venv 설치, 검사기·ruff, 테스트)의 이미지. 언어와 무관한
 # 최소 이미지이고 런타임과 도구는 도구 캐시에서 붙인다 (DESIGN 2.3, 8.1, docker/sandbox/Dockerfile)
 IMAGE: Final = "pipeline-sandbox"
+# 기반 이미지(debian:bookworm-slim)를 새로 받는 주기 (위협 T25)
+PULL_EVERY_SECONDS: Final = 24 * 60 * 60
 # 작업 컨테이너 이름 접두어. 이름 뒤에는 runs ID가 붙는다
 CONTAINER_PREFIX: Final = "pr-proof-job"
 # 이미지 Dockerfile과 컨테이너에 읽기 전용으로 넣는 파이프라인 설정(coveragerc)
@@ -27,6 +32,10 @@ _HARDENING: Final = ("--cap-drop", "ALL", "--security-opt", "no-new-privileges")
 DOCKER_FAILED: Final = frozenset({125, 126, 127})
 
 _ENV_PASSTHROUGH: Final = ("PATH", "HOME", "DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CONFIG")
+# 이 프로세스가 태그마다 기반 이미지를 마지막으로 받은 시각 (time.monotonic)
+_pulled_at: dict[str, float] = {}
+
+log = logging.getLogger(__name__)
 
 
 class SandboxError(RuntimeError):
@@ -99,9 +108,29 @@ class Names:
 DEFAULT_NAMES: Final = Names()  # 운영 기본값
 
 
-def ensure_image(tag: str = IMAGE) -> Image:
-    """이미지를 빌드(캐시되면 즉시 끝남)하고 id를 돌려준다."""
-    run("build", "-q", "-t", tag, str(IMAGE_DIR), timeout=600)
+def ensure_image(
+    tag: str = IMAGE,
+    *,
+    now: Callable[[], float] = time.monotonic,
+    pulled_at: dict[str, float] = _pulled_at,
+) -> Image:
+    """이미지를 빌드(캐시되면 즉시 끝남)하고 id를 돌려준다.
+
+    기반 이미지의 보안 패치를 받으려고 프로세스가 처음 빌드할 때와 그 뒤 `PULL_EVERY_SECONDS`마다
+    한 번 `--pull`로 빌드한다(위협 T25). 받기가 실패하면(네트워크) 있는 기반 이미지로 빌드하고
+    다음 주기에 다시 받는다. pulled_at은 태그마다 마지막으로 받은 시각이고 테스트가 넘긴다.
+    """
+    last = pulled_at.get(tag)
+    built = False
+    if last is None or now() - last >= PULL_EVERY_SECONDS:
+        pulled_at[tag] = now()
+        try:
+            run("build", "-q", "--pull", "-t", tag, str(IMAGE_DIR), timeout=600)
+            built = True
+        except SandboxError as e:
+            log.warning("기반 이미지를 새로 받지 못해 있는 것으로 빌드함: %s", str(e)[-300:])
+    if not built:
+        run("build", "-q", "-t", tag, str(IMAGE_DIR), timeout=600)
     return Image(id=run("image", "inspect", tag, "--format", "{{.Id}}").stdout.strip())
 
 

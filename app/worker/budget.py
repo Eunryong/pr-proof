@@ -20,7 +20,9 @@ from app.models.call_budget import (
     limits_for,
 )
 from app.models.db import ModelCall
+from app.models.ops_alert import Alert
 from app.models.repo_config import CallSettings
+from app.notify import slack
 from app.worker.state import Store
 
 
@@ -82,6 +84,8 @@ class CallBudget:
             call_id, ok=ok, error=error, model_id=model_id, input_tokens=input_tokens,
             output_tokens=output_tokens, permission_denials=permission_denials,
         )  # fmt: skip
+        if permission_denials:
+            slack.send(Alert("tool_denied", self.repo, self.pr_number), self.store.redis)
 
     def record_hit(self, scope: Scope, *, stage: Stage, tier: Tier, model: str) -> None:
         """저장된 결과를 썼다. 상한에서는 0으로 센다."""

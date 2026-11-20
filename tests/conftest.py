@@ -27,6 +27,15 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
         item.add_marker(skip)
 
 
+@pytest.fixture(autouse=True)
+def isolated_config_dir(tmp_path_factory: pytest.TempPathFactory, monkeypatch) -> None:
+    """어느 테스트도 운영자의 ~/.config/pipeline(비밀값, Slack URL)을 읽지 않게 한다. 설정 폴더가
+    필요한 테스트는 이 위에 자기 폴더를 다시 정한다."""
+    from app import config
+
+    monkeypatch.setenv(config.CONFIG_DIR_ENV, str(tmp_path_factory.mktemp("no-config")))
+
+
 @pytest.fixture(scope="session")
 def eval_repo(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """예제 리포를 한 번 클론한다. gh 로그인이 없거나 네트워크가 막히면 건너뛴다."""

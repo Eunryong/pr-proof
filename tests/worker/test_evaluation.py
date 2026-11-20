@@ -1,0 +1,139 @@
+import json
+import subprocess
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Final
+
+import fakeredis
+import pytest
+from sqlalchemy import create_engine, inspect, text
+
+from app import cli
+from app.models.eval_run import RunSummary
+from app.worker import evaluation, state
+from app.worker.state import Store
+
+JUNIT_OK: Final = (
+    '<testsuite><testcase classname="tests.e2e.test_rules_cases" '
+    'name="test_rules_case[01-print-in-orders]" time="1"/>'
+    '<testcase classname="tests.e2e.test_tools_off_eval" name="test_tools" time="2"/></testsuite>'
+)
+JUNIT_BROKEN: Final = (
+    '<testsuite><testcase classname="tests.e2e.test_rules_cases" '
+    'name="test_rules_case[01-print-in-orders]" time="1"><failure/></testcase></testsuite>'
+)
+BY_METHOD: Final = {"off/checker": {"recall": "8/9", "precision": "8/8"}}
+
+
+class FakePytest:
+    """pytest 하위 프로세스 대신 junit과 도구를 끈 평가의 JSON을 쓴다."""
+
+    def __init__(self, junit: str | None, tools_off: dict | None = None) -> None:
+        self.junit, self.tools_off = junit, tools_off
+        self.calls: list[tuple[list[str], dict]] = []
+
+    def __call__(self, command, **kw):  # noqa: ANN001
+        if command[:2] == ["git", "rev-parse"]:
+            return subprocess.CompletedProcess(command, 0, "abc123\n", "")
+        self.calls.append((command, kw))
+        junit = Path(next(a for a in command if a.startswith("--junitxml=")).split("=", 1)[1])
+        out = Path(kw["env"][evaluation.TOOLS_OFF_OUT_ENV])
+        if self.junit is not None:
+            junit.write_text(self.junit)
+        if self.tools_off is not None:
+            (out / "tools_off.json").write_text(json.dumps({"by_method": self.tools_off}))
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+
+def test_suite_runs_every_docker_test_with_a_minimal_environment(tmp_path: Path) -> None:
+    runner = FakePytest(JUNIT_OK, BY_METHOD)
+    environ = {"HOME": "/h", "PATH": "/bin", "GITHUB_TOKEN": "secret", "AWS_KEY": "x",
+               "PR_PROOF_TOOLS_EVAL_MATHLLM": "/private/code"}  # fmt: skip
+    summary = evaluation.run_suite(tmp_path, tmp_path, real_model=False, environ=environ,
+                                   runner=runner)  # fmt: skip
+    ((command, kw),) = runner.calls
+    assert command[1:6] == ["-m", "pytest", "-m", "docker", "tests/e2e"]
+    assert kw["cwd"] == tmp_path
+    assert kw["env"] == {"HOME": "/h", "PATH": "/bin",
+                         "PR_PROOF_TOOLS_EVAL_OUT": str(tmp_path)}  # fmt: skip
+    assert [c.case for c in summary.cases] == ["rules/01-print-in-orders",
+                                               "test_tools_off_eval::test_tools"]  # fmt: skip
+    assert summary.tools_off == BY_METHOD
+    assert summary.prompts["fix"] and summary.models["light"] == "haiku"
+
+
+def test_real_model_is_passed_only_when_asked(tmp_path: Path) -> None:
+    runner = FakePytest(JUNIT_OK)
+    summary = evaluation.run_suite(tmp_path, tmp_path, real_model=True, environ={},
+                                   runner=runner)  # fmt: skip
+    assert runner.calls[0][1]["env"]["PR_PROOF_REAL_MODEL"] == "1"
+    assert summary.tools_off == {}  # 도구를 끈 평가가 결과를 남기지 않았으면 비어 있다
+
+
+def test_no_junit_means_the_suite_did_not_run(tmp_path: Path) -> None:
+    with pytest.raises(evaluation.EvalError):
+        evaluation.run_suite(tmp_path, tmp_path, real_model=False, environ={},
+                             runner=FakePytest(None))  # fmt: skip
+
+
+def test_baseline_then_run_compares_against_the_same_kind(tmp_path: Path) -> None:
+    engine = state.open_engine(tmp_path / "pipeline.db")
+    first = evaluation.evaluate(engine, tmp_path, baseline=True, real_model=False, label="base",
+                                runner=FakePytest(JUNIT_OK, BY_METHOD), environ={})  # fmt: skip
+    assert first.baseline is None
+    real = evaluation.evaluate(engine, tmp_path, baseline=False, real_model=True,
+                               runner=FakePytest(JUNIT_OK), environ={})  # fmt: skip
+    assert real.baseline is None  # 가짜 모델의 기준선은 실제 모델 실행의 기준선이 아니다
+    later = evaluation.evaluate(engine, tmp_path, baseline=False, real_model=False,
+                                runner=FakePytest(JUNIT_BROKEN, BY_METHOD), environ={})  # fmt: skip
+    assert later.baseline is not None and later.baseline.id == first.run_id
+    assert later.baseline.label == "base" and later.baseline.pipeline_commit == "abc123"
+    assert (later.baseline.passed, later.baseline.failed) == (2, 0)
+    assert evaluation.from_row(later.baseline) == first.summary
+
+
+def test_cli_eval_prints_the_comparison(tmp_path: Path, capsys) -> None:
+    db = tmp_path / "pipeline.db"
+    assert cli.evaluate(db, baseline=True, real_model=False, label="",
+                        runner=FakePytest(JUNIT_OK, BY_METHOD)) == 0  # fmt: skip
+    assert "eval_runs #1 (기준선, 가짜 모델)" in capsys.readouterr().out
+    assert cli.evaluate(db, baseline=False, real_model=False, label="",
+                        runner=FakePytest(JUNIT_BROKEN, BY_METHOD)) == 0  # fmt: skip
+    out = capsys.readouterr().out
+    assert "eval_runs #2 (실행, 가짜 모델)" in out
+    assert "새로 실패 1개: rules/01-print-in-orders" in out
+    assert "없어진 케이스 1개: test_tools_off_eval::test_tools" in out
+    assert cli.evaluate(db, baseline=False, real_model=False, label="",
+                        runner=FakePytest(None)) == 1  # fmt: skip
+    assert "평가를 남기지 못함" in capsys.readouterr().err
+
+
+def test_cli_eval_without_a_baseline_says_so(tmp_path: Path, capsys) -> None:
+    assert cli.evaluate(tmp_path / "p.db", baseline=False, real_model=False, label="",
+                        runner=FakePytest(JUNIT_OK)) == 0  # fmt: skip
+    assert "비교할 기준선이 없음" in capsys.readouterr().out
+
+
+def test_existing_database_gets_eval_runs_and_keeps_its_rows(tmp_path: Path) -> None:
+    """6단계 전의 데이터베이스(`eval_runs` 없음)를 그대로 연다. 있던 줄은 남고 새 테이블이
+    생긴다."""
+    path = tmp_path / "pipeline.db"
+    Store(path, fakeredis.FakeStrictRedis())  # 지금의 테이블을 만든 뒤 eval_runs만 지운다
+    old = create_engine(f"sqlite:///{path}")
+    with old.begin() as conn:
+        conn.execute(text("DROP TABLE eval_runs"))
+        conn.execute(
+            text(
+                "INSERT INTO commandrecord (comment_id, repo, pr_number, command, result,"
+                " handled_at) VALUES (5, 'o/r', 1, '/fix', 'ok', '2026-11-01')"
+            )
+        )
+    old.dispose()
+
+    store = Store(path, fakeredis.FakeStrictRedis())
+    assert "eval_runs" in inspect(store.engine).get_table_names()
+    assert store.command_handled(5)
+    now = datetime(2026, 11, 20, tzinfo=UTC)
+    row = evaluation.to_row(RunSummary(cases=()), label="", baseline=True, commit="",
+                            real_model=False, now=now)  # fmt: skip
+    assert state.add_eval_run(store.engine, row) == 1

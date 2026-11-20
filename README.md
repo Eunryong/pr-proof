@@ -1,50 +1,116 @@
-# pr-proof: PR 협업 규칙 검증·수정 파이프라인
+# pr-proof: PR 협업 규칙 수정 파이프라인
 
-PR이 올라오면 그 팀의 협업 규칙(컨벤션, 무차별 정적변수, 파일 구조)에 어긋난 곳을 찾아 PR 코멘트로 알리고, 규칙에 맞게 고친 수정안을 별도 PR로 제안하는 로컬 파이프라인이다. 규칙은 대상 리포의 설정 파일, README, 실제 파일 구조에서 읽는다. 수정안은 Docker 샌드박스에서 테스트를 다시 돌려 동작을 깨지 않은 것만 올린다.
+팀의 규칙을 그 저장소의 문서(README, CONTRIBUTING)와 도구 설정(ruff)에서 읽고, PR이 바꾼 줄에서 어긋난 곳을 찾아 PR 코멘트로 알린다. 고칠 수 있는 위반은 Docker 샌드박스에서 테스트로 확인한 수정안을 별도 PR로 올린다. 사람은 수정안 PR을 머지하거나 닫기만 한다.
 
-- 전체 설계: [docs/DESIGN.md](docs/DESIGN.md)
-- 작업 원칙: [docs/CLAUDE.md](docs/CLAUDE.md)
-- 현재 상태: 0단계 완료, 1단계(수신 → 체크아웃 → 샌드박스 테스트 → PR 코멘트) 진행 중
-
-## 한눈에 보기
+- 전체 설계: [docs/DESIGN.md](docs/DESIGN.md) (v2). 작업 원칙: [docs/CLAUDE.md](docs/CLAUDE.md)
+- 현재 상태: v2의 6단계(평가 확대와 운영) 진행 중. 단계별 완료 기준은 DESIGN 13절에 있다
 
 ```
-GitHub 웹훅 ─────────────▶ api (FastAPI: 서명 검증·큐 등록, 동기화 루프) ──▶ Redis 큐 ──▶ 워커 (LangGraph)
+GitHub 웹훅 ──▶ api (서명 확인, 큐 등록, 동기화 루프) ──▶ Redis 큐 ──▶ 워커 (LangGraph)
 
-워커가 하는 일
-  1. PR worktree에서 .venv + pytest 실행 (Docker 샌드박스 안) → 수정 전 기준선
-  2. 위반 검출 (바뀐 줄만, 규칙은 base 브랜치에서)
-       컨벤션: ruff · 정적변수: 매직 값·반복 리터럴·전역 상태 · 파일 구조: README와 실제 구조 기준
-  3. PR 코멘트: 위반 목록, 규칙의 출처, 자동 수정 가능 여부
-  4. 사람의 명령 없이 바로 수정 → 샌드박스에서 다시 검증
-       (/fix <skill>: 수정안을 못 낸 수정을 다시 돌림 · require_approval: true면 승인 후 수정)
-       lint: ruff --fix · static·structure: AI(claude CLI)
-       검증: 테스트 통과 + 원래 위반 해소 + 새 위반 없음
-  5. 수정 제안 PR (gh CLI)
-
-저장: SQLite(이력·체크포인트) · Chroma(과거 수정 기록 검색)
-컨테이너: Redis · Chroma · 테스트 샌드박스(작업마다)
+워커가 PR 하나에 하는 일
+  0. 작성자 확인: 신뢰되지 않은 작성자의 PR은 승인(/recheck <커밋>) 전까지 아무것도 돌리지 않는다
+  1. base 브랜치의 문서와 도구 설정에서 규칙을 읽는다 (모델, 저장소 단위로 저장)
+  2. 규칙마다 확인 방법을 정한다: 저장소의 도구(ruff) → 모델이 쓴 검사기(ast-grep) → 모델 판단
+  3. PR이 바꾼 줄의 위반을 찾고, 샌드박스에서 테스트 기준선과 커버리지를 잰다
+  4. 위반마다 고칠지(fix/skip)와 이유를 정해 코멘트에 보인다
+  5. 기계적 수정(ruff의 안전한 수정)과 모델 수정을 결정적 도구로 검증한다
+       (규칙 재검사, 허용 범위, 테스트 결과 동일, 비밀값 검사)
+  6. 통과한 수정안을 수정 방법별 PR로 올린다 (pipeline/pr-<n>-fix-mechanical, -fix-model)
 ```
 
-PR 코멘트 맨 위는 두 줄이다. 테스트는 글자로, 협업 규칙은 ⚠️(위반 있음) / ✅(위반 없음)로 표시한다.
+## 설치
+
+필요한 것: macOS나 Linux, Python 3.11 이상, Docker, git, [gh](https://cli.github.com/), [claude](https://docs.anthropic.com/en/docs/claude-code) CLI.
 
 ```
-테스트: 통과 (9개)
-규칙: ⚠️ 위반 3건 (lint 2, static 1)
+git clone https://github.com/Eunryong/pr-proof && cd pr-proof
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e '.[dev]'          # 과거 기록 검색까지 쓰려면 '.[dev,rag]'
+docker compose up -d             # Redis
+cp .env.example .env             # API_PORT 같은 로컬 실행 설정. 비밀값은 넣지 않는다
+gh auth login                    # 코멘트와 수정안 PR을 이 계정으로 단다. 대상 저장소에 쓰기 권한이 필요하다
+claude                           # 처음 한 번 로그인
 ```
 
-검사가 끝나면 같은 코멘트가 수정 결과와 제안 PR 번호로 바뀐다. 테스트가 실패하거나 실행되지 않으면 수정하지 않는다. `.pipeline.yaml`에서 `skills.fix.require_approval: true`로 두면 규칙 줄에 `· 자동 수정 가능: /fix lint`가 붙고, 리뷰어가 `/fix <skill>`을 달 때 수정한다.
+파이프라인 쪽 설정과 비밀값은 대상 저장소 밖의 `~/.config/pipeline/`에 둔다(`PIPELINE_CONFIG_DIR`로 폴더만 바꿀 수 있다). 비밀값 파일은 `chmod 600`이어야 읽는다. 환경변수로는 받지 않는다.
 
-원칙은 다음과 같다.
+```
+mkdir -p ~/.config/pipeline
+cat > ~/.config/pipeline/config.yaml <<'YAML'
+repos: [owner/name]              # 처리할 저장소 허용 목록
+YAML
+openssl rand -hex 32 > ~/.config/pipeline/webhook_secret && chmod 600 ~/.config/pipeline/webhook_secret
+```
 
-- 규칙은 대상 리포에서 읽는다. 특정 구조를 강제하지 않는다.
-- 판정은 결정적 도구가 내고, AI는 수정안 작성과 README 규칙 변환만 한다.
-- 테스트는 수정의 안전망이다. 테스트가 지나가지 않는 줄은 자동으로 고치지 않는다.
-- PR 코드와 AI가 고친 코드는 Docker 샌드박스에서만 실행한다.
-- 웹훅은 신호이고, 기준은 GitHub의 PR 상태다.
-- 머지는 사람이 결정한다.
+- 운영 알림을 Slack으로 받으려면 Incoming Webhook URL(https)을 `~/.config/pipeline/slack_webhook_url`에 한 줄로 두고 `chmod 600`한다. 파일이 없으면 알림을 보내지 않는다. 알림에는 오류의 종류, 저장소#번호, 정해진 짧은 글만 들어가고, 같은 오류는 30분에 한 번만 온다.
+- 그 밖의 파이프라인 쪽 값(동기화 주기, 메모리 상한, 호출 상한의 최댓값, 임베딩 모델)은 DESIGN 10절 "파이프라인 쪽 설정"에 있다.
 
-뮤테이션 테스트와 AI 테스트 생성은 메인 기능이 끝난 뒤 붙일 수 있는 선택 확장이다 (DESIGN.md F13).
+대상 저장소의 GitHub 설정 → Webhooks에 웹훅을 하나 더한다. 저장소 주인만 할 수 있다.
+
+- Payload URL: `https://<터널 주소>/webhook/github`. 로컬 서버로 받으려면 터널(예: smee.io)을 쓴다. 웹훅을 놓쳐도 동기화 루프(기본 5분)가 PR 상태를 보고 채운다
+- Content type: `application/json`, Secret: `webhook_secret` 파일의 값
+- 이벤트: Pull requests, Issue comments
+
+실행:
+
+```
+source .venv/bin/activate
+honcho start                     # api(웹훅 + 동기화 루프)와 worker
+```
+
+워커는 시작할 때 gh·claude 로그인, Docker, Redis를 확인하고(preflight) 하나라도 안 되면 멈춘다. 샌드박스 이미지는 처음 빌드하고, 언어 런타임과 도구(Python, ruff, ast-grep)는 규칙이 쓸 때 고정한 버전과 해시로 받아 `~/.cache/pipeline/tools`에 둔다.
+
+## 사용법
+
+규칙은 대상 저장소의 base 브랜치에서 읽는다. 파이프라인에는 내장 규칙이 없다.
+
+- README(기본은 `README.md`, `CONTRIBUTING.md`)에 규칙을 문장으로 적는다. 예: "`orders/` 아래 모듈은 `print`를 쓰지 않는다." 지키는 예와 어기는 예를 붙이면 검사기가 더 정확해진다.
+- ruff 설정(`ruff.toml`, `.ruff.toml`, `pyproject.toml`의 `[tool.ruff]`)이 있으면 그 설정이 규칙 묶음이 된다.
+- 규칙도 설정도 없으면 검사하지 않고 그 사실을 코멘트에 적는다.
+
+PR을 열면 결과 코멘트 하나가 달리고 단계마다 고쳐진다. 맨 위 두 줄이 테스트와 규칙의 결과이고, 아래에 읽은 규칙과 출처, 위반마다 fix/skip과 이유, 수정안 PR 링크가 있다. 기본은 사람의 명령 없이 수정안 PR까지 간다. 수정안 PR은 원본 PR의 브랜치를 base로 하니, 머지하면 원본 PR에 들어간다.
+
+PR 코멘트 명령 (저장소의 OWNER·MEMBER·COLLABORATOR만):
+
+| 명령 | 하는 일 |
+| --- | --- |
+| `/recheck` | 지금 커밋을 다시 검사한다 |
+| `/recheck <커밋>` | 외부 작성자의 PR을 승인한다. 적은 커밋(앞 7자 이상)이 지금 head일 때만 그 커밋을 검사한다 |
+| `/fix` | 수정안을 만들지 못한 묶음과 호출 상한에 걸린 일을 다시 돌린다 |
+| `/fix model`, `/fix mechanical` | 그 묶음만 다시 돌린다 |
+
+대상 저장소의 base 브랜치에 `.pipeline.yaml`을 두면 동작을 바꿀 수 있다. 전체 스키마는 DESIGN 10절에 있다.
+
+```yaml
+rules:
+  docs: [README.md, CONTRIBUTING.md]   # 규칙을 읽을 문서
+  disabled: []                         # 끌 규칙 id (코멘트의 "읽은 규칙"에 보이는 id)
+fix:
+  require_approval: false              # true면 /fix를 달 때까지 수정하지 않는다
+access:
+  trusted: [OWNER, MEMBER, COLLABORATOR]
+  bots: []                             # 바로 검사할 봇 계정. 예: ["dependabot[bot]"]
+```
+
+수동 명령:
+
+```
+python -m app.cli sync                       # 동기화를 한 번 돌린다
+python -m app.cli reindex                    # 과거 기록 검색의 벡터 저장소를 다시 만든다 ([rag] 필요)
+python -m app.cli eval --baseline            # 평가 세트 전부를 돌려 기준선으로 남긴다
+python -m app.cli eval                       # 다시 돌려 기준선과 비교한다 (도구를 끈 평가 포함)
+python -m app.cli eval --real-model          # 케이스의 가짜 모델 대신 claude를 부른다 (비용이 든다)
+```
+
+평가 결과는 SQLite의 `eval_runs`에 남는다. 프롬프트나 모델을 바꾼 뒤 `eval`을 돌리면 새로 실패한 케이스, 도구를 끈 평가의 재현율·정밀도 변화, 바뀐 프롬프트 판과 모델이 함께 나온다. 평가 케이스와 형식은 [eval/README.md](eval/README.md)에 있다.
+
+개발용 테스트:
+
+```
+pytest                # 파이프라인 자체 테스트 (Docker 없이)
+pytest -m docker      # 실제 Docker·예제 저장소가 필요한 통합 테스트
+```
 
 ---
 

@@ -101,6 +101,27 @@ class Approval(SQLModel, table=True):
     created_at: datetime
 
 
+class EvalRun(SQLModel, table=True):
+    """평가 세트 한 번의 결과 (DESIGN.md 7.8의 `eval_runs`, 13절 6단계). `baseline`인 가장 최근 줄이
+    비교의 기준선이다. 내용의 모양은 app/models/eval_run.py에 있다."""
+
+    __tablename__ = "eval_runs"
+
+    id: int | None = Field(default=None, primary_key=True)
+    created_at: datetime
+    label: str = ""
+    baseline: bool = Field(default=False, index=True)
+    pipeline_commit: str = ""  # 평가한 파이프라인 코드의 커밋. 모르면 빈 문자열
+    real_model: bool  # False면 케이스의 가짜 모델이다(하네스와 결정적 도구만 확인한다)
+    passed: int
+    failed: int
+    skipped: int
+    cases_json: str  # eval_run.CaseResult 목록
+    tools_off_json: str  # 도구를 끈 평가의 {조건/방법: {recall, precision}}. 없으면 "{}"
+    models_json: str  # 단계별 기본 모델
+    prompts_json: str  # 단계별 프롬프트 판
+
+
 class ModelCacheEntry(SQLModel, table=True):
     """해시 키 → 모델 결과 (DESIGN.md 5.6, 9.1). thread·PR과 무관하게 키가 같으면 같은 결과를 쓴다.
 

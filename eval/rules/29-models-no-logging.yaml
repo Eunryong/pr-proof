@@ -1,0 +1,49 @@
+name: models-no-logging
+description: >-
+  base README에 더한 "`orders/models`는 `logging`을 import하지 않는다." 규칙(적용 범위 orders/models).
+  데이터 클래스만 둔다. PR이 orders/models에 넣은 `import logging`과 `from logging import getLogger`는
+  잡히고, 범위 밖(orders/api)의 `import logging`과 이름만 비슷한 모듈(`logging_config_helpers`)은 잡히지 않는다.
+base:
+  - file: README.md
+    find: "### 테스트\n\n- 테스트 파일 이름은 `test_<모듈>.py`다.\n"
+    replace: "### 테스트\n\n- 테스트 파일 이름은 `test_<모듈>.py`다.\n\n### 모델 모듈\n\n- `orders/models`는 `logging`을 import하지 않는다. 데이터 클래스만 둔다.\n"
+pr:
+  - file: orders/models/order.py
+    find: "from dataclasses import dataclass\n"
+    replace: "import logging\nfrom dataclasses import dataclass\nfrom logging import getLogger\n\nfrom orders.models import logging_config_helpers\n"
+  - file: orders/models/logging_config_helpers.py
+    create: "LEVEL = 'INFO'\n"
+  - file: orders/api/handlers.py
+    find: "from orders.models.order import Item, Order\n"
+    replace: "import logging\n\nfrom orders.models.order import Item, Order\n"
+model:
+  rules:
+    - section: 코드 규칙 > 모델 모듈
+      quote: "`orders/models`는 `logging`을 import하지 않는다."
+      scope: ["orders/models/**"]
+      checker:
+        body: |
+          id: models-no-logging
+          language: python
+          severity: error
+          message: orders/models는 logging을 import하지 않는다
+          rule:
+            any:
+              - kind: import_statement
+                has:
+                  kind: dotted_name
+                  regex: "^logging(\\.|$)"
+              - kind: import_from_statement
+                has:
+                  field: module_name
+                  regex: "^logging(\\.|$)"
+        examples:
+          - {code: "import logging\n", violates: true, lines: [1]}
+          - {code: "from logging import getLogger\n", violates: true, lines: [1]}
+          - {code: "import logging.handlers\n", violates: true, lines: [1]}
+          - {code: "import logging_config_helpers\n", violates: false, lines: []}
+          - {code: "from dataclasses import dataclass\n", violates: false, lines: []}
+expect:
+  violations: ["orders/models/order.py:1", "orders/models/order.py:3"]
+  not_flagged: ["orders/models/order.py:5", "orders/api/handlers.py:1"]
+  contains: ["출처: `README.md > 코드 규칙 > 모델 모듈`"]
