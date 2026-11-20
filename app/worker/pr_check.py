@@ -35,6 +35,7 @@ from app.models.pr_check import (
     PLAN_SCHEMA,
     PLAN_SYSTEM_PROMPT,
     TEXT_FACTS,
+    CaseResult,
     PlanDraft,
     PrChecks,
     PrFacts,
@@ -275,7 +276,9 @@ def _try_examples(
             gate_ok(draft.examples, ran, draft.decl))  # fmt: skip
 
 
-def _run_pattern(decl: PrPattern, cases: Sequence[Mapping[str, object]], tools: Tools):
+def _run_pattern(
+    decl: PrPattern, cases: Sequence[Mapping[str, object]], tools: Tools
+) -> tuple[CaseResult, ...] | str | _NoPlan:
     """샌드박스에서 맞춘 결과, 실패 이유(str), 또는 도구를 준비하지 못함(_NoPlan)."""
     try:
         ran = tools.sandbox.pr_pattern(decl.script_input(), cases)

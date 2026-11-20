@@ -779,7 +779,7 @@ def violations_from_json(rule: Rule, shown: Shown, text: str) -> JudgeVerified:
 # --- 결과 ---
 
 PrUnchecked = Literal[
-    "plan_none", "plan_failed", "cap", "model_failed", "tool_unavailable", "run_failed", "no_facts"
+    "plan_none", "cap", "model_failed", "tool_unavailable", "run_failed", "no_facts"
 ]
 PrGap = Literal["cap", "model_failed"]
 
@@ -802,7 +802,6 @@ class PrRuleResult:
     kind: PrUnchecked | PrGap | None = None
     detail: str = ""
     partial: str = ""
-    cached_plan: bool = False
 
 
 @dataclass(frozen=True)

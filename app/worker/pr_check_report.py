@@ -27,7 +27,6 @@ RECHECK_HINT: Final = (
 )
 _UNCHECKED_TEXT: Final[Mapping[str, str]] = {
     "plan_none": "PR 사실로 확인할 수 없는 규칙이라고 모델이 답함",
-    "plan_failed": "확인 방법을 정하지 못함",
     "cap": "호출 상한에 걸려 확인 방법을 정하지 못함 (다음 검사가 이어서 합니다)",
     "model_failed": "확인 방법을 정하는 모델 호출이 실패함",
     "tool_unavailable": "샌드박스 도구를 준비하지 못함",
