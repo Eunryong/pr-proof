@@ -1,0 +1,55 @@
+name: services-no-dict-params
+description: >-
+  base README에 더한 "`orders/services`의 함수는 `dict`를 인자로 받지 않는다." 규칙(적용 범위
+  orders/services). 입력 변환은 orders/api가 한다. PR이 services에 넣은 `payload: dict`와
+  `data: dict[str, int]` 인자는 잡히고, `Order` 인자와 범위 밖(orders/api)의 `dict` 인자는 잡히지 않는다.
+base:
+  - file: README.md
+    find: "### 테스트\n\n- 테스트 파일 이름은 `test_<모듈>.py`다.\n"
+    replace: "### 테스트\n\n- 테스트 파일 이름은 `test_<모듈>.py`다.\n\n### 계층의 입력\n\n- `orders/services`의 함수는 `dict`를 인자로 받지 않는다. 입력을 데이터 클래스로 바꾸는 일은 `orders/api`가 한다.\n"
+pr:
+  - file: orders/services/pricing.py
+    append: |
+
+
+      def total_from_payload(payload: dict) -> int:
+          return payload.get("total", 0)
+
+
+      def weighted(data: dict[str, int], order: Order) -> int:
+          return sum(data.values()) + total(order)
+
+
+      def doubled(order: Order) -> int:
+          return total(order) * 2
+  - file: orders/api/handlers.py
+    append: |
+
+
+      def refund(payload: dict) -> dict:
+          return {"refund": payload.get("amount", 0)}
+model:
+  rules:
+    - section: 코드 규칙 > 계층의 입력
+      quote: "`orders/services`의 함수는 `dict`를 인자로 받지 않는다."
+      scope: ["orders/services/**"]
+      checker:
+        body: |
+          id: services-no-dict-params
+          language: python
+          severity: error
+          message: orders/services의 함수는 dict를 인자로 받지 않는다
+          rule:
+            kind: typed_parameter
+            has:
+              field: type
+              regex: "^dict(\\[|$)"
+        examples:
+          - {code: "def f(p: dict) -> int:\n    return 1\n", violates: true, lines: [1]}
+          - {code: "def g(\n    d: dict[str, int],\n) -> int:\n    return 1\n", violates: true, lines: [2]}
+          - {code: "def h(o: Order) -> int:\n    return 1\n", violates: false, lines: []}
+          - {code: "def k(names: list[str]) -> dict:\n    return {}\n", violates: false, lines: []}
+expect:
+  violations: ["orders/services/pricing.py:30", "orders/services/pricing.py:34"]
+  not_flagged: ["orders/services/pricing.py:38", "orders/api/handlers.py:14"]
+  contains: ["출처: `README.md > 코드 규칙 > 계층의 입력`"]

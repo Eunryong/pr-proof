@@ -1,0 +1,74 @@
+name: money-half-even-fix
+description: >-
+  README 금액 규칙의 더 어려운 모델 수정 케이스 (6단계 모델 비교의 표본). 26과 같이 PR이 할인을
+  `round(... / 100)`으로 바꾸지만, 더한 테스트가 Python `round`의 반올림(0.5는 짝수 쪽)까지 확인한다.
+  `/`를 `//`로만 바꾸거나(내림) `+ 50) // 100`(0.5를 올림)으로 고치면 테스트가 깨진다. 가짜 수정
+  모델은 두 번 그렇게 실패하고 3회차에 짝수 쪽 반올림을 정수 연산으로 지킨다. 기본 구성에서는 3회차가
+  무거운 모델의 회차다.
+pr:
+  - file: orders/services/pricing.py
+    find: "return subtotal(order) * order.coupon_percent // 100"
+    replace: "return round(subtotal(order) * order.coupon_percent / 100)"
+  - file: tests/test_pricing.py
+    append: |
+
+
+      def test_discount_rounds_half_to_even_like_round():
+          assert discount(order(999, coupon=33)) == 330
+          assert discount(order(250, coupon=1)) == 2
+          assert discount(order(350, coupon=1)) == 4
+model:
+  rules:
+    - section: 코드 규칙 > 금액
+      quote: "금액은 원 단위 정수(`int`)로 다룬다. `float`로 바꾸거나 `/`로 나누지 않고 `//`를 쓴다."
+      scope: []
+      scope_exclude: ["tests/**"]
+      scope_reason: 테스트는 금액 계산 코드가 아니라 기대값을 적는 코드다
+      checker:
+        body: |
+          id: money-int
+          language: python
+          severity: error
+          message: 금액은 int로 다루고 / 대신 // 를 쓴다
+          rule:
+            any:
+              - pattern: float($$$ARGS)
+              - kind: binary_operator
+                has:
+                  field: operator
+                  regex: "^/$"
+        examples:
+          - {code: "x = float(total)\n", violates: true, lines: [1]}
+          - {code: "half = amount / 2\n", violates: true, lines: [1]}
+          - {code: "half = amount // 2\n", violates: false, lines: []}
+          - {code: "x = int(total) * 3\n", violates: false, lines: []}
+fix:
+  edits:
+    - - file: orders/services/pricing.py
+        find: "return round(subtotal(order) * order.coupon_percent / 100)"
+        replace: "return subtotal(order) * order.coupon_percent // 100"
+    - - file: orders/services/pricing.py
+        find: "return round(subtotal(order) * order.coupon_percent / 100)"
+        replace: "return (subtotal(order) * order.coupon_percent + 50) // 100"
+      - file: orders/services/pricing.py
+        find: "return subtotal(order) * order.coupon_percent // 100"
+        replace: "return (subtotal(order) * order.coupon_percent + 50) // 100"
+    - - file: orders/services/pricing.py
+        find: "return round(subtotal(order) * order.coupon_percent / 100)"
+        replace: "amount = subtotal(order) * order.coupon_percent\n    return (amount + 50 - (amount % 200 == 50)) // 100"
+      - file: orders/services/pricing.py
+        find: "return subtotal(order) * order.coupon_percent // 100"
+        replace: "amount = subtotal(order) * order.coupon_percent\n    return (amount + 50 - (amount % 200 == 50)) // 100"
+      - file: orders/services/pricing.py
+        find: "return (subtotal(order) * order.coupon_percent + 50) // 100"
+        replace: "amount = subtotal(order) * order.coupon_percent\n    return (amount + 50 - (amount % 200 == 50)) // 100"
+  answer:
+    summary: 할인 계산을 정수 연산으로 바꾸고 round와 같은 짝수 쪽 반올림을 지킴
+    changes:
+      - {file: orders/services/pricing.py, line: 15, rule: 0, why: 금액을 float 없이 // 로 계산한다}
+expect:
+  violations: ["orders/services/pricing.py:15"]
+  fix: ready
+  fix_file: orders/services/pricing.py
+  pushed_contains: ["return (amount + 50 - (amount % 200 == 50)) // 100"]
+  pr_contains: ["- 규칙 재검사: 대상 위반 1건 해소, 새 위반 없음"]

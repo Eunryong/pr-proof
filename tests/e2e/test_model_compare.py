@@ -6,6 +6,8 @@
 - `heavy_only`: 무거운 모델만 (light·heavy 모두 sonnet).
 - `light_then_heavy`: 기본값 (haiku로 시작하고 두 번 실패하면 sonnet으로 한 번 올린다).
 
+케이스는 `rules/09`, `10`, `26`, `30`이다. `PR_PROOF_MODEL_COMPARE_CASES`(쉼표)로 고를 수 있다.
+
 규칙 읽기·검사기 작성·수정 판단은 케이스의 답(가짜)이고 수정 작성만 실제 모델이다. 그래서 세 구성의
 차이는 수정 작성의 모델 하나다. 매번 빈 데이터 폴더다(저장된 답이 구성 사이에 섞이지 않게).
 
@@ -19,8 +21,10 @@
 `PR_PROOF_MODEL_COMPARE_OUT`이 있으면 결과 JSON을 쓴다.
 """
 
+import ast
 import json
 import os
+import textwrap
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Final
@@ -53,6 +57,7 @@ from .test_rules_cases import (
 
 RUNS_ENV: Final = "PR_PROOF_MODEL_COMPARE_RUNS"
 OUT_ENV: Final = "PR_PROOF_MODEL_COMPARE_OUT"
+CASES_ENV: Final = "PR_PROOF_MODEL_COMPARE_CASES"  # 쉼표로 고른 케이스만 돈다
 REPO: Final = "o/r"
 # 긴 실제 모델 실행이 같은 Docker의 다른 docker 테스트와 작업 컨테이너 이름(runs ID)이 겹치지 않게
 _PREFIX: Final = f"{TEST_NAMES.container_prefix}-cmp{os.getpid()}"
@@ -70,6 +75,15 @@ def _discount_body(text: str) -> str:
     return text[start : end if end > 0 else len(text)]
 
 
+def _integer_only(source: str) -> bool:
+    for node in ast.walk(ast.parse(textwrap.dedent(source))):
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+            return False
+        if isinstance(node, ast.Call) and getattr(node.func, "id", "") in {"round", "float"}:
+            return False
+    return True
+
+
 # 케이스마다 팀의 방식. 검증을 통과한 수정안의 고친 파일을 받는다
 ADOPTED: Final[Mapping[str, Callable[[str], bool]]] = {
     # 원래 있던 상수를 다시 쓰고, 수정 판단이 skip한 줄은 그대로 둔다
@@ -78,12 +92,9 @@ ADOPTED: Final[Mapping[str, Callable[[str], bool]]] = {
     ),
     # 모듈 수준 상태를 없앤다 (인자로 넘기거나 다른 이름으로 옮기지 않는다)
     "10-old-static-02-global-state-fix": lambda text: "_seen_orders" not in text,
-    # float·round 없이 정수 나눗셈으로 반올림을 지킨다
-    "26-money-rounding-fix": lambda text: (
-        "//" in _discount_body(text)
-        and "round(" not in _discount_body(text)
-        and "float(" not in _discount_body(text)
-    ),
+    # float·round·`/` 없이 정수 연산으로 반올림을 지킨다 (주석의 글은 보지 않는다)
+    "26-money-rounding-fix": lambda text: _integer_only(_discount_body(text)),
+    "30-money-half-even-fix": lambda text: _integer_only(_discount_body(text)),
 }
 
 
@@ -147,6 +158,14 @@ def run_once(name: str, arm: str, n: int, tmp: Path, eval_repo: Path, shared_ven
     }  # fmt: skip
 
 
+def _chosen() -> list[str]:
+    picked = [c for c in os.environ.get(CASES_ENV, "").split(",") if c]
+    unknown = set(picked) - set(ADOPTED)
+    if unknown:
+        raise ValueError(f"모르는 케이스: {sorted(unknown)}")
+    return picked or list(ADOPTED)
+
+
 def summarize(runs: list[dict]) -> list[dict]:
     """구성마다 해소율·채택률·호출 수. 비율은 "맞은 수/전체"로 둔다."""
     out = []
@@ -193,6 +212,9 @@ def test_adopted_reads_the_teams_way() -> None:
     good = "def discount(o):\n    return (a * p + 50) // 100\n\n\ndef total(o):\n    return 1\n"
     assert rounding(good)
     assert not rounding(good.replace("(a * p + 50) // 100", "round(a * p // 100)"))
+    assert not rounding(good.replace("(a * p + 50) // 100", "int(a * p / 100)"))
+    # divmod도 정수 연산이고, 주석에 쓴 round()는 코드가 아니다
+    assert rounding("def discount(o):\n    q, r = divmod(a, 100)  # round()와 같음\n    return q\n")
     assert ADOPTED["10-old-static-02-global-state-fix"]("x = 1\n")
     assert not ADOPTED["10-old-static-02-global-state-fix"]("_seen_orders = ()\n")
 
@@ -203,7 +225,7 @@ def test_model_arms(eval_repo: Path, shared_venvs, tool_cache: Path, tmp_path: P
     runs_n = int(os.environ.get(RUNS_ENV, "1")) if _real() else 1
     runs = [
         run_once(name, arm, n, tmp_path, eval_repo, shared_venvs, tool_cache, monkeypatch)
-        for n in range(runs_n) for name in ADOPTED for arm in ARMS
+        for n in range(runs_n) for name in _chosen() for arm in ARMS
     ]  # fmt: skip
     table = summarize(runs)
     if os.environ.get(OUT_ENV):
@@ -219,9 +241,15 @@ def test_model_arms(eval_repo: Path, shared_venvs, tool_cache: Path, tmp_path: P
     # 가짜 수정 모델은 구성과 관계없이 같은 편집을 하므로 세 구성의 결과가 같고, 반올림 케이스는
     # 1회차에 테스트가 깨져 2회차에 통과한다
     for row in table:
-        assert row["resolved"] == row["adopted"] == "3/3", row
+        assert row["resolved"] == row["adopted"] == "4/4", row
     rounding = [r for r in runs if r["case"] == "26-money-rounding-fix"]
     assert all(r["fix_calls"] == 2 and r["attempts"] == [2] for r in rounding), rounding
+    # 짝수 쪽 반올림 케이스는 두 번 실패한 뒤 3회차에 통과한다. 3회차는 무거운 단계다
+    half_even = {r["arm"]: r for r in runs if r["case"] == "30-money-half-even-fix"}
+    assert all(r["attempts"] == [3] and r["tiers"] == ["light", "light", "heavy"]
+               for r in half_even.values()), half_even  # fmt: skip
+    assert half_even["light_then_heavy"]["models"] == ["haiku", "haiku", "sonnet"]
+    assert half_even["light_only"]["models"] == ["haiku"] * 3
     by_arm = {r["arm"]: r for r in rounding}
     # 상한은 회차의 단계(light·heavy)로 센다. 무거운 모델만 구성의 sonnet도 1회차·2회차는 가벼운
     # 단계라 1로 센다. 9.2의 "무거운 모델 3"으로 다시 센 값이 fix_units다
