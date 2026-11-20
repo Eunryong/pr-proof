@@ -11,13 +11,15 @@ from rq import get_current_job
 from app.models.job import PRJob
 from app.sandbox.docker_cli import SandboxError
 from app.worker import graph, report
-from app.worker.ai_fix import AIEnvironmentError
+from app.worker.ai.claude_cli import AIEnvironmentError
+from app.worker.ai.workdir import WorkdirError
 from app.worker.github import GitHubError
 from app.worker.repo import GitError
 
 log = logging.getLogger(__name__)
 
-EnvironmentFailure = (SandboxError, GitError, GitHubError, AIEnvironmentError)
+# WorkdirError: 모델 전용 폴더를 만들거나 diff를 뽑는 호스트의 git이 실패했다. PR 탓이 아니다
+EnvironmentFailure = (SandboxError, GitError, GitHubError, AIEnvironmentError, WorkdirError)
 
 
 def attempt() -> tuple[int, bool]:

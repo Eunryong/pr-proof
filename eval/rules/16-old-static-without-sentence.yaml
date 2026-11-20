@@ -1,0 +1,80 @@
+name: old-static-without-sentence
+description: >-
+  완료 기준 2-2. base의 README에서 "비교에 쓰는 기준값은 숫자를 직접 쓰지 않는다" 문장을 지웠다. 옛
+  static 01·02와 같은 PR(`> 50`과 모듈 수준 리스트)이다. 모델이 그 규칙을 답해도 원문 확인에서
+  버려지므로 `> 50`은 위반으로 나오지 않는다. README에 남은 "함수는 모듈 수준 변수를 바꾸지 않는다"
+  규칙은 그대로 검사한다. 파이프라인이 정한 규칙이 없으므로 그 문장이 없으면 매직 값은 아무도 보지
+  않는다.
+base:
+  - file: README.md
+    find: "- 비교에 쓰는 기준값(금액, 비율의 상한)은 숫자를 직접 쓰지 않고 대문자 이름의 모듈 상수로 둔다. `0`, `1`, 퍼센트 계산의 `100`은 예외다.\n"
+    replace: ""
+pr:
+  - file: orders/services/pricing.py
+    find: "order.coupon_percent > MAX_COUPON_PERCENT"
+    replace: "order.coupon_percent > 50"
+  - file: orders/services/pricing.py
+    find: "MAX_COUPON_PERCENT = 50\n"
+    replace: "MAX_COUPON_PERCENT = 50\n_seen_orders = []\n"
+  - file: orders/services/pricing.py
+    find: "def subtotal(order: Order) -> int:\n"
+    replace: "def subtotal(order: Order) -> int:\n    _seen_orders.append(order)\n"
+model:
+  rules:
+    - section: 코드 규칙 > 상수
+      quote: "비교에 쓰는 기준값(금액, 비율의 상한)은 숫자를 직접 쓰지 않고 대문자 이름의 모듈 상수로 둔다. `0`, `1`, 퍼센트 계산의 `100`은 예외다."
+      scope: []
+      scope_exclude: ["tests/**"]
+      scope_reason: 테스트는 기대값을 숫자로 직접 적는 코드라 이 규칙의 대상이 아니다
+      checker:
+        body: |
+          id: no-magic-number-in-comparison
+          language: python
+          severity: error
+          message: 비교의 기준값은 대문자 이름의 모듈 상수로 둔다
+          rule:
+            any:
+              - kind: integer
+              - kind: float
+            inside:
+              kind: comparison_operator
+            not:
+              regex: "^(0|1|100)$"
+        examples:
+          - {code: "if price > 50:\n    pass\n", violates: true, lines: [1]}
+          - {code: "ok = total >= 50_000\n", violates: true, lines: [1]}
+          - {code: "if n > 0:\n    pass\n", violates: false, lines: []}
+          - {code: "full = percent == 100\n", violates: false, lines: []}
+    - section: 코드 규칙 > 상수
+      quote: "함수는 모듈 수준 변수를 바꾸지 않는다. `global` 문을 쓰지 않는다."
+      scope: []
+      checker:
+        body: |
+          id: no-module-state-mutation
+          language: python
+          severity: error
+          message: 함수는 모듈 수준 변수를 바꾸지 않는다
+          rule:
+            any:
+              - kind: global_statement
+              - all:
+                  - kind: call
+                  - has:
+                      field: function
+                      kind: attribute
+                      has:
+                        field: object
+                        kind: identifier
+                        regex: "^_[a-z_]+$"
+                  - inside:
+                      kind: function_definition
+                      stopBy: end
+        examples:
+          - {code: "_seen = []\n\n\ndef f(x):\n    _seen.append(x)\n", violates: true, lines: [5]}
+          - {code: "count = 0\n\n\ndef bump():\n    global count\n    count += 1\n", violates: true, lines: [5]}
+          - {code: "def f(items):\n    items.append(1)\n    return items\n", violates: false, lines: []}
+          - {code: "_cache = []\n_cache.append(1)\n", violates: false, lines: []}
+expect:
+  violations: ["orders/services/pricing.py:10"]
+  not_flagged: ["orders/services/pricing.py:15"]
+  absent: ["비교에 쓰는 기준값"]

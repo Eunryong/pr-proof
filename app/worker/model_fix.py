@@ -11,6 +11,7 @@ verify는 모델을 쓰지 않는다. 4.8의 순서대로 하고 앞에서 떨�
 크기 상한(여기는 이유를 다음 회차에 넘긴다). 샌드박스에서 무엇이든 돌리기 전에 앞의 셋을 끝낸다.
 """
 
+import ast
 import json
 import logging
 from collections.abc import Callable, Sequence
@@ -20,9 +21,8 @@ from typing import Final
 
 from app.models import model_fix as rules
 from app.models import records as record_rules
-from app.models.ai_fix import CALL_BUDGET_USD
 from app.models.cache_key import text_hash
-from app.models.call_budget import Denied, PrScope
+from app.models.call_budget import CALL_BUDGET_USD, Denied, PrScope
 from app.models.db import FixAttempt
 from app.models.diff import ChangedLines, added_lines, change_blocks, new_files
 from app.models.doc_rules import Found
@@ -43,9 +43,9 @@ from app.models.scope import is_pipeline_output, parse_porcelain
 from app.models.test_run import PytestRun
 from app.sandbox.safe_read import read_regular_file
 from app.worker import repo, scope
-from app.worker.ai.claude_cli import ClaudeResult
-from app.worker.ai_fix import AIEnvironmentError, environment_problem, module_constants
+from app.worker.ai.claude_cli import AIEnvironmentError, ClaudeResult, environment_problem
 from app.worker.budget import CallBudget
+from app.worker.coverage import read_sources
 from app.worker.detect import Detection
 from app.worker.loop import LoopPolicy, LoopState, Verdict, WriteFailed, WriteResult, build_loop
 from app.worker.proposal import MODEL_BUNDLE
@@ -57,6 +57,26 @@ log = logging.getLogger(__name__)
 MAX_FILE_BYTES: Final = 5 * 1024 * 1024
 MAX_GUARDED_BYTES: Final = 1024 * 1024
 NOTHING_CHANGED: Final = "아무 파일도 바꾸지 않았다. 목록의 위반을 고친다."
+
+
+def module_constants(worktree: Path, files: Sequence[str]) -> dict[str, list[str]]:
+    """파일마다 이미 있는 모듈 수준 상수(대문자 이름). 호스트에서 파싱만 하고 실행하지 않는다."""
+    result: dict[str, list[str]] = {}
+    for file, source in read_sources(worktree, files).items():
+        try:
+            tree = ast.parse(source)
+        except (SyntaxError, ValueError, RecursionError, MemoryError):
+            continue
+        names: list[str] = []
+        for node in tree.body:
+            targets = (
+                node.targets if isinstance(node, ast.Assign) else [getattr(node, "target", None)]
+            )
+            for t in targets:
+                if isinstance(t, ast.Name) and t.id.isupper() and t.id not in names:
+                    names.append(t.id)
+        result[file] = names
+    return result
 
 
 @dataclass

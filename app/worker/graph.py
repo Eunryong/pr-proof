@@ -1,20 +1,19 @@
 """워커의 작업 흐름 (LangGraph).
 
-    체크아웃 → 규칙 검사(lint, static) → 테스트 → 코멘트 ─┬─ (제안할 수정 없음) → 끝
-                                                   ├─ (기본: 바로 수정)
-                                                   └─ 승인 대기(interrupt) ─ /fix <묶음>
-                                                      (require_approval: true)
-        /fix lint   → 수정(ruff) ───────────┐
-        /fix static → AI 수정 ──────────────┼→ 제안 PR → 수정 코멘트 ─┬─ (남은 제안 없음) → 끝
-        /fix model  → 모델 수정 → 수정안 PR ┘                        └─ 다른 묶음의 대기·수정
+    체크아웃 → 규칙 검사(lint) → 테스트 → 코멘트 ─┬─ (제안할 수정 없음) → 끝
+                                            ├─ (기본: 바로 수정)
+                                            └─ 승인 대기(interrupt) ─ /fix <묶음>
+                                               (require_approval: true)
+        /fix mechanical → 수정(ruff) → 제안 PR ─┬→ 수정 코멘트 ─┬─ (남은 제안 없음) → 끝
+        /fix model → 모델 수정 → 수정안 PR ─────┘              └─ 다른 묶음의 대기·수정
 
 규칙 검사와 테스트 사이에 문서 규칙 경로가 돈다: 규칙 읽기 → 검사기 작성 → 위반 찾기 (5.1).
 규칙이 없거나 이 경로가 실패하면 그 자리에서 테스트로 넘어간다. 테스트 뒤에 그 위반마다 수정 판단
-(fix/skip과 이유, 4.6)을 정해 코멘트에 보인다. v1 스킬의 수정이 끝난 뒤 `fix`·`model`로 정한
+(fix/skip과 이유, 4.6)을 정해 코멘트에 보인다. v1 lint의 수정이 끝난 뒤 `fix`·`model`로 정한
 위반을 모델 수정 묶음으로 고치고(fix_model, 5.3 (b)) 수정안 PR로 올린다(deliver_model).
+파이프라인이 정한 규칙의 검사와 수정은 없다 (2.2).
 
-스킬마다 수정은 한 번이다. 수정마다 새 worktree에서 시작한다 (앞 수정의 변경이 섞이지 않게).
-수정안을 내지 못하고 끝난 스킬은 `/fix <skill>`로 그 스킬만 다시 돌린다 (사람이 달 때만).
+묶음마다 수정은 한 번이다. 수정마다 새 worktree에서 시작한다 (앞 수정의 변경이 섞이지 않게).
 모델 묶음은 수정 판단부터 다시 돌아 호출 상한으로 남은 판단과 수정을 이어 한다 (4.9 명령).
 
 각 단계 사이에서 이 작업의 커밋이 아직 PR의 최신 커밋인지 확인하고, 낡았으면 멈춘다.
@@ -23,7 +22,6 @@
 멈춰 있던 그래프는 따로 지우지 않아도 쓰이지 않는다. 재개할 때 worktree는 다시 만든다 (F7).
 """
 
-import json
 import logging
 import sqlite3
 import time
@@ -43,11 +41,8 @@ from app.models import doc_rules as doc_rule_models
 from app.models import fix as fix_rules
 from app.models import fix_decision as fix_decision_models
 from app.models import model_fix as model_fix_models
-from app.models import proposal as proposal_rules
 from app.models import rejection
 from app.models.checker_authoring import Checked
-from app.models.coverage import FixGate, code_fix_gate
-from app.models.db import AICall
 from app.models.doc_rules import DocRules, Found, RuleOutcome, RulesRead
 from app.models.finding import SkillResult
 from app.models.fix import FixOutcome
@@ -59,7 +54,6 @@ from app.models.repo_config import call_limits
 from app.models.test_run import PytestRun
 from app.sandbox import container, docker_cli, pytest_runner, venv
 from app.worker import (
-    ai_fix,
     base_config,
     coverage,
     decide,
@@ -72,7 +66,6 @@ from app.worker import (
     report,
 )
 from app.worker.ai import claude_cli, workdir
-from app.worker.ai.claude_cli import ClaudeResult
 from app.worker.base_config import BaseConfig
 from app.worker.budget import CallBudget
 from app.worker.coverage import DiffCoverage
@@ -80,10 +73,8 @@ from app.worker.doc_rules import Runtime as DocRuntime
 from app.worker.doc_rules_report import FixView
 from app.worker.github import GitHub
 from app.worker.repo import CHANGES_DIFF
-from app.worker.skills import lint, static
+from app.worker.skills import lint
 from app.worker.skills.lint import LintFix
-from app.worker.skills.static import DEFAULT_SOURCE as STATIC_DEFAULT_SOURCE
-from app.worker.skills.static_rules import DEFAULT_MIN_REPEATS
 from app.worker.state import Store
 
 log = logging.getLogger(__name__)
@@ -93,7 +84,6 @@ CHECKPOINT_DB: Final = "checkpoints.db"
 FIX_DIR: Final = "fixes"
 AWAIT_FIX: Final = "await_fix"
 FIX: Final = "fix"
-AI_FIX: Final = "ai_fix"
 PROPOSE: Final = "propose"
 FIX_COMMENT: Final = "fix_comment"
 LOAD_RULES: Final = "load_rules"
@@ -104,8 +94,8 @@ DECIDE: Final = "decide"
 FIX_MODEL: Final = "fix_model"
 DELIVER_MODEL: Final = "deliver_model"
 MODEL: Final = proposal.MODEL_BUNDLE
-# v1 스킬과 모델 묶음 → 수정 node. `/fix <묶음>`이 승인하거나 다시 돌린다
-FIX_NODES: Final[Mapping[str, str]] = {"lint": FIX, "static": AI_FIX, MODEL: FIX_MODEL}
+# v1 lint와 모델 묶음 → 수정 node. `/fix <묶음>`이 승인하거나 다시 돌린다
+FIX_NODES: Final[Mapping[str, str]] = {"lint": FIX, MODEL: FIX_MODEL}
 # 작업을 다시 시도할 때 처음부터 하지 않고 이어 가는 node. 앞 node의 결과(검증한 패치)가 저장돼 있다
 RESUMABLE: Final = frozenset({DELIVER_MODEL})
 TOOL_DIR: Final = "tools"  # 도구 캐시 (data_dir 아래, venvs와 같은 자리)
@@ -152,7 +142,6 @@ def run_pr_tests(
 class FlowState(TypedDict, total=False):
     job: PRJob
     lint: SkillResult
-    static: SkillResult  # 테스트 뒤에는 위반마다 covered가 채워져 있다
     diff_coverage: DiffCoverage | None
     rules_read: RulesRead  # 규칙 읽기 → 검사기 작성 → 위반 찾기 사이에만 쓴다
     rule_checks: tuple[RuleOutcome, ...]
@@ -163,8 +152,8 @@ class FlowState(TypedDict, total=False):
     model_requested: bool
     test_run: PytestRun
     commented: bool
-    fix_skill: str  # 지금(마지막으로) 수정하는 스킬
-    fixes: dict[str, FixOutcome]  # 스킬별 수정 결과. 스킬마다 한 번
+    fix_skill: str  # 지금(마지막으로) 수정하는 묶음
+    fixes: dict[str, FixOutcome]  # v1 lint의 수정 결과. 한 번
     proposals: dict[str, ProposalResult]
     stopped: Literal["stale", "cancelled"]
 
@@ -186,7 +175,6 @@ class FlowContext:
     base: BaseConfig | None = None
     # 의존성 설치가 실패해도(그래프 밖 예외) 코멘트에 규칙 결과를 쓰려고 여기에도 둔다
     lint: SkillResult | None = None
-    static: SkillResult | None = None
     doc_rules: DocRules | None = None
     doc_runtime: DocRuntime | None = None
     first_call: int = 0  # 문서 규칙 경로를 시작하기 전 마지막 호출 기록의 id
@@ -271,16 +259,6 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
             names=ctx.sandbox_names, changed=changed,
         )  # fmt: skip
 
-    def static_for(job: PRJob, changed=None) -> SkillResult | None:
-        min_repeats = ctx.base.repo.skills.static.min_repeats
-        return static.run_static(
-            ctx.worktree, ctx.base,
-            min_repeats=min_repeats or DEFAULT_MIN_REPEATS,
-            source=base_config.PIPELINE_YAML if min_repeats else STATIC_DEFAULT_SOURCE,
-            job_id=f"{ctx.run_id}", is_stale=is_stale_for(job), names=ctx.sandbox_names,
-            changed=changed,
-        )  # fmt: skip
-
     def checkout(state: FlowState) -> FlowState:
         enter_checkout(state["job"])
         return {}
@@ -288,21 +266,15 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
     def rules(state: FlowState) -> FlowState:
         """규칙 검사. 테스트 전에 돈다 (설치가 실패한 PR에도 규칙 결과를 보여준다)."""
         job = state["job"]
-        if not (enabled("lint") or enabled("static")):
+        if not enabled("lint"):
             return {}  # base의 .pipeline.yaml에서 껐다. 규칙 줄 없이 테스트만 보여준다
         progress(job, "규칙 검사")
         out: FlowState = {}
         rejected = ctx.store.rejected_targets(job.repo, job.pr_number)
-        if enabled("lint"):
-            result = lint_for(job)
-            if result is None:
-                return {"stopped": "cancelled"}
-            ctx.lint = out["lint"] = remember_rejections(result, rejected)
-        if enabled("static"):
-            result = static_for(job)
-            if result is None:
-                return {"stopped": "cancelled"}
-            ctx.static = out["static"] = remember_rejections(result, rejected)
+        result = lint_for(job)
+        if result is None:
+            return {"stopped": "cancelled"}
+        ctx.lint = out["lint"] = remember_rejections(result, rejected)
         return out
 
     def remember_rejections(
@@ -393,12 +365,8 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
         if run.cancelled:
             return {"test_run": run, "stopped": "cancelled"}
         out: FlowState = {"test_run": run}
-        found = state.get("static")
-        if found is not None and found.findings:  # 위반 줄이 테스트로 실행되는지 (F8)
-            covered = coverage.annotate_coverage(found.findings, run.coverage_xml, ctx.worktree)
-            ctx.static = out["static"] = replace(found, findings=covered)
         doc = state.get("doc_rules")
-        if isinstance(doc, Found) and doc.violations:
+        if isinstance(doc, Found) and doc.violations:  # 위반 줄이 테스트로 실행되는지 (4.5)
             covered = coverage.annotate_coverage(doc.violations, run.coverage_xml, ctx.worktree)
             ctx.doc_rules = out["doc_rules"] = replace(doc, violations=covered)
         out["diff_coverage"] = (
@@ -421,15 +389,6 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
         )  # fmt: skip
         return {"fix_decisions": decided}
 
-    def static_gate(state: FlowState) -> FixGate | None:
-        found = state.get("static")
-        if found is None or not found.checked or not found.findings:
-            return None
-        return code_fix_gate(
-            state["test_run"], "static", found.findings,
-            require_covered=ctx.base.repo.fix.require_covered,
-        )  # fmt: skip
-
     def history_or(job: PRJob, skill: str) -> SkillProposal:
         history, number = proposal.blocked_by_history(
             ctx.store, job.repo, job.pr_number, skill, job.head_sha
@@ -439,22 +398,12 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
         return ("approval" if ctx.base.repo.fix.require_approval else "auto"), None
 
     def skill_proposals(state: FlowState) -> dict[str, SkillProposal]:
-        """스킬별 수정 제안 상태 (DESIGN.md F8 표). 위반이 없는 스킬은 빠진다."""
+        """v1 lint의 수정 제안 상태 (DESIGN.md F8 표). lint를 돌리지 않았으면 비어 있다."""
         job, run = state["job"], state["test_run"]
-        out: dict[str, SkillProposal] = {}
-        if state.get("lint") is not None:
-            blocker = fix_rules.lint_fix_blocker(state["lint"], run)
-            out["lint"] = (blocker, None) if blocker is not None else history_or(job, "lint")
-        found = state.get("static")
-        if found is not None and found.findings:
-            gate = static_gate(state)
-            if gate is None or not gate.allowed:
-                out["static"] = ("tests", None)
-            elif not gate.fixable:
-                out["static"] = ("no_fixable", None)
-            else:
-                out["static"] = history_or(job, "static")
-        return out
+        if state.get("lint") is None:
+            return {}
+        blocker = fix_rules.lint_fix_blocker(state["lint"], run)
+        return {"lint": (blocker, None) if blocker is not None else history_or(job, "lint")}
 
     def open_skills(state: FlowState, mode: str) -> list[str]:
         done = state.get("fixes", {})
@@ -491,7 +440,7 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
         return FixView(**counts, state="running")
 
     def awaiting(state: FlowState) -> list[str]:
-        """승인을 기다리는 v1 스킬과 모델 묶음."""
+        """승인을 기다리는 v1 lint와 모델 묶음."""
         view = model_fix_view(state)
         model = [MODEL] if view is not None and view.state == "approval" else []
         return open_skills(state, "approval") + model
@@ -503,10 +452,8 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
             job.head_sha,
             time.monotonic() - ctx.started,
             lint=state.get("lint"),
-            static=state.get("static"),
             base=ctx.base,
             proposals=skill_proposals(state),
-            static_gate=static_gate(state),
             diff_coverage=state.get("diff_coverage"),
             fixes=state.get("fixes"),
             proposal_results=state.get("proposals"),
@@ -619,78 +566,6 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
             patch_path=save_patch(job, repo.head_diff(ctx.worktree), "lint"),
         )
 
-    def record_call_for(job: PRJob, skill: str) -> Callable[[int, str, ClaudeResult, float], None]:
-        def record(attempt: int, model: str, result: ClaudeResult, charged: float) -> None:
-            ctx.store.record_ai_call(
-                AICall(
-                    repo=job.repo, pr_number=job.pr_number, head_sha=job.head_sha, skill=skill,
-                    model=model, attempt=attempt, ok=result.ok,
-                    error=str(result.error) if result.error else None, cost_usd=result.cost_usd,
-                    charged_usd=charged, permission_denials=len(result.permission_denials),
-                    unexpected_tools=(
-                        json.dumps(dict(result.unexpected_tools)) if result.unexpected_tools
-                        else None
-                    ),
-                    detail=result.detail or None,
-                )
-            )  # fmt: skip
-
-        return record
-
-    def ai_fix_step(state: FlowState) -> FlowState:
-        """static(4단계부터 structure) 위반을 AI로 고치고 검증한다 (F7 AI 수정 루프)."""
-        job, skill = state["job"], "static"
-        ensure_checkout(job)
-        gate = static_gate(state)
-        targets = gate.fixable if gate is not None and gate.allowed else ()
-        if not targets:  # 제안할 때는 있었다. 재개 사이에 바뀔 일은 없지만 방어한다
-            return with_fix(state, FixOutcome(skill=skill, status="nothing_fixed"))
-        fresh_worktree(job)
-        progress(job, f"{skill} 수정 (AI)")
-        recheck_lint = None
-        if enabled("lint") and state.get("lint") is not None:
-
-            def recheck_lint(changed):
-                return lint_for(job, changed)
-
-        tools = ai_fix.CodeFixTools(
-            run_ai=lambda wt, prompt, **kw: workdir.run_in_model_folder(wt, prompt, **kw),
-            recheck=lambda changed: static_for(job, changed),
-            recheck_lint=recheck_lint,
-            run_tests=lambda: tests_for(job),
-            record_call=record_call_for(job, skill),
-            is_stale=lambda: ctx.store.is_stale(job),
-            guarded=(ctx.base.ruff_config,) if ctx.base.ruff_config else (),
-        )
-        outcome = ai_fix.code_fix(
-            ctx.worktree, ctx.merge_base, skill, state["static"], targets,
-            lint_before=state.get("lint"), test_before=state["test_run"], config=ctx.base.repo,
-            spent_usd=ctx.store.ai_spent(job.repo, job.pr_number), tools=tools,
-        )  # fmt: skip
-        if outcome is None:
-            return {"stopped": "cancelled"}
-        if outcome.ready:
-            outcome = seal(job, outcome)
-        return with_fix(state, outcome)
-
-    def seal(job: PRJob, outcome: FixOutcome) -> FixOutcome:
-        """AI 수정안을 GitHub에 보이기 전에 diff와 AI의 설명을 비밀값 검사한다 (F10).
-
-        걸리면 수정안 전체를 버린다. AI가 비밀값을 읽었다는 뜻이라 수정 내용도 믿을 수 없다.
-        포크 PR처럼 제안 PR을 열지 않고 코멘트에만 보이는 경우도 여기서 막는다.
-        """
-        patch = repo.head_diff(ctx.worktree)
-        secrets = proposal.pipeline_secrets()
-        kind = proposal_rules.find_secret(patch, secrets) or proposal_rules.find_secret_in_text(
-            outcome.explanation, secrets
-        )
-        if kind is not None:
-            log.warning("AI 수정안을 버림 %s#%s: 비밀값 (%s)", job.repo, job.pr_number, kind)
-            return replace(
-                outcome, status="secret", detail=kind, explanation="", remaining=(), test_run=None
-            )
-        return replace(outcome, patch_path=save_patch(job, patch, outcome.skill))
-
     def save_patch(job: PRJob, patch: str, skill: str) -> Path:
         out = ctx.data_dir / FIX_DIR / f"{job.repo.replace('/', '__')}-pr{job.pr_number}"
         out.mkdir(parents=True, exist_ok=True)
@@ -791,7 +666,7 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
             return "stop"
         return "next"
 
-    fix_targets = [AWAIT_FIX, FIX, AI_FIX, FIX_MODEL, END]
+    fix_targets = [AWAIT_FIX, FIX, FIX_MODEL, END]
     graph = StateGraph(FlowState)
     graph.add_node("checkout", checkout)
     graph.add_node("rules", rules)
@@ -803,7 +678,6 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
     graph.add_node("comment", comment)
     graph.add_node(AWAIT_FIX, await_fix)
     graph.add_node(FIX, fix)
-    graph.add_node(AI_FIX, ai_fix_step)
     graph.add_node(PROPOSE, propose)
     graph.add_node(FIX_COMMENT, fix_comment)
     graph.add_node(FIX_MODEL, fix_model)
@@ -821,9 +695,8 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
     graph.add_conditional_edges(TEST, route, {"next": DECIDE, "stop": END})
     graph.add_conditional_edges(DECIDE, route, {"next": "comment", "stop": END})
     graph.add_conditional_edges("comment", next_fix, fix_targets)
-    graph.add_conditional_edges(AWAIT_FIX, after_await, [FIX, AI_FIX, FIX_MODEL, END])
+    graph.add_conditional_edges(AWAIT_FIX, after_await, [FIX, FIX_MODEL, END])
     graph.add_conditional_edges(FIX, route, {"next": PROPOSE, "stop": END})
-    graph.add_conditional_edges(AI_FIX, route, {"next": PROPOSE, "stop": END})
     graph.add_conditional_edges(PROPOSE, route, {"next": FIX_COMMENT, "stop": END})
     graph.add_conditional_edges(FIX_COMMENT, next_fix, fix_targets)
     graph.add_conditional_edges(FIX_MODEL, route, {"next": DELIVER_MODEL, "stop": END})
@@ -907,7 +780,7 @@ def pending_kind(job: PRJob, ctx: FlowContext, skill: str) -> PendingFix | None:
 def resume_fix(job: PRJob, ctx: FlowContext, approval: dict[str, Any]) -> FlowState | None:
     """멈춰 있던 그래프를 approval["skill"]의 수정 단계부터 이어서 실행한다. 없으면 None.
 
-    수정안을 내지 못하고 끝난 수정(실패·예산 등)도 그 스킬의 수정 단계부터 다시 돌린다. 모델 묶음은
+    수정안을 내지 못하고 끝난 수정(검증 실패 등)도 그 스킬의 수정 단계부터 다시 돌린다. 모델 묶음은
     수정 판단부터 다시 돌아, 호출 상한으로 정하지 못한 판단을 다시 묻고 새 시도 세대로 고친다.
     """
     skill = approval["skill"]

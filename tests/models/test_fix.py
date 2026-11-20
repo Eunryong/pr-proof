@@ -9,7 +9,6 @@ from app.models.fix import (
     out_of_scope,
     parse_porcelain,
     same_test_result,
-    unresolved,
 )
 from app.models.test_run import PytestRun, ReportSummary
 
@@ -94,23 +93,7 @@ def test_lint_fix_blocker() -> None:
     assert lint_fix_blocker(SkillResult(skill="lint"), _run(0)) == "no_fixable"
 
 
-# --- AI 수정 검증 (3단계) ---
-
-
-def _static(file: str, code: str, line: int = 1) -> Finding:
-    return Finding(file, line, "warning", f"{code} msg", "static", "기본 규칙", code)
-
-
-def test_unresolved_counts_targets_by_key() -> None:
-    a1, a2 = _static("a.py", "PLR2004", 3), _static("a.py", "PLR2004", 9)
-    b = _static("b.py", "STATIC-REPEAT")
-    before = [a1, a2, b]
-    # a.py의 PLR2004 두 건 중 a1만 대상: 하나만 줄면 해소
-    assert unresolved(before, [a1], SkillResult("static", (a2, b))) == []
-    assert unresolved(before, [a1], SkillResult("static", (a1, a2, b))) == [a1]
-    # 둘 다 대상이면 둘 다 없어져야 한다 (줄이 밀려도 같은 키)
-    assert unresolved(before, [a1, a2], SkillResult("static", (_static("a.py", "PLR2004", 5),)))
-    assert unresolved(before, [b], SkillResult("static", (a1, a2))) == []
+# --- 모델 수정 뒤 테스트 ---
 
 
 def _code_run(passed: int, total: int, failed: int = 0, flaky: tuple[str, ...] = ()) -> PytestRun:

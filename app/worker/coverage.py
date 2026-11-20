@@ -18,10 +18,10 @@ from typing import Final
 from app.models.coverage import (
     MAX_COVERAGE_XML_BYTES,
     CoverageData,
-    LineIssue,
     mark_covered,
     parse_coverage_xml,
 )
+from app.models.violation import Violation
 from app.sandbox.safe_read import read_regular_file
 
 DIFF_COVER_TIMEOUT: Final = 60
@@ -75,8 +75,8 @@ def read_sources(
 
 
 def annotate_coverage(
-    findings: Iterable[LineIssue], coverage_xml: Path | None, worktree: Path
-) -> tuple[LineIssue, ...]:
+    findings: Iterable[Violation], coverage_xml: Path | None, worktree: Path
+) -> tuple[Violation, ...]:
     """위반에 covered를 채운다. coverage.xml은 `PytestRun.coverage_xml`(수정 전 실행)이다."""
     findings = tuple(findings)
     coverage = read_coverage(coverage_xml)

@@ -28,7 +28,7 @@ from app.models.repo_config import (
 from app.models.rule import rule_id
 from app.models.test_run import ReportSummary
 from app.worker import graph, main, repo, retry, update
-from app.worker.ai import claude_cli
+from app.worker.ai import claude_cli, workdir
 from app.worker.ai.claude_cli import AIErrorKind, ClaudeResult
 from app.worker.github import GitHubError
 from app.worker.markdown import inline_code
@@ -54,7 +54,7 @@ from .test_github import is_reply
 
 RID: Final = rule_id("README.md", PRINT_RULE)
 BRANCH: Final = "pipeline/pr-1-fix-model"
-# v1 lint·static을 끄고 기본값(바로 수정)으로 둔다. 문서 규칙 경로만 본다
+# v1 lint를 끄고 기본값(바로 수정)으로 둔다. 문서 규칙 경로만 본다
 AUTO: Final = RepoConfig(skills=SkillsSettings(enabled=[]))
 FIX_LINE_2: Final = {"orders/a.py": [("print(x)\n", "log(x)\n")]}
 
@@ -473,6 +473,37 @@ def test_model_outside_the_tool_list_is_an_environment_error(fix_env, tmp_path: 
     use_fixer(fix_env, wrong_tools)
     with pytest.raises(Exception, match="claude 호출을 중단함"):
         run(fix_env, tmp_path)
+
+
+def test_model_folder_git_failure_is_an_environment_error(fix_env, tmp_path: Path) -> None:
+    """모델 전용 폴더를 만드는 호스트의 git이 실패하면 PR 탓이 아니므로 환경 오류로 남기고 RQ가
+    다시 시도한다. 다음 시도에서 git이 돌면 수정안 PR까지 간다."""
+    use_model(fix_env, FakeModel(rule_answer(print_rule()), decide=first_fix_then_skip))
+    use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation(("orders/a.py", 2))]))
+    real = workdir._snapshot_git
+    broken = {"left": 1}
+
+    def git_fails_once(git_dir, work, *args):
+        if broken["left"]:
+            broken["left"] -= 1
+            raise workdir.WorkdirError("git init 실행 실패: 디스크가 가득 참")
+        return real(git_dir, work, *args)
+
+    fix_env["monkeypatch"].setattr(workdir, "_snapshot_git", git_fails_once)
+    fix_env["monkeypatch"].setattr(retry, "attempt", lambda: (1, False))
+    deps = fix_env["deps"]
+    base_sha, head = make_remote(tmp_path / "remote", BASE_FILES, TWO_PRINTS)
+    fix_env["gh"].head, fix_env["gh"].base = head, base_sha
+    fix_env["redis"].set(state_keys.latest_head("o/r", 1), head)
+    job = PRJob(repo="o/r", pr_number=1, kind="update", head_sha=head, base_sha=base_sha,
+                source="webhook")  # fmt: skip
+    with pytest.raises(workdir.WorkdirError):
+        update.process_update(job, deps)
+    assert "환경 문제로 대기 중" in _comment(fix_env)
+    assert "파이프라인 오류" not in _comment(fix_env)
+    fix_env["monkeypatch"].setattr(retry, "attempt", lambda: (2, True))
+    assert update.process_update(job, deps) == "passed"
+    assert [p["branch"] for p in fix_env["pushes"]] == [BRANCH]
 
 
 def test_model_fix_state_survives_checkpoint() -> None:

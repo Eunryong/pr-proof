@@ -21,6 +21,9 @@ Stage = Literal["rules", "checker", "judge", "decide", "fix"]
 Cap = Literal["pr", "ruleset", "repo_daily"]
 
 TIER_COST: Final[Mapping[str, int]] = {"light": 1, "heavy": 3}
+# 호출 하나의 claude `--max-budget-usd` (9.2 "호출 하나"). 호출 하나가 끝없이 도는 것을 막을 뿐
+# 상한 계산에는 쓰지 않는다
+CALL_BUDGET_USD: Final[Mapping[str, float]] = {"light": 0.30, "heavy": 0.50}
 DAILY_WINDOW: Final = timedelta(hours=24)
 # 이만큼 쓴 상한에서는 무거운 모델로 올리지 않는다 (9.3). 가벼운 모델은 상한까지 쓴다
 HEAVY_STOP_RATIO: Final = 0.8

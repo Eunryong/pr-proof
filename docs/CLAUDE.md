@@ -57,12 +57,14 @@ BACKLOG.md 형식:
 
 ## 현재 단계
 
-- 코드는 v1 구조에 v2 1단계의 문서 규칙 경로를 더한 것이다. v1의 0–3단계(수신·체크아웃·샌드박스 테스트·코멘트·동기화, lint, static)까지 끝났고, v1의 4단계(structure) 이후는 하지 않는다.
-- 2026-11-18에 설계를 v2로 다시 썼다. v2의 0단계(문서)와 1단계(규칙 읽기와 검사기 작성, 도구 없이. 2026-11-19)가 끝났고, 1단계 직후 묶음(경로 패턴 검사기, 범위 추정의 효과 확인, 확인 대상 고르기. 1a-1~1a-4)도 2026-11-19에 끝났다. 다음은 2단계다. 1단계의 새 경로는 위반을 찾기만 하고, v1의 lint·static 경로와 수정이 같이 돈다. 순서는 `docs/DESIGN.md` 13절을 따른다: 1 규칙 읽기와 검사기 작성(호출 상한 포함) → 1단계 직후(경로 패턴 검사기, 범위 추정의 효과 확인) → 2 수정 판단과 수정 연결, 내장 검사기 지우기 → 3 저장소의 도구 연결 → 4 모델의 직접 판단 → 5 RAG 검색 → 6 평가 확대와 운영. 완료하면 `docs/DESIGN.md`의 체크리스트를 갱신한다.
+- 코드는 v1 구조(수신·체크아웃·샌드박스 테스트·코멘트·동기화, lint)에 v2의 문서 규칙 경로(규칙 읽기, 검사기 작성, 위반 찾기, 수정 판단, 모델 수정, 수정안 PR, 기록)를 더한 것이다. v1의 static(파이프라인 내장 검사기)은 v2 2단계에 지웠고, v1의 4단계(structure) 이후는 하지 않는다.
+- 2026-11-18에 설계를 v2로 다시 썼다. v2의 0단계(문서)와 1단계(규칙 읽기와 검사기 작성, 도구 없이. 2026-11-19)가 끝났고, 1단계 직후 묶음(경로 패턴 검사기, 범위 추정의 효과 확인, 확인 대상 고르기. 1a-1~1a-4)도 2026-11-19에 끝났다. 그 뒤 2단계를 진행했다(아래). 순서는 `docs/DESIGN.md` 13절을 따른다: 1 규칙 읽기와 검사기 작성(호출 상한 포함) → 1단계 직후(경로 패턴 검사기, 범위 추정의 효과 확인) → 2 수정 판단과 수정 연결, 내장 검사기 지우기 → 3 저장소의 도구 연결 → 4 모델의 직접 판단 → 5 RAG 검색 → 6 평가 확대와 운영. 완료하면 `docs/DESIGN.md`의 체크리스트를 갱신한다.
 - 2단계의 첫 작업으로 수정 판단(DESIGN 4.6)이 테스트 뒤에 돈다(2026-11-19). 문서 규칙 위반마다 fix/skip과 이유를 정해 코멘트에 보인다. 모델 답은 위반마다 `model_cache`에 저장한다.
 - 2단계의 두 번째 작업으로 `fix`·`model`로 정한 문서 규칙 위반을 고친다(2026-11-20, `worker/model_fix.py`). 공용 틀(`worker/loop.py`)의 write가 모델 전용 폴더에서 파일 도구만 준 모델을 부르고(지시는 `--append-system-prompt`), verify가 허용 범위·파이프라인 파일·비밀값·설명 JSON·규칙 재검사·샌드박스 테스트·크기 상한을 결정적으로 본다. 통과하면 수정안 PR(`pipeline/pr-<n>-fix-model`)을 연다. 호출은 PR 상한에서 센다. v1 lint·static 경로는 그대로다.
 - 2단계의 세 번째 작업으로 전달을 다시 할 수 있게 하고 기록을 남기기 시작했다(2026-11-20). 문서 규칙 경로의 수정 시도는 `fix_attempts`에 저장되고, `deliver_model`은 늘 새 worktree에 저장한 패치를 적용해 파일 해시를 맞춰 본 뒤 올린다. RQ가 작업을 다시 시도하면 `deliver_model`에서 멈춘 thread를 그 node부터 이어 가므로 모델 호출 기록이 늘지 않는다. `violations`와 `records`(채택·거절·실패·작성자 수정, `worker/records.py`)를 저장 전 비밀값 검사를 거쳐 남기고, 같은 PR의 거절 기록이 다음 커밋의 같은 줄을 `skip`(이전에 거절됨)으로 만든다. 검색은 5단계다.
-- 2단계의 네 번째 작업으로 수정 묶음과 `/fix`를 맞췄다(2026-11-20). `/fix`의 인자는 묶음이다: `/fix model`(문서 규칙 경로), `/fix mechanical`(3단계까지 v1 lint와 같다), 인자 없는 `/fix`(할 일이 남은 묶음 전부). `/fix lint`, `/fix static`도 아직 받는다. `require_approval: true`면 모델 묶음이 승인을 기다리고 `/fix model`이 그 thread를 잇는다. 호출 상한에 걸려 남은 수정 판단과 수정은 `/fix`가 PR 상한을 한 번 더 받아(`call_grants`) 수정 판단부터 새 시도 세대로 이어 한다. 수정안 PR에는 설명 JSON의 `changes`마다 줄 리뷰 코멘트를 리뷰 하나로 단다. `.pipeline.yaml`의 `fix.*`는 최상위 키이고 (옛 `skills.fix`도 2단계 동안 읽는다) `max_retries`는 5로 자른다. 확장 명령(`/mutate`, `/generate-tests`)과 `extensions.*` 설정을 지웠다. 남은 2단계 일은 내장 검사기(static) 삭제와 그 달러 예산, `eval/static` 옮기기다.
+- 2단계의 네 번째 작업으로 수정 묶음과 `/fix`를 맞췄다(2026-11-20). `/fix`의 인자는 묶음이다: `/fix model`(문서 규칙 경로), `/fix mechanical`(3단계까지 v1 lint와 같다), 인자 없는 `/fix`(할 일이 남은 묶음 전부). `/fix lint`도 아직 받는다. `require_approval: true`면 모델 묶음이 승인을 기다리고 `/fix model`이 그 thread를 잇는다. 호출 상한에 걸려 남은 수정 판단과 수정은 `/fix`가 PR 상한을 한 번 더 받아(`call_grants`) 수정 판단부터 새 시도 세대로 이어 한다. 수정안 PR에는 설명 JSON의 `changes`마다 줄 리뷰 코멘트를 리뷰 하나로 단다. `.pipeline.yaml`의 `fix.*`는 최상위 키이고 (옛 `skills.fix`도 2단계 동안 읽는다) `max_retries`는 5로 자른다. 확장 명령(`/mutate`, `/generate-tests`)과 `extensions.*` 설정을 지웠다.
+- 2단계의 다섯 번째 작업으로 내장 검사기(static)와 v1 AI 수정 루프, 달러 예산(`model.budget_per_pr_usd`)을 지웠다(2026-11-20). 파이프라인이 정한 규칙은 ruff 설정이 없는 base의 ruff 기본 규칙(v1 lint, 3단계에서 없앰)뿐이다. `/fix static`은 지원하지 않는 명령이다. `.pipeline.yaml`의 `skills.static`, `model.budget_per_pr_usd`, `skills.enabled`의 `static`·`structure`는 무시하고 "설정:"에 알린다. `eval/static`은 `eval/rules/09`–`12`, `15`, `16`으로 옮겼다. 검사기 작성 프롬프트가 규칙이 덮는 코드 모양을 모두 위반 예시로 나누게 바뀌어, 저장소마다 검사기를 한 번 다시 쓴다.
+- 2단계는 아직 끝나지 않았다. 완료 기준 중 2-1(옛 static 02가 실제 모델로 수정안 PR까지 감)만 남았다. 실제 모델의 검사기가 `_seen_orders.append(order)`를 잡는 비율이 0/6에서 4/6으로 올랐지만 늘 잡지는 않는다. 남은 선택지(README에 어기는 예를 붙이기, 4.4의 형식 바꾸기 순서)는 저장소 주인이 정한다(BACKLOG의 2-1 항목, `docs/JOURNAL.md`).
 - 문서와 코드가 다른 곳은 `docs/DESIGN.md` 12.2절에 있다. 코드 주석의 "DESIGN.md F7" 같은 번호는 v1의 절이고, 12.3절의 대응표로 읽는다.
 - 작업은 기능 단위 브랜치와 PR로 진행한다.
 - 첫 대상 리포는 별도 예제 리포 `Eunryong/eval`이다. 이 리포(`pr-proof`)는 자기 PR을 검사하지 않는다.
@@ -90,7 +92,9 @@ pytest -m docker      # 실제 Docker·예제 리포가 필요한 통합 테스�
 - `app/models/`: 웹·워커 공용 데이터. 외부 호출 없음
 - `app/controllers/`, `app/services/`, `app/views/`: 웹 쪽 MVC (webhook, sync). GitHub은 조회만 한다
 - `app/worker/`: 워커 진입점, 작업 흐름(LangGraph), PR 코멘트, 처리 기록 쓰기, GitHub 쓰기
-- `app/sandbox/`: 워커가 쓰는 docker 도구 (`docker_cli`, `venv`, `container`, `pytest_runner`, `ruff_runner`)
+- `app/sandbox/`: 워커가 쓰는 docker 도구 (`docker_cli`, `venv`, `container`, `pytest_runner`, `ruff_runner`, `toolcache`, `checker_runner`)
+- 문서 규칙 경로: `worker/rules.py`(규칙 읽기) → `worker/checkers.py`(검사기 작성) → `worker/detect.py`(위반 찾기) → `worker/decide.py`(수정 판단) → `worker/model_fix.py`(모델 수정, 모델 전용 폴더는 `worker/ai/workdir.py`) → `worker/proposal.py`(수정안 PR) · `worker/records.py`(기록). 판단 규칙은 같은 이름의 `models/` 모듈에 있다
+- `worker/skills/`에는 v1 lint만 남았다. 3단계에 도구 규칙으로 옮긴다
 - 웹 쪽은 `worker/`·`sandbox/`를, 워커는 웹 쪽을 import하지 않는다. `tests/test_layers.py`가 검사한다
 - 테스트는 `tests/` 아래 같은 이름의 폴더에 둔다
 

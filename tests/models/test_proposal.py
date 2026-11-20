@@ -90,14 +90,3 @@ def test_find_secret_in_text_checks_the_whole_text() -> None:
         "파이프라인 비밀값"
     )
     assert proposal.find_secret_in_text("short", ["short"]) is None  # 너무 짧은 값은 보지 않는다
-
-
-def test_ai_body_fences_explanation_and_asks_for_review() -> None:
-    text = proposal.ai_body(
-        3, "static", "a" * 40, Counter({"PLR2004": 2}), "기본 규칙", "통과 (9개)",
-        ("haiku", "sonnet"), "@someone 상수로 뺐다", "````",
-    )  # fmt: skip
-    assert text.startswith(proposal.PROPOSAL_MARKER)
-    assert "`PLR2004` 2건" in text and "모델: haiku, sonnet" in text
-    assert "````\n@someone 상수로 뺐다\n````" in text  # 코드 블록 안이라 멘션이 동작하지 않는다
-    assert "리뷰한 뒤 머지" in text

@@ -132,7 +132,7 @@ def process_update(job: PRJob, deps: Deps) -> str:
     except DependencyInstallError as e:
         if install_failure_outcome(e.kind, attempt) == "unrunnable":
             body = report.render_install_failure(
-                job.head_sha, e.detail, lint=ctx.lint, static=ctx.static, base=ctx.base,
+                job.head_sha, e.detail, lint=ctx.lint, base=ctx.base,
                 doc_rules=ctx.doc_rules,
                 checkers=doc_rules.shown_checkers(ctx.doc_rules, store), kind=e.kind,
                 packages=e.packages,

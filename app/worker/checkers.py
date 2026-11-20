@@ -18,9 +18,8 @@ from typing import Protocol
 
 from langgraph.graph.state import CompiledStateGraph
 
-from app.models.ai_fix import CALL_BUDGET_USD
 from app.models.cache_key import text_hash
-from app.models.call_budget import Denied, RulesetScope
+from app.models.call_budget import CALL_BUDGET_USD, Denied, RulesetScope
 from app.models.checker import Checker, CheckerKind, checker_id
 from app.models.checker_authoring import (
     ANSWER_SCHEMA,

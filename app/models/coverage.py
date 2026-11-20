@@ -1,4 +1,4 @@
-"""위반 줄 커버리지와 static·structure 수정 제안 조건 (docs/DESIGN.md F8).
+"""위반 줄 커버리지 (docs/DESIGN.md 4.5, F8). 수정 판단의 안전망 조건은 `models/fix_decision.py`.
 
 `coverage.xml`은 샌드박스에서 PR 코드가 도는 동안 만들어지므로 믿을 수 없는 입력으로 다룬다.
 DTD·엔티티를 거부하는 파서(defusedxml)로 읽고 크기를 제한하며, 형식이 조금이라도 어긋나면
@@ -8,32 +8,16 @@ DTD·엔티티를 거부하는 파서(defusedxml)로 읽고 크기를 제한하�
 import ast
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
-from typing import Final, Literal, TypeVar
+from typing import Final
 from xml.etree.ElementTree import Element, ParseError
 
 from defusedxml import DefusedXmlException
 from defusedxml.ElementTree import fromstring
 
-from app.models.finding import Finding
-from app.models.test_run import PytestRun, RunStatus
 from app.models.violation import Violation
-
-# 줄 위반: v1의 Finding과 문서 규칙의 Violation. 둘 다 file, line, covered가 있다
-LineIssue = TypeVar("LineIssue", Finding, Violation)
 
 # 이보다 큰 coverage.xml은 읽지 않는다 (모름으로 본다)
 MAX_COVERAGE_XML_BYTES: Final = 20 * 1024 * 1024
-
-CodeSkill = Literal["static", "structure"]
-
-# passed가 아닌 테스트 상태에서 static·structure 수정을 막는 이유 (코멘트에 쓴다)
-_BLOCKED: Final[Mapping[RunStatus, str]] = {
-    "failed": "테스트가 실패함",
-    "no_tests": "실행된 테스트가 없어 안전망이 없음",
-    "timeout": "테스트가 시간 제한을 넘김",
-    "cancelled": "새 커밋이 와서 중단됨",
-    "unrunnable": "테스트를 실행하지 못함",
-}
 
 
 @dataclass(frozen=True)
@@ -182,10 +166,10 @@ def line_covered(file_cov: FileCoverage, line: int, statements: list[_Stmt] | No
 
 
 def mark_covered(
-    findings: Iterable[LineIssue],
+    findings: Iterable[Violation],
     coverage: CoverageData | None,
     sources: Mapping[str, str] | None = None,
-) -> tuple[LineIssue, ...]:
+) -> tuple[Violation, ...]:
     """위반마다 covered를 채운다.
 
     - coverage가 None(파일 없음·깨짐): 모두 None(모름)
@@ -210,58 +194,3 @@ def mark_covered(
             parsed[path] = _statements(source) if source is not None else None
         result.append(replace(f, covered=line_covered(file_cov, f.line, parsed[path])))
     return tuple(result)
-
-
-@dataclass(frozen=True)
-class FixGate:
-    """static·structure 수정을 제안할 수 있는지와 자동 수정 대상 (DESIGN.md F8 표).
-
-    allowed가 False면 blocked_reason에 이유가 있고 fixable은 비어 있다.
-    """
-
-    allowed: bool
-    blocked_reason: str | None = None
-    fixable: tuple[Finding, ...] = ()
-    uncovered: tuple[Finding, ...] = ()  # 테스트가 지나가지 않아 자동 수정 대상 아님
-    unknown: tuple[Finding, ...] = ()  # 커버리지를 알 수 없어 자동 수정 대상 아님
-    rejected: tuple[Finding, ...] = ()  # 같은 줄을 고친 이전 제안을 사람이 닫아 대상 아님
-
-
-def blocked_reason(run: PytestRun) -> str | None:
-    """수정 전 테스트 결과로 static·structure 수정을 막는 이유. 막지 않으면 None."""
-    status = run.status
-    if status == "passed":
-        return "불안정한 테스트가 있어 수정 후 결과를 믿을 수 없음" if run.flaky else None
-    return _BLOCKED[status]
-
-
-def code_fix_gate(
-    run: PytestRun,
-    skill: CodeSkill,
-    findings: Iterable[Finding],
-    *,
-    require_covered: bool = True,
-) -> FixGate:
-    """skill(static·structure)의 위반 중 자동 수정 대상을 고른다.
-
-    findings는 `mark_covered`를 거친 것이다.
-
-    lint는 동작을 바꾸지 않으므로 이 함수를 쓰지 않는다 (`PytestRun.allows_lint_fix`).
-    require_covered가 False면 커버리지와 관계없이 모든 위반이 대상이다.
-    이전에 거절된 위반(rejected_in)은 커버리지와 관계없이 대상이 아니다.
-    """
-    mine = tuple(f for f in findings if f.skill == skill)
-    reason = blocked_reason(run)
-    if reason is not None:
-        return FixGate(allowed=False, blocked_reason=reason)
-    rejected = tuple(f for f in mine if f.rejected_in is not None)
-    own = tuple(f for f in mine if f.rejected_in is None)
-    if not require_covered:
-        return FixGate(allowed=True, fixable=own, rejected=rejected)
-    return FixGate(
-        allowed=True,
-        fixable=tuple(f for f in own if f.covered is True),
-        uncovered=tuple(f for f in own if f.covered is False),
-        unknown=tuple(f for f in own if f.covered is None),
-        rejected=rejected,
-    )

@@ -1006,9 +1006,9 @@ class Record:
 | T20 | 테스트 출력 | 팀원·외부 | 테스트가 찍은 글이 코멘트나 재시도 프롬프트에서 지시로 읽히거나 비밀값을 드러낸다 | 저장소·비밀 | 출력은 크기 상한 안에서 코드 블록으로만 보임. 프롬프트에는 자료로 넣고 도구는 T6과 같음. 컨테이너에 비밀값이 없음 (8.2) | 지금 | 있음 |
 | T21 | PR 코드·모델 | 팀원·외부 | 수정안 PR에 비밀값이나 허용 범위 밖의 파일이 실려 올라간다 | 비밀·저장소 | 허용된 경로만 스테이징, 올리기 전 비밀값 검사, 사용자 전역의 서명·훅 끔, 포크 PR에는 수정안 PR 없음 (4.9, 8.5) | 지금 | 있음. 걸렸을 때 운영 알림은 공개 전 |
 | T22 | 실행 환경 | 본인 | 비밀값이 환경변수나 로그, 하위 프로세스로 샌다 | 비밀 | 비밀값은 파일에서 메모리로만. 하위 프로세스에는 최소 환경만. claude에는 로그인에 필요한 변수만 (8.2) | 지금 | 있음 |
-| T23 | 대상 저장소 설정 | 본인·팀원 | base의 `.pipeline.yaml`이 큰 한도를 적어 호출을 많이 쓴다 | 호출 | 호출 상한은 파이프라인 쪽 최대치로 자름. `fix.max_retries`는 5로 자름. v1 수정 경로의 달러 예산에는 최대치가 없다 (9.2) | 공개 전 | 호출 상한과 `fix.max_retries`는 있음(2026-11-20, `test_fix_settings_come_from_base_and_are_clamped`). 달러 예산은 2단계에서 static을 지우며 없어진다 |
+| T23 | 대상 저장소 설정 | 본인·팀원 | base의 `.pipeline.yaml`이 큰 한도를 적어 호출을 많이 쓴다 | 호출 | 호출 상한은 파이프라인 쪽 최대치로 자름. `fix.max_retries`는 5로 자름 (9.2) | 공개 전 | 있음. 호출 상한과 `fix.max_retries`는 2026-11-20(`test_fix_settings_come_from_base_and_are_clamped`). 최대치가 없던 v1 달러 예산(`model.budget_per_pr_usd`)은 2026-11-20에 static과 함께 없앴다. 그 키가 남은 설정은 무시하고 "설정:"에 알린다(`test_removed_static_and_dollar_keys_are_ignored_with_a_note`) |
 | T24 | 대상 저장소 설정 | 팀원 | base의 설정 파일이 심볼릭 링크라 링크 대상의 글을 설정으로 읽는다 | 파일 | 규칙 문서 읽기는 일반 파일만 읽음. v1의 설정 읽기는 모드를 보지 않는다 | 공개 전 | BACKLOG |
-| T25 | 실행 환경 | 본인 | 샌드박스 이미지에 보안 패치가 들어오지 않는다. 모델이 목록 밖 도구를 부르려 한 일을 운영자가 모른다 | 파일 | 지금은 로그와 `aicall`의 기록뿐이다 | 공개 전 | BACKLOG |
+| T25 | 실행 환경 | 본인 | 샌드박스 이미지에 보안 패치가 들어오지 않는다. 모델이 목록 밖 도구를 부르려 한 일을 운영자가 모른다 | 파일 | 지금은 로그와 `ai_calls`의 기록(`permission_denials`)뿐이다 | 공개 전 | BACKLOG |
 | T26 | RAG 기록 | 팀원·외부 | 과거 PR의 diff나 글에 든 지시·비밀값이 다른 PR의 프롬프트에 들어간다. 다른 저장소의 코드가 섞인다 | 비밀·저장소 | 검색은 같은 저장소 안에서만, 저장 전 비밀값 검사, 꺼낸 기록은 자료로만 (6.4, 6.5) | 지금 | 저장 전 비밀값 검사는 있음 (2026-11-20, `test_record_with_a_secret_is_not_stored`). 검색과 자료 블록은 5단계에서 함께 넣음 (그 전에는 검색이 없고, 기록은 같은 줄의 거절을 SQL로 찾는 데만 쓴다) |
 | T27 | 커밋 메시지·PR 제목과 본문·브랜치 이름 | 팀원·외부 | PR 단위 확인(4.5)이 작성자의 글을 모델에 주면, 글에 든 지시가 "위반 없음"을 답하게 한다 | 저장소 | 아직 그 글을 읽지 않는다. 설계: 패턴 확인은 글을 모델에 주지 않고, 모델 판단은 자료로만 넣고 도구 없이 부르며 결과는 알리기만 한다(수정안 없음) | 4단계 | 설계만 있음 |
 | T28 | PR 코드 | 팀원·외부 | PR이 넣었거나 샌드박스에서 돈 PR 코드가 남긴 심볼릭 링크를 수정 모델이 따라가, 작업 폴더 밖의 파일을 읽거나 쓴다 | 파일·비밀 | 모델 전용 작업 폴더: worktree의 일반 파일만 새 폴더로 복사하고(링크·특수 파일·링크인 폴더 아래·`.git`·파이프라인 산출물 제외) 그 폴더에서 모델을 돌린다. 바뀐 것은 diff로 뽑아 `git apply`로 worktree에 적용한다(git은 링크 너머에 쓰지 않는다). PreToolUse 경로 감시 훅이 도구가 가리키는 경로의 실제 위치가 폴더 밖이면 거부하고, 훅이 돌지 않았으면 결과를 버린다. CLI의 `--restricted` 제한은 그대로 한 겹 더 있다 (8.4) | 지금 | 있음 (2026-11-19). 실제 CLI 2.1.328로 확인: `tests/worker/ai/test_workdir_real_cli.py` |
@@ -1251,9 +1251,9 @@ notify:
 
 | v1 | v2 | 처리 |
 | --- | --- | --- |
-| `skills.enabled: [lint, static, structure]` | 없음 | 스킬이 없어진다. 특정 규칙을 끄려면 `rules.disabled` |
+| `skills.enabled: [lint, static, structure]` | 없음 | 스킬이 없어진다. 특정 규칙을 끄려면 `rules.disabled`. 3단계에 v1 lint를 옮길 때까지 `lint`만 읽고, 2단계부터 다른 이름(`static`, `structure`)은 무시하고 "설정:"에 알린다 |
 | `skills.fix.*` | `fix.*` | 구현 2단계 동안 옛 키도 읽고, 코멘트의 "설정:"에 새 키를 알린다 |
-| `skills.static.min_repeats` | 없음 | 내장 정적변수 검사가 없어진다 |
+| `skills.static.min_repeats` | 없음 | 내장 정적변수 검사가 없어진다(2단계). 있으면 무시하고 "설정:"에 알린다 |
 | `skills.structure.*` | 없음 | 구조 규칙은 문서에서 읽는다 |
 | `model.backend` | 없음 | claude CLI만 쓴다. 읽은 적이 없는 키였다 |
 | `model.budget_per_pr_usd` | `model.calls.*` | 달러 예산을 호출 수 상한으로 바꿨다 (9.2). 구현 2단계까지 옛 키가 있으면 무시하고 코멘트의 "설정:"에 알린다 |
@@ -1392,12 +1392,12 @@ rag:
 | `models/fix.py` | 바뀜 | `FixOutcome`이 묶음 단위로, 판단 함수는 4.6·4.8로 |
 | `models/proposal.py` | 바뀜 | 브랜치 이름, 본문(요약·검증 절), 비밀값 검사 대상에 줄 리뷰 코멘트 |
 | `models/rejection.py` | 바뀜 | 키의 "규칙 코드"가 규칙 id로. 논리는 그대로 |
-| `models/ai_fix.py` | 바뀜 | 모델 고르기는 그대로. 달러 예산 계산이 호출 수 상한으로. 프롬프트가 스킬 설명에서 규칙 원문으로, 출력이 설명 JSON으로 |
+| `models/ai_fix.py` | 없앰 (2단계) | 모델 고르기와 프롬프트는 `models/model_fix.py`로, 달러 예산은 호출 수 상한(`models/call_budget.py`)으로 바뀌었다. 호출 하나의 `--max-budget-usd`만 `call_budget.CALL_BUDGET_USD`에 남았다 |
 | `models/db.py` | 바뀜 | 7.8의 새 테이블 |
 | `worker/graph.py` | 바뀜 | 5.1의 그래프로 다시 짠다. 체크포인터, thread_id, 낡은 커밋 확인, 재개는 그대로 |
-| `worker/ai_fix.py` | 바뀜 | 루프가 공용 틀의 `write`·`verify`로 나뉜다. 검증 순서와 내용은 그대로 |
+| `worker/ai_fix.py` | 없앰 (2단계) | 루프는 공용 틀의 `write`·`verify`(`worker/model_fix.py`)가 되었다. `AIEnvironmentError`와 `environment_problem`은 `worker/ai/claude_cli.py`로 옮겼다 |
 | `worker/skills/lint.py` | 바뀜 | 고정 단계에서 도구 `ruff`·`ruff-format`으로. 검사·수정 논리는 그대로 |
-| `worker/skills/static.py`, `static_rules.py` | 없앰 | 파이프라인 내장 검사기를 두지 않는다 (2.2). 2단계에서 지운다 |
+| `worker/skills/static.py`, `static_rules.py` | 없앰 (2단계, 2026-11-20) | 파이프라인 내장 검사기를 두지 않는다 (2.2) |
 | `worker/base_config.py` | 바뀜 | 규칙 문서도 base에서 읽는다 |
 | `worker/report.py` | 바뀜 | 읽은 규칙, 수정 판단의 이유, 검사하지 못한 규칙 |
 | `worker/proposal.py` | 바뀜 | 묶음 단위, 줄 리뷰 코멘트, 상태 확인 때 기록 남기기. 상태 처리는 그대로 |
@@ -1422,22 +1422,20 @@ rag:
 
 ### 12.2 지금 코드가 이 문서와 다른 곳
 
-13절의 단계를 끝내기 전까지 아래는 문서에만 있다. 1단계를 끝낸 2026-11-19 기준이고, 2단계의 수정 연결과 기록 저장, 묶음과 `/fix`(2026-11-20)에 맞춰 고쳤다.
+13절의 단계를 끝내기 전까지 아래는 문서에만 있다. 1단계를 끝낸 2026-11-19 기준이고, 2단계의 수정 연결과 기록 저장, 묶음과 `/fix`, 내장 검사기 삭제(2026-11-20)에 맞춰 고쳤다.
 
-- 모델의 직접 판단이 없다. 규칙 읽기와 검사기 작성은 1단계에 들어왔다. 수정 판단(4.6)은 2026-11-19에, `fix`·`model`로 정한 문서 규칙 위반의 모델 수정과 수정안 PR은 2026-11-20에 들어왔다. ruff와 static은 아직 고정 단계다.
-- 파이프라인 내장 검사기(`worker/skills/static.py`, `static_rules.py`)와 ruff 기본 규칙으로 내려가는 동작이 남아 있다.
-- 외부 작성자 PR 가드레일(8.6)이 없다. 지금은 작성자를 가리지 않고 모든 PR을 검사한다. 명령만 작성자의 권한을 본다.
-- v1 static 수정 경로는 모델 호출 캐시(`model_cache`)를 쓰지 않는다. 문서 규칙 경로의 수정 작성은 회차마다 적용한 diff와 설명을 `model_cache`에 저장하고 같은 입력에는 모델을 다시 부르지 않는다. 문서 규칙 경로는 시도 결과를 `fix_attempts`에 저장하고 전달은 저장한 패치를 새 worktree에 적용해 올린다. v1 경로는 `fixes/` 폴더의 패치 파일을 쓰고, 전달이 실패하면 작업을 처음부터 다시 돌린다.
+- 모델의 직접 판단이 없다. 규칙 읽기와 검사기 작성은 1단계에, 수정 판단(4.6)과 문서 규칙 위반의 모델 수정·수정안 PR은 2단계에 들어왔다. ruff는 아직 고정 단계(v1 lint)다.
+- 파이프라인 내장 검사기(static)는 2단계에 지웠다. 남은 파이프라인 쪽 규칙은 ruff 설정이 없는 base에서 v1 lint가 쓰는 ruff 기본 규칙(`--isolated`) 하나이고, 3단계에서 없앤다(완료 기준 3-3).
+- 외부 작성자 PR 가드레일(8.6)은 임시 가드레일만 있다. 신뢰되지 않은 작성자의 PR에는 아무것도 하지 않는다. 승인, `access.*` 설정, 안내 코멘트는 6단계다.
+- 문서 규칙 경로의 수정 작성은 회차마다 적용한 diff와 설명을 `model_cache`에 저장하고 같은 입력에는 모델을 다시 부르지 않는다. 시도 결과는 `fix_attempts`에 저장하고 전달은 저장한 패치를 새 worktree에 적용해 올린다. v1 lint 경로는 `fixes/` 폴더의 패치 파일을 쓰고, 전달이 실패하면 작업을 처음부터 다시 돌린다.
 - 작업을 다시 시도할 때 이어 가는 node는 `deliver_model` 하나다(5.6은 실패한 node부터). 다른 node에서 실패하면 처음부터 다시 돈다. 모델 호출은 저장한 결과로 0이지만 `ai_calls`에 저장된 결과를 쓴 줄이 남는다.
 - `record` 노드가 따로 없다(5.1). 검증 실패 기록은 `fix_model`이, 위반과 작성자 수정 기록은 `detect` 뒤에, 머지·거절 기록은 수정안 PR 상태 확인(`proposal.refresh`)이 남긴다.
-- 줄 리뷰 코멘트는 문서 규칙 경로의 수정안 PR에만 있다. v1 static은 모델의 자유 글을 본문에 넣고 줄 리뷰가 없다. GitHub이 리뷰의 줄을 받지 않으면(422) 리뷰 없이 수정안 PR만 남는다.
-- v1 경로의 수정안 PR이 스킬별(`fix-lint`, `fix-static`)이다. 문서 규칙 경로는 묶음 `model`(`fix-model`)이다. `/fix`의 인자는 묶음(`mechanical`, `model`, 없으면 할 일이 남은 묶음 전부)이고, `mechanical`은 3단계에서 lint를 새 구조로 옮길 때까지 v1 lint 경로(`/fix lint`와 같다)를 가리킨다. `/fix lint`, `/fix static`도 그 경로를 지울 때까지 받는다.
-- v1 static의 수정 호출은 파이프라인의 지시를 `--append-system-prompt`가 아니라 표준 입력의 프롬프트에 넣는다. 문서 규칙 경로의 수정 작성, 규칙 읽기, 검사기 작성, 수정 판단의 호출은 `--append-system-prompt`를 쓴다.
+- 줄 리뷰 코멘트는 문서 규칙 경로의 수정안 PR에만 있다(v1 lint의 수정은 모델이 쓰지 않아 설명이 없다). GitHub이 리뷰의 줄을 받지 않으면(422) 리뷰 없이 수정안 PR만 남는다.
+- v1 lint의 수정안 PR 브랜치가 `fix-lint`다(묶음 이름 `mechanical`이 아니다). 문서 규칙 경로는 묶음 `model`(`fix-model`)이다. `/fix`의 인자는 묶음(`mechanical`, `model`, 없으면 할 일이 남은 묶음 전부)이고, `mechanical`은 3단계에서 lint를 새 구조로 옮길 때까지 v1 lint 경로(`/fix lint`와 같다)를 가리킨다. `/fix lint`도 그때까지 받는다. `/fix static`은 2단계에 지원하지 않는 명령이 되었다.
 - 저장소 하루 상한에 걸린 뒤의 `/fix`에 "○시 이후에 다시"로 답하지 않는다(9.2). 다시 돌려 같은 상한에 걸리고, 그 사실이 결과 코멘트에 나온다.
-- v1 static 수정 경로의 사용량 상한이 달러(`model.budget_per_pr_usd`, 기본 0.50)이고 코멘트에 추정 비용을 달러로 보인다. 호출 수 상한(PR, 규칙 묶음, 저장소 하루)은 규칙 읽기, 검사기 작성, 수정 판단, 문서 규칙 경로의 수정 작성에 걸린다.
 - 샌드박스 이미지가 `python:3.11-slim`에 ruff 한 버전을 미리 넣은 것이다. 도구 캐시에는 ast-grep만 있고, 저장소가 고정한 ruff 버전을 쓰지 않는다.
 - Python 전용 코드(pytest 실행, coverage 읽기, 테스트 파일의 정의, ruff)가 여러 모듈에 흩어져 있다.
-- RAG 검색과 벡터 저장소가 없다. 문서 규칙 경로는 `violations`와 `records`(채택·거절·실패·작성자 수정)를 SQLite에 남기고, 같은 PR에서 같은 (파일, 규칙, 줄 내용)의 거절만 SQL로 찾아 쓴다. 검사기 기록(`checker`)은 남기지 않는다. v1 경로의 수정안은 `records`에 남기지 않고 `proposaltarget`으로 거절을 기억한다.
+- RAG 검색과 벡터 저장소가 없다. 문서 규칙 경로는 `violations`와 `records`(채택·거절·실패·작성자 수정)를 SQLite에 남기고, 같은 PR에서 같은 (파일, 규칙, 줄 내용)의 거절만 SQL로 찾아 쓴다. 검사기 기록(`checker`)은 남기지 않는다. v1 lint의 수정안은 `records`에 남기지 않고 `proposaltarget`으로 거절을 기억한다.
 - 코드의 주석과 독스트링이 "docs/DESIGN.md F7"처럼 v1의 절 번호를 가리킨다. 아래 표로 읽는다.
 
 ### 12.3 v1 절 번호 대응
@@ -1495,7 +1493,7 @@ rag:
 
 **확인에 쓰는 저장소**
 
-- `Eunryong/eval`: 위반을 일부러 넣은 PR로 정답이 있는 확인을 한다. 지금 `eval/lint` 5개, `eval/static` 5개가 있다.
+- `Eunryong/eval`: 위반을 일부러 넣은 PR로 정답이 있는 확인을 한다. 지금 `eval/lint` 5개, `eval/rules` 16개가 있다. `eval/static` 5개는 2단계에 README 규칙 케이스(`eval/rules/09`–`12`, `15`, `16`)로 옮기고 지웠다.
 - MathLLM: 실제 저장소로, 정답 없이 "틀린 결과가 보이지 않는가"를 본다. 이 저장소의 문서 구성은 아직 확인하지 않았다. 아래 MathLLM 시나리오는 그 저장소의 README를 본 뒤 고친다. v1에서 알려진 것은 데이터 생성기가 코드에 데이터 표를 둔다는 점이다.
 
 **eval에 더할 케이스: 팀 고유 규칙 (`eval/rules/`)**
@@ -1593,8 +1591,8 @@ rag:
 - [x] 설명 JSON과 그 확인, 수정안 PR의 요약 본문과 줄 리뷰 코멘트, 파이프라인이 쓰는 검증 절 (2026-11-20. 줄 리뷰 코멘트는 `changes`마다 리뷰 하나로 달고, 리뷰 본문의 `<!-- pr-proof:review <패치 해시> -->`로 같은 패치의 리뷰를 다시 달지 않는다)
 - [x] `fix_attempts`, 전달 재시도 때 저장한 패치 적용, 부수 효과의 중복 확인 (2026-11-20. 문서 규칙 경로. `fix_model`이 시도마다 결과를 저장하고, 검증을 통과했으면 패치·설명·고친 뒤 파일 해시를 남긴다. `deliver_model`은 늘 새 worktree에 저장한 패치를 적용하고 해시를 맞춰 본 뒤 올린다. 작업을 RQ가 다시 시도하면 `deliver_model`에서 멈춘 thread를 그 node부터 이어 간다. v1 경로는 예전대로 `fixes/`의 패치 파일)
 - [x] 수정안 PR 묶음을 `mechanical`·`model`로, `/fix`의 인자를 묶음으로, 확장 명령 삭제, `.pipeline.yaml`의 `fix.*` (2026-11-20. `require_approval: true`면 모델 묶음이 `await_approval`에서 멈추고 `/fix model`이 잇는다. `mechanical`은 3단계까지 v1 lint 경로다. `fix.*`는 base에서만 읽고 `max_retries`는 5로 자르며, 옛 키 `skills.fix`도 읽고 "설정:"에 알린다. `/mutate`, `/generate-tests`는 모르는 명령이다)
-- [ ] v1 수정 경로의 달러 예산을 1단계의 호출 상한으로 바꿈. 상한에 걸려 처리하지 못한 수정을 `/fix`로 이어 하기, 토큰 수 기록 (2026-11-20: 문서 규칙 경로의 수정 판단과 수정 작성은 PR 호출 상한에서 세고 토큰 수를 `ai_calls`와 코멘트에 남긴다. 상한에 걸려 남은 수정 판단과 수정은 `/fix`가 PR 상한을 한 번 더 받아 수정 판단부터 이어 한다. v1 static의 달러 예산은 static을 지울 때 같이 없어진다)
-- [ ] **내장 검사기 삭제:** `worker/skills/static.py`, `static_rules.py`와 그래프의 static 단계. `eval/static` 5개를 README 규칙 케이스로 옮김
+- [x] v1 수정 경로의 달러 예산을 1단계의 호출 상한으로 바꿈. 상한에 걸려 처리하지 못한 수정을 `/fix`로 이어 하기, 토큰 수 기록 (2026-11-20: 문서 규칙 경로의 수정 판단과 수정 작성은 PR 호출 상한에서 세고 토큰 수를 `ai_calls`와 코멘트에 남긴다. 상한에 걸려 남은 수정 판단과 수정은 `/fix`가 PR 상한을 한 번 더 받아 수정 판단부터 이어 한다. v1 static의 달러 예산(`model.budget_per_pr_usd`, `aicall`, 추정 비용 줄)은 static과 함께 지웠다. 그 키가 남은 `.pipeline.yaml`은 무시하고 "설정:"에 알린다. 호출 하나의 `--max-budget-usd`는 9.2의 "호출 하나"대로 남는다)
+- [x] **내장 검사기 삭제:** `worker/skills/static.py`, `static_rules.py`와 그래프의 static 단계. `eval/static` 5개를 README 규칙 케이스로 옮김 (2026-11-20. v1 AI 수정 루프 `worker/ai_fix.py`·`models/ai_fix.py`, `/fix static`, ruff의 `--select`·`--show-files`도 지웠다. `eval/static` 01–04는 `eval/rules/09`–`12`, 05는 `15`로 옮기고, 그 문장이 없는 base는 `16`(2-2)이다)
 - [x] 기록 저장 시작: `violations`, `records`(채택·거절·실패·작성자 수정). 검색은 아직 하지 않음 (D5) (2026-11-20. 문서 규칙 경로만. `worker/records.py`, `models/records.py`. 저장 전 비밀값 검사. 같은 PR의 거절 기록이 수정 판단 표의 첫 줄(이전에 거절됨)을 채운다. 검사기 기록과 v1 수정안의 기록은 BACKLOG)
 - [x] 단계별 모델(`model.rules`, `model.checker`, 기본 sonnet), 검사기 작성은 더 높은 모델로 올리지 않음 (11.2 D7. 2026-11-19에 더함)
 - [x] 결과 코멘트의 위반 목록을 규칙별 건수와 앞 10건, 나머지 접기로 (11.2 D6. 2026-11-19에 더함)
@@ -1602,18 +1600,18 @@ rag:
 
 **완료 기준** (확정 2026-11-18)
 
-- [ ] **2-1** (eval) README에 "비교에 숫자를 직접 쓰지 않는다"를 적은 base에서 옛 static 01·02의 위반이 검사기로 잡히고 실제 모델의 수정안 PR까지 간다. (2026-11-20: 가짜 모델로는 둘 다 수정안 PR까지 간다(`eval/rules/09-…`, `10-…`). 실제 모델로는 01만 갔다. sonnet이 쓴 02의 검사기가 `global` 문만 잡았다. BACKLOG)
-- [ ] **2-2** (eval) 그 문장이 없는 base에서는 같은 PR에 그 위반이 나오지 않는다.
+- [ ] **2-1** (eval) README에 "비교에 숫자를 직접 쓰지 않는다"를 적은 base에서 옛 static 01·02의 위반이 검사기로 잡히고 실제 모델의 수정안 PR까지 간다. (2026-11-20: 가짜 모델로는 둘 다 수정안 PR까지 간다(`eval/rules/09-…`, `10-…`). 실제 모델로는 01만 갔다. sonnet이 쓴 02의 검사기가 `global` 문만 잡았다. BACKLOG) (2026-11-20 마무리: 검사기 작성 프롬프트의 예시 요구를 세 번 고쳐 쟀다. 검사기 작성만 돌린 6회에서 02의 줄을 잡은 것이 고치기 전 0/6, 고친 뒤 4/6(규칙 읽기가 문장을 하나로 읽으면 3/3, 둘로 나누면 1/3)이다. 끝까지 돌린 2회 중 짧은 README의 1회는 잡았지만 규칙 읽기가 그 규칙의 수정 방법을 `none`으로 답해 수정안 PR까지 가지 않았고, 전체 README의 1회는 다시 `global` 문만 잡았다. 아직 채우지 못했다. `docs/JOURNAL.md`, BACKLOG)
+- [x] **2-2** (eval) 그 문장이 없는 base에서는 같은 PR에 그 위반이 나오지 않는다. (2026-11-20. `eval/rules/16-old-static-without-sentence.yaml`: 옛 static 01·02의 PR에서 `> 50`은 나오지 않고 남은 규칙의 위반만 나온다. 원문 확인이 모델이 답한 그 규칙을 버린다)
 - [x] **2-3** (eval) 검증 통과 뒤 `deliver`에서 일부러 실패시키고 재시도하면 `ai_calls`에 새 줄이 생기지 않고 같은 패치가 올라간다. (2026-11-20. `eval/rules/13-…`, `test_failed_push_is_retried_with_the_stored_patch`)
 - [x] **2-4** (eval) 같은 커밋에 `/recheck`를 하면 모델 호출이 0이다. (2026-11-20. `eval/rules/13-…`, `test_recheck_on_the_same_commit_makes_no_model_calls`. 저장한 결과로 이미 0이었고 이번에 평가 케이스로 확인함)
 - [x] **2-5** (eval) 설명 JSON이 diff에 없는 줄을 가리키는 가짜 응답은 버려진다. (2026-11-20. `test_explanation_pointing_at_an_unchanged_line_is_dropped`)
 - [x] **2-6** (eval) 수정안 PR을 닫은 뒤 `records`에 거절 기록이 하나 있고, 다음 커밋에서 같은 줄이 `skip`(이전에 거절됨)으로 나온다. (2026-11-20. `eval/rules/13-…`, `test_closed_fix_pr_is_rejected_and_next_commit_skips_it`)
 - [x] **2-7** (eval) 고치면 테스트가 깨지는 케이스와 테스트가 지나가지 않는 케이스(옛 static 03·04)가 그대로 걸러진다. (2026-11-20. `eval/rules/11-…`, `12-…`)
-- [ ] **2-8** (eval) 수정 판단의 가짜 응답이 위반 하나를 빼먹으면 그 위반이 `skip`(모델이 답하지 않음)으로 남고, 넘기지 않은 위반 id를 답하면 버려진다.
+- [x] **2-8** (eval) 수정 판단의 가짜 응답이 위반 하나를 빼먹으면 그 위반이 `skip`(모델이 답하지 않음)으로 남고, 넘기지 않은 위반 id를 답하면 버려진다. (2026-11-19에 들어왔고 2026-11-20 마무리 점검에서 표시함. `test_decisions_follow_tests_and_show_in_the_comment`(흐름과 코멘트), `test_answer_that_drops_or_invents_a_violation_is_reconciled`)
 - [x] **2-9** (eval) 모델이 `skip`한 위반이 이유와 함께 코멘트에 나오고 수정안 PR에는 들어가지 않는다. (2026-11-20. `eval/rules/09-…`, `test_fix_decided_violation_reaches_a_fix_pull_request`)
 - [x] **2-10** (eval) 같은 커밋의 `/recheck`에서 수정 판단의 호출이 0이다. (2026-11-20. 2-4와 같은 케이스가 "수정 판단: … 모델 호출 0회"를 확인함)
 - [x] **2-11** (eval) `pr_max`를 3으로 낮춘 케이스에서 코멘트에 처리하지 못한 수정 건수가 나오고, `/fix` 뒤에 나머지가 처리된다. (2026-11-20. `eval/rules/14-call-cap-then-fix.yaml`, `test_capped_fix_is_shown_and_fix_processes_the_rest`)
-- [ ] **2-12** (MathLLM) 데이터 표를 코드에 둔 파일에 파이프라인이 정한 규칙의 위반이 하나도 나오지 않는다(내장 검사기가 없다).
+- [x] **2-12** (MathLLM) 데이터 표를 코드에 둔 파일에 파이프라인이 정한 규칙의 위반이 하나도 나오지 않는다(내장 검사기가 없다). (2026-11-20. MathLLM `origin/main`의 로컬 사본으로 전체 흐름을 실제 모델로 돌렸다. 데이터 표를 둔 `src/data_creator/generators.py`에 지우기 전의 static은 `STATIC-REPEAT` 10건, `PLR2004` 5건을 냈고 지운 뒤는 0건이다. 그 파일의 위반은 README 규칙의 것(비교의 기준값 5건, `Op` Enum 98건)과, ruff 설정이 없는 base라 v1 lint가 쓰는 ruff 기본 규칙의 것(`I001`, `F401`, `PLW0127`, 데이터 표가 아닌 줄)뿐이다. ruff 기본 규칙은 13절의 순서대로 3단계에 없앤다(3-3). `docs/JOURNAL.md`)
 
 ### 3단계. 저장소의 도구 연결
 

@@ -65,7 +65,7 @@ def find_secret(patch: str, literals: Iterable[str] = ()) -> str | None:
 
 
 def find_secret_in_text(text: str, literals: Iterable[str] = ()) -> str | None:
-    """글(AI가 쓴 변경 설명 등) 전체에서 비밀값으로 보이는 것의 종류. 값은 돌려주지 않는다."""
+    """글(모델이 쓴 설명 등) 전체에서 비밀값으로 보이는 것의 종류. 값은 돌려주지 않는다."""
     for literal in literals:
         if len(literal) >= MIN_LITERAL_SECRET and literal in text:
             return "파이프라인 비밀값"
@@ -99,44 +99,6 @@ def fixed_codes(before: Sequence[Finding], remaining: Sequence[Finding]) -> Coun
 def title(pr_number: int, skill: str, fixed: int) -> str:
     what = f"위반 {fixed}건 수정" if fixed else "포맷 정리"
     return f"[pipeline] #{pr_number} {skill} {what}"
-
-
-def ai_body(
-    pr_number: int,
-    skill: str,
-    head_sha: str,
-    codes: Counter,
-    source: str,
-    tests: str,
-    models: Sequence[str],
-    explanation: str,
-    fence: str = "```",
-) -> str:
-    """AI 수정안의 본문. explanation은 비밀값 검사를 거친 AI 글이고 코드 블록에 넣는다."""
-    lines = [
-        PROPOSAL_MARKER,
-        f"#{pr_number}의 커밋 `{head_sha[:7]}`에서 PR이 바꾼 줄의 {skill} 위반을 AI가 고친 "
-        "수정안입니다.",
-        "",
-    ]
-    if codes:
-        lines.append(
-            "고친 위반: " + ", ".join(f"`{code}` {n}건" for code, n in sorted(codes.items()))
-        )
-    lines += [
-        f"적용한 규칙: {skill} ({source}). 위반 판정과 검증은 결정적 검사기가 했습니다.",
-        f"고친 뒤 테스트: {tests} (수정 전과 같은 수가 모두 통과). 규칙을 다시 검사해 원래 위반이 "
-        "없어지고 새 위반이 없는 것을 확인했습니다.",
-        f"모델: {', '.join(models)}",
-    ]
-    if explanation:
-        lines += ["", "AI의 변경 설명:", "", fence, explanation, fence]
-    lines += [
-        "",
-        f"머지하면 #{pr_number}의 브랜치에 들어갑니다. AI가 쓴 코드이니 리뷰한 뒤 머지해 주세요. "
-        "원하지 않으면 닫아 주세요. 같은 커밋에는 다시 제안하지 않습니다.",
-    ]
-    return "\n".join(lines) + "\n"
 
 
 def body(
