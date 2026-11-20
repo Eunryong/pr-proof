@@ -19,7 +19,7 @@ import pytest
 import yaml
 
 from app import config
-from app.models import rule_reading, state_keys
+from app.models import fix_decision, rule_reading, state_keys
 from app.models.job import PRJob
 from app.worker import main, repo
 from app.worker.ai import claude_cli
@@ -38,7 +38,8 @@ REPO: Final = "o/r"
 REAL_MODEL_ENV: Final = "PR_PROOF_REAL_MODEL"
 # v1 스킬을 끈다. 케이스가 `pipeline`을 주면 그 위에 덮는다
 PIPELINE_YAML: Final = {"skills": {"enabled": []}}
-_LOCATION: Final = re.compile(r"^- (`+) ?(.+?) ?\1(?: \(파일 이름·경로\))?$")
+# 위치 뒤에 수정 판단(" · skip (...)")이 붙을 수 있다
+_LOCATION: Final = re.compile(r"^- (`+) ?(.+?) ?\1(?: \(파일 이름·경로\))?(?: · .+)?$")
 
 
 def _apply(root: Path, edits: list[dict] | None) -> None:
@@ -86,7 +87,8 @@ def _answer(data: dict) -> StructuredResult:
 
 
 def scripted_model(case: dict):
-    """규칙 읽기에는 케이스의 규칙 목록을, 검사기 작성에는 프롬프트에 든 규칙의 검사기를 답한다."""
+    """규칙 읽기에는 케이스의 규칙 목록을, 검사기 작성에는 프롬프트에 든 규칙의 검사기를 답한다.
+    수정 판단에는 받은 위반을 모두 fix로 답한다."""
     rules = case["model"]["rules"]
     reading = {"rules": [
         {"file": "README.md", "section": r["section"], "quote": r["quote"],
@@ -99,6 +101,11 @@ def scripted_model(case: dict):
     def ask(prompt: str, *, schema, **kw) -> StructuredResult:
         if schema is rule_reading.ANSWER_SCHEMA:
             return _answer(reading)
+        if schema is fix_decision.ANSWER_SCHEMA:
+            ids = re.findall(r"^<<<VIOLATION id=(\S+) ", prompt, re.M)
+            return _answer(
+                {"decisions": [{"id": i, "action": "fix", "why": "케이스"} for i in ids]}
+            )
         (rule,) = [r for r in rules if r["quote"] in prompt]
         return _answer({"checker": rule["checker"]["body"],
                         "examples": rule["checker"]["examples"]})  # fmt: skip
@@ -204,7 +211,8 @@ def test_flagged_reads_locations_from_section() -> None:
     section = (
         "**문서 규칙:** ⚠️ 위반 2건 (규칙 1개)\n\n위반:\n"
         "- `R-readme-1` `` `x` `` · 2건\n  출처: `README.md > 코드 규칙`\n"
-        "  - `a/b.py:3`\n\n<details><summary><code>R-readme-1</code>의 나머지 1건</summary>\n\n"
+        "  - `a/b.py:3` · skip (모델: `x`)\n\n"
+        "<details><summary><code>R-readme-1</code>의 나머지 1건</summary>\n\n"
         "  - ``a`b.py:4``\n\n</details>\n\n모델 호출 1회"
     )
     assert flagged(section) == ["a/b.py:3", "a`b.py:4"]

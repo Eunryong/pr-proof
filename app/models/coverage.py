@@ -8,7 +8,7 @@ DTD·엔티티를 거부하는 파서(defusedxml)로 읽고 크기를 제한하�
 import ast
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
-from typing import Final, Literal
+from typing import Final, Literal, TypeVar
 from xml.etree.ElementTree import Element, ParseError
 
 from defusedxml import DefusedXmlException
@@ -16,6 +16,10 @@ from defusedxml.ElementTree import fromstring
 
 from app.models.finding import Finding
 from app.models.test_run import PytestRun, RunStatus
+from app.models.violation import Violation
+
+# 줄 위반: v1의 Finding과 문서 규칙의 Violation. 둘 다 file, line, covered가 있다
+LineIssue = TypeVar("LineIssue", Finding, Violation)
 
 # 이보다 큰 coverage.xml은 읽지 않는다 (모름으로 본다)
 MAX_COVERAGE_XML_BYTES: Final = 20 * 1024 * 1024
@@ -178,10 +182,10 @@ def line_covered(file_cov: FileCoverage, line: int, statements: list[_Stmt] | No
 
 
 def mark_covered(
-    findings: Iterable[Finding],
+    findings: Iterable[LineIssue],
     coverage: CoverageData | None,
     sources: Mapping[str, str] | None = None,
-) -> tuple[Finding, ...]:
+) -> tuple[LineIssue, ...]:
     """위반마다 covered를 채운다.
 
     - coverage가 None(파일 없음·깨짐): 모두 None(모름)

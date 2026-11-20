@@ -73,6 +73,15 @@ def test_stage3_defaults() -> None:
     )  # fmt: skip
 
 
+def test_decision_model_is_its_own_setting() -> None:
+    default, _ = parse_repo_config(None)
+    assert default.model.decide == "sonnet"
+    config, problem = parse_repo_config("model: {decide: opus}\n")
+    assert problem is None and (config.model.decide, config.model.checker) == ("opus", "sonnet")
+    _, problem = parse_repo_config("model: {decide: '-x'}\n")
+    assert problem is not None
+
+
 def test_stage3_values_are_read() -> None:
     text = (
         "skills:\n  fix: {require_covered: false, max_retries: 5}\n  static: {min_repeats: 2}\n"

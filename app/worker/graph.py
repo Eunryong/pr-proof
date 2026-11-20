@@ -9,7 +9,8 @@
                                                        └─ 다른 스킬의 승인 대기·자동 수정
 
 규칙 검사와 테스트 사이에 문서 규칙 경로가 돈다: 규칙 읽기 → 검사기 작성 → 위반 찾기 (5.1).
-찾기만 하고 고치지 않는다. 규칙이 없거나 이 경로가 실패하면 그 자리에서 테스트로 넘어간다.
+규칙이 없거나 이 경로가 실패하면 그 자리에서 테스트로 넘어간다. 테스트 뒤에 그 위반마다 수정 판단
+(fix/skip과 이유, 4.6)을 정해 코멘트에 보인다. 문서 규칙 위반의 수정은 아직 잇지 않았다.
 
 스킬마다 수정은 한 번이다. 수정마다 새 worktree에서 시작한다 (앞 수정의 변경이 섞이지 않게).
 수정안을 내지 못하고 끝난 스킬은 `/fix <skill>`로 그 스킬만 다시 돌린다 (사람이 달 때만).
@@ -38,19 +39,21 @@ from langgraph.types import Command, interrupt
 from app.config import CallMaxima
 from app.models import doc_rules as doc_rule_models
 from app.models import fix as fix_rules
+from app.models import fix_decision as fix_decision_models
 from app.models import proposal as proposal_rules
 from app.models import rejection
 from app.models.coverage import FixGate, code_fix_gate
 from app.models.db import AICall
-from app.models.doc_rules import DocRules, RuleOutcome, RulesRead
+from app.models.doc_rules import DocRules, Found, RuleOutcome, RulesRead
 from app.models.finding import SkillResult
 from app.models.fix import FixOutcome
+from app.models.fix_decision import Decided, SafetyNet
 from app.models.job import PRJob
 from app.models.proposal import ProposalResult
 from app.models.repo_config import call_limits
 from app.models.test_run import PytestRun
 from app.sandbox import container, docker_cli, pytest_runner, venv
-from app.worker import ai_fix, base_config, coverage, doc_rules, proposal, repo, report
+from app.worker import ai_fix, base_config, coverage, decide, doc_rules, proposal, repo, report
 from app.worker.ai import claude_cli, workdir
 from app.worker.ai.claude_cli import ClaudeResult
 from app.worker.base_config import BaseConfig
@@ -79,6 +82,7 @@ FIX_COMMENT: Final = "fix_comment"
 LOAD_RULES: Final = "load_rules"
 AUTHOR_CHECKERS: Final = "author_checkers"
 DETECT: Final = "detect"
+DECIDE: Final = "decide"
 TOOL_DIR: Final = "tools"  # 도구 캐시 (data_dir 아래, venvs와 같은 자리)
 # 체크포인트에서 되살릴 수 있는 상태 타입 (나머지는 langgraph가 막는다)
 _STATE_TYPES: Final = (
@@ -91,6 +95,7 @@ _STATE_TYPES: Final = (
     ("app.models.proposal", "ProposalResult"),
     ("app.worker.coverage", "DiffCoverage"),
     *doc_rule_models.STATE_TYPES,
+    *fix_decision_models.STATE_TYPES,
 )
 
 
@@ -126,6 +131,7 @@ class FlowState(TypedDict, total=False):
     rules_read: RulesRead  # 규칙 읽기 → 검사기 작성 → 위반 찾기 사이에만 쓴다
     rule_checks: tuple[RuleOutcome, ...]
     doc_rules: DocRules  # 문서 규칙 경로의 결과. 코멘트의 "문서 규칙" 절은 이 값으로만 그린다
+    fix_decisions: Decided  # 문서 규칙 위반마다 수정 판단 (테스트 뒤, 4.6)
     test_run: PytestRun
     commented: bool
     fix_skill: str  # 지금(마지막으로) 수정하는 스킬
@@ -349,10 +355,28 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
         if found is not None and found.findings:  # 위반 줄이 테스트로 실행되는지 (F8)
             covered = coverage.annotate_coverage(found.findings, run.coverage_xml, ctx.worktree)
             ctx.static = out["static"] = replace(found, findings=covered)
+        doc = state.get("doc_rules")
+        if isinstance(doc, Found) and doc.violations:
+            covered = coverage.annotate_coverage(doc.violations, run.coverage_xml, ctx.worktree)
+            ctx.doc_rules = out["doc_rules"] = replace(doc, violations=covered)
         out["diff_coverage"] = (
             coverage.diff_coverage(run.coverage_xml, ctx.changes_diff) if ctx.changes_diff else None
         )
         return out
+
+    def decide_fixes(state: FlowState) -> FlowState:
+        """문서 규칙 위반마다 fix/skip을 정한다 (5.1 decide). 표가 테스트 상태와 커버리지를 본다."""
+        job, found = state["job"], state.get("doc_rules")
+        if not isinstance(found, Found) or not found.violations:
+            return {}
+        progress(job, "수정 판단")
+        rt, run = doc_runtime(job), state["test_run"]
+        decided = decide.decide(
+            found, SafetyNet(run.status, flaky=bool(run.flaky)), ctx.changes_diff,
+            require_covered=ctx.base.repo.skills.fix.require_covered, store=rt.store,
+            budget=rt.budget, model=rt.models.decide, ask=rt.ask,
+        )  # fmt: skip
+        return {"fix_decisions": decided}
 
     def static_gate(state: FlowState) -> FixGate | None:
         found = state.get("static")
@@ -410,6 +434,7 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
             from_sync=job.source == "sync",
             doc_rules=state.get("doc_rules"),
             checkers=doc_rules.shown_checkers(state.get("doc_rules"), ctx.store),
+            decisions=state.get("fix_decisions"),
         )
 
     def comment(state: FlowState) -> FlowState:
@@ -621,6 +646,7 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
     graph.add_node(AUTHOR_CHECKERS, author_checkers)
     graph.add_node(DETECT, detect_rules)
     graph.add_node("test", test)
+    graph.add_node(DECIDE, decide_fixes)
     graph.add_node("comment", comment)
     graph.add_node(AWAIT_FIX, await_fix)
     graph.add_node(FIX, fix)
@@ -637,7 +663,8 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
         AUTHOR_CHECKERS, after_doc_step, {"next": DETECT, "done": "test", "stop": END}
     )
     graph.add_conditional_edges(DETECT, route, {"next": "test", "stop": END})
-    graph.add_conditional_edges("test", route, {"next": "comment", "stop": END})
+    graph.add_conditional_edges("test", route, {"next": DECIDE, "stop": END})
+    graph.add_conditional_edges(DECIDE, route, {"next": "comment", "stop": END})
     graph.add_conditional_edges("comment", next_fix, fix_targets)
     graph.add_conditional_edges(AWAIT_FIX, after_await, [FIX, AI_FIX, END])
     graph.add_conditional_edges(FIX, route, {"next": PROPOSE, "stop": END})

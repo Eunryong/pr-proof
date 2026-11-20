@@ -97,6 +97,7 @@ class ModelSettings(BaseModel):
     # 3회 안에 안 되면 "검사하지 못한 규칙"으로 두고 4단계의 모델 판단으로 넘긴다 (11.2 D7)
     rules: str = Field(default="sonnet", pattern=MODEL_NAME_PATTERN)
     checker: str = Field(default="sonnet", pattern=MODEL_NAME_PATTERN)
+    decide: str = Field(default="sonnet", pattern=MODEL_NAME_PATTERN)  # 수정 판단 (4.6)
     # 수정 경로의 모델: 가벼운 모델로 시작하고 실패가 이어지면 무거운 모델로 한 번 올린다
     light: str = Field(default="haiku", pattern=MODEL_NAME_PATTERN)
     heavy: str = Field(default="sonnet", pattern=MODEL_NAME_PATTERN)

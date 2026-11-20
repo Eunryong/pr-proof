@@ -1,8 +1,9 @@
-"""결과 코멘트의 "문서 규칙" 절 (docs/DESIGN.md 4.9, 9.4, 13절 1단계). 판정을 새로 내지 않는다.
+"""결과 코멘트의 "문서 규칙" 절 (docs/DESIGN.md 4.9, 9.4, 13절 1·2단계). 판정을 새로 내지 않는다.
 
-`DocRules` 값 하나와, 위반을 찾은 검사기의 본문(`checkers` 테이블에서 읽은 것)만 받는다. 규칙의
-인용, 문서의 절 이름, 파일 경로, 검사기 본문과 예시, 실패 이유는 모두 믿지 않는 글이라 코드
-스팬이나 코드 울타리 안에만 넣는다 (worker/markdown.py).
+`DocRules` 값 하나와, 위반을 찾은 검사기의 본문(`checkers` 테이블에서 읽은 것), 위반마다의 수정
+판단(`Decided`)만 받는다. 규칙의 인용, 문서의 절 이름, 파일 경로, 검사기 본문과 예시, 실패 이유,
+모델이 쓴 수정 판단의 이유는 모두 믿지 않는 글이라 코드 스팬이나 코드 울타리 안에만 넣는다
+(worker/markdown.py).
 """
 
 from collections import Counter
@@ -21,6 +22,7 @@ from app.models.doc_rules import (
     RuleOutcome,
     RuleUnchecked,
 )
+from app.models.fix_decision import Decided, FixDecision
 from app.models.rule import Rule
 from app.models.violation import Violation
 from app.worker.markdown import code_fence, inline_code
@@ -66,12 +68,32 @@ _UNCHECKED_TEXT: Final[Mapping[str, str]] = {
     "run_failed": "검사하지 못함 (검사기 실행 실패)",
 }
 _FAILED_KINDS: Final = frozenset({"model_failed", "tool_unavailable", "run_failed"})
+_SKIP_LABEL: Final[Mapping[str, str]] = {
+    "rejected_before": "이전에 거절됨",
+    "notify_only": "알리기만 하는 규칙",
+    "tests_failed": "테스트가 실패함",
+    "no_safety_net": "안전망이 없음",
+    "not_covered": "테스트가 지나가지 않음",
+    "coverage_unknown": "커버리지를 알 수 없음",
+    "team_pattern": "팀이 닫은 수정과 비슷함",
+    "risky": "모델이 고치지 않기로 함",
+    "call_limit": "호출 상한",
+    "undecided": "수정 판단을 하지 못함",
+}
+NOT_CONNECTED: Final = (
+    "문서 규칙 위반의 수정안은 아직 만들지 않습니다. fix로 정한 위반도 지금은 알리기만 합니다."
+)
 # 확인 대상이 코드 줄이 아닌 규칙 (4.3). 검사하지 못한 것이 아니라 검사 대상이 아니다
 _OTHER_TARGETS: Final = frozenset({"pr", "human"})
 
 
-def section(result: DocRules | None, checkers: Mapping[str, Checker]) -> list[str]:
-    """ "문서 규칙" 절의 줄들. checkers는 위반을 찾은 검사기의 {CheckerRef.key: 검사기}다."""
+def section(
+    result: DocRules | None, checkers: Mapping[str, Checker], decisions: Decided | None = None
+) -> list[str]:
+    """ "문서 규칙" 절의 줄들. checkers는 위반을 찾은 검사기의 {CheckerRef.key: 검사기}다.
+
+    decisions는 테스트 뒤의 수정 판단이다. 아직 없으면(테스트 전에 끝남) 판단 없이 그린다.
+    """
     match result:
         case None:
             return []
@@ -86,14 +108,16 @@ def section(result: DocRules | None, checkers: Mapping[str, Checker]) -> list[st
         case NoRulesFound():
             return ["", f"{TITLE} {NO_RULES}", "", HOW_TO_WRITE]
         case Found():
-            return _found(result, checkers)
+            return _found(result, checkers, decisions)
 
 
-def _found(found: Found, checkers: Mapping[str, Checker]) -> list[str]:
+def _found(found: Found, checkers: Mapping[str, Checker], decisions: Decided | None) -> list[str]:
     head = ["", f"{TITLE} {_title_line(found)}"]
     tail = ["", usage_line(found.usage), "", HOW_TO_CORRECT]
+    by_id = {d.violation_id: d for d in decisions.decisions} if decisions else {}
     blocks = [
-        _violations(found),
+        _decision_summary(decisions),
+        _violations(found, by_id),
         _not_checkable(found.outcomes),
         _failed(found.outcomes),
         _capped(found.outcomes),
@@ -157,7 +181,42 @@ def _how_checked(outcome: RuleOutcome) -> str:
     return _UNCHECKED_TEXT[outcome.kind]
 
 
-def _violations(found: Found) -> list[str]:
+def _decision_summary(decisions: Decided | None) -> list[str]:
+    """fix·skip 건수와 skip 이유별 건수, 수정 판단의 모델 호출 (4.9)."""
+    if not decisions or not decisions.decisions:
+        return []
+    fixes = sum(1 for d in decisions.decisions if d.action == "fix")
+    skips = Counter(_SKIP_LABEL[d.reason or "undecided"] for d in decisions.decisions
+                    if d.action == "skip")  # fmt: skip
+    line = f"수정 판단: fix {fixes}건, skip {sum(skips.values())}건"
+    if skips:
+        line += f" ({', '.join(f'{label} {n}건' for label, n in skips.items())})"
+    line += f" · 모델 호출 {decisions.calls}회 · 저장된 판단 {decisions.cached}건 사용"
+    lines = ["", line, NOT_CONNECTED]
+    capped = sum(1 for d in decisions.decisions if d.reason == "call_limit")
+    if capped:
+        lines += [
+            "",
+            f"모델 호출 상한에 걸려 처리하지 못함: 수정 판단 {capped}건. "
+            "다음 검사(새 커밋이나 `/recheck`)가 다시 정합니다.",
+        ]
+    return lines
+
+
+def _decision(d: FixDecision | None) -> str:
+    """위반 줄 끝에 붙는 수정 판단. 모델이 쓴 이유는 코드 스팬 안에만 넣는다."""
+    if d is None:
+        return ""
+    if d.action == "fix":
+        how = "기계적 수정" if d.method == "mechanical" else "모델 수정"
+        why = f": {inline_code(d.why, MAX_DETAIL_CHARS)}" if d.decided_by == "model" else ""
+        return f" · fix ({how}{why})"
+    if d.decided_by == "model":
+        return f" · skip (모델: {inline_code(d.why or '이유 없음', MAX_DETAIL_CHARS)})"
+    return f" · skip ({d.why})"
+
+
+def _violations(found: Found, decisions: Mapping[str, FixDecision]) -> list[str]:
     """규칙별 건수와 규칙마다 앞 몇 건. 나머지는 접는다 (4.9, 11.2 D6).
 
     위반이 많아도 코멘트의 첫 화면에 모든 규칙이 보이게 한다. 접은 목록도 상한이 있다.
@@ -179,7 +238,8 @@ def _violations(found: Found) -> list[str]:
             f"- `{rule_id}` {_quote(outcome.rule)} · {len(violations)}건",
             f"  출처: {_source(outcome.rule)} · {_how_checked(outcome)}",
         ]
-        lines += [f"  - {_where(v)}" for v in violations[:MAX_SHOWN_PER_RULE]]
+        lines += [f"  - {_where(v)}{_decision(decisions.get(v.id))}"
+                  for v in violations[:MAX_SHOWN_PER_RULE]]  # fmt: skip
         rest = violations[MAX_SHOWN_PER_RULE:]
         if not rest:
             continue
@@ -187,7 +247,7 @@ def _violations(found: Found) -> list[str]:
         folded_left -= len(shown)
         lines += ["", f"<details><summary><code>{rule_id}</code>의 나머지 {len(rest)}건</summary>",
                   ""]  # fmt: skip
-        lines += [f"  - {_where(v)}" for v in shown]
+        lines += [f"  - {_where(v)}{_decision(decisions.get(v.id))}" for v in shown]
         if len(rest) > len(shown):
             lines.append(f"  - 외 {len(rest) - len(shown)}건")
         lines += ["", "</details>", ""]
