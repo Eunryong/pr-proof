@@ -44,7 +44,7 @@ YAML
 openssl rand -hex 32 > ~/.config/pipeline/webhook_secret && chmod 600 ~/.config/pipeline/webhook_secret
 ```
 
-- 운영 알림을 Slack으로 받으려면 Incoming Webhook URL(https)을 `~/.config/pipeline/slack_webhook_url`에 한 줄로 두고 `chmod 600`한다. 파일이 없으면 알림을 보내지 않는다. 알림에는 오류의 종류, 저장소#번호, 정해진 짧은 글만 들어가고, 같은 오류는 30분에 한 번만 온다.
+- 운영 알림은 따로 설정하지 않는다. macOS에서 gh·claude 로그인이 풀리거나 Docker·Redis가 꺼지는 것처럼 사람이 해야 풀리는 환경 오류가 나면 알림 한 줄이 할 일과 함께 뜬다(예: "pr-proof: Docker가 꺼져 있습니다. Docker Desktop을 실행하세요."). 같은 오류는 30분에 한 번이다. 다른 오류는 PR 코멘트와 로그에만 남는다. macOS가 아니면 알림이 없다. 종류와 글은 DESIGN 13절 6단계의 표에 있다. 예전에 둔 `~/.config/pipeline/slack_webhook_url`은 읽지 않으니 지워도 된다.
 - 그 밖의 파이프라인 쪽 값(동기화 주기, 메모리 상한, 호출 상한의 최댓값, 임베딩 모델)은 DESIGN 10절 "파이프라인 쪽 설정"에 있다.
 
 대상 저장소의 GitHub 설정 → Webhooks에 웹훅을 하나 더한다. 저장소 주인만 할 수 있다.
@@ -60,7 +60,7 @@ source .venv/bin/activate
 honcho start                     # api(웹훅 + 동기화 루프)와 worker
 ```
 
-워커는 시작할 때 gh·claude 로그인, Docker, Redis를 확인하고(preflight) 하나라도 안 되면 멈춘다. 샌드박스 이미지는 처음 빌드하고, 언어 런타임과 도구(Python, ruff, ast-grep)는 규칙이 쓸 때 고정한 버전과 해시로 받아 `~/.cache/pipeline/tools`에 둔다.
+워커는 시작할 때 gh·claude 로그인, Docker, Redis를 확인하고(preflight) 하나라도 안 되면 macOS 알림을 띄우고 멈춘다. 알림이 이 Mac에 뜨는지는 `PR_PROOF_REAL_NOTIFY=1 pytest tests/notify/test_macos_real.py`로 한 번 볼 수 있다. 샌드박스 이미지는 처음 빌드하고, 언어 런타임과 도구(Python, ruff, ast-grep)는 규칙이 쓸 때 고정한 버전과 해시로 받아 `~/.cache/pipeline/tools`에 둔다.
 
 ## 사용법
 
