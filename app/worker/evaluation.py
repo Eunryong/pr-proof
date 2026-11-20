@@ -11,7 +11,8 @@ import os
 import subprocess
 import sys
 import tempfile
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -30,6 +31,9 @@ PASSED_ENV: Final = (
 )  # fmt: skip
 TOOLS_OFF_OUT_ENV: Final = "PR_PROOF_TOOLS_EVAL_OUT"
 REAL_MODEL_ENV: Final = "PR_PROOF_REAL_MODEL"
+# 실제 모델 평가의 호출 기록이자 같은 입력의 답을 다시 쓰는 파일(`tests/e2e/model_memo.py`).
+# 주지 않으면 그 실행의 임시 폴더에 두어 실행 하나 안에서만 다시 쓴다
+MODEL_MEMO_ENV: Final = "PR_PROOF_MODEL_MEMO"
 SUITE: Final = "tests/e2e"
 
 Runner = Callable[..., subprocess.CompletedProcess]
@@ -51,6 +55,7 @@ def suite_env(environ: Mapping[str, str], out_dir: Path, real_model: bool) -> di
     env[TOOLS_OFF_OUT_ENV] = str(out_dir)
     if real_model:
         env[REAL_MODEL_ENV] = "1"
+        env[MODEL_MEMO_ENV] = environ.get(MODEL_MEMO_ENV) or str(out_dir / "memo.jsonl")
     return env
 
 
@@ -114,6 +119,16 @@ def from_row(row: EvalRun) -> eval_run.RunSummary:
     )
 
 
+@contextmanager
+def _out_dir(out: Path | None) -> Iterator[Path]:
+    if out is not None:
+        out.mkdir(parents=True, exist_ok=True)
+        yield out
+        return
+    with tempfile.TemporaryDirectory(prefix="pr-proof-eval-") as tmp:
+        yield Path(tmp)
+
+
 def evaluate(
     engine: Engine,
     repo_root: Path,
@@ -123,10 +138,12 @@ def evaluate(
     label: str = "",
     runner: Runner = subprocess.run,
     environ: Mapping[str, str] | None = None,
+    out: Path | None = None,
 ) -> Stored:
-    """평가 세트를 돌려 저장한다. 기준선으로 저장하지 않으면 가장 최근 기준선을 함께 돌려준다."""
-    with tempfile.TemporaryDirectory(prefix="pr-proof-eval-") as tmp:
-        summary = run_suite(repo_root, Path(tmp), real_model=real_model, environ=environ,
+    """평가 세트를 돌려 저장한다. 기준선으로 저장하지 않으면 가장 최근 기준선을 함께 돌려준다.
+    out을 주면 junit·도구를 끈 평가의 JSON·호출 기록을 그 폴더에 남긴다(없으면 임시 폴더)."""
+    with _out_dir(out) as folder:
+        summary = run_suite(repo_root, folder, real_model=real_model, environ=environ,
                             runner=runner)  # fmt: skip
     row = to_row(summary, label=label, baseline=baseline, real_model=real_model,
                  commit=pipeline_commit(repo_root, runner))  # fmt: skip
