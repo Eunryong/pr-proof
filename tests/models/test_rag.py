@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from typing import Final
 
 import pytest
 
@@ -22,8 +23,8 @@ from app.models.rag import (
     with_prefix,
 )
 
-REPO = "o/r"
-ALL = frozenset({"adopted", "rejected", "failed"})
+REPO: Final = "o/r"
+ALL: Final = frozenset({"adopted", "rejected", "failed"})
 
 
 def _record(id_: int, *, repo: str = REPO, kind: str = "adopted", diff: str = "-a\n+b",
