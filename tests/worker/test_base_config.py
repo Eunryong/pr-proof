@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from app.models.access import AccessSettings
 from app.worker import base_config, repo
 
 
@@ -185,3 +186,64 @@ def test_old_skills_enabled_without_lint_disables_the_ruff_rule_set(repo_dir: Pa
     assert config.repo.rules.disabled == ["ruff"]
     (note,) = config.problems
     assert "`rules.disabled: [ruff]`로 바꿔 주세요" in note
+
+
+# --- 가드레일의 access: 체크아웃 전에 bare 캐시에서 읽는다 (8.6) ---
+
+
+@pytest.fixture
+def remote(tmp_path: Path) -> Path:
+    path = tmp_path / "remote"
+    path.mkdir()
+    _git(path, "init", "-q", "-b", "main")
+    return path
+
+
+def _load_access(tmp_path: Path, remote: Path, base: str) -> AccessSettings:
+    return base_config.load_access(tmp_path / "data", "o/r", base, url=str(remote))
+
+
+def test_access_is_read_from_the_base_commit_without_a_worktree(
+    tmp_path: Path, remote: Path
+) -> None:
+    base = _commit(remote, {".pipeline.yaml": "access:\n  trusted: [OWNER]\n  bots: ['x[bot]']\n"})
+    # PR이 자기 자신을 신뢰 목록에 넣는다
+    _git(remote, "checkout", "-q", "-b", "pr")
+    _commit(remote, {".pipeline.yaml": "access:\n  trusted: [NONE]\n"})
+    _git(remote, "update-ref", "refs/pull/1/head", "HEAD")
+
+    access = _load_access(tmp_path, remote, base)
+
+    assert access == AccessSettings(frozenset({"OWNER"}), frozenset({"x[bot]"}))
+    assert not (tmp_path / "data" / "worktrees").exists()  # PR 코드를 꺼내지 않는다
+    bare = repo.bare_path(tmp_path / "data", "o/r")
+    refs = _git(bare, "for-each-ref", "--format=%(refname)")
+    assert "refs/pull" not in refs and "refs/pipeline" not in refs
+
+
+def test_access_fetches_a_base_commit_made_after_the_clone(tmp_path: Path, remote: Path) -> None:
+    first = _commit(remote, {"a.py": "x = 1\n"})
+    assert _load_access(tmp_path, remote, first) == AccessSettings()
+    later = _commit(remote, {".pipeline.yaml": "access:\n  trusted: [MEMBER]\n"})
+    assert _load_access(tmp_path, remote, later).trusted == frozenset({"MEMBER"})
+
+
+def test_access_in_a_symlinked_settings_file_is_not_read(tmp_path: Path, remote: Path) -> None:
+    (remote / "real.yaml").write_text("access:\n  trusted: [NONE]\n")
+    (remote / ".pipeline.yaml").symlink_to("real.yaml")
+    base = _commit(remote, {})
+    assert _load_access(tmp_path, remote, base) == AccessSettings()
+
+
+def test_access_with_an_unknown_commit_fails(tmp_path: Path, remote: Path) -> None:
+    _commit(remote, {"a.py": "x = 1\n"})
+    with pytest.raises(repo.GitError):
+        _load_access(tmp_path, remote, "f" * 40)
+    with pytest.raises(repo.GitError):
+        _load_access(tmp_path, remote, "--upload-pack=touch")
+
+
+def test_access_notes_are_shown_with_the_other_settings(repo_dir: Path) -> None:
+    base = _commit(repo_dir, {".pipeline.yaml": "access:\n  bots: [alice]\n"})
+    (note,) = base_config.load(repo_dir, base, max_memory_gb=4).problems
+    assert "`access.bots`" in note and "alice" not in note

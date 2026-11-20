@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import subprocess
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -11,6 +12,7 @@ from app.models.comment import COMMENT_MARKER, REPLY_MARKER
 
 GH_TIMEOUT: Final = 60
 _ENV_PASSTHROUGH: Final = ("PATH", "HOME", "GH_CONFIG_DIR")
+_FULL_SHA: Final = re.compile(r"[0-9a-f]{40}")
 
 GhRunner = Callable[[list[str], str | None], str]
 
@@ -25,6 +27,14 @@ class PullRefs:
     # PR 작성자와 저장소의 관계, 로그인 이름. 워커가 체크아웃 전에 이 값으로 실행을 정한다 (8.6)
     author_association: str = ""
     author_login: str = ""
+
+
+@dataclass(frozen=True)
+class IssueComment:
+    login: str
+    association: str
+    body: str
+    pr_number: int | None  # 이 저장소의 어느 PR(이슈)에 달렸는지. 알 수 없으면 None
 
 
 @dataclass(frozen=True)
@@ -85,12 +95,35 @@ class GitHub:
             '(.author_association // ""), (.user.login // "")] | @tsv'
         )
         out = self._run(["api", f"repos/{repo}/pulls/{pr_number}", "--jq", jq], None)
-        fields = (out.rstrip("\n").split("\t") + [""] * 4)[:7]
+        fields = (out.rstrip("\n").split("\t") + [""] * 7)[:7]
         head, base, state, head_ref, head_repo, association, login = fields
+        # 응답을 읽지 못한 것도 조회 실패다. 빈 head로 판단하거나 안내를 달지 않는다 (8.6)
+        if not (_FULL_SHA.fullmatch(head) and _FULL_SHA.fullmatch(base)):
+            raise GitHubError(f"PR 조회 응답을 읽지 못함: {repo}#{pr_number}")
         return PullRefs(
             head_sha=head, base_sha=base, open=state == "open", head_ref=head_ref,
             head_repo=head_repo, author_association=association, author_login=login,
         )  # fmt: skip
+
+    def issue_comment(self, repo: str, comment_id: int) -> IssueComment:
+        """코멘트 하나의 지금 작성자, 관계, 본문, 달린 PR. 승인자 확인에 쓴다 (8.6)."""
+        jq = (
+            '{login: (.user.login // ""), association: (.author_association // ""), '
+            'issue_url: (.issue_url // ""), body: (.body // "")} | @json'
+        )
+        out = self._run(["api", f"repos/{repo}/issues/comments/{comment_id}", "--jq", jq], None)
+        try:
+            item = json.loads(out)
+            url = str(item["issue_url"])
+            prefix = f"/repos/{repo.lower()}/issues/"
+            number = url.rsplit("/", 1)[1]
+            pr_number = int(number) if prefix in url.lower() and number.isdigit() else None
+            return IssueComment(
+                login=str(item["login"]), association=str(item["association"]),
+                body=str(item["body"]), pr_number=pr_number,
+            )  # fmt: skip
+        except (ValueError, KeyError, IndexError, TypeError) as e:
+            raise GitHubError(f"코멘트 조회 응답을 읽지 못함: {comment_id}") from e
 
     # --- 제안 PR (DESIGN.md F10) ---
 

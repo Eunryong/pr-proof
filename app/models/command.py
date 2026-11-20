@@ -21,7 +21,7 @@ FIX_TARGETS: Final[Mapping[str, tuple[str, ...]]] = {
 class ParsedCommand:
     name: CommandName
     word: str  # 코멘트에 쓴 명령어. 예: "/fix"
-    arg: str = ""  # "/fix model"의 "model"
+    arg: str = ""  # "/fix model"의 "model", "/recheck abc1234"의 "abc1234"
 
 
 def parse_command(text: str) -> ParsedCommand:
@@ -32,7 +32,7 @@ def parse_command(text: str) -> ParsedCommand:
     word, _, rest = text.strip().partition(" ")
     word = word.lower()
     if word == RECHECK:
-        return ParsedCommand("recheck", word)
+        return ParsedCommand("recheck", word, rest.strip())
     if word == FIX:
         return ParsedCommand("fix", word, rest.strip().lower())
     return ParsedCommand("unknown", word)

@@ -1,6 +1,7 @@
 """`command` 작업: PR 코멘트 명령 처리 (docs/DESIGN.md 4.9 명령).
 
-- `/recheck`: PR의 지금 head로 다시 검사한다
+- `/recheck`: PR의 지금 head로 다시 검사한다. 신뢰되지 않은 작성자의 PR에서는 커밋을 적은
+  `/recheck <커밋>`만 승인이고, 그 커밋이 지금 head일 때만 그 커밋을 검사한다 (8.6)
 - `/fix <묶음>`: 승인을 기다리는 수정을 승인하고, 이 커밋에서 수정안을 내지 못하고 끝난 수정(검증
   실패, 호출 상한)을 다시 돌린다. 묶음은 `mechanical`·`model`이고, 인자가 없으면 할 일이 남은 묶음
   전부다. v1의 `/fix lint`는 3단계에 지원하지 않는 명령이 되었다 (그 경로가 `mechanical`이 되었다)
@@ -11,10 +12,12 @@
 
 import logging
 
+from app.models.access import BadCommit, Commit, NeedsApproval, NoCommit, approval_arg, may_approve
 from app.models.command import FIX_TARGETS, parse_command
 from app.models.job import PRJob
-from app.worker import graph, proposal, retry, update
+from app.worker import graph, guard, proposal, retry, update
 from app.worker.deps import Deps
+from app.worker.github import PullRefs
 
 log = logging.getLogger(__name__)
 
@@ -70,14 +73,19 @@ def process_command(job: PRJob, deps: Deps) -> str:
     _, final = retry.attempt()
     try:
         refs = deps.github.pr_refs(job.repo, job.pr_number)
-        if not refs.open:
+        gate = guard.check(job, deps, refs) if refs.open else None
+        if gate is None:
             result = "closed"
-        elif update.untrusted(job, refs):  # 명령을 단 사람이 신뢰돼도 승인으로 치지 않는다 (8.6)
-            result = update.UNTRUSTED_AUTHOR
+        elif isinstance(gate.decision, NeedsApproval):
+            # `/fix`는 누가 달아도 승인이 아니다. 승인은 커밋을 적은 `/recheck <커밋>`뿐이다
+            if parsed.name == "recheck":
+                result = _approve(job, deps, gate)
+            else:
+                result = guard.block(job, deps, refs)
         elif parsed.name == "recheck":
-            result = f"recheck:{update.process_update(_target(job, refs), deps)}"
+            result = f"recheck:{update.run_admitted(_target(job, refs), deps, refs)}"
         else:
-            result = _fix(job, deps, parsed.word, parsed.arg, _target(job, refs))
+            result = _fix(job, deps, parsed.word, parsed.arg, refs)
     except Exception:  # 환경 오류든 버그든 재시도는 RQ가 한다
         if final:
             # 마지막 시도면 실패로 적고 키를 지운다. 적지 않으면 동기화가 주기마다 다시 넣는다.
@@ -89,8 +97,44 @@ def process_command(job: PRJob, deps: Deps) -> str:
     return result
 
 
-def _target(job: PRJob, refs) -> PRJob:
-    """명령이 가리키는 PR의 지금 커밋에 대한 update 작업."""
+def _approve(job: PRJob, deps: Deps, gate: guard.Gate) -> str:
+    """신뢰되지 않은 작성자의 PR에 달린 `/recheck`. 승인이면 기록하고 그 커밋 하나를 검사한다.
+
+    승인자와 명령의 글은 작업에 실린 값이 아니라 지금 GitHub에서 읽은 코멘트로 확인한다. 승인할
+    수 없는 사람이면 다른 신뢰되지 않은 명령처럼 답하지 않는다. 커밋이 없거나, 7자 미만이거나,
+    지금 head가 아니면 실행하지 않고 답한다. 답에는 코멘트에 쓴 글을 옮기지 않는다.
+    """
+    assert job.comment_id is not None
+    refs = gate.refs
+    comment = deps.github.issue_comment(job.repo, job.comment_id)
+    if comment.pr_number != job.pr_number or not may_approve(
+        comment.association, comment.login, gate.access
+    ):
+        log.warning(
+            "승인할 수 없는 사람의 /recheck라 무시함: %s#%d 코멘트 %d %r (%r)",
+            job.repo, job.pr_number, job.comment_id, comment.login, comment.association,
+        )  # fmt: skip
+        return "approver_not_trusted"
+    lines = comment.body.strip().splitlines()
+    parsed = parse_command(lines[0] if lines else "")
+    if parsed.name != "recheck":
+        return "approval_comment_changed"  # 큐에서 기다리는 사이에 코멘트가 고쳐졌다
+    match approval_arg(parsed.arg):
+        case NoCommit():
+            deps.github.reply(job.repo, job.pr_number, guard.missing_commit_reply(refs.head_sha))
+            return "approval_missing_commit"
+        case BadCommit():
+            deps.github.reply(job.repo, job.pr_number, guard.bad_commit_reply(refs.head_sha))
+            return "approval_bad_commit"
+        case Commit() as commit if not commit.matches(refs.head_sha):
+            deps.github.reply(job.repo, job.pr_number, guard.head_moved_reply(refs.head_sha))
+            return "approval_head_moved"
+    deps.store.add_approval(job.repo, job.pr_number, refs.head_sha, comment.login, job.comment_id)
+    return f"approved:{update.run_admitted(_target(job, refs), deps, refs)}"
+
+
+def _target(job: PRJob, refs: PullRefs) -> PRJob:
+    """명령이 가리키는 PR의 지금 커밋에 대한 update 작업. 작업에 실린 작성자 값(기록용)은 옮긴다."""
     return PRJob(
         repo=job.repo,
         pr_number=job.pr_number,
@@ -98,15 +142,18 @@ def _target(job: PRJob, refs) -> PRJob:
         head_sha=refs.head_sha,
         base_sha=refs.base_sha,
         source=job.source,
+        author_association=job.author_association,
+        author_login=job.author_login,
     )
 
 
-def _fix(job: PRJob, deps: Deps, word: str, arg: str, target: PRJob) -> str:
+def _fix(job: PRJob, deps: Deps, word: str, arg: str, refs: PullRefs) -> str:
     """arg의 묶음마다 재개할 수정이 있으면 차례로 이어 간다. 하나도 없으면 그 이유를 답한다.
 
     모델 묶음을 다시 돌릴 때는 PR 호출 상한을 한 번 더 준다 (9.2). 같은 코멘트를 다시 처리해도
     (재시도) 한 번이고, 이미 처리한 묶음은 재개할 것이 없어 건너뛴다.
     """
+    target = _target(job, refs)
     skills = FIX_TARGETS.get(arg)
     if skills is None:
         deps.github.reply(job.repo, job.pr_number, fix_unsupported_message(word, arg))
@@ -119,7 +166,7 @@ def _fix(job: PRJob, deps: Deps, word: str, arg: str, target: PRJob) -> str:
         if skill == graph.MODEL and pending == "rerun":
             deps.store.add_call_grant(job.repo, job.pr_number, target.head_sha, job.comment_id)
         approval = {"skill": skill, "comment_id": job.comment_id}
-        results.append(update.resume_fix(target, deps, approval))
+        results.append(update.resume_fix(target, deps, approval, guard.author(refs)))
     if results:
         return ";".join(results)
     # 제안 PR을 닫거나 머지한 뒤 바로 /fix를 달 수 있으니 기록을 GitHub과 맞춘 뒤 본다

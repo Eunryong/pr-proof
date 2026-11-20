@@ -11,6 +11,7 @@ worktree 밖 파일에 적고(`record_git_dir`), worktree에서 도는 git은 �
 """
 
 import os
+import re
 import shutil
 import subprocess
 import uuid
@@ -136,6 +137,32 @@ def fetch_pr(bare: Path, pr_number: int, base_sha: str) -> None:
         base_sha,
         cwd=bare,
     )  # fmt: skip
+
+
+def fetch_commit(bare: Path, sha: str) -> None:
+    """커밋 하나를 bare 캐시로 가져온다. 이미 있으면 받지 않는다. PR head는 가져오지 않는다."""
+    if not re.fullmatch(r"[0-9a-f]{40}", sha):
+        raise GitError(f"커밋 해시가 아님: {sha!r}")
+    try:
+        _git("cat-file", "-e", f"{sha}^{{commit}}", cwd=bare)
+        return
+    except GitError:
+        pass
+    _git("fetch", "--quiet", "--no-tags", "origin", sha, cwd=bare)
+
+
+def bare_entries(bare: Path, sha: str, paths: Sequence[str]) -> dict[str, TreeEntry]:
+    """worktree 없이 bare 캐시의 커밋에서 paths의 (모드, blob 해시, 크기)를 읽는다."""
+    if not paths:
+        return {}
+    listed = _git("ls-tree", "-l", "-z", sha, "--", *paths, cwd=bare)
+    wanted = set(paths)
+    return {path: e for path, e in _tree_entries(listed).items() if path in wanted}
+
+
+def bare_blob(bare: Path, blob_sha: str) -> str:
+    """bare 캐시의 blob 하나를 글로 읽는다. 글로 읽을 수 없는 바이트면 UnicodeDecodeError."""
+    return _git("cat-file", "blob", blob_sha, cwd=bare)
 
 
 def list_base_entries(worktree: Path, base_sha: str, paths: Sequence[str]) -> dict[str, TreeEntry]:

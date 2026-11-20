@@ -3,59 +3,45 @@
 import logging
 from typing import Any, Final
 
-from app.models.access import may_run
+from app.models.access import Author, NeedsApproval
 from app.models.install import install_failure_outcome
 from app.models.job import PRJob
 from app.sandbox import docker_cli
-from app.worker import doc_rules, graph, proposal, report, retry
+from app.worker import doc_rules, graph, guard, proposal, report, retry
 from app.worker.deps import Deps
-from app.worker.github import GitHubError
+from app.worker.github import PullRefs
 from app.worker.lang.python import DependencyInstallError
 
 CLOSED_HEAD: Final = "closed"  # PR이 닫혔다는 Redis 최신 head 표시. 어떤 커밋 SHA와도 같지 않다
-UNTRUSTED_AUTHOR: Final = "untrusted_author"  # 신뢰되지 않은 사람이 연 PR이라 아무것도 하지 않음
 
 log = logging.getLogger(__name__)
 
 
-def untrusted(job: PRJob, refs) -> bool:
-    """PR 작성자가 신뢰되지 않으면 True (8.6의 임시 가드레일). 판단은 방금 조회한 값으로만 한다."""
-    if may_run(refs.author_association):
-        return False
-    log.warning(
-        "신뢰되지 않은 작성자의 PR이라 아무것도 하지 않음: %s#%d 작성자 %r (%r)",
-        job.repo, job.pr_number, refs.author_login, refs.author_association,
-    )  # fmt: skip
-    return True
-
-
-def _skip_reason(job: PRJob, deps: Deps, final: bool) -> str | None:
-    """GitHub에서 PR의 지금 상태를 확인한다. 검사하지 않을 작업이면 그 이유를, 검사할 작업이면 None.
+def _admit(job: PRJob, deps: Deps, final: bool) -> PullRefs | str:
+    """GitHub에서 PR의 지금 상태를 확인하고 가드레일을 지난다 (8.6). 검사할 작업이면 조회한 PR을,
+    아니면 결과 이름을 돌려준다.
 
     닫힌 PR은 검사하지 않는다. 닫히기 전에 등록된 작업이 닫힌 뒤에 실행될 수 있다(워커가 죽어 RQ가
     나중에 다시 실행한 경우). 그대로 두면 닫힌 PR의 코멘트를 고치고 제안 PR을 연다. 최신 head를
     닫힘 표시로 되돌려, 이미 돌고 있는 작업도 멈추게 한다.
 
-    웹훅은 순서대로 오지 않을 수 있다. 옛 커밋의 웹훅이 늦게 오면 Redis의 최신 head가 옛 커밋으로
-    덮이고, 그대로 두면 옛 커밋의 결과가 PR에 남는다. 그래서 최신 head를 GitHub의 값으로 바로잡는다.
-    확인에 실패하면 환경 오류로 재시도한다(아직 runs 기록 전이므로 마지막 시도면 작업 키만 지운다).
-
-    신뢰되지 않은 사람이 연 PR이면 체크아웃도 코멘트도 기록도 없이 끝낸다. 같은 조회에서 읽은
-    작성자 값으로 정한다.
+    신뢰되지 않은 작성자의 PR이고 지금 head가 승인되지 않았으면 승인 안내만 달고 끝낸다. 같은
+    조회에서 읽은 작성자 값으로 정한다. 조회나 base 설정 읽기에 실패하면 환경 오류로 재시도한다
+    (아직 runs 기록 전이므로 마지막 시도면 작업 키만 지운다).
     """
     try:
         refs = deps.github.pr_refs(job.repo, job.pr_number)
-    except GitHubError:
+        if not refs.open:
+            deps.store.set_latest_head(job.repo, job.pr_number, CLOSED_HEAD)
+            return "closed"
+        gate = guard.check(job, deps, refs)
+        if isinstance(gate.decision, NeedsApproval):
+            return guard.block(job, deps, refs)
+    except retry.EnvironmentFailure:
         if final:
             deps.store.release(job)
         raise
-    if not refs.open:
-        deps.store.set_latest_head(job.repo, job.pr_number, CLOSED_HEAD)
-        return "closed"
-    if untrusted(job, refs):
-        return UNTRUSTED_AUTHOR
-    deps.store.set_latest_head(job.repo, job.pr_number, refs.head_sha)
-    return None if refs.head_sha == job.head_sha else "stale"
+    return refs
 
 
 def _context(deps: Deps, run_id: int, comment_id: int | None) -> graph.FlowContext:
@@ -80,12 +66,15 @@ def pending_fix(job: PRJob, deps: Deps, bundle: str) -> graph.PendingFix | None:
     return graph.pending_kind(job, _context(deps, run_id=0, comment_id=None), bundle)
 
 
-def resume_fix(job: PRJob, deps: Deps, approval: dict[str, Any]) -> str:
-    """/fix 승인: 멈춰 있던 그래프를 수정 단계부터 이어 간다. job은 PR의 지금 head의 update 작업."""
+def resume_fix(job: PRJob, deps: Deps, approval: dict[str, Any], author: Author) -> str:
+    """/fix 승인: 멈춰 있던 그래프를 수정 단계부터 이어 간다. job은 PR의 지금 head의 update 작업.
+
+    가드레일(8.6)을 지난 명령 작업에서만 부른다. author는 그때 GitHub에서 읽은 PR 작성자다.
+    """
     store = deps.store
     _, final = retry.attempt()
     store.set_latest_head(job.repo, job.pr_number, job.head_sha)
-    run_id = store.start_run(job, kind="fix")
+    run_id = store.start_run(job, kind="fix", author=author)
     ctx = _context(deps, run_id, store.last_comment_id(job.repo, job.pr_number))
     try:
         result = graph.resume_fix(job, ctx, approval)
@@ -110,13 +99,26 @@ def resume_fix(job: PRJob, deps: Deps, approval: dict[str, Any]) -> str:
 
 
 def process_update(job: PRJob, deps: Deps) -> str:
+    _, final = retry.attempt()
+    admitted = _admit(job, deps, final)
+    if isinstance(admitted, str):
+        return admitted  # closed, needs_approval: 할 일이 없다
+    return run_admitted(job, deps, admitted)
+
+
+def run_admitted(job: PRJob, deps: Deps, refs: PullRefs) -> str:
+    """가드레일(8.6)을 지난 update 작업을 돌린다. refs는 같은 작업에서 방금 조회한 PR이다.
+
+    웹훅은 순서대로 오지 않을 수 있다. 옛 커밋의 웹훅이 늦게 오면 Redis의 최신 head가 옛 커밋으로
+    덮이고, 그대로 두면 옛 커밋의 결과가 PR에 남는다. 그래서 최신 head를 GitHub의 값으로 바로잡고,
+    이 작업의 커밋이 지금 head가 아니면 더 새 커밋의 작업(또는 동기화)에 맡긴다.
+    """
     store, github = deps.store, deps.github
     attempt, final = retry.attempt()
-    skip = _skip_reason(job, deps, final)
-    if skip is not None:
-        # stale: 더 새 커밋의 작업(또는 동기화)이 처리한다. closed, untrusted_author: 할 일이 없다
-        return skip
-    run_id = store.start_run(job)
+    store.set_latest_head(job.repo, job.pr_number, refs.head_sha)
+    if refs.head_sha != job.head_sha:
+        return "stale"
+    run_id = store.start_run(job, author=guard.author(refs))
     comment_id = store.last_comment_id(job.repo, job.pr_number)
     ctx = _context(deps, run_id, comment_id)
     try:

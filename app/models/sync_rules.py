@@ -37,6 +37,10 @@ def enqueue_reason(
     if any(run.state == "done" for run in runs):
         return None  # 결과가 이미 있다. 새 커밋이 올 때만 검사한다
     last = runs[-1]
+    if last.state == "blocked":
+        # 신뢰되지 않은 작성자의 PR이라 승인을 기다린다 (8.6). 승인(`/recheck <커밋>`)이나 새 커밋이
+        # 와야 다시 검사한다. 주기마다 다시 넣지 않는다
+        return None
     if last.state == "error":
         # 파이프라인 버그나 시간 초과는 같은 커밋으로 다시 돌려도 같은 결과다. 새 커밋 때만 검사한다
         return None

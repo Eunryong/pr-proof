@@ -10,8 +10,10 @@ from sqlalchemy.schema import CreateColumn
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from app.models import state_keys
+from app.models.access import Author
 from app.models.call_budget import RulesetScope, Scope, Spent
 from app.models.db import (
+    Approval,
     CallGrant,
     CheckerEntry,
     CommandRecord,
@@ -75,8 +77,11 @@ class Store:
 
     # --- SQLite ---
 
-    def start_run(self, job: PRJob, kind: str | None = None) -> int:
-        """kind는 기본으로 작업 종류. /fix 재개는 "fix"로 남긴다."""
+    def start_run(
+        self, job: PRJob, kind: str | None = None, *, author: Author | None = None
+    ) -> int:
+        """kind는 기본으로 작업 종류. /fix 재개는 "fix"로 남긴다. author는 워커가 GitHub에서 읽은
+        PR 작성자이고, 작업에 실린 값과 함께 남긴다 (8.6)."""
         now = _now()
         run = Run(
             repo=job.repo,
@@ -87,11 +92,40 @@ class Store:
             state="running",
             started_at=now,
             heartbeat_at=now,
+            author_association=author.association if author else None,
+            author_login=author.login if author else None,
+            job_author_association=job.author_association,
+            job_author_login=job.author_login,
         )
         with Session(self.engine) as session:
             session.add(run)
             session.commit()
             return run.id
+
+    def record_blocked(
+        self, job: PRJob, head_sha: str, author: Author, comment_id: int | None
+    ) -> None:
+        """신뢰되지 않은 작성자의 PR이라 승인 안내만 달고 끝낸 작업 (8.6)."""
+        run_id = self.start_run(job.model_copy(update={"head_sha": head_sha}), author=author)
+        self.finish_run(run_id, "blocked", comment_id=comment_id)
+
+    def add_approval(
+        self, repo: str, pr_number: int, head_sha: str, approver: str, comment_id: int
+    ) -> None:
+        """`/recheck <커밋>` 하나의 승인. 같은 코멘트로 다시 불려도 하나다."""
+        with Session(self.engine) as session:
+            if session.get(Approval, comment_id) is None:
+                session.add(Approval(comment_id=comment_id, repo=repo, pr_number=pr_number,
+                                     head_sha=head_sha, approver=approver,
+                                     created_at=_now()))  # fmt: skip
+                session.commit()
+
+    def approved_shas(self, repo: str, pr_number: int) -> set[str]:
+        with Session(self.engine) as session:
+            stmt = select(Approval.head_sha).where(
+                Approval.repo == repo, Approval.pr_number == pr_number
+            )
+            return set(session.exec(stmt))
 
     def heartbeat(self, run_id: int) -> None:
         with Session(self.engine) as session:

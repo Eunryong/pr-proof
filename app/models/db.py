@@ -7,7 +7,8 @@ from sqlalchemy import UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 # error: 환경 오류가 아닌 예외(파이프라인 버그, 작업 시간 초과). 같은 커밋은 다시 넣지 않는다
-RunState = Literal["running", "done", "cancelled", "env_error", "error"]
+# blocked: 신뢰되지 않은 작성자의 PR이라 승인 안내만 달고 끝냈다 (8.6). 같은 커밋은 다시 넣지 않는다
+RunState = Literal["running", "done", "cancelled", "env_error", "error", "blocked"]
 
 
 # open: 열려 있음, merged: 머지됨, superseded: 원본 PR에 새 커밋이 와서 파이프라인이 닫음,
@@ -75,6 +76,29 @@ class Run(SQLModel, table=True):
     started_at: datetime
     heartbeat_at: datetime
     finished_at: datetime | None = None
+    # PR 작성자 (8.6). 판단에 쓴 값은 워커가 GitHub의 PR 조회에서 읽은 것이고, `job_` 쪽은 작업을
+    # 만든 경로가 `PRJob`에 실은 기록용 값이다. 둘이 다르면 여기서 알 수 있다
+    author_association: str | None = None
+    author_login: str | None = None
+    job_author_association: str | None = None
+    job_author_login: str | None = None
+
+
+class Approval(SQLModel, table=True):
+    """외부 작성자 PR의 승인 (DESIGN.md 8.6). 승인은 적힌 커밋 하나에만 적용한다.
+
+    워커가 `/recheck <커밋>`을 처리하며, 승인자의 권한과 커밋을 GitHub에서 읽은 값으로 확인한
+    뒤에만 쓴다. 같은 코멘트를 다시 처리해도(재시도) 한 줄이다.
+    """
+
+    __tablename__ = "approvals"
+
+    comment_id: int = Field(primary_key=True)
+    repo: str = Field(index=True)
+    pr_number: int = Field(index=True)
+    head_sha: str  # 전체 해시
+    approver: str  # 승인자의 로그인 이름
+    created_at: datetime
 
 
 class ModelCacheEntry(SQLModel, table=True):

@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
+from app.models.access import AccessSettings, parse_access
 from app.models.repo_config import (
     LINT,
     RepoConfig,
@@ -75,6 +76,32 @@ def _read_settings(
     return files, blobs, problems
 
 
+def load_access(
+    data_dir: Path, repo_name: str, base_sha: str, *, url: str | None = None
+) -> AccessSettings:
+    """외부 작성자 PR 가드레일의 `access` (8.6). PR의 코드를 체크아웃하기 전에 읽는다.
+
+    worktree를 만들지 않고 bare 캐시에서 base 커밋의 `.pipeline.yaml` blob만 읽는다. 일반 파일이
+    아니거나 너무 크거나 글이 아니면 기본값이다. 문제는 검사가 돌 때 `load`가 "설정:"에 알린다.
+    git이 실패하면 GitError를 올려 실행하지 않는다.
+    """
+    bare = repo.ensure_bare(data_dir, repo_name, url)
+    repo.fetch_commit(bare, base_sha)
+    entry = repo.bare_entries(bare, base_sha, [PIPELINE_YAML]).get(PIPELINE_YAML)
+    if (
+        entry is None
+        or entry.mode not in REGULAR_FILE_MODES
+        or entry.size is None
+        or entry.size > MAX_SETTINGS_BYTES
+    ):
+        return AccessSettings()
+    try:
+        text = repo.bare_blob(bare, entry.sha)
+    except UnicodeDecodeError:
+        return AccessSettings()
+    return parse_access(text)[0]
+
+
 def load(worktree: Path, base_sha: str, max_memory_gb: float) -> BaseConfig:
     files, blobs, problems = _read_settings(worktree, base_sha)
 
@@ -82,6 +109,7 @@ def load(worktree: Path, base_sha: str, max_memory_gb: float) -> BaseConfig:
     if problem:
         problems.append(f"`{PIPELINE_YAML}`을 읽지 못해 기본값을 씀: {problem}")
     problems += settings_notes(files.get(PIPELINE_YAML))
+    problems += parse_access(files.get(PIPELINE_YAML))[1]
     fix = fix_limits(repo_config.fix)
     if fix != repo_config.fix:
         problems.append(
