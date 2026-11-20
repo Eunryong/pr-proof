@@ -6,6 +6,9 @@ lint·static 케이스와 같은 방식이다: 예제 리포의 로컬 git 원�
 모두 진짜다. `PR_PROOF_REAL_MODEL=1`이면 로그인된 claude를 실제로 부른다 (비용이 든다. 비교용).
 
 v1 lint·static은 base의 `.pipeline.yaml`로 끈다. 이 케이스는 문서 규칙 절과 모델 수정안만 본다.
+수정안 PR의 생애를 보는 케이스는 `deliver_retry`(첫 push를 실패시키고 재시도),
+`recheck_without_calls`(같은 커밋의 `/recheck`), `rejected_next_commit`(수정안 PR을 닫고 새 커밋)을
+차례로 한다.
 케이스에 `fix`가 있으면 수정 판단은 `model.skip`에 적은 위반만 skip하고 나머지를 fix로 답하며, 수정
 작성은 케이스의 `fix` 편집을 모델 폴더에 적용하는 가짜다(검증과 수정안 PR 푸시는 진짜). `fix`가 없는
 케이스는 모든 위반을 skip으로 답해 수정까지 가지 않는다.
@@ -26,7 +29,7 @@ from app import config
 from app.models import fix_decision, rule_reading, state_keys
 from app.models.job import PRJob
 from app.models.rule import rule_id
-from app.worker import main, repo
+from app.worker import main, repo, retry
 from app.worker.ai import claude_cli
 from app.worker.ai.claude_cli import ClaudeResult, StructuredResult
 from app.worker.deps import Deps
@@ -84,6 +87,19 @@ def _remote(tmp_path: Path, eval_repo: Path, case: dict) -> dict:
         _git(path, "update-ref", f"refs/pull/{pr}/head", head)
     _git(path, "checkout", "-q", "main")
     return {"path": path, "base": base, "head": head}
+
+
+def _push_commit(remote: dict, edits: list[dict]) -> dict:
+    """원본 PR(#1)의 브랜치에 새 커밋을 올린다."""
+    path = remote["path"]
+    _git(path, "checkout", "-q", "feature")
+    _apply(path, edits)
+    _git(path, "add", "-A")
+    _git(path, "commit", "-q", "-m", "next")
+    head = _git(path, "rev-parse", "HEAD")
+    _git(path, "update-ref", "refs/pull/1/head", head)
+    _git(path, "checkout", "-q", "main")
+    return {**remote, "head": head}
 
 
 def _answer(data: dict) -> StructuredResult:
@@ -196,6 +212,7 @@ def deps_for(tmp_path: Path, shared_venvs: Path, tool_cache: Path, monkeypatch):
 
 
 def _check(deps: Deps, gh: FakeGh, redis, remote: dict, pr: int) -> str:
+    gh.head = remote["head"]
     redis.set(state_keys.latest_head(REPO, pr), remote["head"])
     job = PRJob(repo=REPO, pr_number=pr, kind="update", head_sha=remote["head"],
                 base_sha=remote["base"], source="webhook")  # fmt: skip
@@ -220,7 +237,12 @@ def test_rules_case(case_path: Path, eval_repo: Path, deps_for, tmp_path: Path,
     remote = _remote(tmp_path, eval_repo, case)
     deps, gh, redis = deps_for(remote)
 
-    section = doc_rules_section(_check(deps, gh, redis, remote, pr=1))
+    if expect.get("deliver_retry"):
+        section = doc_rules_section(
+            _check_with_failed_push(deps, gh, redis, remote, fixer, monkeypatch)
+        )
+    else:
+        section = doc_rules_section(_check(deps, gh, redis, remote, pr=1))
     found = flagged(section)
     assert found == sorted(expect["violations"]), section
     assert not set(found) & set(expect.get("not_flagged", ())), section
@@ -236,11 +258,87 @@ def test_rules_case(case_path: Path, eval_repo: Path, deps_for, tmp_path: Path,
 
     if "fix" in expect:
         _check_fix(expect, section, gh, remote, fixer, real_model)
+    if expect.get("deliver_retry"):
+        _check_same_patch_pushed(deps, remote)
+    if expect.get("recheck_without_calls"):
+        _check_recheck(deps, gh, redis, remote, fixer)
+    if "rejected_next_commit" in expect:
+        _check_rejection(expect["rejected_next_commit"], deps, gh, redis, remote, fixer)
 
     if expect.get("second_pr_without_calls"):
         again = doc_rules_section(_check(deps, gh, redis, remote, pr=2))
         assert "모델 호출 0회" in again, again
         assert flagged(again) == found
+
+
+def _made_calls(deps: Deps) -> list[int]:
+    """저장된 결과를 쓴 줄을 뺀 실제 모델 호출 기록."""
+    return [c.id for c in deps.store.model_calls(REPO, 1) if not c.cache_hit]
+
+
+def _check_with_failed_push(deps: Deps, gh: FakeGh, redis, remote: dict, fixer, monkeypatch):
+    """2-3: 검증을 통과한 뒤 첫 push를 실패시키고, RQ의 재시도처럼 같은 작업을 다시 돌린다. 모델
+    호출 기록(`ai_calls`)에 새 줄이 생기지 않는다."""
+    real_push, real_attempt = repo.commit_and_push, retry.attempt
+    left = [1]
+
+    def failing_once(*args, **kwargs):
+        if left:
+            left.pop()
+            raise repo.GitError("일부러 실패시킨 push (2-3)")
+        return real_push(*args, **kwargs)
+
+    monkeypatch.setattr(repo, "commit_and_push", failing_once)
+    with pytest.raises(repo.GitError, match="일부러 실패시킨 push"):
+        _check(deps, gh, redis, remote, pr=1)
+    assert gh.pulls == {} and _git(remote["path"], "branch", "--list", BRANCH) == ""
+    rows, written = deps.store.model_calls(REPO, 1), len(fixer.calls)
+    monkeypatch.setattr(retry, "attempt", lambda: (2, True))
+    body = _check(deps, gh, redis, remote, pr=1)
+    monkeypatch.setattr(retry, "attempt", real_attempt)
+    assert deps.store.model_calls(REPO, 1) == rows and len(fixer.calls) == written
+    return body
+
+
+def _changed_lines(patch: str) -> list[str]:
+    return [line for line in patch.splitlines()
+            if line[:1] in "+-" and not line.startswith(("+++", "---"))]  # fmt: skip
+
+
+def _check_same_patch_pushed(deps: Deps, remote: dict) -> None:
+    """올라간 커밋의 변경이 검증을 통과해 저장한 패치(`fix_attempts`)와 같다."""
+    (proposal,) = deps.store.proposals(REPO, 1)
+    stored = deps.store.fix_attempt(proposal.attempt_id)
+    pushed = _git(remote["path"], "-c", "diff.noprefix=false", "diff", "--no-color",
+                  "--no-ext-diff", remote["head"], BRANCH)  # fmt: skip
+    assert stored.status == "ready" and _changed_lines(pushed) == _changed_lines(stored.patch)
+
+
+def _check_recheck(deps: Deps, gh: FakeGh, redis, remote: dict, fixer) -> None:
+    """2-4: 같은 커밋에 `/recheck`를 달면 모든 단계의 모델 호출이 0이다."""
+    calls, written = _made_calls(deps), len(fixer.calls)
+    job = PRJob(repo=REPO, pr_number=1, kind="command", command="/recheck", comment_id=70,
+                source="webhook")  # fmt: skip
+    assert main.handle(job.model_dump_json(), deps).startswith("recheck:")
+    section = doc_rules_section(_bodies(gh)[-1])
+    assert _made_calls(deps) == calls and len(fixer.calls) == written, section
+    assert "모델 호출 0회 / 상한" in section
+    assert "수정 판단: fix 1건, skip 0건 · 모델 호출 0회" in section
+    assert "이 커밋의 모델 수정안 PR #900이 열려 있습니다." in section, section
+
+
+def _check_rejection(then: dict, deps: Deps, gh: FakeGh, redis, remote: dict, fixer) -> None:
+    """2-6: 사람이 수정안 PR을 닫은 뒤 새 커밋을 올리면 거절 기록이 하나 남고, 같은 줄은
+    skip(이전에 거절됨)이다. 수정 작성을 다시 부르지 않는다."""
+    ((number, pull),) = gh.pulls.items()
+    pull["state"] = "closed"
+    written = len(fixer.calls)
+    section = doc_rules_section(_check(deps, gh, redis, _push_commit(remote, then["edits"]), pr=1))
+    (record,) = deps.store.records(REPO, 1)
+    assert (record.kind, record.origin, record.fix_pr_number) == ("rejected", "fix_pr", number)
+    assert len(fixer.calls) == written and list(gh.pulls) == [number], section
+    for text in then["contains"]:
+        assert text in section, (text, section)
 
 
 def _check_fix(expect: dict, section: str, gh: FakeGh, remote: dict, fixer, real_model: bool):

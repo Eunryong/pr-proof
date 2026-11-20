@@ -293,6 +293,11 @@ def apply_patch(worktree: Path, patch: bytes) -> None:
         raise GitError(f"git apply 실패 ({proc.returncode}): {detail}")
 
 
+def commit_diff(worktree: Path, old: str, new: str, path: str) -> str:
+    """두 커밋 사이의 파일 하나의 diff. 작성자가 자기 커밋으로 고친 기록(4.10)에 쓴다."""
+    return _tree_git(worktree, *_DIFF, old, new, "--", path)
+
+
 def head_diff(worktree: Path) -> str:
     """체크아웃한 커밋과 worktree 사이의 diff. 수정안 자체다."""
     return _tree_git(worktree, *_DIFF, "HEAD")

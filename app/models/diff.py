@@ -226,6 +226,47 @@ def change_blocks(diff: str) -> tuple[ChangeBlock, ...]:
     return tuple(blocks)
 
 
+def hunk_removing(diff: str, file: str, line_text: str, max_lines: int) -> str:
+    """file의 hunk 중 앞뒤 공백을 뺀 내용이 line_text인 줄을 지운(바꾼) 것. 없으면 그 파일의 첫
+    hunk, 그 파일이 diff에 없으면 "". hunk 헤더를 포함해 max_lines줄까지 자른다.
+
+    과거 기록(6.1)에 넣는 "관련 hunk"다. 위반 줄은 고친 쪽에서 지워진 줄로 보인다.
+    """
+    wanted = line_text.strip()
+    current: str | None = None
+    old_left = new_left = 0
+    first: list[str] | None = None
+    hunk: list[str] = []
+    hit = False
+    for raw in diff.splitlines():
+        if old_left > 0 or new_left > 0:
+            hunk.append(raw)
+            tag = raw[:1]
+            if tag == "-":
+                old_left -= 1
+                hit = hit or raw[1:].strip() == wanted
+            elif tag == "+":
+                new_left -= 1
+            elif tag != "\\":
+                old_left -= 1
+                new_left -= 1
+            if old_left <= 0 and new_left <= 0 and current == file:
+                if hit:
+                    return "\n".join(hunk[:max_lines])
+                first = hunk if first is None else first
+            continue
+        if raw.startswith("diff --git ") or raw == _DELETED:
+            current = None
+        elif raw.startswith(_NEW_FILE_HEADER):
+            current = _new_path(raw)
+        elif match := _HUNK.match(raw):
+            old_count, _, new_count = match.groups()
+            old_left = int(old_count) if old_count is not None else 1
+            new_left = int(new_count) if new_count is not None else 1
+            hunk, hit = [raw], False
+    return "\n".join(first[:max_lines]) if first is not None else ""
+
+
 def touches(changed: ChangedLines, file: str, start: int, end: int) -> bool:
     """file의 start–end 줄 범위가 PR이 바꾼 줄을 하나라도 포함하는지.
 

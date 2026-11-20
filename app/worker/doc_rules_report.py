@@ -102,6 +102,7 @@ class FixView:
     number: int | None = None  # merged·open·rejected의 수정안 PR 번호
     fix: ModelFix | None = None  # state가 done일 때
     proposal: ProposalResult | None = None
+    patch: str = ""  # 검증을 통과한 패치 (`fix_attempts`). 수정안 PR을 열지 못했을 때 보인다
 
 
 # 확인 대상이 코드 줄이 아닌 규칙 (4.3). 검사하지 못한 것이 아니라 검사 대상이 아니다
@@ -292,8 +293,8 @@ def _fix_result(view: FixView) -> list[str]:
         lines.append(f"수정안 크기 상한으로 처리하지 못함: {view.size_capped}건")
     lines.append(_fix_usage(fix))
     shown = fix.ready and proposal is not None and proposal.number is None
-    if shown and not proposal.secret_blocked and fix.patch_path and fix.patch_path.is_file():
-        patch = fix.patch_path.read_text()
+    if shown and not proposal.secret_blocked and view.patch:
+        patch = view.patch
         if len(patch) > MAX_PATCH_CHARS:
             patch = patch[:MAX_PATCH_CHARS] + "\n… (생략)"
         fence = code_fence(patch)

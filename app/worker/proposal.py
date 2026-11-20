@@ -23,7 +23,7 @@ from app.models.fix import FixOutcome
 from app.models.job import PRJob
 from app.models.model_fix import Explanation, ModelFix
 from app.models.proposal import ProposalResult
-from app.worker import repo
+from app.worker import records, repo
 from app.worker.github import GitHub
 from app.worker.markdown import inline_code
 from app.worker.report import code_fence, format_test_line
@@ -38,13 +38,17 @@ log = logging.getLogger(__name__)
 
 
 def refresh(store: Store, github: GitHub, repo_name: str, pr_number: int) -> None:
-    """열린 제안의 상태를 GitHub에서 확인해 기록한다. 머지 여부는 커밋 메시지로 판단하지 않는다."""
+    """열린 제안의 상태를 GitHub에서 확인해 기록한다. 머지 여부는 커밋 메시지로 판단하지 않는다.
+
+    문서 규칙 수정안이 머지됐거나 닫혔으면 채택·거절 기록을 남긴다 (4.10).
+    """
     for p in store.proposals(repo_name, pr_number, state="open"):
         status = github.pull_status(repo_name, p.number)
         if status.merged:
             store.set_proposal_state(p.id, "merged", merge_commit=status.merge_commit)
         elif not status.open:
             store.set_proposal_state(p.id, "rejected")
+    records.after_proposals(store, repo_name, pr_number, pipeline_secrets())
 
 
 def supersede(store: Store, github: GitHub, repo_name: str, pr_number: int, head_sha: str) -> None:
@@ -240,11 +244,14 @@ def open_model_proposal(
     fix: ModelFix,
     found: Found,
     *,
+    patch: str,
     skipped: int,
     secrets: Sequence[str] | None = None,
 ) -> ProposalResult:
     """검증을 통과한 모델 수정안을 수정안 PR로 올린다 (4.9). 올리지 못하면 이유를 돌려준다.
 
+    worktree에는 저장한 패치(patch)가 적용돼 있다(`model_fix.reapply`). 다시 불러도 같은 브랜치에
+    같은 내용을 강제 푸시하고 열린 수정안 PR은 제목·본문만 고치므로 중복되지 않는다 (5.6).
     포크에서 온 PR에는 열지 않는다 (8.5). 그때는 결과 코멘트에 수정 내용만 보인다.
     """
     refs = github.pr_refs(job.repo, job.pr_number)
@@ -252,7 +259,6 @@ def open_model_proposal(
         return ProposalResult(reason=FORK_NO_PR)
     if refs.head_sha != job.head_sha:
         return ProposalResult(reason="그 사이 새 커밋이 올라옴")
-    patch = fix.patch_path.read_text() if fix.patch_path else ""
     secrets = list(pipeline_secrets() if secrets is None else secrets)
     blocker = rules.push_blocker(patch, fix.changed_files, secrets)
     if blocker is not None:
@@ -278,8 +284,11 @@ def open_model_proposal(
         number = existing
     else:
         number = github.create_pr(job.repo, refs.head_ref, branch, title, body)
-    # 거절 기록(같은 줄을 다음 커밋에서 다시 고치지 않기)은 기록 저장 단위에서 넣는다
-    store.record_proposal(job.repo, job.pr_number, MODEL_BUNDLE, job.head_sha, branch, number)
+    # 머지·닫힘의 기록(4.10)은 이 시도의 대상 위반에서 만든다. 거절되면 다음 커밋에서 같은 줄을 skip
+    store.record_proposal(
+        job.repo, job.pr_number, MODEL_BUNDLE, job.head_sha, branch, number,
+        attempt_id=fix.attempt_id,
+    )  # fmt: skip
     return ProposalResult(
         number=number,
         url=f"https://github.com/{job.repo}/pull/{number}",

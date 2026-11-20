@@ -66,6 +66,7 @@ from app.worker import (
     doc_rules,
     model_fix,
     proposal,
+    records,
     repo,
     report,
 )
@@ -101,6 +102,8 @@ DETECT: Final = "detect"
 DECIDE: Final = "decide"
 FIX_MODEL: Final = "fix_model"
 DELIVER_MODEL: Final = "deliver_model"
+# 작업을 다시 시도할 때 처음부터 하지 않고 이어 가는 node. 앞 node의 결과(검증한 패치)가 저장돼 있다
+RESUMABLE: Final = frozenset({DELIVER_MODEL})
 TOOL_DIR: Final = "tools"  # 도구 캐시 (data_dir 아래, venvs와 같은 자리)
 # 체크포인트에서 되살릴 수 있는 상태 타입 (나머지는 langgraph가 막는다)
 _STATE_TYPES: Final = (
@@ -350,14 +353,27 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
         return doc_rules_done(outcomes)
 
     def detect_rules(state: FlowState) -> FlowState:
-        """채택한 검사기를 PR이 바꾼 파일에 돌린다 (5.1 detect). 바뀐 줄의 위반만 남긴다."""
+        """채택한 검사기를 PR이 바꾼 파일에 돌린다 (5.1 detect). 바뀐 줄의 위반만 남긴다.
+
+        사람이 닫은 수정안이 고친 줄에 표시하고(4.6 표의 첫 줄), 작성자가 고친 이전 위반과 이번
+        위반을 기록한다 (4.10).
+        """
         job = state["job"]
-        return doc_rules_done(
-            doc_rules.find(
-                state["rules_read"], state["rule_checks"], ctx.worktree, ctx.changes_diff,
-                doc_runtime(job), since_call=ctx.first_call,
-            )
+        result = doc_rules.find(
+            state["rules_read"], state["rule_checks"], ctx.worktree, ctx.changes_diff,
+            doc_runtime(job), since_call=ctx.first_call,
         )  # fmt: skip
+        if isinstance(result, Found):
+            result = records.mark_rejected(ctx.store, job, result)
+            merged_fix = any(
+                p.state == "merged" and p.merge_commit == job.head_sha
+                for p in ctx.store.proposals(job.repo, job.pr_number)
+            )
+            records.after_detect(
+                ctx.store, job, result, ctx.worktree, proposal.pipeline_secrets(),
+                merged_fix=merged_fix,
+            )  # fmt: skip
+        return doc_rules_done(result)
 
     def after_doc_step(state: FlowState) -> str:
         if state.get("stopped") or ctx.store.is_stale(state["job"]):
@@ -453,7 +469,9 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
         done = state.get("model_fix")
         if done is not None:
             result = state.get("proposals", {}).get(proposal.MODEL_BUNDLE)
-            return FixView(**counts, state="done", fix=done, proposal=result)
+            attempt = ctx.store.fix_attempt(done.attempt_id) if done.attempt_id else None
+            patch = (attempt.patch or "") if attempt is not None else ""
+            return FixView(**counts, state="done", fix=done, proposal=result, patch=patch)
         job = state["job"]
         history, number = proposal.blocked_by_history(
             ctx.store, job.repo, job.pr_number, proposal.MODEL_BUNDLE, job.head_sha
@@ -690,6 +708,7 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
             guarded=(ctx.base.ruff_config,) if ctx.base.ruff_config else (),
             secrets=proposal.pipeline_secrets(),
         )
+        notes = model_fix.notes_for(found, picked, ctx.worktree)
         outcome = model_fix.fix_violations(
             found, picked, worktree=ctx.worktree, merge_base=ctx.merge_base,
             test_before=state["test_run"], lint_before=state.get("lint"), store=rt.store,
@@ -698,22 +717,36 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
         )  # fmt: skip
         if outcome is None:
             return {"stopped": "cancelled"}
-        if outcome.ready:
-            patch = save_patch(job, repo.head_diff(ctx.worktree), proposal.MODEL_BUNDLE)
-            outcome = replace(outcome, patch_path=patch)
+        outcome = model_fix.save_attempt(
+            ctx.store, job, ctx.merge_base, outcome, notes, ctx.worktree
+        )
+        records.after_failed_fix(
+            ctx.store, job, outcome, notes, ctx.worktree, proposal.pipeline_secrets()
+        )
         return {"model_fix": outcome}
 
     def deliver_model(state: FlowState) -> FlowState:
-        """검증을 통과한 모델 수정안만 수정안 PR로 올린다 (5.1 deliver)."""
+        """검증을 통과한 모델 수정안만 수정안 PR로 올린다 (5.1 deliver).
+
+        늘 새 worktree에 저장한 패치(`fix_attempts`)를 적용하고 파일 해시를 맞춰 본 뒤 올린다
+        (4.8 끝). 전달이 실패해 재시도가 이 node부터 이어 가도 모델을 다시 부르지 않고 같은 패치가
+        올라간다 (3.1의 C6).
+        """
         fix = state["model_fix"]
         if not fix.ready:
             return {}
         job = state["job"]
+        fresh_worktree(job)
         progress(job, "수정안 PR")
-        skipped = sum(1 for d in state["fix_decisions"].decisions if d.action == "skip")
-        result = proposal.open_model_proposal(
-            job, ctx.worktree, ctx.store, ctx.github, fix, state["doc_rules"], skipped=skipped
-        )
+        stored = model_fix.reapply(ctx.store, fix.attempt_id, ctx.worktree)
+        if isinstance(stored, str):
+            result = ProposalResult(reason=stored)
+        else:
+            skipped = sum(1 for d in state["fix_decisions"].decisions if d.action == "skip")
+            result = proposal.open_model_proposal(
+                job, ctx.worktree, ctx.store, ctx.github, fix, state["doc_rules"],
+                patch=stored.patch or "", skipped=skipped,
+            )  # fmt: skip
         return {"proposals": {**state.get("proposals", {}), proposal.MODEL_BUNDLE: result}}
 
     def propose(state: FlowState) -> FlowState:
@@ -781,16 +814,24 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
     return graph.compile(checkpointer=checkpointer)
 
 
-def run_flow(job: PRJob, ctx: FlowContext) -> FlowState:
+def run_flow(job: PRJob, ctx: FlowContext, *, retry: bool = False) -> FlowState:
     """새 검사를 처음부터 실행한다. 같은 커밋의 이전 체크포인트는 지운다 (/recheck 등).
+
+    retry는 같은 작업을 RQ가 다시 시도하는 것이다. 지난 시도가 전달(`deliver_model`)에서 실패해
+    멈췄으면 처음부터 하지 않고 그 node부터 이어 간다 (5.6). 끝난 node는 다시 돌지 않으므로 모델
+    호출 기록도 늘지 않는다.
 
     코멘트까지 가지 못했으면 stopped가 들어 있다. 승인 대기로 멈추면 commented만 있다.
     """
     with ctx.stack:
         saver = open_checkpointer(ctx.data_dir, ctx.stack)
         config = thread_config(job)
-        saver.delete_thread(config["configurable"]["thread_id"])
-        result = build_graph(ctx, saver).invoke({"job": job}, config)
+        flow = build_graph(ctx, saver)
+        if retry and RESUMABLE & set(flow.get_state(config).next):
+            result = flow.invoke(None, config)
+        else:
+            saver.delete_thread(config["configurable"]["thread_id"])
+            result = flow.invoke({"job": job}, config)
     if not result.get("commented"):
         result.setdefault("stopped", "stale")
     return result
