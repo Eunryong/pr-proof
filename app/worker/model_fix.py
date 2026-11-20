@@ -37,7 +37,12 @@ from app.models.model_fix import (
     Verification,
     Written,
 )
-from app.models.proposal import changed_line_count, find_secret, find_secret_in_text
+from app.models.proposal import (
+    SECRET_BLOCKED,
+    changed_line_count,
+    find_secret,
+    find_secret_in_text,
+)
 from app.models.rag import (
     EMPTY,
     Selection,
@@ -343,7 +348,7 @@ def fix_violations(
         patch = repo.head_diff(worktree)
         kind = find_secret(patch, tools.secrets) or find_secret_in_text(written.text, tools.secrets)
         if kind is not None:
-            return Verdict("drop", f"비밀값으로 보이는 내용이 있음 ({kind})")
+            return Verdict("drop", f"{SECRET_BLOCKED} ({kind})")
 
         try:
             explanation = rules.parse_explanation(written.text)

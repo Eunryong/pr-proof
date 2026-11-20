@@ -4,15 +4,19 @@ import pytest
 from rq.timeouts import JobTimeoutException
 from sqlmodel import Session, select
 
+from app import config
 from app.models import state_keys
 from app.models.db import Run
 from app.models.doc_rules import NoRuleDocs
 from app.models.job import PRJob
+from app.models.ops_alert import TEXT
+from app.notify import slack
 from app.sandbox.docker_cli import SandboxError
 from app.worker import doc_rules, main, retry, update
 from app.worker.github import GitHubError
 from app.worker.lang.python import DependencyInstallError
 
+from ..notify.test_slack import Endpoint, endpoint  # noqa: F401
 from .helpers import BASE, HEAD, PASSED, bodies, use_runner
 
 
@@ -215,3 +219,37 @@ def test_sync_job_result_says_so(env) -> None:
     use_runner(env, lambda *a, **k: PASSED)
     main.handle(_payload(source="sync"), env["deps"])
     assert "동기화로 처리됨 (웹훅 누락)" in bodies(env["gh"])[-1]
+
+
+def test_last_failures_reach_slack_once_per_window(env, endpoint: Endpoint) -> None:  # noqa: F811
+    """6-4: 마지막 시도의 운영 오류가 Slack(로컬 https 가짜 엔드포인트)에 온다. 같은 저장소의 같은
+    오류는 다른 PR에서 다시 나도 30분 안에는 한 번만 온다. 앞 시도의 실패와 다른 종류는 따로 본다.
+    메시지에는 오류의 종류, 저장소#번호, 정한 글만 있다."""
+    folder = config.config_dir()  # worker/conftest.py가 정한 빈 설정 폴더
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / slack.SECRET_NAME).write_text(endpoint.url)
+    (folder / slack.SECRET_NAME).chmod(0o600)
+    env["monkeypatch"].setenv("SSL_CERT_FILE", str(endpoint.cert))
+    env["gh"].head_error = "gh: 401 token=ghp_should_not_leave"
+
+    def fail(final: bool, pr: int) -> None:
+        env["monkeypatch"].setattr(retry, "attempt", lambda: (4 if final else 1, final))
+        with pytest.raises(GitHubError):
+            main.handle(_payload(pr_number=pr), env["deps"])
+
+    fail(False, 1)
+    assert endpoint.bodies == []  # 재시도가 남은 실패는 알리지 않는다
+    fail(True, 1)
+    fail(True, 2)
+    fail(True, 1)
+    env["gh"].head_error = None
+    use_runner(env, lambda *a, **k: (_ for _ in ()).throw(RuntimeError("버그 ghp_x")))
+    env["monkeypatch"].setattr(retry, "attempt", lambda: (4, True))
+    with pytest.raises(RuntimeError):
+        main.handle(_payload(), env["deps"])
+    texts = [b["text"] for b in endpoint.bodies]
+    assert texts == [
+        "pr-proof 운영 알림 · env_error_final · o/r#1 · " + TEXT["env_error_final"],
+        "pr-proof 운영 알림 · pipeline_error · o/r#1 · " + TEXT["pipeline_error"],
+    ]
+    assert not any("ghp_" in text or "401" in text or "버그" in text for text in texts)

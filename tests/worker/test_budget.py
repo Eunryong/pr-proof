@@ -145,3 +145,20 @@ def test_model_cache_round_trip(store: Store) -> None:
     store.save_result("k", stage="checker", model="m", prompt_version="1", result_json='{"a":2}')
     entry = store.cached_result("k")
     assert (entry.stage, entry.result_json) == ("checker", '{"a":2}')
+
+
+def test_denied_tool_calls_alert_the_operator(store: Store, monkeypatch) -> None:
+    """모델이 목록 밖 도구를 부르려 한 호출은 운영 알림으로 간다 (위협 T25). 없으면 알리지
+    않는다."""
+    from app.models.ops_alert import Alert
+    from app.notify import slack
+
+    sent: list[Alert] = []
+    monkeypatch.setattr(slack, "send", lambda alert, redis, **kw: sent.append(alert) or "sent")
+    budget = _budget(store, pr=7)
+    clean = budget.begin(PrScope(), stage="fix", tier="light", model="haiku")
+    budget.finish(clean, ok=True, permission_denials=0)
+    assert sent == []
+    denied = budget.begin(PrScope(), stage="fix", tier="light", model="haiku")
+    budget.finish(denied, ok=True, permission_denials=2)
+    assert sent == [Alert("tool_denied", "o/r", 7)]

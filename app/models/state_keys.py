@@ -22,3 +22,8 @@ def job(dedup_key: str) -> str:
 def delivery(delivery_id: str) -> str:
     """처리한 웹훅 delivery ID."""
     return f"{PREFIX}:delivery:{delivery_id}"
+
+
+def ops_alert(kind: str, repo: str | None) -> str:
+    """운영 알림을 보낸 표시. 있는 동안 같은 알림을 다시 보내지 않는다 (13절 6단계, 6-4)."""
+    return f"{PREFIX}:ops_alert:{kind}:{repo or '-'}"

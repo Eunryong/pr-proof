@@ -48,10 +48,12 @@ from app.models.fix import MECHANICAL_BUNDLE, MechanicalFix
 from app.models.fix_decision import Decided, SafetyNet, open_targets
 from app.models.job import PRJob
 from app.models.model_fix import ModelFix, Picked
-from app.models.proposal import ProposalResult
+from app.models.ops_alert import Alert
+from app.models.proposal import SECRET_BLOCKED, ProposalResult
 from app.models.rag import E5_SMALL, EMBED_MODELS, Retrieval
 from app.models.repo_config import call_limits
 from app.models.test_run import PytestRun
+from app.notify import slack
 from app.sandbox import container, docker_cli, toolcache
 from app.worker import (
     base_config,
@@ -480,6 +482,11 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
     def after_await(state: FlowState) -> str:
         return FIX_NODES.get(state.get("fix_skill") or "", END)
 
+    def alert_secret(job: PRJob, reason: str) -> None:
+        """수정안이나 그 설명이 비밀값 검사에 걸렸으면 운영자에게 알린다 (위협 T21)."""
+        if reason.startswith(SECRET_BLOCKED):
+            slack.send(Alert("secret_blocked", job.repo, job.pr_number), ctx.store.redis)
+
     def fix_mechanical(state: FlowState) -> FlowState:
         """fix·mechanical로 정한 위반을 도구의 수정으로 고친다 (5.1 fix_mechanical, 4.7, 4.8)."""
         job, found = state["job"], state["doc_rules"]
@@ -500,6 +507,7 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
         outcome = mechanical_fix.save_attempt(
             ctx.store, job, ctx.merge_base, outcome, notes, ctx.worktree
         )
+        alert_secret(job, outcome.detail)
         records.after_failed_fix(
             ctx.store, job, outcome, notes, ctx.worktree, proposal.pipeline_secrets()
         )
@@ -522,6 +530,7 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
                 job, ctx.worktree, ctx.store, ctx.github, fix, state["doc_rules"],
                 patch=stored.patch or "", tool=ctx.base.ruff.label,
             )  # fmt: skip
+        alert_secret(job, result.reason)
         return {"proposals": {**state.get("proposals", {}), MECHANICAL: result}}
 
     def fix_model(state: FlowState) -> FlowState:
@@ -561,6 +570,7 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
         outcome = model_fix.save_attempt(
             ctx.store, job, ctx.merge_base, outcome, notes, ctx.worktree
         )
+        alert_secret(job, outcome.detail)
         records.after_failed_fix(
             ctx.store, job, outcome, notes, ctx.worktree, proposal.pipeline_secrets()
         )
@@ -588,6 +598,7 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
                 job, ctx.worktree, ctx.store, ctx.github, fix, state["doc_rules"],
                 patch=stored.patch or "", skipped=skipped,
             )  # fmt: skip
+        alert_secret(job, result.reason)
         return {"proposals": {**state.get("proposals", {}), MODEL: result}}
 
     def fix_comment(state: FlowState) -> FlowState:

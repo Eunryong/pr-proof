@@ -13,7 +13,9 @@ from rq import Queue, SimpleWorker
 from app import config
 from app.models import state_keys
 from app.models.job import PRJob
-from app.worker import command, preflight, update
+from app.models.ops_alert import Alert
+from app.notify import slack
+from app.worker import command, preflight, retry, update
 from app.worker.deps import Deps
 
 log = logging.getLogger(__name__)
@@ -22,12 +24,23 @@ log = logging.getLogger(__name__)
 def handle(payload: str, deps: Deps | None = None) -> str:
     job = PRJob.model_validate_json(payload)
     deps = deps or Deps.from_config()
-    if job.kind == "update":
-        result = update.process_update(job, deps)
-    elif job.kind == "command":
-        result = command.process_command(job, deps)
-    else:
-        result = update.process_close(job, deps)
+    try:
+        if job.kind == "update":
+            result = update.process_update(job, deps)
+        elif job.kind == "command":
+            result = command.process_command(job, deps)
+        else:
+            result = update.process_close(job, deps)
+    except Exception as error:
+        # 마지막 시도만 알린다. 앞 시도의 실패는 RQ가 다시 하고 PR에 대기 중으로 보인다
+        if retry.attempt()[1]:
+            kind = (
+                "env_error_final"
+                if isinstance(error, retry.EnvironmentFailure)
+                else "pipeline_error"
+            )
+            slack.send(Alert(kind, job.repo, job.pr_number), deps.store.redis)
+        raise
     deps.store.release(job)
     return result
 
@@ -40,6 +53,7 @@ def main() -> int:
     if problems:
         for problem in problems:
             log.error(problem)
+        slack.send(Alert("preflight_failed"), redis)
         return 1
     # 동시 작업 1개. macOS에서 fork 문제를 피하려고 작업을 같은 프로세스에서 실행한다
     worker = SimpleWorker([Queue(state_keys.QUEUE_NAME, connection=redis)], connection=redis)
