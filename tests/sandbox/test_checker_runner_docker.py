@@ -221,3 +221,37 @@ def test_backtracking_regex_is_stopped_by_the_time_limit(py: Path) -> None:
 def test_path_pattern_that_is_not_a_declaration_never_runs(tmp_path: Path) -> None:
     run = checker_runner.run_path_pattern("import os", ["a.py"], tool_dir=tmp_path, image=IMAGE)
     assert isinstance(run, Invalid)
+
+
+# --- PR 패턴 (4.5 끝): 모델이 쓴 선언을 PR 작성자의 글에 맞춘다 ---
+
+
+def test_pr_pattern_reports_gate_and_breaking_values(py: Path) -> None:
+    decl = {"on_paths": False, "condition": "must_match", "pattern": "^(feat|fix): ",
+            "when_changed": ""}  # fmt: skip
+    cases = [{"values": ["feat: a", "update", "fix: b", "WIP"], "paths": []}]
+    run = checker_runner.run_pr_pattern(decl, cases, tool_dir=py, image=IMAGE)
+    assert run == checker_runner.PrRan([{"gated": True, "bad": [1, 3]}])
+
+
+def test_pr_pattern_gate_on_changed_paths(py: Path) -> None:
+    decl = {"on_paths": False, "condition": "must_match", "pattern": "(?m)^## 마이그레이션",
+            "when_changed": "^migrations/"}  # fmt: skip
+    cases = [
+        {"values": ["설명"], "paths": ["migrations/1.py"]},
+        {"values": ["설명"], "paths": ["orders/a.py"]},
+        {"values": ["x\n## 마이그레이션"], "paths": ["migrations/1.py"]},
+    ]
+    run = checker_runner.run_pr_pattern(decl, cases, tool_dir=py, image=IMAGE)
+    assert run == checker_runner.PrRan([
+        {"gated": True, "bad": [0]}, {"gated": False, "bad": []}, {"gated": True, "bad": []},
+    ])  # fmt: skip
+
+
+def test_pr_pattern_backtracking_on_author_text_is_stopped(py: Path) -> None:
+    """작성자가 고른 커밋 메시지가 모델이 쓴 정규식을 끝없이 되짚게 해도 워커는 멈추지 않는다."""
+    decl = {"on_paths": False, "condition": "must_match", "pattern": "^(a+)+$",
+            "when_changed": ""}  # fmt: skip
+    cases = [{"values": ["a" * 60 + "!"], "paths": []}]
+    run = checker_runner.run_pr_pattern(decl, cases, tool_dir=py, image=IMAGE, timeout=5)
+    assert isinstance(run, Failed) and "5초" in run.reason

@@ -91,6 +91,9 @@ def _assert_only_the_guide(gh, head: str, since: int = 0) -> None:
     body = json.loads(stdin)["body"]
     assert body.split("\n") == [COMMENT_MARKER, guard.approval_guide(head)]
     assert f"`/recheck {head}`" in body  # 승인에 그대로 복사할 수 있는 전체 해시
+    # PR의 제목·본문(작성자의 글)은 가드레일이 들인 작업의 PR 단위 확인만 읽는다 (4.5 끝, T27)
+    assert gh.text_lookups == 0
+    assert not any(".title" in " ".join(args) for args, _ in gh.calls)
 
 
 def _runs(env) -> list[Run]:

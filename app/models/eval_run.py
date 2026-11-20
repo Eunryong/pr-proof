@@ -12,7 +12,15 @@ from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from typing import Final, Literal
 
-from app.models import checker_authoring, fix_decision, judge, model_fix, rule_reading, tool_choice
+from app.models import (
+    checker_authoring,
+    fix_decision,
+    judge,
+    model_fix,
+    pr_check,
+    rule_reading,
+    tool_choice,
+)
 from app.models.repo_config import ModelSettings
 
 Outcome = Literal["passed", "failed", "skipped"]
@@ -93,6 +101,8 @@ def prompt_versions() -> dict[str, str]:
         "checker": checker_authoring.PROMPT_VERSION,
         "checker_path": checker_authoring.PATH_PROMPT_VERSION,
         "judge": judge.PROMPT_VERSION,
+        "pr_plan": pr_check.PLAN_PROMPT_VERSION,
+        "pr_judge": pr_check.JUDGE_PROMPT_VERSION,
         "decide": fix_decision.PROMPT_VERSION,
         "fix": model_fix.PROMPT_VERSION,
     }

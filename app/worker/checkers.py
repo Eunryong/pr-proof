@@ -195,6 +195,14 @@ class Sandbox:
     def rule_exists(self, code: str) -> bool:
         return python.ruff_rule_exists(code, tool_dir=self._tool_dir("ruff"), image=self.image)
 
+    def pr_pattern(
+        self, decl: Mapping[str, object], cases: Sequence[Mapping[str, object]]
+    ) -> checker_runner.PrRan | Failed:
+        """PR 패턴 선언을 사례들에 맞춘다 (4.5 끝). 경로 패턴과 같은 Python 런타임을 붙인다."""
+        return checker_runner.run_pr_pattern(
+            decl, cases, tool_dir=self._tool_dir("path-pattern"), image=self.image
+        )
+
     def format_check(self, root: Path) -> python.FormatResult:
         """root 전체가 base 설정의 `ruff format`을 따르는지 (4.7)."""
         return python.format_check(

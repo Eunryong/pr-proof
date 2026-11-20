@@ -136,7 +136,9 @@ SYSTEM_PROMPT: Final = """\
 - section: 그 문장이 든 절의 제목들을 " > "로 잇는다. 예: "코드 규칙 > 출력". 문서 맨 위의 제목
   (문서 이름인 # 제목)은 넣지 않는다.
 아래 scope부터 fix까지는 target이 "code"인 규칙에서만 뜻이 있다. "pr"과 "human"인 규칙은 scope,
-scope_exclude, examples를 빈 목록으로, scope_reason을 빈 문자열로, check와 fix를 "none"으로 둔다.
+scope_exclude를 빈 목록으로, scope_reason을 빈 문자열로, check와 fix를 "none"으로 둔다. "human"인
+규칙은 examples도 빈 목록이다. "pr"인 규칙은 문서에 그 규칙의 지키는 예나 어기는 예(커밋 메시지,
+PR 제목, PR 본문, 브랜치 이름)가 코드 블록으로 있으면 examples에 옮긴다. 어기는 예의 lines는 [1].
 - scope: 문서가 규칙의 적용 범위(경로)를 밝혔으면 저장소 루트 기준 glob으로 옮긴다.
   예: "orders/models/**". 밝히지 않았으면 빈 목록. 문서에 없는 범위를 지어내 넣지 않는다.
 - scope_exclude: 문서가 범위를 밝히지 않은 규칙(scope가 빈 목록)에서만 쓴다. 문서의 다른 내용
@@ -449,13 +451,15 @@ def verify_rules(
 def _rule(raw: AnswerRule, id_: str, source: RuleSource, flat_doc: str) -> Rule:
     """원문 확인을 통과한 답 하나를 규칙으로. 코드 규칙이 아니면 범위, 예시, 확인 방법은 버린다.
 
-    확인 대상이 pr·human인 규칙은 검사하지 않고 목록으로만 보이므로, 모델이 같이 적은 값이 있어도
-    버린다. 코드 규칙인데 check가 "none"이면 답이 어긋난 것이고, 검사기부터 시도한다.
+    확인 대상이 pr·human인 규칙은 범위와 확인 방법 힌트를 받지 않는다. 모델이 같이 적은 값이
+    있어도 버린다. pr 규칙은 문서에 그대로 있는 예시만 남긴다: PR 패턴의 예시 확인이 문서의 예시를
+    먼저 쓴다 (4.5 끝). 코드 규칙인데 check가 "none"이면 답이 어긋난 것이고, 검사기부터 시도한다.
     """
     text = raw.quote.strip()
     if raw.target != "code":
         check = CheckMethod("none", reason=raw.reason.strip())
-        return Rule(id_, text, source, "document", (), check, "none", target=raw.target)
+        examples = _examples(raw.examples, flat_doc) if raw.target == "pr" else ()
+        return Rule(id_, text, source, "document", (), check, "none", examples, target=raw.target)
     scope = tuple(raw.scope)
     if not all(_valid_glob(p) for p in scope):
         scope = ()  # 형식이 틀린 적용 범위는 저장소 전체로 둔다 (4.3)

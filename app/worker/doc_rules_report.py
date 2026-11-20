@@ -29,11 +29,13 @@ from app.models.doc_rules import (
 from app.models.fix import MECHANICAL_BUNDLE, MechanicalFix
 from app.models.fix_decision import Decided, FixDecision
 from app.models.model_fix import ModelFix
+from app.models.pr_check import PrChecks
 from app.models.proposal import ProposalResult
 from app.models.rag import KIND_LABEL, SITE_LABEL, Retrieval, merge_retrievals
 from app.models.rag_switch import RagSwitch, describe
 from app.models.rule import Rule
 from app.models.violation import Violation
+from app.worker import pr_check_report
 from app.worker.markdown import code_fence, inline_code
 
 TITLE: Final = "**규칙:**"
@@ -75,7 +77,7 @@ MAX_SECTION_CHARS: Final = 30_000
 OMITTED: Final = "… (코멘트 길이 제한으로 나머지를 생략)"
 
 _UNCHECKED_TEXT: Final[Mapping[str, str]] = {
-    "pr": "PR 단위 규칙 (아직 확인하지 않음)",
+    "pr": "PR 단위 규칙 (PR 단위 확인으로 봄)",
     "human": "사람이 확인하는 규칙 (검사하지 않음)",
     "no_checker": "읽었지만 아직 검사하지 못함",
     "cap": "호출 상한에 걸려 이번에 처리하지 못함",
@@ -140,8 +142,13 @@ class FixView:
 _OTHER_TARGETS: Final = frozenset({"pr", "human"})
 
 
-def title(result: DocRules | None, fixes: Mapping[str, FixView] | None = None) -> str | None:
-    """코멘트 맨 위의 "규칙:" 줄 (4.9). 규칙 경로를 돌기 전에 끝났으면 None."""
+def title(
+    result: DocRules | None,
+    fixes: Mapping[str, FixView] | None = None,
+    pr: PrChecks | None = None,
+) -> str | None:
+    """코멘트 맨 위의 "규칙:" 줄 (4.9). 규칙 경로를 돌기 전에 끝났으면 None. pr은 PR 단위 확인의
+    결과다(PR 규칙이 있는 검사만). 그 위반은 코드 위반과 따로 센다."""
     match result:
         case None:
             return None
@@ -151,7 +158,7 @@ def title(result: DocRules | None, fixes: Mapping[str, FixView] | None = None) -
             return f"{TITLE} {NO_RULES}"
         case Found():
             numbers = [n for v in (fixes or {}).values() if (n := _proposal_number(v)) is not None]
-            line = f"{TITLE} {_title_line(result)}"
+            line = f"{TITLE} {_title_line(result, pr)}"
             return line + (f" · 수정안 {', '.join(f'#{n}' for n in numbers)}" if numbers else "")
 
 
@@ -168,6 +175,7 @@ def section(
     decisions: Decided | None = None,
     fixes: Mapping[str, FixView] | None = None,
     rag: RagSwitch | None = None,
+    pr: PrChecks | None = None,
 ) -> list[str]:
     """규칙 절의 줄들 ("규칙:" 줄 아래). checkers는 위반을 찾은 검사기의 {CheckerRef.key: 검사기}다.
 
@@ -187,7 +195,7 @@ def section(
         case NoRulesFound():
             return ["", HOW_TO_WRITE]
         case Found():
-            return _found(result, checkers, decisions, fixes or {}, rag)
+            return _found(result, checkers, decisions, fixes or {}, rag, pr)
 
 
 def _found(
@@ -196,6 +204,7 @@ def _found(
     decisions: Decided | None,
     fixes: Mapping[str, FixView],
     rag: RagSwitch | None = None,
+    pr: PrChecks | None = None,
 ) -> list[str]:
     head = (
         ["", f"규칙 문서를 읽지 못해 도구 설정의 규칙만 검사함 "
@@ -210,10 +219,11 @@ def _found(
         _decision_summary(decisions),
         *(_fix_lines(view, bundle) for bundle, view in fixes.items()),
         _violations(found, by_id),
+        pr_check_report.section(pr) if pr is not None else [],
         _not_checkable(found.outcomes),
         _failed(found.outcomes),
         _capped(found.outcomes),
-        _other_targets(found.outcomes),
+        _other_targets(found.outcomes, pr_checked=pr is not None),
         _checker_details(found, checkers),
         references_block(_retrievals(found, decisions, fixes), rag),
         _read_rules(found),
@@ -222,7 +232,7 @@ def _found(
     return head + _fit(blocks, budget) + tail
 
 
-def _title_line(found: Found) -> str:
+def _title_line(found: Found, pr_checks: PrChecks | None = None) -> str:
     checked = sum(1 for o in found.outcomes if isinstance(o, RuleChecked)
                   or isinstance(o, RuleJudged) and not o.left)  # fmt: skip
     pr = len(_unchecked(found.outcomes, frozenset({"pr"})))
@@ -237,7 +247,9 @@ def _title_line(found: Found) -> str:
         line = f"검사한 규칙 없음 (읽은 규칙 {len(found.outcomes)}개)"
     if unchecked and (found.violations or checked):
         line += f" · 검사하지 못한 규칙 {unchecked}개"
-    if pr:
+    if pr_checks is not None:
+        line += pr_check_report.title_part(pr_checks)
+    elif pr:
         line += f" · PR 단위 규칙 {pr}개"
     if human:
         line += f" · 사람이 확인하는 규칙 {human}개"
@@ -536,10 +548,11 @@ def _not_checkable(outcomes: Sequence[RuleOutcome]) -> list[str]:
     return ["", head, *_rule_lines(rules, detail=True)]
 
 
-def _other_targets(outcomes: Sequence[RuleOutcome]) -> list[str]:
-    """코드 줄로 확인하지 않는 규칙의 목록. 검사하지 않고 보이기만 한다."""
+def _other_targets(outcomes: Sequence[RuleOutcome], *, pr_checked: bool = False) -> list[str]:
+    """코드 줄로 확인하지 않는 규칙의 목록. 사람이 확인하는 규칙은 보이기만 한다. PR 단위 규칙은
+    PR 단위 확인을 했으면 그 부분에 나오고, 하지 못했으면(이전 체크포인트 등) 목록으로만 보인다."""
     lines: list[str] = []
-    pr = _unchecked(outcomes, frozenset({"pr"}))
+    pr = [] if pr_checked else _unchecked(outcomes, frozenset({"pr"}))
     if pr:
         head = (
             f"PR 단위로 확인할 규칙 {len(pr)}개 (커밋 메시지, PR 본문, 브랜치, 바뀐 파일 종류. "

@@ -135,7 +135,7 @@ def run_admitted(job: PRJob, deps: Deps, refs: PullRefs) -> str:
                 job.head_sha, e.detail, base=ctx.base,
                 doc_rules=ctx.doc_rules,
                 checkers=doc_rules.shown_checkers(ctx.doc_rules, store), kind=e.kind,
-                packages=e.packages,
+                packages=e.packages, pr=ctx.pr_checks,
             )  # fmt: skip
             ctx.comment_id = github.upsert_comment(job.repo, job.pr_number, body, ctx.comment_id)
             store.finish_run(run_id, "done", test_status="unrunnable", comment_id=ctx.comment_id)

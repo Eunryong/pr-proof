@@ -30,6 +30,13 @@ class PullRefs:
 
 
 @dataclass(frozen=True)
+class PullText:
+    title: str
+    body: str
+    branch: str
+
+
+@dataclass(frozen=True)
 class IssueComment:
     login: str
     association: str
@@ -104,6 +111,20 @@ class GitHub:
             head_sha=head, base_sha=base, open=state == "open", head_ref=head_ref,
             head_repo=head_repo, author_association=association, author_login=login,
         )  # fmt: skip
+
+    def pr_text(self, repo: str, pr_number: int) -> PullText:
+        """PR의 제목·본문·브랜치 이름 (4.5 PR 사실). 작성자가 쓴 믿지 않는 글이다.
+
+        가드레일(8.6)이 작업을 들인 뒤 PR 단위 확인만 부른다. 가드레일의 조회(`pr_refs`)는 이 글을
+        읽지 않는다.
+        """
+        jq = '{title: (.title // ""), body: (.body // ""), branch: (.head.ref // "")} | @json'
+        out = self._run(["api", f"repos/{repo}/pulls/{pr_number}", "--jq", jq], None)
+        try:
+            item = json.loads(out)
+            return PullText(str(item["title"]), str(item["body"]), str(item["branch"]))
+        except (ValueError, KeyError, TypeError) as e:
+            raise GitHubError(f"PR 글 조회 응답을 읽지 못함: {repo}#{pr_number}") from e
 
     def issue_comment(self, repo: str, comment_id: int) -> IssueComment:
         """코멘트 하나의 지금 작성자, 관계, 본문, 달린 PR. 승인자 확인에 쓴다 (8.6)."""
