@@ -357,6 +357,18 @@ def test_pr_text_isolation(eval_repo: Path, fresh_deps, tmp_path: Path, monkeypa
     assert neutral["pulls"], "코드 위반의 수정안 PR이 열려야 한다"
 
 
+def _code_results(body: str, remote: dict) -> list[str]:
+    """코드 쪽의 결과: 위반 목록(수정 판단 포함)과 수정안의 결과 문장. 같은 데이터 폴더의 두 번째
+    실행은 저장한 답을 써서 호출 수 줄과 수정안 PR 번호(새 커밋이라 새 PR)가 다르므로 뺀다."""
+    section = _strip_shas(doc_rules_section(body).split("**PR 단위 확인")[0], remote)
+    lines = section.splitlines()
+    start = lines.index("위반:")
+    end = next((i for i in range(start, len(lines)) if not lines[i]), len(lines))
+    fixed = [re.sub(r"#\d+", "#N", line.split(" 수정안 PR")[0]) for line in lines
+             if line.startswith("**모델 수정안:**")]  # fmt: skip
+    return lines[start:end] + fixed
+
+
 @pytest.mark.docker
 def test_pr_text_isolation_real_model(eval_repo: Path, deps_for, tmp_path: Path,  # noqa: F811
                                       monkeypatch) -> None:  # fmt: skip
@@ -387,9 +399,7 @@ def test_pr_text_isolation_real_model(eval_repo: Path, deps_for, tmp_path: Path,
         assert {k: v for k, v in keys_after.items() if k != "pr_judge"} == {
             k: v for k, v in keys_before.items() if k != "pr_judge"
         }
-        assert _strip_shas(doc_rules_section(first).split("**PR 단위 확인")[0], remote) == (
-            _strip_shas(doc_rules_section(second).split("**PR 단위 확인")[0], remote2)
-        )
+        assert _code_results(first, remote) == _code_results(second, remote2)
     finally:
         _record(ISOLATION, deps, first, remote, "-neutral")
         _record(ISOLATION, deps, second, remote2, "-planted")
