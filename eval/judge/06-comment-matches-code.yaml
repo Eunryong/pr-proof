@@ -7,10 +7,11 @@ description: >-
   base의 `.pipeline.yaml`이 `fix.require_covered: false`를 둔다. 모델이 찾은 위반이 수정 판단과 모델
   수정을 거쳐 수정안 PR까지 가고 본문에 "도구로 재검사하지 못함"이 적힌다. 같은 hunk를 가진 다음 커밋은
   모델 판단을 다시 부르지 않는다.
-  실제 모델로 돌릴 때도 검사기 작성만 케이스의 답이다(real_checker_scripted). sonnet은 이 규칙에도
-  자기가 쓴 예시를 통과하는 Python AST 검사기를 써서(2026-11-20, 2/2) 규칙이 모델 판단까지 오지 않고
-  PR의 어긋난 주석을 잡지 못했다. 모델 판단부터의 경로(규칙 읽기, 모델 판단, 수정 판단, 수정)는 실제
-  모델이다.
+  실제 모델로 돌릴 때도 검사기 작성만 케이스의 답이다(real_checker_scripted). coverage를 묻기 전의
+  sonnet은 이 규칙에도 자기가 쓴 예시를 통과하는 Python AST 검사기를 써서(2026-11-20, 2/2) 규칙이 모델
+  판단까지 오지 않았다. coverage를 물은 뒤의 sonnet은 도구를 끈 평가에서 4/4 none으로 답했다(같은 날).
+  이 케이스의 실제 모델 실행은 그 뒤로 다시 돌리지 않아 real_checker_scripted를 그대로 둔다. 모델
+  판단부터의 경로(규칙 읽기, 모델 판단, 수정 판단, 수정)는 실제 모델이다.
 real_checker_scripted: true
 pipeline:
   fix:
