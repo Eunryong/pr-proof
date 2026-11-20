@@ -8,6 +8,7 @@ import pytest
 
 from app import config
 from app.models import state_keys
+from app.models.access import AccessSettings
 from app.worker import base_config, repo
 from app.worker.deps import Deps
 from app.worker.github import GitHub
@@ -38,6 +39,9 @@ def env(tmp_path: Path, monkeypatch):
     # 실제 ~/.config/pipeline의 비밀값을 읽지 않게 빈 설정 폴더를 쓴다
     monkeypatch.setenv(config.CONFIG_DIR_ENV, str(tmp_path / "config"))
     monkeypatch.setattr(base_config, "load", lambda *a, **k: BASE)
+    # 가드레일(8.6)이 체크아웃 전에 bare 캐시에서 읽는 base의 `access`. 기본값으로 본다 (실제
+    # 저장소로 읽는 것은 test_base_config, 설정을 바꾼 흐름은 test_guardrail)
+    monkeypatch.setattr(base_config, "load_access", lambda *a, **k: AccessSettings())
     # 가짜 체크아웃에는 git 기록이 없다. base에 규칙 문서도 ruff 설정도 없는 리포로 본다 (규칙
     # 흐름은 test_doc_rules_flow·test_mechanical_flow)
     monkeypatch.setattr(repo, "list_base_entries", lambda *a, **k: {})

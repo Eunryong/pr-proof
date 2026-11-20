@@ -9,7 +9,7 @@ from typing import Final
 
 GH_TIMEOUT: Final = 60
 _ENV_PASSTHROUGH: Final = ("PATH", "HOME", "GH_CONFIG_DIR")
-PR_FIELDS: Final = "number,headRefOid,baseRefOid,headRefName,isDraft"
+PR_FIELDS: Final = "number,headRefOid,baseRefOid,headRefName,isDraft,author"
 
 GhRunner = Callable[[list[str]], str]
 
@@ -25,6 +25,9 @@ class OpenPR:
     base_sha: str
     head_ref: str
     draft: bool
+    # PR 작성자의 로그인 이름. 기록용으로 `PRJob`에 싣는다 (8.6). `gh pr list`는
+    # author_association을 주지 않아 동기화로 만든 작업에는 그 값이 없다
+    author_login: str = ""
 
 
 def run_gh(args: list[str]) -> str:
@@ -46,6 +49,7 @@ class PRComment:
     author_association: str
     created_at: str  # ISO 8601 (UTC, "Z")
     body: str
+    login: str = ""  # 명령 작성자. 기록용 (8.6)
 
 
 def head_commit_time(repo: str, head_sha: str, runner: GhRunner = run_gh) -> str:
@@ -58,7 +62,7 @@ def list_comments_since(
     repo: str, pr_number: int, since: str, runner: GhRunner = run_gh
 ) -> list[PRComment]:
     """since 뒤에 달린 PR 코멘트. 본문은 여러 줄일 수 있어 한 줄에 JSON 하나로 받는다."""
-    jq = ".[] | {id, author_association, created_at, body} | @json"
+    jq = '.[] | {id, author_association, created_at, body, login: (.user.login // "")} | @json'
     out = runner(
         ["api", "--paginate", f"repos/{repo}/issues/{pr_number}/comments?since={since}",
          "--jq", jq]
@@ -76,6 +80,7 @@ def list_comments_since(
                 author_association=item.get("author_association") or "",
                 created_at=item["created_at"],
                 body=item.get("body") or "",
+                login=item.get("login") or "",
             )
         )
     return comments
@@ -92,6 +97,7 @@ def list_open_prs(repo: str, runner: GhRunner = run_gh) -> list[OpenPR]:
             base_sha=pr["baseRefOid"],
             head_ref=pr["headRefName"],
             draft=pr["isDraft"],
+            author_login=(pr.get("author") or {}).get("login") or "",
         )
         for pr in json.loads(out or "[]")
     ]

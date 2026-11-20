@@ -5,6 +5,7 @@ import pytest
 from sqlalchemy import create_engine, inspect, text
 
 from app.models import state_keys
+from app.models.access import Author
 from app.models.db import SeenViolation
 from app.models.job import PRJob
 from app.models.records import NewRecord
@@ -170,3 +171,49 @@ def test_violations_of_a_commit_are_replaced_and_the_previous_commit_is_found(st
     store.replace_violations("o/r", 1, "h2", [row("h2", "d")])
     assert [v.violation_id for v in store.previous_violations("o/r", 1, "h2")] == ["c"]
     assert [v.violation_id for v in store.previous_violations("o/r", 1, "h3")] == ["d"]
+
+
+def test_existing_runs_table_gets_the_author_columns_and_approvals_is_created(
+    tmp_path: Path,
+) -> None:
+    """6단계 전의 `run` 테이블(작성자 열 없음)이 그대로 열리고 옛 행이 읽힌다. `approvals`는
+    새로 생긴다. 동기화가 읽는 옛 행의 상태도 그대로다."""
+    path = tmp_path / "pipeline.db"
+    old = create_engine(f"sqlite:///{path}")
+    with old.begin() as conn:
+        conn.execute(
+            text(
+                "CREATE TABLE run (id INTEGER PRIMARY KEY, repo VARCHAR NOT NULL, "
+                "pr_number INTEGER NOT NULL, head_sha VARCHAR NOT NULL, kind VARCHAR NOT NULL, "
+                "source VARCHAR NOT NULL, state VARCHAR NOT NULL, test_status VARCHAR, "
+                "comment_id INTEGER, started_at DATETIME NOT NULL, "
+                "heartbeat_at DATETIME NOT NULL, finished_at DATETIME)"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO run (repo, pr_number, head_sha, kind, source, state, comment_id, "
+                "started_at, heartbeat_at) VALUES ('o/r', 1, 'h', 'update', 'webhook', 'done', "
+                "555, '2026-11-01 00:00:00', '2026-11-01 00:00:00')"
+            )
+        )
+    old.dispose()
+
+    store = Store(path, fakeredis.FakeStrictRedis())
+    Store(path, fakeredis.FakeStrictRedis())  # 다시 열어도 같은 상태
+    assert "approvals" in set(inspect(store.engine).get_table_names())
+    assert store.last_comment_id("o/r", 1) == 555
+    with store.engine.connect() as conn:
+        row = conn.execute(text("SELECT state, author_association FROM run")).one()
+    assert tuple(row) == ("done", None)
+
+    store.record_blocked(_job("c" * 40), "c" * 40, Author("NONE", "outsider"), 556)
+    assert store.last_comment_id("o/r", 1) == 556
+
+
+def test_approval_is_recorded_once_per_comment(store: Store) -> None:
+    store.add_approval("o/r", 1, "a" * 40, "maintainer", 9)
+    store.add_approval("o/r", 1, "a" * 40, "maintainer", 9)  # 재시도
+    store.add_approval("o/r", 2, "b" * 40, "maintainer", 10)
+    assert store.approved_shas("o/r", 1) == {"a" * 40}
+    assert store.approved_shas("o/r", 3) == set()

@@ -29,6 +29,7 @@ def _replies(gh) -> list[str]:
     [
         ("/recheck", "recheck", ""),
         ("/ReCheck", "recheck", ""),
+        ("/recheck ABC1234", "recheck", "ABC1234"),
         ("/fix lint", "fix", "lint"),
         ("/fix Model", "fix", "model"),
         ("/fix", "fix", ""),

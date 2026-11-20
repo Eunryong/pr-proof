@@ -33,11 +33,13 @@ def _reason(*runs: RunSnapshot):
         ((_run("env_error", ago=90), _run("running", ago=1, finished=False)), None),
         ((_run("error", ago=500),), None),  # 파이프라인 오류는 새 커밋 때만
         ((_run("env_error", ago=90), _run("error", ago=60)), None),
+        ((_run("blocked", ago=500),), None),  # 승인을 기다리는 외부 작성자의 PR (8.6)
+        ((_run("env_error", ago=90), _run("blocked", ago=60)), None),
     ],
     ids=[
         "no-record", "done", "env-error-recent", "env-error-old", "running-alive",
         "running-dead", "cancelled", "done-then-env-error", "env-error-then-running",
-        "error", "env-error-then-error",
+        "error", "env-error-then-error", "blocked", "env-error-then-blocked",
     ],
 )  # fmt: skip
 def test_enqueue_reason(runs, reason) -> None:

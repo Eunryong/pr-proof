@@ -34,6 +34,8 @@ class FakeGh:
         # 제안 PR의 리뷰: 번호 → [{"body", "event", "comments", "login"}]
         self.reviews: dict[int, list[dict]] = {}
         self.review_error: str | None = None
+        # 원본 PR의 코멘트 하나 조회 (승인자 확인): ID → {"login", "association", "body", "pr"}
+        self.issue_comments: dict[int, dict] = {}
 
     def __call__(self, args: list[str], stdin: str | None) -> str:
         self.calls.append((args, stdin))
@@ -50,6 +52,15 @@ class FakeGh:
                 f"{self.head}\t{self.base}\t{self.state}\t{self.head_ref}\t{self.head_repo}"
                 f"\t{self.author_association}\t{self.author_login}\n"
             )
+        one_comment = re.fullmatch(r"repos/o/r/issues/comments/(\d+)", path)
+        if one_comment and method == "GET":
+            c = self.issue_comments.get(int(one_comment.group(1)))
+            if c is None:
+                raise GitHubError("HTTP 404: Not Found")
+            return json.dumps({
+                "login": c["login"], "association": c["association"], "body": c["body"],
+                "issue_url": f"https://api.github.com/repos/o/r/issues/{c.get('pr', 1)}",
+            }) + "\n"  # fmt: skip
         review = re.fullmatch(r"repos/o/r/pulls/(\d+)/reviews", path or args[2])
         if review:
             return self._review(int(review.group(1)), method, args, stdin)
@@ -122,6 +133,43 @@ def test_pr_refs() -> None:
     assert gh.calls[0][0][:2] == ["api", "repos/o/r/pulls/7"]
     gh.state = "closed"
     assert not GitHub(gh).pr_refs("o/r", 7).open
+
+
+@pytest.mark.parametrize("out", ["", "\n", "abc\tdef\topen\n", f"{'a' * 40}\t-x\topen\n"])
+def test_unreadable_pr_lookup_is_a_failure(out: str) -> None:
+    """빈 응답이나 해시가 아닌 head·base로 판단하지 않는다 (8.6)."""
+    with pytest.raises(GitHubError):
+        GitHub(lambda args, stdin: out).pr_refs("o/r", 7)
+
+
+def test_issue_comment_reads_author_body_and_pr() -> None:
+    gh = FakeGh()
+    gh.issue_comments[5] = {"login": "m", "association": "MEMBER", "body": "/recheck a\nb", "pr": 3}
+    comment = GitHub(gh).issue_comment("o/r", 5)
+    assert (comment.login, comment.association, comment.body, comment.pr_number) == (
+        "m", "MEMBER", "/recheck a\nb", 3,
+    )  # fmt: skip
+    assert gh.calls[0][0][:2] == ["api", "repos/o/r/issues/comments/5"]
+
+
+@pytest.mark.parametrize(
+    "out",
+    [
+        "",
+        "not json",
+        json.dumps({"login": "m"}),
+        json.dumps({"login": "m", "association": "MEMBER", "body": "", "issue_url": None}),
+    ],
+)
+def test_unreadable_issue_comment_is_a_failure(out: str) -> None:
+    with pytest.raises(GitHubError):
+        GitHub(lambda args, stdin: out).issue_comment("o/r", 5)
+
+
+def test_issue_comment_of_another_repo_has_no_pr() -> None:
+    out = json.dumps({"login": "m", "association": "MEMBER", "body": "",
+                      "issue_url": "https://api.github.com/repos/x/y/issues/1"})  # fmt: skip
+    assert GitHub(lambda args, stdin: out).issue_comment("o/r", 5).pr_number is None
 
 
 def test_reply_uses_its_own_marker() -> None:

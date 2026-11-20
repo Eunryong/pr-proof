@@ -46,6 +46,8 @@ def parse_event(
             base_sha=pr["base"]["sha"],
             source="webhook",
             delivery_id=delivery_id,
+            author_association=pr.get("author_association"),
+            author_login=(pr.get("user") or {}).get("login"),
         )
 
     if event == "issue_comment":
@@ -65,6 +67,10 @@ def parse_event(
             comment_id=comment["id"],
             source="webhook",
             delivery_id=delivery_id,
+            author_association=issue.get("author_association"),
+            author_login=(issue.get("user") or {}).get("login"),
+            commenter_association=comment.get("author_association"),
+            commenter_login=(comment.get("user") or {}).get("login"),
         )
 
     return Ignored(f"처리하지 않는 이벤트: {event}")

@@ -15,6 +15,12 @@ class PRJob(BaseModel):
     comment_id: int | None = None  # 명령의 코멘트 ID
     source: Literal["webhook", "sync"]
     delivery_id: str | None = None  # 웹훅으로 온 작업에만 있다
+    # PR 작성자와 명령 작성자 (8.6). 기록용이다. 워커는 실행을 이 값이 아니라 GitHub에서 직접 읽은
+    # 값으로 정하고, 이 값은 runs에 같이 남겨 둘이 다를 때 알 수 있게 한다
+    author_association: str | None = None
+    author_login: str | None = None
+    commenter_association: str | None = None
+    commenter_login: str | None = None
 
     @model_validator(mode="after")
     def _command_fields(self) -> "PRJob":

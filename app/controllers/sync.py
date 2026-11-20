@@ -76,6 +76,7 @@ def run_once(
                 head_sha=pr.head_sha,
                 base_sha=pr.base_sha,
                 source="sync",
+                author_login=pr.author_login or None,
             )
             if reason == "dead_worker":
                 queue.clear_job(redis, job)
@@ -110,6 +111,9 @@ def _missed_commands(
             command=command,
             comment_id=comment.id,
             source="sync",
+            author_login=pr.author_login or None,
+            commenter_association=comment.author_association or None,
+            commenter_login=comment.login or None,
         )
         if queue.enqueue(redis, job) == "queued":
             result.enqueued.append((repo, pr.number, "missed_command"))

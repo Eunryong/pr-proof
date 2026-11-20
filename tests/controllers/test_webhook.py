@@ -75,6 +75,22 @@ def test_ignored_pull_request_cases(pr_opened: dict) -> None:
     assert "이벤트" in _ignored("push", pr_opened)
 
 
+def test_author_values_are_carried_for_the_record(pr_opened: dict, comment_created: dict) -> None:
+    """api는 판단하지 않고 실어 넘기기만 한다 (8.6). 워커는 이 값으로 정하지 않는다."""
+    pr_opened["pull_request"]["author_association"] = "NONE"
+    job = parse_event("pull_request", pr_opened, "d-1", ALLOWED)
+    assert (job.author_association, job.author_login) == ("NONE", "Eunryong")
+    comment_created["issue"] |= {"author_association": "CONTRIBUTOR", "user": {"login": "x"}}
+    job = parse_event("issue_comment", comment_created, "d-2", ALLOWED)
+    assert (job.author_association, job.author_login) == ("CONTRIBUTOR", "x")
+    assert (job.commenter_association, job.commenter_login) == ("OWNER", "Eunryong")
+
+
+def test_untrusted_authors_pr_is_queued_like_any_other(pr_opened: dict) -> None:
+    pr_opened["pull_request"]["author_association"] = "FIRST_TIMER"
+    assert parse_event("pull_request", pr_opened, "d-1", ALLOWED).kind == "update"
+
+
 def test_command_comment(comment_created: dict) -> None:
     job = parse_event("issue_comment", comment_created, "d-2", ALLOWED)
     assert (job.kind, job.command, job.comment_id, job.pr_number) == (
