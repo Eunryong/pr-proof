@@ -1,0 +1,55 @@
+name: clock-only
+description: >-
+  base README에 더한 "현재 시각은 `orders/clock.py`의 `now()`로 읽는다." 규칙. pricing.py에 PR이 넣은
+  `datetime.now(...)`와 `time.time()`은 잡히고, `orders.clock`의 `now()`를 부르는 줄과 clock.py 자체는
+  잡히지 않는다.
+base:
+  - file: README.md
+    find: "### 테스트\n\n- 테스트 파일 이름은 `test_<모듈>.py`다.\n"
+    replace: "### 테스트\n\n- 테스트 파일 이름은 `test_<모듈>.py`다.\n\n### 시각\n\n- 현재 시각은 `orders/clock.py`의 `now()`로 읽는다. 다른 모듈은 `datetime.now()`나 `time.time()`을 부르지 않는다.\n"
+  - file: orders/clock.py
+    create: "from datetime import UTC, datetime\n\n\ndef now() -> datetime:\n    return datetime.now(UTC)\n"
+pr:
+  - file: orders/services/pricing.py
+    append: |
+
+
+      def sale_started() -> bool:
+          import time
+          from datetime import UTC, datetime
+
+          from orders.clock import now
+
+          started = datetime.now(UTC)
+          stamp = time.time()
+          return now() >= started and stamp > 0
+  - file: orders/clock.py
+    append: "\n\ndef today():\n    return datetime.now(UTC).date()\n"
+model:
+  rules:
+    - section: 코드 규칙 > 시각
+      quote: "현재 시각은 `orders/clock.py`의 `now()`로 읽는다. 다른 모듈은 `datetime.now()`나 `time.time()`을 부르지 않는다."
+      scope: []
+      scope_exclude: ["orders/clock.py"]
+      scope_reason: 현재 시각을 읽으라고 정한 파일 자체다
+      checker:
+        body: |
+          id: clock-only
+          language: python
+          severity: error
+          message: 현재 시각은 orders/clock.py의 now()로 읽는다
+          rule:
+            any:
+              - pattern: datetime.now($$$ARGS)
+              - pattern: datetime.datetime.now($$$ARGS)
+              - pattern: time.time()
+        examples:
+          - {code: "from datetime import datetime\nx = datetime.now()\n", violates: true, lines: [2]}
+          - {code: "import datetime\nx = datetime.datetime.now()\n", violates: true, lines: [2]}
+          - {code: "import time\nx = time.time()\n", violates: true, lines: [2]}
+          - {code: "from orders.clock import now\nx = now()\n", violates: false, lines: []}
+          - {code: "elapsed = timer.time_left()\n", violates: false, lines: []}
+expect:
+  violations: ["orders/services/pricing.py:36", "orders/services/pricing.py:37"]
+  not_flagged: ["orders/services/pricing.py:38", "orders/clock.py:9"]
+  contains: ["출처: `README.md > 코드 규칙 > 시각`"]

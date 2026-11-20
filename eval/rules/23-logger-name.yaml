@@ -1,0 +1,43 @@
+name: logger-name
+description: >-
+  base README에 더한 "로거는 `logging.getLogger(__name__)`로 만든다." 규칙. PR이 이름을 문자열로 적어
+  만든 로거는 잡히고, `__name__`으로 만든 로거는 잡히지 않는다.
+base:
+  - file: README.md
+    find: "### 테스트\n\n- 테스트 파일 이름은 `test_<모듈>.py`다.\n"
+    replace: "### 테스트\n\n- 테스트 파일 이름은 `test_<모듈>.py`다.\n\n### 로거\n\n- 로거는 `logging.getLogger(__name__)`로 만든다. 이름을 문자열로 적지 않는다.\n"
+pr:
+  - file: orders/services/pricing.py
+    find: "from orders.models.order import Order\n"
+    replace: "import logging\n\nfrom orders.models.order import Order\n\nlogger = logging.getLogger(\"pricing\")\n"
+  - file: orders/api/handlers.py
+    find: "from orders.models.order import Item, Order\n"
+    replace: "import logging\n\nfrom orders.models.order import Item, Order\n"
+  - file: orders/api/handlers.py
+    find: "from orders.services.pricing import total\n"
+    replace: "from orders.services.pricing import total\n\nlogger = logging.getLogger(__name__)\n"
+model:
+  rules:
+    - section: 코드 규칙 > 로거
+      quote: "로거는 `logging.getLogger(__name__)`로 만든다. 이름을 문자열로 적지 않는다."
+      scope: []
+      checker:
+        body: |
+          id: logger-name
+          language: python
+          severity: error
+          message: 로거는 logging.getLogger(__name__)로 만든다
+          rule:
+            pattern: logging.getLogger($NAME)
+          constraints:
+            NAME:
+              kind: string
+        examples:
+          - {code: "import logging\nlog = logging.getLogger('x')\n", violates: true, lines: [2]}
+          - {code: "import logging\nlog = logging.getLogger(\"orders.api\")\n", violates: true, lines: [2]}
+          - {code: "import logging\nlog = logging.getLogger(__name__)\n", violates: false, lines: []}
+          - {code: "name = 'x'\nlogger = make_logger(name)\n", violates: false, lines: []}
+expect:
+  violations: ["orders/services/pricing.py:5"]
+  not_flagged: ["orders/api/handlers.py:6"]
+  contains: ["출처: `README.md > 코드 규칙 > 로거`"]

@@ -1,0 +1,52 @@
+name: model-method-no-self-assign
+description: >-
+  base README에 더한 "`orders/models`의 메서드는 `self`의 속성에 대입하지 않는다." 규칙. orders/models에
+  PR이 넣은 `self.count = 0`은 잡히고, 같은 클래스의 새 객체를 돌려주는 메서드와 범위 밖
+  (orders/services)의 `self` 대입은 잡히지 않는다.
+base:
+  - file: README.md
+    find: "### 테스트\n\n- 테스트 파일 이름은 `test_<모듈>.py`다.\n"
+    replace: "### 테스트\n\n- 테스트 파일 이름은 `test_<모듈>.py`다.\n\n### 모델 메서드\n\n- `orders/models`의 메서드는 `self`의 속성에 대입하지 않는다. 바뀐 값은 새 객체로 돌려준다.\n"
+pr:
+  - file: orders/models/order.py
+    append: |
+
+
+      @dataclass(frozen=True)
+      class Cart:
+          count: int = 0
+
+          def add(self) -> "Cart":
+              return Cart(count=self.count + 1)
+
+          def reset(self) -> None:
+              self.count = 0
+  - file: orders/services/counter.py
+    create: |
+      class Counter:
+          def __init__(self) -> None:
+              self.value = 0
+model:
+  rules:
+    - section: 코드 규칙 > 모델 메서드
+      quote: "`orders/models`의 메서드는 `self`의 속성에 대입하지 않는다."
+      scope: ["orders/models/**"]
+      checker:
+        body: |
+          id: model-no-self-assign
+          language: python
+          severity: error
+          message: orders/models의 메서드는 self의 속성에 대입하지 않는다
+          rule:
+            any:
+              - pattern: self.$A = $B
+              - pattern: self.$A += $B
+        examples:
+          - {code: "class A:\n    def f(self):\n        self.x = 1\n", violates: true, lines: [3]}
+          - {code: "class A:\n    def f(self):\n        self.n += 1\n", violates: true, lines: [3]}
+          - {code: "class A:\n    def f(self):\n        return A(x=self.x + 1)\n", violates: false, lines: []}
+          - {code: "def g(other):\n    other.x = 1\n", violates: false, lines: []}
+expect:
+  violations: ["orders/models/order.py:25"]
+  not_flagged: ["orders/models/order.py:22", "orders/services/counter.py:3"]
+  contains: ["출처: `README.md > 코드 규칙 > 모델 메서드`"]

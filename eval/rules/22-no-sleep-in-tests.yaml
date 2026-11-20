@@ -1,0 +1,42 @@
+name: no-sleep-in-tests
+description: >-
+  base README에 더한 "테스트는 `time.sleep`을 쓰지 않는다." 규칙(적용 범위 tests/). PR이 테스트에 넣은
+  `time.sleep`은 잡히고, 범위 밖(scripts/)의 `time.sleep`은 잡히지 않는다.
+base:
+  - file: README.md
+    find: "### 테스트\n\n- 테스트 파일 이름은 `test_<모듈>.py`다.\n"
+    replace: "### 테스트\n\n- 테스트 파일 이름은 `test_<모듈>.py`다.\n- `tests/`의 테스트는 `time.sleep`을 쓰지 않는다.\n"
+pr:
+  - file: tests/test_pricing.py
+    append: |
+
+
+      def test_total_is_stable():
+          import time
+
+          time.sleep(0)
+          assert total(order(1000)) == total(order(1000))
+  - file: scripts/wait.py
+    create: "import time\n\n\ndef main():\n    time.sleep(1)\n"
+model:
+  rules:
+    - section: 코드 규칙 > 테스트
+      quote: "`tests/`의 테스트는 `time.sleep`을 쓰지 않는다."
+      scope: ["tests/**"]
+      checker:
+        body: |
+          id: no-sleep-in-tests
+          language: python
+          severity: error
+          message: 테스트는 time.sleep을 쓰지 않는다
+          rule:
+            pattern: time.sleep($$$ARGS)
+        examples:
+          - {code: "import time\ntime.sleep(1)\n", violates: true, lines: [2]}
+          - {code: "def test_a():\n    time.sleep(0.1)\n", violates: true, lines: [2]}
+          - {code: "def test_a():\n    assert True\n", violates: false, lines: []}
+          - {code: "sleep_seconds = 0\n", violates: false, lines: []}
+expect:
+  violations: ["tests/test_pricing.py:46"]
+  not_flagged: ["scripts/wait.py:5"]
+  contains: ["출처: `README.md > 코드 규칙 > 테스트`"]
