@@ -90,6 +90,8 @@ docker compose up -d       # redis
 source .venv/bin/activate  # Procfile의 python·uvicorn은 venv에서 찾는다
 cp .env.example .env       # 처음 한 번. API_PORT 등 로컬 실행 설정 (비밀값은 넣지 않음)
 honcho start               # api(웹훅 + 동기화 루프), worker
+scripts/start.sh           # venv를 켜지 않은 셸이나 launchd에서. .venv/bin과 gh·claude·docker 경로를 정하고 honcho start
+scripts/install-launchd.sh # 사용자 LaunchAgent로 등록 (죽으면 다시 띄움). 상태·로그·제거는 README "launchd로 띄워 두기"
 pytest                # 파이프라인 자체 테스트 (Docker 없이)
 pytest -m docker      # 실제 Docker·예제 리포가 필요한 통합 테스트 (이미지 빌드와 Python 런타임·ast-grep·ruff 받기에 네트워크가 필요하다)
 pip install -e '.[rag]'   # 과거 기록 검색을 쓸 때만(rag.enabled: on, 또는 auto가 켤 때). chromadb·onnxruntime·tokenizers·numpy
@@ -98,7 +100,7 @@ python -m app.cli eval --baseline --db <경로>  # 평가 세트 전부를 돌�
 PR_PROOF_REAL_EMBED=1 PR_PROOF_EMBED_DIR=<모델 폴더> pytest tests/worker/test_real_embed.py  # 실제 임베딩 모델의 recall@k
 ```
 
-워커 실행 전 `gh auth login`, `claude` 로그인, Docker 실행이 필요하다. preflight가 확인한다.
+워커 실행 전 `gh auth login`, `claude` 로그인, Docker 실행이 필요하다. preflight가 확인한다. 워커는 preflight 전에 DB 스키마(새 테이블, NULL 허용 열)를 맞추고, 맞추지 못하면 1로 끝난다.
 
 ## 코드 구조
 
