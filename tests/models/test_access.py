@@ -92,26 +92,27 @@ def test_approver_needs_a_login() -> None:
     [
         ("", NoCommit()),
         ("   ", NoCommit()),
-        ("abc1234", Commit("abc1234")),
-        ("ABC1234", Commit("abc1234")),
-        ("abc1234 확인했습니다", Commit("abc1234")),
         (HEAD, Commit(HEAD)),
-        ("abc123", BadCommit()),  # 7자 미만
-        ("abc123g", BadCommit()),  # 16진수가 아님
+        (HEAD.upper(), Commit(HEAD)),
+        (f"{HEAD} 확인했습니다", Commit(HEAD)),
+        # 짧은 해시는 앞자리가 같은 커밋으로 바꿔 끼울 수 있어 받지 않는다 (T31)
+        ("abc1234", BadCommit()),
+        (HEAD[:39], BadCommit()),
         (HEAD + "0", BadCommit()),  # 40자 초과
-        ("`abc1234`", BadCommit()),
+        (HEAD[:39] + "g", BadCommit()),  # 16진수가 아님
+        (f"`{HEAD}`", BadCommit()),
     ],
 )
 def test_approval_arg(arg: str, expected: object) -> None:
     assert approval_arg(arg) == expected
 
 
-def test_commit_matches_only_the_head_it_prefixes() -> None:
-    assert Commit("abc1234").matches(HEAD)
+def test_commit_matches_only_the_same_head() -> None:
     assert Commit(HEAD).matches(HEAD)
-    assert not Commit("abc1234").matches(OTHER)
-    assert not Commit("abc1234").matches("")
-    assert not Commit("abc1234").matches("abc1234")  # head가 전체 해시가 아니면 맞지 않는다
+    assert not Commit(HEAD).matches(OTHER)
+    assert not Commit(HEAD).matches(HEAD[:39] + "1")  # 앞 39자가 같은 다른 커밋
+    assert not Commit(HEAD).matches(HEAD[:7])
+    assert not Commit(HEAD).matches("")
 
 
 def test_settings_default_without_access() -> None:

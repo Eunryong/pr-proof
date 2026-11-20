@@ -10,7 +10,7 @@ import logging
 from dataclasses import dataclass
 from typing import Final
 
-from app.models.access import MIN_SHORT_SHA, AccessSettings, Author, Decision, may_run
+from app.models.access import AccessSettings, Author, Decision, may_run
 from app.models.job import PRJob
 from app.worker import base_config
 from app.worker.deps import Deps
@@ -66,10 +66,10 @@ def block(job: PRJob, deps: Deps, refs: PullRefs) -> str:
 
 
 def approval_guide(head_sha: str) -> str:
-    short = head_sha[:MIN_SHORT_SHA]
+    """승인 명령은 전체 해시만 받으므로(T31) 안내에도 그대로 복사할 수 있게 전체 해시를 적는다."""
     return (
         "외부 작성자의 PR이라 검사하지 않았습니다. 저장소 멤버가 코드를 확인한 뒤 "
-        f"`/recheck {short}`를 달면 이 커밋을 검사합니다."
+        f"`/recheck {head_sha}`를 달면 이 커밋을 검사합니다."
     )
 
 
@@ -78,16 +78,14 @@ def missing_commit_reply(head_sha: str) -> str:
 
 
 def bad_commit_reply(head_sha: str) -> str:
-    short = head_sha[:MIN_SHORT_SHA]
     return (
-        f"> /recheck\n\n커밋은 해시의 앞 {MIN_SHORT_SHA}자 이상으로 적어 주세요. "
-        f"지금 head는 `{short}`입니다. 확인한 뒤 `/recheck {short}`을 달아 주세요."
+        "> /recheck\n\n커밋은 전체 해시 40자로 적어 주세요. 짧은 해시로는 승인하지 않습니다. "
+        f"지금 head는 `{head_sha}`입니다. 확인한 뒤 `/recheck {head_sha}`을 달아 주세요."
     )
 
 
 def head_moved_reply(head_sha: str) -> str:
-    short = head_sha[:MIN_SHORT_SHA]
     return (
-        f"> /recheck\n\n새 커밋이 왔습니다. 지금 head는 `{short}`입니다. "
-        f"확인한 뒤 `/recheck {short}`을 달아 주세요."
+        f"> /recheck\n\n새 커밋이 왔습니다. 지금 head는 `{head_sha}`입니다. "
+        f"확인한 뒤 `/recheck {head_sha}`을 달아 주세요."
     )

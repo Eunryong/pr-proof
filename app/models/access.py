@@ -28,8 +28,7 @@ ASSOCIATIONS: Final = frozenset(
 )
 # GitHub 로그인 이름에는 `[`가 들어갈 수 없어, 이 꼬리가 붙은 이름은 GitHub App(봇)만 쓴다
 BOT_SUFFIX: Final = "[bot]"
-MIN_SHORT_SHA: Final = 7
-_SHA_PREFIX: Final = re.compile(r"[0-9a-f]{7,40}")
+# 승인은 전체 해시만 받는다. 짧은 해시는 앞자리가 같은 커밋을 만들어 바꿔 끼울 수 있다 (T31)
 _FULL_SHA: Final = re.compile(r"[0-9a-f]{40}")
 
 
@@ -56,7 +55,7 @@ class Allowed:
 
 @dataclass(frozen=True)
 class NeedsApproval:
-    head_sha: str  # 승인 안내에 짧게 보일 지금 head
+    head_sha: str  # 승인 안내에 전체 해시로 보일 지금 head
 
 
 Decision = Allowed | NeedsApproval
@@ -96,16 +95,16 @@ class NoCommit:
 
 @dataclass(frozen=True)
 class BadCommit:
-    """커밋이 16진수 7–40자가 아니다 (7자 미만 포함)."""
+    """커밋이 16진수 40자(전체 해시)가 아니다. 짧은 해시도 여기다 (T31)."""
 
 
 @dataclass(frozen=True)
 class Commit:
-    prefix: str  # 소문자 16진수 7–40자
+    sha: str  # 소문자 16진수 40자
 
     def matches(self, head_sha: str) -> bool:
         """이 커밋이 지금 head인지. 해시만 본다. 커밋 시각은 작성자가 정할 수 있어 쓰지 않는다."""
-        return bool(_FULL_SHA.fullmatch(head_sha)) and head_sha.startswith(self.prefix)
+        return head_sha == self.sha
 
 
 ApprovalArg = NoCommit | BadCommit | Commit
@@ -117,7 +116,7 @@ def approval_arg(arg: str) -> ApprovalArg:
     if not words:
         return NoCommit()
     word = words[0].lower()
-    return Commit(word) if _SHA_PREFIX.fullmatch(word) else BadCommit()
+    return Commit(word) if _FULL_SHA.fullmatch(word) else BadCommit()
 
 
 def parse_access(text: str | None) -> tuple[AccessSettings, tuple[str, ...]]:

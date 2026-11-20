@@ -21,7 +21,7 @@ FIX_TARGETS: Final[Mapping[str, tuple[str, ...]]] = {
 class ParsedCommand:
     name: CommandName
     word: str  # 코멘트에 쓴 명령어. 예: "/fix"
-    arg: str = ""  # "/fix model"의 "model", "/recheck abc1234"의 "abc1234"
+    arg: str = ""  # "/fix model"의 "model", "/recheck <커밋>"의 커밋
 
 
 def parse_command(text: str) -> ParsedCommand:
