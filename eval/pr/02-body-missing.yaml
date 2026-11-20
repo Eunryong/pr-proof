@@ -1,0 +1,97 @@
+name: body-missing
+description: 4-12. orders/models/ 아래 파일을 바꾼 PR의 본문에 '## 데이터 변경' 절이 없다. 본문 규칙이 그 PR을 잡는다. 커밋은 형식을 지켜 잡히지
+  않는다.
+base:
+- file: README.md
+  create: "# orders\n\n파이프라인 평가용 예제 리포다.\n\n## 기여 방법\n\n- 커밋 메시지의 첫 줄은 `feat: `, `fix: `, `docs: ` 중 하나로\
+    \ 시작한다.\n\n  지키는 예:\n\n  ```text\n  feat: 쿠폰 모델 추가\n  ```\n\n  어기는 예:\n\n  ```text\n  쿠폰 모델 추가\n \
+    \ ```\n\n- `orders/models/` 아래 파일을 바꾸는 PR은 본문에 `## 데이터 변경` 절을 두고 무엇이 바뀌는지 적는다.\n"
+pr_commits:
+- message: 'feat: 쿠폰 모델 추가'
+  edits:
+  - file: orders/models/coupon.py
+    create: "from dataclasses import dataclass\n\n\n@dataclass(frozen=True)\nclass Coupon:\n    code:\
+      \ str\n    amount: int\n"
+pr_text:
+  title: 쿠폰 모델
+  body: '쿠폰 모델을 더했습니다.
+
+
+    ## 테스트
+
+    pytest'
+model:
+  pr_rules:
+  - section: 기여 방법
+    quote: '커밋 메시지의 첫 줄은 `feat: `, `fix: `, `docs: ` 중 하나로 시작한다.'
+    examples:
+    - code: 'feat: 쿠폰 모델 추가'
+      violates: false
+      lines: []
+    - code: 쿠폰 모델 추가
+      violates: true
+      lines:
+      - 1
+    plan:
+      method: pattern
+      fact: commit_subject
+      condition: must_match
+      pattern: '^(feat|fix|docs): '
+      when_changed: ''
+      reason: ''
+      examples:
+      - value: 'feat: 쿠폰 모델 추가'
+        changed_paths:
+        - orders/models/coupon.py
+        violates: false
+      - value: 쿠폰 모델 추가
+        changed_paths:
+        - orders/models/coupon.py
+        violates: true
+      - value: 'fix: 합계 오류 수정
+
+
+          할인 뒤 합계'
+        changed_paths:
+        - orders/services/pricing.py
+        violates: false
+      - value: WIP
+        changed_paths:
+        - orders/services/pricing.py
+        violates: true
+  - section: 기여 방법
+    quote: '`orders/models/` 아래 파일을 바꾸는 PR은 본문에 `## 데이터 변경` 절을 두고 무엇이 바뀌는지 적는다.'
+    plan:
+      method: pattern
+      fact: pr_body
+      condition: must_match
+      pattern: (?m)^## 데이터 변경
+      when_changed: ^orders/models/
+      reason: ''
+      examples:
+      - value: 쿠폰 모델을 더했다
+        changed_paths:
+        - orders/models/coupon.py
+        violates: true
+      - value: '## 변경
+
+          주문에 필드를 더함'
+        changed_paths:
+        - orders/models/order.py
+        - orders/services/pricing.py
+        violates: true
+      - value: '## 데이터 변경
+
+          쿠폰 테이블을 더함'
+        changed_paths:
+        - orders/models/coupon.py
+        violates: false
+      - value: 합계 계산을 고침
+        changed_paths:
+        - orders/services/pricing.py
+        violates: false
+expect:
+  pr_flagged:
+  - pr_body
+  pr_contains:
+  - PR 본문 (빠진 내용)

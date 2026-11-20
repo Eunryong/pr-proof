@@ -1,0 +1,122 @@
+name: commit-format
+description: 4-11. README의 기여 방법에 커밋 형식 규칙(문서에 지키는 예와 어기는 예가 있음)과 orders/models/ 본문 규칙이 있다. PR의 커밋 넷 중
+  둘(1번, 3번)만 형식을 어긴다. 형식을 어긴 커밋만 전체 해시로 잡히고 지킨 커밋은 잡히지 않는다. 코드 규칙이 없어 수정 판단도 수정안도 없다(4-13). PR은 orders/models/를
+  바꾸지 않아 본문 규칙은 해당 없음이다.
+base:
+- file: README.md
+  create: "# orders\n\n파이프라인 평가용 예제 리포다.\n\n## 기여 방법\n\n- 커밋 메시지의 첫 줄은 `feat: `, `fix: `, `docs: ` 중 하나로\
+    \ 시작한다.\n\n  지키는 예:\n\n  ```text\n  feat: 쿠폰 모델 추가\n  ```\n\n  어기는 예:\n\n  ```text\n  쿠폰 모델 추가\n \
+    \ ```\n\n- `orders/models/` 아래 파일을 바꾸는 PR은 본문에 `## 데이터 변경` 절을 두고 무엇이 바뀌는지 적는다.\n"
+pr_commits:
+- message: 'feat: 쿠폰 계산 추가'
+  edits:
+  - file: orders/services/coupon.py
+    create: "def coupon_amount(total: int, rate: int) -> int:\n    return total * rate // 100\n"
+- message: 쿠폰 금액 반올림 고침
+  edits:
+  - file: orders/services/coupon.py
+    create: "def coupon_amount(total: int, rate: int) -> int:\n    return (total * rate + 50) // 100\n"
+- message: 'docs: 쿠폰 설명
+
+
+    계산 방법을 적는다'
+  edits:
+  - file: docs/coupon.md
+    create: '# 쿠폰
+
+
+      금액의 퍼센트를 깎는다.
+
+      '
+- message: WIP
+  edits:
+  - file: docs/coupon.md
+    append: '
+
+      반올림한다.
+
+      '
+pr_text:
+  title: 쿠폰 계산
+  body: 쿠폰 금액을 계산하는 함수를 더했습니다.
+model:
+  pr_rules:
+  - section: 기여 방법
+    quote: '커밋 메시지의 첫 줄은 `feat: `, `fix: `, `docs: ` 중 하나로 시작한다.'
+    examples:
+    - code: 'feat: 쿠폰 모델 추가'
+      violates: false
+      lines: []
+    - code: 쿠폰 모델 추가
+      violates: true
+      lines:
+      - 1
+    plan:
+      method: pattern
+      fact: commit_subject
+      condition: must_match
+      pattern: '^(feat|fix|docs): '
+      when_changed: ''
+      reason: ''
+      examples:
+      - value: 'feat: 쿠폰 모델 추가'
+        changed_paths:
+        - orders/models/coupon.py
+        violates: false
+      - value: 쿠폰 모델 추가
+        changed_paths:
+        - orders/models/coupon.py
+        violates: true
+      - value: 'fix: 합계 오류 수정
+
+
+          할인 뒤 합계'
+        changed_paths:
+        - orders/services/pricing.py
+        violates: false
+      - value: WIP
+        changed_paths:
+        - orders/services/pricing.py
+        violates: true
+  - section: 기여 방법
+    quote: '`orders/models/` 아래 파일을 바꾸는 PR은 본문에 `## 데이터 변경` 절을 두고 무엇이 바뀌는지 적는다.'
+    plan:
+      method: pattern
+      fact: pr_body
+      condition: must_match
+      pattern: (?m)^## 데이터 변경
+      when_changed: ^orders/models/
+      reason: ''
+      examples:
+      - value: 쿠폰 모델을 더했다
+        changed_paths:
+        - orders/models/coupon.py
+        violates: true
+      - value: '## 변경
+
+          주문에 필드를 더함'
+        changed_paths:
+        - orders/models/order.py
+        - orders/services/pricing.py
+        violates: true
+      - value: '## 데이터 변경
+
+          쿠폰 테이블을 더함'
+        changed_paths:
+        - orders/models/coupon.py
+        violates: false
+      - value: 합계 계산을 고침
+        changed_paths:
+        - orders/services/pricing.py
+        violates: false
+expect:
+  pr_flagged:
+  - commit:1
+  - commit:3
+  no_fix: true
+  pr_contains:
+  - 커밋 4개
+  - PR 패턴 (커밋 제목이
+  - 이 PR은 바뀐 파일이 조건에 맞지 않아 해당 없음
+  contains:
+  - ⚠️ PR 단위 위반 2건 (규칙 1개)

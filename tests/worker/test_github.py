@@ -36,6 +36,10 @@ class FakeGh:
         self.review_error: str | None = None
         # 원본 PR의 코멘트 하나 조회 (승인자 확인): ID → {"login", "association", "body", "pr"}
         self.issue_comments: dict[int, dict] = {}
+        # 원본 PR의 제목과 본문 (PR 단위 확인의 pr_text). 조회한 횟수를 센다
+        self.title = "PR 제목"
+        self.body = ""
+        self.text_lookups = 0
 
     def __call__(self, args: list[str], stdin: str | None) -> str:
         self.calls.append((args, stdin))
@@ -51,6 +55,11 @@ class FakeGh:
             return (
                 f"{self.head}\t{self.base}\t{self.state}\t{self.head_ref}\t{self.head_repo}"
                 f"\t{self.author_association}\t{self.author_login}\n"
+            )
+        if _is_text_lookup(args):
+            self.text_lookups += 1
+            return (
+                json.dumps({"title": self.title, "body": self.body, "branch": self.head_ref}) + "\n"
             )
         one_comment = re.fullmatch(r"repos/o/r/issues/comments/(\d+)", path)
         if one_comment and method == "GET":
@@ -116,6 +125,10 @@ class FakeGh:
                 continue
             out.append("patch" if "PATCH" in a else "find" if "--paginate" in a else "create")
         return out
+
+
+def _is_text_lookup(args: list[str]) -> bool:
+    return len(args) > 1 and "/pulls/" in args[1] and any(".title" in a for a in args)
 
 
 def _is_head_lookup(args: list[str]) -> bool:

@@ -327,6 +327,18 @@ def test_rules_outside_code_keep_only_the_reason(target: str) -> None:
     assert (rule.scope, rule.exclude, rule.exclude_reason, rule.examples) == ((), (), "", ())
 
 
+@pytest.mark.parametrize(("target", "kept"), [("pr", 1), ("human", 0)])
+def test_pr_rules_keep_document_examples_for_their_pattern(target: str, kept: int) -> None:
+    """PR 패턴의 예시 확인(4.5 끝)은 문서의 예시를 먼저 쓴다. 문서에 없는 예시는 버린다."""
+    examples = [{"code": BAD_PRINT, "violates": True, "lines": [1]},
+                {"code": "feat: 문서에 없음", "violates": False, "lines": []}]  # fmt: skip
+    (rule,), _ = _verify(
+        {"section": "출력", "quote": PRINT_RULE, "target": target, "examples": examples}
+    )
+    assert len(rule.examples) == kept
+    assert all(e.written_by == "document" and e.code == BAD_PRINT for e in rule.examples)
+
+
 def test_code_rule_answered_with_no_check_is_still_tried() -> None:
     """코드 규칙인데 check가 "none"이면 답이 어긋난 것이다. 검사 대상에서 빼지 않는다."""
     (rule,), _ = _verify({"section": "출력", "quote": PRINT_RULE, "check": "none", "reason": "?"})

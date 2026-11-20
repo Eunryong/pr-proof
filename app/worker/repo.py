@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
+from app.models.pr_check import RawCommit
 from app.models.rule_reading import TreeEntry
 from app.sandbox.container import OUT_DIR
 
@@ -204,6 +205,88 @@ def read_blob(worktree: Path, sha: str) -> str:
 
 def merge_base(worktree: Path, base_sha: str, head_sha: str) -> str:
     return _tree_git(worktree, "merge-base", base_sha, head_sha).strip()
+
+
+def changed_paths(worktree: Path, merge_base_sha: str, head_sha: str) -> tuple[str, ...]:
+    """PR이 바꾼 파일의 경로 (4.5 PR 사실). 추가·수정·삭제이고, 이름을 바꾸면 옛 경로와 새 경로
+    둘 다다."""
+    listed = _tree_git(
+        worktree, "-c", "core.quotePath=false", "diff", "--name-only", "-z", "--no-renames",
+        merge_base_sha, head_sha,
+    )  # fmt: skip
+    return tuple(filter(None, listed.split("\0")))
+
+
+# 커밋 객체에서 메시지 앞의 머리(작성자, 서명 등)에 둘 여유. 그 뒤는 읽지 않고 버린다
+_COMMIT_HEADER_ROOM: Final = 64 * 1024
+_FULL_SHA_LINE: Final = re.compile(r"[0-9a-f]{40}( [0-9a-f]{40})*")
+
+
+def pr_commits(
+    worktree: Path, merge_base_sha: str, head_sha: str, *, limit: int, message_bytes: int
+) -> tuple[list[RawCommit], bool]:
+    """PR의 커밋(merge-base..head, 새 커밋부터) limit개까지와, 더 있었는지 (4.5 PR 사실).
+
+    해시와 부모는 `rev-list --parents`로, 메시지는 `cat-file --batch`로 객체 크기를 보며 읽는다.
+    메시지 안의 글(작성자의 글)이 구분자를 흉내 내어 다른 커밋처럼 보일 수 없다. 메시지는
+    message_bytes를 조금 넘게까지만 읽고, 객체가 더 크면 cut으로 표시한다.
+    """
+    listed = _tree_git(
+        worktree, "rev-list", "--parents", f"--max-count={limit + 1}",
+        f"{merge_base_sha}..{head_sha}",
+    )  # fmt: skip
+    rows = [line.split() for line in listed.splitlines() if line.strip()]
+    if not all(_FULL_SHA_LINE.fullmatch(" ".join(r)) for r in rows):
+        raise GitError("rev-list 출력을 읽지 못함")
+    more = len(rows) > limit
+    rows = rows[:limit]
+    messages = _commit_messages(worktree, [r[0] for r in rows], message_bytes + _COMMIT_HEADER_ROOM)
+    commits = [RawCommit(r[0], tuple(r[1:]), *messages[r[0]]) for r in rows]
+    return commits, more
+
+
+def _commit_messages(worktree: Path, shas: Sequence[str], keep: int) -> dict[str, tuple[str, bool]]:
+    """커밋마다 (메시지, 잘렸는지). 객체의 앞 keep바이트만 메모리에 둔다."""
+    if not shas:
+        return {}
+    try:
+        git_dir = _git_dir_record(worktree).read_text().strip()
+    except OSError as e:
+        raise GitError(f"worktree의 저장소 기록이 없음: {worktree}") from e
+    env = {k: os.environ[k] for k in _ENV_PASSTHROUGH if k in os.environ}
+    command = ["git", f"--git-dir={git_dir}", "cat-file", "--batch"]
+    try:
+        proc = subprocess.Popen(
+            command, cwd=worktree, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL, env=env,
+        )  # fmt: skip
+    except OSError as e:
+        raise GitError(f"git cat-file 실행 실패: {e}") from e
+    out: dict[str, tuple[str, bool]] = {}
+    try:
+        assert proc.stdin is not None and proc.stdout is not None
+        proc.stdin.write(("\n".join(shas) + "\n").encode())
+        proc.stdin.close()
+        for sha in shas:
+            header = proc.stdout.readline().split()
+            if len(header) != 3 or header[0].decode() != sha or header[1] != b"commit":
+                raise GitError(f"커밋 객체를 읽지 못함: {sha}")
+            size = int(header[2])
+            head = proc.stdout.read(min(size, keep))
+            left = size - len(head)
+            while left > 0:
+                chunk = proc.stdout.read(min(left, 1 << 16))
+                if not chunk:
+                    raise GitError(f"커밋 객체가 중간에 끝남: {sha}")
+                left -= len(chunk)
+            proc.stdout.read(1)  # 객체 뒤의 줄바꿈
+            _, _, message = head.partition(b"\n\n")
+            out[sha] = (message.decode("utf-8", errors="replace"), size > keep)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(timeout=GIT_TIMEOUT)
+    return out
 
 
 # 사용자 전역 git 설정이 diff 형식(접두사, 경로 표기, 외부 diff 도구)을 바꾸지 않게 한다.
