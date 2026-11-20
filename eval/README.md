@@ -8,8 +8,9 @@
 - `rules/*.yaml`: v2 1단계 문서 규칙 케이스. 예제 리포 README의 "코드 규칙" 절의 규칙을 읽어 검사기를 만들고 PR이 바꾼 줄의 위반을 찾는지 본다. `tests/e2e/test_rules_cases.py`가 같은 방식으로 돌린다. 예제 리포에는 ruff 설정이 없어 도구 설정의 규칙은 없고, 가짜 모델은 도구 선택에 규칙의 `tool`(없으면 맞는 도구 없음)을 답한다. 모델은 케이스의 `model` 답을 돌려주는 가짜이고(원문 확인, ast-grep 예시 확인, 검사기 실행은 진짜), `PR_PROOF_REAL_MODEL=1`이면 로그인된 claude를 실제로 부른다(비용이 든다. 비교용). `scripted_only: true`인 케이스는 실제 모델로 돌릴 때 건너뛴다.
 - `judge/*.yaml`: v2 4단계 모델의 직접 판단 케이스(4-1–4-7). 검사기 작성이 세 번 모두 예시를 통과하지 못한 규칙이 모델 판단으로 내려가, 위반이 수정안 PR까지 가는지, 답의 줄 인용 확인, hunk의 지시 주석(기록만), 위반 수에 비례하는 PR 상한과 `/fix`, 저장소 하루 상한을 본다. `tests/e2e/test_judge_cases.py`가 문서 규칙 케이스와 같은 방식으로 돌리고, 더한 키(`model.rules[].judge`, `record_only`, `real_checker_scripted`, `expect.judge_calls`·`next_commit`·`then_fix`·`mechanical_branch`)는 그 파일의 독스트링에 있다.
 - `tools_off.yaml`: 도구를 끈 평가(DESIGN 13절, 완료 기준 1-16, 3-7, 3-8, 4-8)의 표본과 개념. 위 케이스 열 개(옛 static 다섯과 lint 다섯)와 1단계 기준선의 probe 파일(ruff가 정답지), 판단 케이스 `judge/01`·`06`(케이스가 표시한 줄이 정답)을 같은 규칙 읽기 결과로 모델 판단만·도구 끔·도구 켬에서 돌려, 개념과 확인 방법(도구 / 검사기 / 모델 판단)마다 재현율·정밀도를 낸다. `tests/e2e/test_tools_off_eval.py`가 읽고, 실행 방법은 그 파일의 독스트링에 있다.
-- 실행: `pytest -m docker tests/e2e`
-- 6단계에서 케이스를 20–30개로 늘리고, 결과를 `eval_runs`에 남겨 기준선과 비교한다.
+- 실행: `python -m app.cli eval --baseline`으로 `tests/e2e`의 docker 테스트 전부(케이스 파일, 도구를 끈 평가, 비교 하네스)를 돌려 결과를 SQLite의 `eval_runs`에 기준선으로 남긴다. 프롬프트나 모델을 바꾼 뒤 `python -m app.cli eval`을 돌리면 같은 종류(가짜 모델 / `--real-model`)의 가장 최근 기준선과 비교한다(6단계, 완료 기준 6-1, 6-3). 하네스만 보려면 `pytest -m docker tests/e2e`.
+- 케이스 수 (2026-11-20): `rules` 26, `judge` 6, `lint` 5, `tools` 4, `rag` 10, 합 51. 팀 고유 규칙 케이스(DESIGN 13절 "eval에 더할 케이스: 팀 고유 규칙 (`eval/rules/`)")는 `rules`의 26개다. `rules/17`–`26`은 6단계에 더했다: 금액 타입(17), 모델 메서드의 `self` 대입(18), 예외 이름(19), 상수 위치(20), 환경변수 위치(21), 테스트의 `time.sleep`(22), 로거 이름(23), `requests` import 위치(24), 현재 시각 읽기(25), 금액 반올림의 모델 수정(26, 6-2 모델 비교의 표본).
+- `tests/e2e/test_model_compare.py`: 수정 작성의 모델 세 구성(가벼운 모델만 / 무거운 모델만 / 가벼운 다음 무거운)을 `rules/09`, `10`, `26`으로 비교한다(6-2). 해소율·채택률·호출 수를 낸다. 실행 방법은 그 파일의 독스트링에 있다.
 
 ## 케이스 형식
 
