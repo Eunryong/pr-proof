@@ -29,6 +29,16 @@ def test_extension_settings_are_gone() -> None:
     assert problem is None and not hasattr(config, "extensions")
 
 
+def test_old_notify_key_is_ignored_without_a_problem_or_a_note() -> None:
+    """`notify.slack.ops`는 10절에서 지웠다(저장소 주인, 2026-11-20). 운영 알림은 운영자의 비밀값
+    파일로만 켜지고 대상 저장소가 끄지 못한다. 옛 파일의 키는 모르는 키로 무시한다."""
+    text = "notify:\n  slack:\n    ops: false\nsandbox: {memory_gb: 2}\n"
+    config, problem = parse_repo_config(text)
+    assert problem is None and config.sandbox.memory_gb == 2
+    assert not hasattr(config, "notify")
+    assert settings_notes(text) == []
+
+
 def test_reads_memory_and_ignores_other_sections() -> None:
     text = "sandbox:\n  memory_gb: 2\nskills:\n  enabled: [lint]\nmodel:\n  light: haiku\n"
     config, problem = parse_repo_config(text)

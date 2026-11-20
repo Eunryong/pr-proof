@@ -90,7 +90,7 @@ def _assert_only_the_guide(gh, head: str, since: int = 0) -> None:
     assert "issues/1/comments" in " ".join(args) or "issues/comments/" in " ".join(args)
     body = json.loads(stdin)["body"]
     assert body.split("\n") == [COMMENT_MARKER, guard.approval_guide(head)]
-    assert f"`/recheck {head[:7]}`" in body
+    assert f"`/recheck {head}`" in body  # 승인에 그대로 복사할 수 있는 전체 해시
 
 
 def _runs(env) -> list[Run]:
@@ -120,7 +120,7 @@ def _approver(env, login: str = "maintainer", association: str = "MEMBER",
     """승인 코멘트를 GitHub에서 읽은 값. 작업에 실린 값과 관계없다."""
     env["gh"].issue_comments[COMMENT_ID] = {
         "login": login, "association": association,
-        "body": body if body is not None else f"/recheck {env['gh'].head[:7]}", "pr": pr,
+        "body": body if body is not None else f"/recheck {env['gh'].head}", "pr": pr,
     }  # fmt: skip
 
 
@@ -363,14 +363,14 @@ def test_listed_bot_cannot_approve(env) -> None:
     env["gh"].author_association = "NONE"
     _approver(env, login="dependabot[bot]", association="MEMBER")
     _forbid_everything(env)
-    assert main.handle(_command(f"/recheck {HEAD[:7]}"), env["deps"]) == "approver_not_trusted"
+    assert main.handle(_command(f"/recheck {HEAD}"), env["deps"]) == "approver_not_trusted"
     assert _writes(env["gh"]) == [] and not _approvals(env)
 
 
 # --- 6-11: 커밋을 적은 /recheck 승인 ---
 
 
-@pytest.mark.parametrize("written", [HEAD[:7], HEAD.upper()[:12], HEAD])
+@pytest.mark.parametrize("written", [HEAD, HEAD.upper()])
 def test_recheck_with_the_current_head_runs_that_commit_and_records_it(env, written: str) -> None:
     env["gh"].author_association = "NONE"
     _approver(env, body=f"/recheck {written}")
@@ -389,9 +389,11 @@ def test_recheck_with_the_current_head_runs_that_commit_and_records_it(env, writ
     ("written", "result", "reply"),
     [
         ("/recheck", "approval_missing_commit", guard.missing_commit_reply),
-        (f"/recheck {HEAD[:6]}", "approval_bad_commit", guard.bad_commit_reply),
+        # 짧은 해시는 지금 head의 앞자리여도 승인이 아니다 (T31)
+        (f"/recheck {HEAD[:7]}", "approval_bad_commit", guard.bad_commit_reply),
+        (f"/recheck {HEAD[:39]}", "approval_bad_commit", guard.bad_commit_reply),
         ("/recheck please", "approval_bad_commit", guard.bad_commit_reply),
-        (f"/recheck {NEW_HEAD[:7]}", "approval_head_moved", guard.head_moved_reply),
+        (f"/recheck {NEW_HEAD}", "approval_head_moved", guard.head_moved_reply),
     ],
 )
 def test_recheck_that_does_not_name_the_head_runs_nothing_and_replies(
@@ -405,7 +407,9 @@ def test_recheck_that_does_not_name_the_head_runs_nothing_and_replies(
 
     writes = _writes(env["gh"])
     assert len(writes) == 1 and is_reply(writes[0][1])
-    assert json.loads(writes[0][1])["body"].endswith(reply(HEAD))
+    body = json.loads(writes[0][1])["body"]
+    assert body.endswith(reply(HEAD))
+    assert f"`/recheck {HEAD}`" in body  # 다시 달 명령은 전체 해시다
     assert not _approvals(env)
     assert env["deps"].store.command_handled(COMMENT_ID)
 
@@ -423,7 +427,7 @@ def test_new_commit_after_approval_is_blocked_again(env) -> None:
     env["gh"].author_association = "NONE"
     _approver(env)
     use_runner(env, lambda *a, **k: PASSED)
-    assert main.handle(_command(f"/recheck {HEAD[:7]}"), env["deps"]) == "approved:passed"
+    assert main.handle(_command(f"/recheck {HEAD}"), env["deps"]) == "approved:passed"
     # 승인한 커밋은 다시 넣어도 돈다
     assert main.handle(_update(), env["deps"]) == "passed"
 
@@ -433,7 +437,7 @@ def test_new_commit_after_approval_is_blocked_again(env) -> None:
     assert main.handle(_update(NEW_HEAD), env["deps"]) == guard.NEEDS_APPROVAL
     _assert_only_the_guide(env["gh"], NEW_HEAD, since)
     # 옛 커밋을 적은 승인은 새 head에 쓰이지 않는다
-    payload = _command(f"/recheck {HEAD[:7]}", comment_id=COMMENT_ID + 1)
+    payload = _command(f"/recheck {HEAD}", comment_id=COMMENT_ID + 1)
     env["gh"].issue_comments[COMMENT_ID + 1] = env["gh"].issue_comments[COMMENT_ID]
     assert main.handle(payload, env["deps"]) == "approval_head_moved"
     assert [a.head_sha for a in _approvals(env)] == [HEAD]
@@ -443,7 +447,7 @@ def test_fix_on_an_approved_commit_is_not_blocked(env) -> None:
     env["gh"].author_association = "NONE"
     _approver(env)
     use_runner(env, lambda *a, **k: PASSED)
-    main.handle(_command(f"/recheck {HEAD[:7]}"), env["deps"])
+    main.handle(_command(f"/recheck {HEAD}"), env["deps"])
     result = main.handle(_command("/fix", comment_id=COMMENT_ID + 1), env["deps"])
     assert result == "no_pending_fix"  # 승인 안내가 아니라 /fix의 답이다
 
@@ -462,7 +466,7 @@ def test_approver_is_checked_against_github(env, login: str, association: str, p
     env["gh"].author_association = "NONE"
     _approver(env, login=login, association=association, pr=pr)
     _forbid_everything(env)
-    assert main.handle(_command(f"/recheck {HEAD[:7]}"), env["deps"]) == "approver_not_trusted"
+    assert main.handle(_command(f"/recheck {HEAD}"), env["deps"]) == "approver_not_trusted"
     assert _writes(env["gh"]) == [] and not _approvals(env)
 
 
@@ -471,7 +475,7 @@ def test_approver_must_be_in_base_trusted_list(env) -> None:
     env["gh"].author_association = "NONE"
     _approver(env, association="MEMBER")
     _forbid_everything(env)
-    assert main.handle(_command(f"/recheck {HEAD[:7]}"), env["deps"]) == "approver_not_trusted"
+    assert main.handle(_command(f"/recheck {HEAD}"), env["deps"]) == "approver_not_trusted"
 
 
 def test_edited_comment_is_read_from_github(env) -> None:
@@ -479,7 +483,7 @@ def test_edited_comment_is_read_from_github(env) -> None:
     env["gh"].author_association = "NONE"
     _approver(env, body="고마워요")
     _forbid_everything(env)
-    assert main.handle(_command(f"/recheck {HEAD[:7]}"), env["deps"]) == "approval_comment_changed"
+    assert main.handle(_command(f"/recheck {HEAD}"), env["deps"]) == "approval_comment_changed"
     assert _writes(env["gh"]) == [] and not _approvals(env)
 
 
@@ -487,7 +491,7 @@ def test_failed_comment_lookup_runs_nothing(env) -> None:
     env["gh"].author_association = "NONE"  # 코멘트가 없어 조회가 실패한다
     _forbid_everything(env)
     with pytest.raises(GitHubError):
-        main.handle(_command(f"/recheck {HEAD[:7]}"), env["deps"])
+        main.handle(_command(f"/recheck {HEAD}"), env["deps"])
     assert _writes(env["gh"]) == [] and not _approvals(env)
 
 
