@@ -4,6 +4,7 @@ SQLite만 쓴다. chromadb가 없는 설치에서도 돈다. 기준값은 상수
 """
 
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Final
 
@@ -18,7 +19,7 @@ from .rag_helpers import fix_outcomes, record
 
 REPO: Final = "o/r"
 HEAVY: Final = ("chromadb", "onnxruntime", "tokenizers", "numpy")
-LIMITS: Final = {"min_records": 20, "min_attempts": 30, "min_baseline": 10}
+LIMITS: Final[Mapping[str, int]] = {"min_records": 20, "min_attempts": 30, "min_baseline": 10}
 
 
 def _store(path: Path) -> Store:

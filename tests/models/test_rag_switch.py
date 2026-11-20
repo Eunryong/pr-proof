@@ -1,5 +1,8 @@
 """검색을 켜는 조건 (docs/DESIGN.md 6.7). 기준값은 상수를 바꾸지 않고 인자로 준다."""
 
+from collections.abc import Mapping
+from typing import Final
+
 import pytest
 
 from app.models.rag_switch import (
@@ -17,7 +20,7 @@ from app.models.rag_switch import (
     worse,
 )
 
-LIMITS = {"min_records": 20, "min_attempts": 30, "min_baseline": 10}
+LIMITS: Final[Mapping[str, int]] = {"min_records": 20, "min_attempts": 30, "min_baseline": 10}
 
 
 def _auto(evidence: Evidence | None, turned_off: Evidence | None = None) -> RagSwitch:

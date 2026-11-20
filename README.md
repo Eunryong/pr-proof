@@ -26,7 +26,7 @@ GitHub 웹훅 ──▶ api (서명 확인, 큐 등록, 동기화 루프) ──
 ```
 git clone https://github.com/Eunryong/pr-proof && cd pr-proof
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e '.[dev]'          # 과거 기록 검색까지 쓰려면 '.[dev,rag]'
+pip install -e '.[dev]'          # 과거 기록 검색까지 쓰려면 '.[dev,rag]' (rag.enabled 기본 auto는 기록 20건부터 켜고, 없으면 검색 없이 검사한다)
 docker compose up -d             # Redis
 cp .env.example .env             # API_PORT 같은 로컬 실행 설정. 비밀값은 넣지 않는다
 gh auth login                    # 코멘트와 수정안 PR을 이 계정으로 단다. 대상 저장소에 쓰기 권한이 필요하다
