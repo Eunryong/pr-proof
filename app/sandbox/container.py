@@ -8,14 +8,13 @@ import subprocess
 import tempfile
 import time
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
 from app.sandbox import docker_cli
-from app.sandbox.venv import VENV_IN_CONTAINER
 
 WORKDIR: Final = "/work"
 # 파이프라인 설정(coveragerc 등)을 읽기 전용으로 넣는 경로
@@ -43,7 +42,7 @@ class ExecResult:
 @contextmanager
 def running(
     worktree: Path,
-    venv: Path,
+    mounts: Sequence[tuple[Path, str]],
     *,
     job_id: str | None = None,
     memory_gb: float = docker_cli.MEMORY_LIMIT_GB,
@@ -51,15 +50,17 @@ def running(
 ) -> Iterator[str]:
     """작업 컨테이너를 띄우고 이름을 돌려준다. 블록을 나가면 지운다.
 
-    네트워크 없음, 자원 제한, 호스트 UID·GID. .venv와 파이프라인 설정은 읽기 전용.
+    네트워크 없음, 자원 제한, 호스트 UID·GID. mounts(호스트 경로, 컨테이너 경로)와 파이프라인 설정은
+    읽기 전용이다. 언어 프로필이 .venv와 런타임을 넘긴다.
     """
     name = f"{names.container_prefix}-{job_id or uuid.uuid4().hex[:12]}"
     (worktree / OUT_DIR).mkdir(exist_ok=True)
+    readonly = [arg for host, inside in mounts for arg in ("-v", f"{host.resolve()}:{inside}:ro")]
     docker_cli.run(
         "run", "-d", "--name", name, "--network", "none", *docker_cli.limits(memory_gb),
         "--user", docker_cli.user(), "-e", "HOME=/tmp",
         "-v", f"{worktree.resolve()}:{WORKDIR}", "-w", WORKDIR,
-        "-v", f"{venv.resolve()}:{VENV_IN_CONTAINER}:ro",
+        *readonly,
         "-v", f"{docker_cli.IMAGE_DIR}:{PIPELINE_DIR}:ro",
         names.image, "sleep", "infinity",
     )  # fmt: skip

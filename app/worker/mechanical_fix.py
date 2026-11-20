@@ -32,9 +32,9 @@ from app.models.scope import MECHANICAL_POLICY, is_pipeline_output, parse_porcel
 from app.models.test_run import PytestRun
 from app.models.text_edit import TextEdit, apply_edits
 from app.models.violation import Violation
-from app.sandbox import ruff_runner
 from app.worker import detect, repo, scope
 from app.worker.checkers import FormatsFiles
+from app.worker.lang import python
 from app.worker.model_fix import file_hashes
 from app.worker.report import format_test_line
 from app.worker.state import Store
@@ -101,7 +101,7 @@ def fix_violations(
             break
     formatted: list[str] = []
     format_skipped = ""
-    format_files = sorted(touched | {v.file for v in targets if v.code == ruff_runner.FORMAT_CODE})
+    format_files = sorted(touched | {v.file for v in targets if v.code == python.FORMAT_CODE})
     if format_files:
         with repo.side_worktree(worktree, base_sha) as base_tree:
             base_ok = sandbox.format_check(base_tree)

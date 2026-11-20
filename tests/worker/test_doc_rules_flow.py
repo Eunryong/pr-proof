@@ -39,10 +39,10 @@ from app.models.rule import CheckMethod, Rule, RuleSource, rule_id
 from app.sandbox import checker_runner, toolcache
 from app.sandbox.checker_runner import CheckerRun, Match, Ran
 from app.sandbox.docker_cli import SandboxError
-from app.sandbox.venv import DependencyInstallError
 from app.worker import base_config, doc_rules, graph, repo, update
 from app.worker.ai import claude_cli
 from app.worker.ai.claude_cli import AIErrorKind, ClaudeResult, StructuredResult
+from app.worker.lang.python import DependencyInstallError
 from app.worker.markdown import inline_code
 
 from .helpers import BASE, PASSED, bodies, use_runner

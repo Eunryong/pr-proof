@@ -42,30 +42,38 @@ def store(tmp_path: Path) -> Store:
     return Store(tmp_path / "pipeline.db", fakeredis.FakeStrictRedis())
 
 
-def test_real_checker_passing_examples_is_accepted(store: Store, tool_cache: Path) -> None:
+def test_real_checker_passing_examples_is_accepted(
+    store: Store, tool_cache: Path, sandbox_image: str
+) -> None:
     model = FakeModel(_reply(checker=PRINT_RULE))
-    (result,) = _author(store, model, Sandbox(tool_cache))
+    (result,) = _author(store, model, Sandbox(tool_cache, image=sandbox_image))
     assert isinstance(result, Checked) and result.checker.kind == "ast-grep"
 
 
-def test_real_wrong_checker_fails_an_example_and_is_retried(store: Store, tool_cache: Path) -> None:
+def test_real_wrong_checker_fails_an_example_and_is_retried(
+    store: Store, tool_cache: Path, sandbox_image: str
+) -> None:
     wrong = PRINT_RULE.replace("print($$$ARGS)", "pprint($$$ARGS)")
     model = FakeModel(_reply(checker=wrong), _reply(checker=PRINT_RULE))
-    (result,) = _author(store, model, Sandbox(tool_cache))
+    (result,) = _author(store, model, Sandbox(tool_cache, image=sandbox_image))
     assert isinstance(result, Checked)
     assert "위반 예시 1 (문서): 2번째 줄에서 잡혀야 함, 실제로는 잡히지 않음." in model.calls[1][0]
 
 
-def test_real_fix_rule_is_rejected_before_running(store: Store, tool_cache: Path) -> None:
+def test_real_fix_rule_is_rejected_before_running(
+    store: Store, tool_cache: Path, sandbox_image: str
+) -> None:
     model = FakeModel(_reply(checker=PRINT_RULE + "fix: logger.info($$$ARGS)\n"),
                       _reply(checker=PRINT_RULE))  # fmt: skip
-    (result,) = _author(store, model, Sandbox(tool_cache))
+    (result,) = _author(store, model, Sandbox(tool_cache, image=sandbox_image))
     assert isinstance(result, Checked)
     assert "쓸 수 없는 키: fix" in model.calls[1][0]
 
 
-def test_third_attempt_switches_to_python_script(store: Store, tool_cache: Path) -> None:
+def test_third_attempt_switches_to_python_script(
+    store: Store, tool_cache: Path, sandbox_image: str
+) -> None:
     wrong = _reply(checker=PRINT_RULE.replace("print(", "pprint("))
     model = FakeModel(wrong, wrong, _reply(checker=PRINT_SCRIPT))
-    (result,) = _author(store, model, Sandbox(tool_cache))
+    (result,) = _author(store, model, Sandbox(tool_cache, image=sandbox_image))
     assert isinstance(result, Checked) and result.checker.kind == "python-ast"

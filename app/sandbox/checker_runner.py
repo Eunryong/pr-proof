@@ -2,8 +2,9 @@
 
 검사기 하나를 컨테이너 하나에서 돌린다. 네트워크 없음, 루트 파일 시스템 읽기 전용, 권한 없음,
 자원 제한, 호스트 UID. 검사할 폴더(worktree 또는 예시 폴더), 검사기 파일, 도구 캐시는 모두 읽기
-전용이다. 작업 디렉터리는 검사기 폴더라서 검사할 폴더의 `sgconfig.yml`을 읽지 않는다 (PR이 넣은
-설정이 언어 연결을 바꾸면 위반이 숨는다).
+전용이다. 이미지에는 언어가 없어서 ast-grep은 그 실행 파일을, Python AST 스크립트와 경로 패턴은
+Python 런타임을 도구 캐시에서 붙인다. 작업 디렉터리는 검사기 폴더라서 검사할 폴더의
+`sgconfig.yml`을 읽지 않는다 (PR이 넣은 설정이 언어 연결을 바꾸면 위반이 숨는다).
 
 출력은 믿지 않는 입력이다. 크기 상한 안의 JSON만 읽고, 넘긴 파일 밖을 가리키는 항목이 있으면
 결과 전체를 버린다.
@@ -21,11 +22,13 @@ from typing import Final
 
 from app.models.checker import CheckerKind, is_repo_path, validate_body
 from app.models.text_edit import TextEdit
-from app.sandbox import docker_cli
+from app.sandbox import docker_cli, toolcache
 
 WORK: Final = "/work"
 CHECKER_DIR: Final = "/checker"
 TOOL_MOUNT: Final = "/tools/ast-grep"
+PYTHON_MOUNT: Final = "/tools/python"
+PYTHON_BIN: Final = f"{PYTHON_MOUNT}/{toolcache.TOOLS[toolcache.PYTHON].binary}"
 RULE_FILE: Final = "rule.yml"
 SCRIPT_FILE: Final = "check.py"
 EXAMPLE_DIR: Final = "examples"
@@ -99,24 +102,24 @@ def run_checker(
     root: Path,
     files: Sequence[str],
     *,
-    tool_dir: Path | None = None,
+    tool_dir: Path,
+    image: str,
     timeout: int = CHECK_TIMEOUT,
     memory_gb: float = docker_cli.MEMORY_LIMIT_GB,
 ) -> CheckerRun:
-    """root 아래 files(상대 경로)에 검사기를 돌린다. ast-grep은 tool_dir(도구 캐시)이 필요하다.
+    """root 아래 files(상대 경로)에 검사기를 image 컨테이너에서 돌린다. tool_dir은 도구 캐시의
+    폴더다: ast-grep은 ast-grep, Python AST 스크립트와 경로 패턴은 Python 런타임.
 
     docker 자체가 실패하면 SandboxError를 올린다.
     """
     if kind == "path-pattern":
-        return run_path_pattern(body, files)
+        return run_path_pattern(body, files, tool_dir=tool_dir, image=image)
     check_paths(files)
     problem = validate_body(kind, body)
     if problem:
         return Invalid(problem)
     if not files:
         return Ran(())
-    if kind == "ast-grep" and tool_dir is None:
-        raise ValueError("ast-grep 검사기에는 tool_dir이 필요하다")
     with tempfile.TemporaryDirectory(prefix="pipeline-checker-") as tmp:
         checker_dir = Path(tmp)
         if kind == "ast-grep":
@@ -130,15 +133,15 @@ def run_checker(
             stdin = b""
         else:
             (checker_dir / SCRIPT_FILE).write_text(body)
-            mounts = ()
-            argv = ["python", "-I", f"{CHECKER_DIR}/{SCRIPT_FILE}"]
+            mounts = ("-v", f"{tool_dir.resolve()}:{PYTHON_MOUNT}:ro")
+            argv = [PYTHON_BIN, "-I", f"{CHECKER_DIR}/{SCRIPT_FILE}"]
             stdin = json.dumps({"files": list(files)}).encode()
         workdir = CHECKER_DIR if kind == "ast-grep" else WORK
         docker = [
             "run", "--rm", "-i", "--network", "none", "--read-only", *docker_cli.limits(memory_gb),
             "--user", docker_cli.user(), "-e", "HOME=/tmp", "-e", "PYTHONDONTWRITEBYTECODE=1",
             "-v", f"{root.resolve()}:{WORK}:ro", "-v", f"{checker_dir}:{CHECKER_DIR}:ro", *mounts,
-            "-w", workdir, docker_cli.TOOL_IMAGE, *argv,
+            "-w", workdir, image, *argv,
         ]  # fmt: skip
         result = run_bounded(docker, stdin, timeout=timeout)
     return read_result(kind, result, frozenset(files), timeout)
@@ -149,7 +152,8 @@ def run_on_examples(
     body: str,
     snippets: Sequence[str],
     *,
-    tool_dir: Path | None = None,
+    tool_dir: Path,
+    image: str,
     timeout: int = CHECK_TIMEOUT,
 ) -> CheckerRun:
     """예시 코드마다 파일을 하나씩 만들어 검사기를 돌린다. 저장소는 마운트하지 않는다.
@@ -158,14 +162,14 @@ def run_on_examples(
     파일을 만들지 않는다.
     """
     if kind == "path-pattern":
-        return run_path_pattern(body, [s.strip() for s in snippets])
+        return run_path_pattern(body, [s.strip() for s in snippets], tool_dir=tool_dir, image=image)
     with tempfile.TemporaryDirectory(prefix="pipeline-examples-") as tmp:
         root = Path(tmp)
         (root / EXAMPLE_DIR).mkdir()
         for i, code in enumerate(snippets):
             (root / example_path(i)).write_text(code)
         files = [example_path(i) for i in range(len(snippets))]
-        return run_checker(kind, body, root, files, tool_dir=tool_dir, timeout=timeout)
+        return run_checker(kind, body, root, files, tool_dir=tool_dir, image=image, timeout=timeout)
 
 
 def example_path(index: int) -> str:
@@ -178,10 +182,15 @@ def example_file(kind: CheckerKind, index: int, snippet: str) -> str:
 
 
 def run_path_pattern(
-    body: str, paths: Sequence[str], *, timeout: int = PATH_PATTERN_TIMEOUT
+    body: str,
+    paths: Sequence[str],
+    *,
+    tool_dir: Path,
+    image: str,
+    timeout: int = PATH_PATTERN_TIMEOUT,
 ) -> CheckerRun:
     """경로 패턴 선언을 paths(저장소 기준 경로)에 맞춘다. 파일은 읽지 않고 저장소도 마운트하지
-    않는다. 위반은 파일 단위다 (Match.line은 1).
+    않는다. 위반은 파일 단위다 (Match.line은 1). tool_dir은 도구 캐시의 Python 런타임이다.
 
     정규식은 모델이 쓴 것이라 끝없이 되짚을 수 있다. 그래서 호스트가 아니라 시간·자원 제한이 있는
     컨테이너에서 맞춘다.
@@ -199,8 +208,9 @@ def run_path_pattern(
         docker = [
             "run", "--rm", "-i", "--network", "none", "--read-only", *docker_cli.limits(),
             "--user", docker_cli.user(), "-e", "HOME=/tmp", "-e", "PYTHONDONTWRITEBYTECODE=1",
-            "-v", f"{checker_dir}:{CHECKER_DIR}:ro", "-w", CHECKER_DIR, docker_cli.TOOL_IMAGE,
-            "python", "-I", f"{CHECKER_DIR}/{SCRIPT_FILE}",
+            "-v", f"{checker_dir}:{CHECKER_DIR}:ro",
+            "-v", f"{tool_dir.resolve()}:{PYTHON_MOUNT}:ro",
+            "-w", CHECKER_DIR, image, PYTHON_BIN, "-I", f"{CHECKER_DIR}/{SCRIPT_FILE}",
         ]  # fmt: skip
         result = run_bounded(docker, stdin, timeout=timeout)
     return read_result("path-pattern", result, frozenset(paths), timeout)

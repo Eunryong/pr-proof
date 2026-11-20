@@ -29,7 +29,7 @@ JUDGE_VERSION: Final = "1"
 # 뒤에만 쓰므로 도구 목록의 버전은 도구 선택의 키에 둔다. 이 값을 바꾸면 모든 저장소가 검사기를 다시
 # 쓴다
 TOOLS_VERSION: Final = "none-1"
-# 검사 엔진 버전 (7.2). sandbox/toolcache.py의 ast-grep 버전, TOOL_IMAGE의 Python과 맞춘다
+# 검사 엔진 버전 (7.2). sandbox/toolcache.py의 ast-grep 버전, Python 런타임의 버전(3.11)과 맞춘다
 ENGINE_VERSION: Final[Mapping[str, str]] = {
     "ast-grep": "ast-grep-0.51.3",
     "python-ast": "py3.11",

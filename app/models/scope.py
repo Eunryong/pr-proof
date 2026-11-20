@@ -9,7 +9,7 @@ from pathlib import PurePosixPath
 from typing import Final
 
 # 범위 검사에서 빼는 파이프라인 산출물. `.venv`는 샌드박스의 .venv 마운트 지점이다
-# (`app/sandbox/container.py`의 OUT_DIR, `app/sandbox/venv.py`의 VENV_IN_CONTAINER와 맞춘다)
+# (`app/sandbox/container.py`의 OUT_DIR, `app/worker/lang/python.py`의 VENV_IN_CONTAINER와 맞춘다)
 PIPELINE_OUTPUTS: Final = (".pipeline-out/", ".venv/")
 _PIPELINE_OUTPUT_DIRS: Final = (".pipeline-out", ".venv")
 

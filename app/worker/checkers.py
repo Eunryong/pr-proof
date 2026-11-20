@@ -20,10 +20,10 @@
 import json
 import logging
 import tempfile
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Protocol
+from typing import Final, Protocol
 
 from langgraph.graph.state import CompiledStateGraph
 
@@ -60,11 +60,12 @@ from app.models.checker_authoring import (
 from app.models.repo_config import ModelSettings
 from app.models.rule import Rule, looks_at_paths, normalize
 from app.models.tools import RUFF, RuffSetup, valid_codes
-from app.sandbox import checker_runner, ruff_runner, toolcache
+from app.sandbox import checker_runner, docker_cli, toolcache
 from app.sandbox.checker_runner import CheckerRun, Failed, Invalid
 from app.worker.ai import claude_cli
 from app.worker.ai.claude_cli import StructuredResult
 from app.worker.budget import CallBudget
+from app.worker.lang import python
 from app.worker.loop import LoopPolicy, LoopState, Verdict, WriteFailed, WriteResult, build_loop
 from app.worker.state import Store
 
@@ -72,6 +73,15 @@ log = logging.getLogger(__name__)
 
 # (사용자 메시지, *, system_prompt, schema, model, max_budget_usd) → 결과. 테스트는 가짜를 넘긴다
 AskModel = Callable[..., StructuredResult]
+# 검사기 종류마다 도구 캐시에서 붙이는 도구. 이미지에는 언어가 없어 Python AST 스크립트와 경로
+# 패턴의 고정 스크립트도 Python 런타임을 받아 붙인다
+KIND_TOOL: Final[Mapping[CheckerKind, str]] = {
+    "ast-grep": "ast-grep",
+    "python-ast": toolcache.PYTHON,
+    "path-pattern": toolcache.PYTHON,
+    "ruff": RUFF,
+    "ruff-format": RUFF,
+}
 
 
 class RunsCheckers(Protocol):
@@ -87,39 +97,48 @@ class RunsCheckers(Protocol):
 class FormatsFiles(RunsCheckers, Protocol):
     """기계적 수정이 쓰는 샌드박스: 도구의 검사에 더해 `ruff format`."""
 
-    def format_check(self, root: Path) -> ruff_runner.FormatResult: ...
+    def format_check(self, root: Path) -> python.FormatResult: ...
 
-    def format_apply(self, root: Path, files: Sequence[str]) -> ruff_runner.FormatResult: ...
+    def format_apply(self, root: Path, files: Sequence[str]) -> python.FormatResult: ...
 
 
 class Sandbox:
     """검사기와 도구를 샌드박스에서 돌린다. 도구는 처음 필요할 때 도구 캐시에 받는다 (2.3).
 
-    ruff는 이 저장소의 버전(저장소가 고정한 것 먼저)과 base의 설정으로 돈다. 받지 못하면
-    toolcache.ToolUnavailable(그 도구를 쓰는 규칙만 검사하지 못함) 또는 SandboxError(환경 오류)가
-    올라간다.
+    이미지에는 언어가 없어서 검사기 종류마다 도구 캐시의 도구 하나를 붙인다(`KIND_TOOL`). 이미지는
+    처음 컨테이너가 필요할 때 한 번 빌드한다. ruff는 이 저장소의 버전(저장소가 고정한 것 먼저)과
+    base의 설정으로 돈다. 받지 못하면 toolcache.ToolUnavailable(그 도구를 쓰는 규칙만 검사하지 못함)
+    또는 SandboxError(환경 오류)가 올라간다.
     """
 
     def __init__(
-        self, cache_dir: Path = toolcache.TOOL_CACHE, ruff: RuffSetup | None = None
+        self,
+        cache_dir: Path = toolcache.TOOL_CACHE,
+        ruff: RuffSetup | None = None,
+        image: str = docker_cli.IMAGE,
     ) -> None:
         self.cache_dir = cache_dir
         self.ruff = ruff or RuffSetup(toolcache.TOOLS[RUFF].default)
+        self.image = image
+        self._built = False
         self._dirs: dict[str, Path] = {}
 
-    def _tool_dir(self, kind: CheckerKind) -> Path | None:
-        if kind not in ("ast-grep", *TOOL_KINDS):
-            return None
-        name = RUFF if kind in TOOL_KINDS else kind
+    def _tool_dir(self, kind: CheckerKind) -> Path:
+        if not self._built:
+            docker_cli.ensure_image(self.image)
+            self._built = True
+        name = KIND_TOOL[kind]
         if name not in self._dirs:
             version = self.ruff.version if name == RUFF else None
-            self._dirs[name] = toolcache.ensure(name, version, cache_dir=self.cache_dir)
+            self._dirs[name] = toolcache.ensure(
+                name, version, cache_dir=self.cache_dir, download=toolcache.fetcher(self.image)
+            )
         return self._dirs[name]
 
     def on_examples(self, kind: CheckerKind, body: str, snippets: Sequence[str]) -> CheckerRun:
         if kind not in TOOL_KINDS:
             return checker_runner.run_on_examples(
-                kind, body, snippets, tool_dir=self._tool_dir(kind)
+                kind, body, snippets, tool_dir=self._tool_dir(kind), image=self.image
             )
         with tempfile.TemporaryDirectory(prefix="pipeline-examples-") as tmp:
             root = Path(tmp)
@@ -135,35 +154,38 @@ class Sandbox:
     ) -> CheckerRun:
         if kind in TOOL_KINDS:
             return self._tool(kind, body, root, files, isolated=False)
-        return checker_runner.run_checker(kind, body, root, files, tool_dir=self._tool_dir(kind))
+        return checker_runner.run_checker(
+            kind, body, root, files, tool_dir=self._tool_dir(kind), image=self.image
+        )
 
     def _tool(
         self, kind: CheckerKind, body: str, root: Path, files: Sequence[str], *, isolated: bool
     ) -> CheckerRun:
         tool_dir = self._tool_dir(kind)
-        assert tool_dir is not None
         config = None if isolated else self.ruff.config
         if kind == "ruff-format":
-            return ruff_runner.format_diff(root, files, tool_dir=tool_dir, config=config)
-        return ruff_runner.check(
-            root, files, tool_dir=tool_dir, config=config, codes=tool_codes(body)
-        )
+            return python.format_diff(
+                root, files, tool_dir=tool_dir, image=self.image, config=config
+            )
+        return python.ruff_check(
+            root, files, tool_dir=tool_dir, image=self.image, config=config,
+            codes=tool_codes(body),
+        )  # fmt: skip
 
     def rule_exists(self, code: str) -> bool:
-        tool_dir = self._tool_dir("ruff")
-        assert tool_dir is not None
-        return ruff_runner.rule_exists(code, tool_dir=tool_dir)
+        return python.ruff_rule_exists(code, tool_dir=self._tool_dir("ruff"), image=self.image)
 
-    def format_check(self, root: Path) -> ruff_runner.FormatResult:
+    def format_check(self, root: Path) -> python.FormatResult:
         """root 전체가 base 설정의 `ruff format`을 따르는지 (4.7)."""
-        tool_dir = self._tool_dir("ruff-format")
-        assert tool_dir is not None
-        return ruff_runner.format_check(root, tool_dir=tool_dir, config=self.ruff.config)
+        return python.format_check(
+            root, tool_dir=self._tool_dir("ruff-format"), image=self.image, config=self.ruff.config
+        )
 
-    def format_apply(self, root: Path, files: Sequence[str]) -> ruff_runner.FormatResult:
-        tool_dir = self._tool_dir("ruff-format")
-        assert tool_dir is not None
-        return ruff_runner.format_apply(root, files, tool_dir=tool_dir, config=self.ruff.config)
+    def format_apply(self, root: Path, files: Sequence[str]) -> python.FormatResult:
+        return python.format_apply(
+            root, files, tool_dir=self._tool_dir("ruff-format"), image=self.image,
+            config=self.ruff.config,
+        )  # fmt: skip
 
 
 class _CapHit(Exception):

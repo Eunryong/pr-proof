@@ -69,9 +69,9 @@ def test_tool_case(case_path: Path, eval_repo: Path, shared_venvs: Path,  # noqa
     downloads: list[str] = []
     real_download = toolcache.docker_download
 
-    def counting(asset, archive):
+    def counting(asset, archive, **kwargs):
         downloads.append(asset.url)
-        real_download(asset, archive)
+        real_download(asset, archive, **kwargs)
 
     monkeypatch.setattr(toolcache, "docker_download", counting)
     monkeypatch.setenv(config.CONFIG_DIR_ENV, str(tmp_path / "config"))

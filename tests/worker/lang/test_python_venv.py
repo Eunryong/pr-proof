@@ -1,4 +1,4 @@
-"""app/sandbox/venv.py 단위 테스트. Docker 없이 돈다."""
+"""worker/lang/python.py의 .venv 설치 단위 테스트. Docker 없이 돈다."""
 
 import json
 import subprocess
@@ -7,11 +7,21 @@ from typing import Final
 
 import pytest
 
-from app.sandbox import docker_cli, venv
+from app.sandbox import docker_cli
 from app.sandbox.docker_cli import Image, SandboxError
-from app.sandbox.venv import DependencyInstallError
+from app.worker.lang import python
+from app.worker.lang.python import DependencyInstallError
 
-IMAGE: Final = Image(id="sha256:aaa", python_version="3.11.15")
+IMAGE: Final = Image(id="sha256:aaa")
+RUNTIME: Final = python.Runtime("3.11.18", Path("/cache/tools/python/3.11.18/linux-arm64-gnu"))
+
+
+@pytest.fixture(autouse=True)
+def no_container_removal(monkeypatch) -> list[str]:
+    """설치 컨테이너를 지우는 호출. 단위 테스트에서 docker를 부르지 않게 기록만 한다."""
+    removed: list[str] = []
+    monkeypatch.setattr(docker_cli, "remove_container", removed.append)
+    return removed
 
 
 # --- pyproject 의존성 ---------------------------------------------------------
@@ -26,11 +36,11 @@ dependencies = ["fastapi>=0.115", "pyyaml"]
 dev = ["pytest>=8", "pr-proof[extra]"]
 extra = ["httpx", "pr.proof >= 1 ; python_version >= '3.11'"]
 """
-    assert venv.pyproject_requirements(text) == ["fastapi>=0.115", "pyyaml", "pytest>=8", "httpx"]
+    assert python.pyproject_requirements(text) == ["fastapi>=0.115", "pyyaml", "pytest>=8", "httpx"]
 
 
 def test_pyproject_without_project_table_has_no_requirements() -> None:
-    assert venv.pyproject_requirements("[tool.ruff]\nline-length = 100\n") == []
+    assert python.pyproject_requirements("[tool.ruff]\nline-length = 100\n") == []
 
 
 # --- 캐시 키 ------------------------------------------------------------------
@@ -44,13 +54,15 @@ def repo(tmp_path: Path) -> Path:
 
 
 def test_cache_key_is_stable(repo: Path) -> None:
-    assert venv.cache_key(repo, IMAGE) == venv.cache_key(repo, IMAGE)
+    assert python.cache_key(repo, IMAGE, RUNTIME.version) == python.cache_key(
+        repo, IMAGE, RUNTIME.version
+    )
 
 
 def test_cache_key_ignores_source_changes(repo: Path) -> None:
-    before = venv.cache_key(repo, IMAGE)
+    before = python.cache_key(repo, IMAGE, RUNTIME.version)
     (repo / "app.py").write_text("X = 2\n")
-    assert venv.cache_key(repo, IMAGE) == before
+    assert python.cache_key(repo, IMAGE, RUNTIME.version) == before
 
 
 @pytest.mark.parametrize(
@@ -63,31 +75,31 @@ def test_cache_key_ignores_source_changes(repo: Path) -> None:
     ids=["dep-version", "new-requirements-file", "new-pyproject"],
 )
 def test_cache_key_changes_with_dependency_files(repo: Path, change) -> None:
-    before = venv.cache_key(repo, IMAGE)
+    before = python.cache_key(repo, IMAGE, RUNTIME.version)
     change(repo)
-    assert venv.cache_key(repo, IMAGE) != before
+    assert python.cache_key(repo, IMAGE, RUNTIME.version) != before
 
 
 @pytest.mark.parametrize(
-    "image",
-    [
-        Image(id="sha256:bbb", python_version="3.11.15"),
-        Image(id="sha256:aaa", python_version="3.11.16"),
-    ],
-    ids=["image-digest", "python-version"],
+    ("image", "runtime_version"),
+    [(Image(id="sha256:bbb"), RUNTIME.version), (IMAGE, "3.11.19")],
+    ids=["image-digest", "runtime-version"],
 )
-def test_cache_key_changes_with_image(repo: Path, image: Image) -> None:
-    assert venv.cache_key(repo, image) != venv.cache_key(repo, IMAGE)
+def test_cache_key_changes_with_image_and_runtime(
+    repo: Path, image: Image, runtime_version: str
+) -> None:
+    before = python.cache_key(repo, IMAGE, RUNTIME.version)
+    assert python.cache_key(repo, image, runtime_version) != before
 
 
 def test_cache_key_without_dependency_files(tmp_path: Path) -> None:
-    assert len(venv.cache_key(tmp_path, IMAGE)) == 24
+    assert len(python.cache_key(tmp_path, IMAGE, RUNTIME.version)) == 24
 
 
 def test_dependency_files_order(tmp_path: Path) -> None:
     for name in ("pyproject.toml", "requirements-dev.txt", "requirements.txt", "setup.cfg"):
         (tmp_path / name).write_text("")
-    assert [p.name for p in venv.dependency_files(tmp_path)] == [
+    assert [p.name for p in python.dependency_files(tmp_path)] == [
         "requirements-dev.txt",
         "requirements.txt",
         "pyproject.toml",
@@ -99,18 +111,18 @@ def test_deps_input_translates_pyproject_and_adds_tools(tmp_path: Path) -> None:
     repo.mkdir()
     (repo / "requirements.txt").write_text("pytest\n")
     (repo / "pyproject.toml").write_text("[project]\nname='x'\ndependencies=['pyyaml']\n")
-    files, args = venv.deps_input(repo)
+    files, args = python.deps_input(repo)
     assert args == [
         "-r", "/tmp/deps/requirements.txt",
         "-r", "/tmp/deps/pyproject-deps.txt",
-        *venv.TOOL_REQUIREMENTS,
+        *python.TOOL_REQUIREMENTS,
     ]  # fmt: skip
     # 프로젝트 자체는 넘기지 않는다
     assert files == {"requirements.txt": "pytest\n", "pyproject-deps.txt": "pyyaml\n"}
 
 
 def test_install_container_gets_inputs_on_stdin_and_one_output_mount(
-    tmp_path: Path, repo: Path, monkeypatch
+    tmp_path: Path, repo: Path, monkeypatch, no_container_removal: list[str]
 ) -> None:
     calls = []
 
@@ -119,21 +131,27 @@ def test_install_container_gets_inputs_on_stdin_and_one_output_mount(
         return _completed(0)
 
     monkeypatch.setattr(docker_cli, "run", fake_run)
-    target = venv.ensure_venv(repo, IMAGE, cache_dir=tmp_path / "cache")
-    ((args, kwargs),) = calls
-    mounts = [args[i + 1] for i, a in enumerate(args) if a in ("-v", "--volume", "--mount")]
-    assert len(mounts) == 1 and mounts[0].endswith(f":{venv.VENV_IN_CONTAINER}")
+    target = python.ensure_venv(repo, IMAGE, RUNTIME, cache_dir=tmp_path / "cache")
+    (create, _), (copy, _), (start, start_kw) = calls
+    assert (create[0], copy[0], start[0]) == ("create", "cp", "start")
+    mounts = [create[i + 1] for i, a in enumerate(create) if a in ("-v", "--volume", "--mount")]
+    assert len(mounts) == 1 and mounts[0].endswith(f":{python.VENV_IN_CONTAINER}")
     assert mounts[0].split(":")[0].startswith(str(tmp_path / "cache" / "."))  # 빈 임시 출력 폴더
-    assert "-i" in args and json.loads(kwargs["input"]) == venv.deps_input(repo)[0]
-    script = args[-1]
+    # 런타임은 마운트하지 않고 복사한다. .venv가 묶이는 경로로 넣는다
+    name = create[create.index("--name") + 1]
+    assert copy[1:] == (str(RUNTIME.dir.resolve()), f"{name}:{python.RUNTIME_IN_CONTAINER}")
+    assert "-i" in create and json.loads(start_kw["input"]) == python.deps_input(repo)[0]
+    assert start[1:] == ("-ai", name) and no_container_removal == [name]
+    script = create[-1]
+    assert f"{python.PYTHON_IN_CONTAINER} -m venv" in script
     assert "--only-binary :all:" in script and "-r /tmp/deps/requirements.txt" in script
     assert (target / ".complete").is_file()
 
 
 def test_cache_key_includes_install_method(repo: Path, monkeypatch) -> None:
-    before = venv.cache_key(repo, IMAGE)
-    monkeypatch.setattr(venv, "INSTALL_VERSION", "other")
-    assert venv.cache_key(repo, IMAGE) != before
+    before = python.cache_key(repo, IMAGE, RUNTIME.version)
+    monkeypatch.setattr(python, "INSTALL_VERSION", "other")
+    assert python.cache_key(repo, IMAGE, RUNTIME.version) != before
 
 
 @pytest.mark.parametrize(
@@ -169,24 +187,24 @@ def test_cache_key_includes_install_method(repo: Path, monkeypatch) -> None:
 )
 def test_disallowed_lines(text: str, bad: list[str]) -> None:
     files = {"requirements-dev.txt": text, "requirements.txt": "pytest\n"}
-    assert venv.disallowed_lines(files) == [f"requirements-dev.txt: {b}" for b in bad]
+    assert python.disallowed_lines(files) == [f"requirements-dev.txt: {b}" for b in bad]
 
 
 def test_disallowed_requirement_is_not_installed(tmp_path: Path, repo: Path, monkeypatch) -> None:
     (repo / "requirements.txt").write_text("--no-binary :all:\npytest\n")
     monkeypatch.setattr(docker_cli, "run", lambda *a, **k: pytest.fail("설치하면 안 된다"))
     with pytest.raises(DependencyInstallError) as info:
-        venv.ensure_venv(repo, IMAGE, cache_dir=tmp_path / "cache")
+        python.ensure_venv(repo, IMAGE, RUNTIME, cache_dir=tmp_path / "cache")
     assert info.value.kind == "disallowed" and "--no-binary :all:" in info.value.detail
     assert list((tmp_path / "cache").iterdir()) == []
 
 
 def test_ensure_venv_reuses_complete_cache(tmp_path: Path, repo: Path, monkeypatch) -> None:
-    target = tmp_path / "cache" / venv.cache_key(repo, IMAGE)
+    target = tmp_path / "cache" / python.cache_key(repo, IMAGE, RUNTIME.version)
     target.mkdir(parents=True)
     (target / ".complete").touch()
     monkeypatch.setattr(docker_cli, "run", lambda *a, **k: pytest.fail("설치하면 안 된다"))
-    assert venv.ensure_venv(repo, IMAGE, cache_dir=tmp_path / "cache") == target
+    assert python.ensure_venv(repo, IMAGE, RUNTIME, cache_dir=tmp_path / "cache") == target
 
 
 def test_ensure_venv_failure_leaves_no_partial_cache(
@@ -197,7 +215,7 @@ def test_ensure_venv_failure_leaves_no_partial_cache(
 
     monkeypatch.setattr(docker_cli, "run", fail)
     with pytest.raises(SandboxError):
-        venv.ensure_venv(repo, IMAGE, cache_dir=tmp_path / "cache")
+        python.ensure_venv(repo, IMAGE, RUNTIME, cache_dir=tmp_path / "cache")
     assert list((tmp_path / "cache").iterdir()) == []
 
 
@@ -249,18 +267,18 @@ No sources permitted for pytest"""
     ],  # fmt: skip
 )
 def test_classify_pip_failure(output: str, kind: str) -> None:
-    assert venv.classify_pip_failure(output) == kind
+    assert python.classify_pip_failure(output) == kind
 
 
 def test_source_only_packages_only_names_missing_ones() -> None:
-    assert venv.source_only_packages(SOURCE_ONLY) == ("docopt",)
-    assert venv.source_only_packages("ERROR: No matching distribution found for nope==1") == ()
+    assert python.source_only_packages(SOURCE_ONLY) == ("docopt",)
+    assert python.source_only_packages("ERROR: No matching distribution found for nope==1") == ()
 
 
 def test_source_only_failure_names_packages(tmp_path: Path, repo: Path, monkeypatch) -> None:
     monkeypatch.setattr(docker_cli, "run", lambda *a, **k: _completed(1, SOURCE_ONLY))
     with pytest.raises(DependencyInstallError) as info:
-        venv.ensure_venv(repo, IMAGE, cache_dir=tmp_path / "cache")
+        python.ensure_venv(repo, IMAGE, RUNTIME, cache_dir=tmp_path / "cache")
     assert (info.value.kind, info.value.packages) == ("source_only", ("docopt",))
 
 
@@ -277,9 +295,9 @@ def test_pip_failure_raises_dependency_error_with_kind(
         lambda *a, **k: _completed(1, "ERROR: No matching distribution found for x"),
     )
     with pytest.raises(DependencyInstallError) as info:
-        venv.ensure_venv(repo, IMAGE, cache_dir=tmp_path / "cache")
+        python.ensure_venv(repo, IMAGE, RUNTIME, cache_dir=tmp_path / "cache")
     assert info.value.kind == "resolution"
-    assert info.value.cache_key == venv.cache_key(repo, IMAGE)
+    assert info.value.cache_key == python.cache_key(repo, IMAGE, RUNTIME.version)
     assert list((tmp_path / "cache").iterdir()) == []
 
 
@@ -289,5 +307,20 @@ def test_docker_failure_during_install_is_environment_error(
 ) -> None:
     monkeypatch.setattr(docker_cli, "run", lambda *a, **k: _completed(code, "docker: error"))
     with pytest.raises(SandboxError):
-        venv.ensure_venv(repo, IMAGE, cache_dir=tmp_path / "cache")
+        python.ensure_venv(repo, IMAGE, RUNTIME, cache_dir=tmp_path / "cache")
+    assert list((tmp_path / "cache").iterdir()) == []
+
+
+def test_install_container_is_removed_when_install_times_out(
+    tmp_path: Path, repo: Path, monkeypatch, no_container_removal: list[str]
+) -> None:
+    def fake_run(*args, **kwargs):
+        if args[0] == "start":
+            raise SandboxError("docker start 실행 실패: timed out")
+        return _completed(0)
+
+    monkeypatch.setattr(docker_cli, "run", fake_run)
+    with pytest.raises(SandboxError):
+        python.ensure_venv(repo, IMAGE, RUNTIME, cache_dir=tmp_path / "cache")
+    assert len(no_container_removal) == 1
     assert list((tmp_path / "cache").iterdir()) == []

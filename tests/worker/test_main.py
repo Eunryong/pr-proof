@@ -9,9 +9,9 @@ from app.models.db import Run
 from app.models.doc_rules import NoRuleDocs
 from app.models.job import PRJob
 from app.sandbox.docker_cli import SandboxError
-from app.sandbox.venv import DependencyInstallError
 from app.worker import doc_rules, main, retry, update
 from app.worker.github import GitHubError
+from app.worker.lang.python import DependencyInstallError
 
 from .helpers import BASE, HEAD, PASSED, bodies, use_runner
 

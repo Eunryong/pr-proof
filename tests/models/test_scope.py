@@ -15,7 +15,7 @@ from app.models.scope import (
     parse_porcelain,
 )
 from app.sandbox.container import OUT_DIR, WORKDIR
-from app.sandbox.venv import VENV_IN_CONTAINER
+from app.worker.lang.python import VENV_IN_CONTAINER
 
 
 def test_pipeline_outputs_match_sandbox_paths() -> None:
