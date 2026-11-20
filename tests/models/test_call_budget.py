@@ -31,9 +31,19 @@ def test_pr_cap_is_pr_max_in_this_stage() -> None:
     assert limits_for(CallSettings(pr_max=3), PrScope()).scope == 3
 
 
-def test_negative_rule_count_is_rejected() -> None:
+@pytest.mark.parametrize(("grants", "expected"), [(0, 3), (1, 6), (2, 9)])
+def test_each_fix_command_grants_the_pr_cap_once_more(grants: int, expected: int) -> None:
+    """9.2: `/fix`는 PR 상한을 한 번 더 받는다. 저장소 하루 상한과 규칙 묶음 상한은 그대로다."""
+    settings = CallSettings(pr_max=3)
+    assert limits_for(settings, PrScope(), grants) == CallLimits("pr", expected, 500)
+    assert limits_for(settings, RulesetScope("k", 0), grants).scope == 10
+
+
+def test_negative_rule_count_or_grants_are_rejected() -> None:
     with pytest.raises(ValueError):
         limits_for(DEFAULTS, RulesetScope("k", -1))
+    with pytest.raises(ValueError):
+        limits_for(DEFAULTS, PrScope(), -1)
 
 
 PR: Final = CallLimits("pr", 10, 100)

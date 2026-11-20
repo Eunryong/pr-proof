@@ -6,6 +6,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import Final
 
+from app.models.cache_key import text_hash
 from app.models.finding import Finding
 
 BRANCH_PREFIX: Final = "pipeline/"
@@ -31,6 +32,11 @@ BLOCK_REWRITE_CODES: Final = frozenset({"I001"})
 
 def branch_name(pr_number: int, skill: str) -> str:
     return f"{BRANCH_PREFIX}pr-{pr_number}-fix-{skill}"
+
+
+def review_marker(patch: str) -> str:
+    """수정안 PR의 줄 리뷰에 넣는 표시 (5.6). 같은 패치의 리뷰가 이미 있으면 다시 달지 않는다."""
+    return f"<!-- pr-proof:review {text_hash(patch)[:16]} -->"
 
 
 def _added_lines(patch: str) -> list[str]:

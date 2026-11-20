@@ -13,6 +13,7 @@ from app.models import state_keys
 from app.models.call_budget import RulesetScope, Scope, Spent
 from app.models.db import (
     AICall,
+    CallGrant,
     CheckerEntry,
     CommandRecord,
     FixAttempt,
@@ -390,6 +391,23 @@ class Store:
                 )
             )
             session.commit()
+
+    def add_call_grant(self, repo: str, pr_number: int, head_sha: str, comment_id: int) -> None:
+        """`/fix` 명령 하나의 PR 상한 추가. 같은 코멘트로 다시 불려도 하나다."""
+        with Session(self.engine) as session:
+            if session.get(CallGrant, comment_id) is None:
+                session.add(CallGrant(comment_id=comment_id, repo=repo, pr_number=pr_number,
+                                      head_sha=head_sha, created_at=_now()))  # fmt: skip
+                session.commit()
+
+    def call_grants(self, repo: str, pr_number: int) -> int:
+        with Session(self.engine) as session:
+            stmt = (
+                select(func.count())
+                .select_from(CallGrant)
+                .where(CallGrant.repo == repo, CallGrant.pr_number == pr_number)
+            )
+            return int(session.exec(stmt).one())
 
     def last_comment_id(self, repo: str, pr_number: int) -> int | None:
         """이 PR에 단 코멘트 ID. 없으면 GitHub에서 찾는다 (worker/github.py)."""

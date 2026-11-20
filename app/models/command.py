@@ -1,25 +1,30 @@
-"""PR 코멘트 명령 해석 (docs/DESIGN.md F11). 판단만 하고 실행하지 않는다."""
+"""PR 코멘트 명령 해석 (docs/DESIGN.md 4.9 명령). 판단만 하고 실행하지 않는다."""
 
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Final, Literal
 
-CommandName = Literal["recheck", "fix", "extension", "unknown"]
+CommandName = Literal["recheck", "fix", "unknown"]
 
 RECHECK: Final = "/recheck"
 FIX: Final = "/fix"
-# 확장 명령 → .pipeline.yaml의 extensions.<이름> (7단계)
-EXTENSION_COMMANDS: Final[Mapping[str, str]] = {
-    "/mutate": "mutation",
-    "/generate-tests": "ai_tests",
+# `/fix <인자>` → 다시 돌릴 수정 묶음. 비면 수정할 것이 남은 묶음 전부다 (4.9).
+# `mechanical`은 v1 lint 경로다. 3단계에서 lint를 새 구조로 옮길 때까지 `lint`와 같다.
+# `static`은 v1 static을 지울 때 함께 지운다
+FIX_TARGETS: Final[Mapping[str, tuple[str, ...]]] = {
+    "": ("lint", "static", "model"),
+    "mechanical": ("lint",),
+    "model": ("model",),
+    "lint": ("lint",),
+    "static": ("static",),
 }
 
 
 @dataclass(frozen=True)
 class ParsedCommand:
     name: CommandName
-    word: str  # 코멘트에 쓴 명령어. 예: "/mutate"
-    arg: str = ""  # "/fix lint"의 "lint", 확장 명령이면 extensions의 이름
+    word: str  # 코멘트에 쓴 명령어. 예: "/fix"
+    arg: str = ""  # "/fix model"의 "model"
 
 
 def parse_command(text: str) -> ParsedCommand:
@@ -33,6 +38,4 @@ def parse_command(text: str) -> ParsedCommand:
         return ParsedCommand("recheck", word)
     if word == FIX:
         return ParsedCommand("fix", word, rest.strip().lower())
-    if word in EXTENSION_COMMANDS:
-        return ParsedCommand("extension", word, EXTENSION_COMMANDS[word])
     return ParsedCommand("unknown", word)

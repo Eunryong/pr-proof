@@ -1,11 +1,15 @@
 import pytest
 
 from app.models.repo_config import (
+    MAX_RETRIES_CAP,
     MIN_MEMORY_GB,
     CallSettings,
+    FixSettings,
     call_limits,
+    fix_limits,
     memory_limit,
     parse_repo_config,
+    settings_notes,
 )
 
 
@@ -16,6 +20,12 @@ def test_missing_file_uses_defaults() -> None:
 
 def test_empty_file_uses_defaults() -> None:
     assert parse_repo_config("")[1] is None
+
+
+def test_extension_settings_are_gone() -> None:
+    """v1 F13의 확장 명령을 범위에서 뺐다 (10절). 옛 `extensions` 키는 모르는 키로 무시한다."""
+    config, problem = parse_repo_config("extensions:\n  mutation:\n    enabled: true\n")
+    assert problem is None and not hasattr(config, "extensions")
 
 
 def test_reads_memory_and_ignores_other_sections() -> None:
@@ -65,8 +75,8 @@ def test_unknown_skill_is_config_problem() -> None:
 def test_stage3_defaults() -> None:
     config, problem = parse_repo_config(None)
     assert problem is None
-    assert (config.skills.fix.require_covered, config.skills.fix.max_retries) == (True, 3)
-    assert config.skills.fix.require_approval is False  # 기본: 검사 뒤 바로 수정안까지 간다
+    assert (config.fix.require_covered, config.fix.max_retries) == (True, 3)
+    assert config.fix.require_approval is False  # 기본: 검사 뒤 바로 수정안까지 간다
     assert config.skills.static.min_repeats is None
     assert (config.model.light, config.model.heavy, config.model.budget_per_pr_usd) == (
         "haiku", "sonnet", 0.5,
@@ -84,22 +94,36 @@ def test_decision_model_is_its_own_setting() -> None:
 
 def test_stage3_values_are_read() -> None:
     text = (
-        "skills:\n  fix: {require_covered: false, max_retries: 5}\n  static: {min_repeats: 2}\n"
+        "fix: {require_covered: false, max_retries: 5, require_approval: true}\n"
+        "skills:\n  static: {min_repeats: 2}\n"
         "model: {light: claude-haiku-5-5, heavy: opus, budget_per_pr_usd: 0}\n"
     )
     config, problem = parse_repo_config(text)
-    assert problem is None
-    assert config.skills.fix.require_covered is False and config.skills.fix.max_retries == 5
+    assert problem is None and settings_notes(text) == []
+    assert config.fix == FixSettings(require_approval=True, require_covered=False, max_retries=5)
     assert config.skills.static.min_repeats == 2
     assert (config.model.light, config.model.budget_per_pr_usd) == ("claude-haiku-5-5", 0)
+
+
+def test_old_skills_fix_key_is_read_and_noted_during_stage_2() -> None:
+    """10절: `skills.fix.*`는 `fix.*`가 되었다. 2단계 동안 옛 키도 읽고 "설정:"에 새 키를 알린다."""
+    old = "skills:\n  fix: {require_approval: true, max_retries: 2}\n"
+    config, problem = parse_repo_config(old)
+    assert problem is None and config.fix.require_approval and config.fix.max_retries == 2
+    (note,) = settings_notes(old)
+    assert "`skills.fix`는 `fix`로 바뀌었습니다" in note
+    both = "fix: {max_retries: 4}\nskills:\n  fix: {max_retries: 2, require_approval: true}\n"
+    config, _ = parse_repo_config(both)
+    assert config.fix == FixSettings(max_retries=4)  # 새 키가 있으면 옛 키는 읽지 않는다
+    assert settings_notes(None) == [] and settings_notes("fix: [") == []
 
 
 @pytest.mark.parametrize(
     ("text", "where"),
     [
         ("skills: {static: {min_repeats: 1}}", "skills.static.min_repeats"),
-        ("skills: {fix: {max_retries: 0}}", "skills.fix.max_retries"),
-        ("skills: {fix: {max_retries: 6}}", "skills.fix.max_retries"),  # 회차마다 테스트를 돈다
+        ("fix: {max_retries: 0}", "fix.max_retries"),
+        ("skills: {fix: {max_retries: 0}}", "fix.max_retries"),
         ("model: {light: '--dangerously-skip-permissions'}", "model.light"),  # 옵션으로 읽힘
         ("model: {heavy: 'a b'}", "model.heavy"),
         ("model: {budget_per_pr_usd: -1}", "model.budget_per_pr_usd"),
@@ -108,7 +132,21 @@ def test_stage3_values_are_read() -> None:
 def test_stage3_bad_values_fall_back_to_defaults(text: str, where: str) -> None:
     config, problem = parse_repo_config(text)
     assert problem is not None and f"`{where}`" in problem
-    assert config.model.light == "haiku" and config.skills.fix.max_retries == 3
+    assert config.model.light == "haiku" and config.fix.max_retries == 3
+
+
+@pytest.mark.parametrize(
+    ("requested", "expected"), [(1, 1), (MAX_RETRIES_CAP, MAX_RETRIES_CAP), (6, MAX_RETRIES_CAP),
+                                (1000, MAX_RETRIES_CAP)],
+)  # fmt: skip
+def test_fix_retries_above_the_pipeline_maximum_are_clamped(requested: int, expected: int) -> None:
+    """회차마다 테스트를 다시 돌리므로 리포가 큰 값을 적어도 최댓값으로 줄인다 (9.2, T23). 설정
+    오류로 다른 값까지 기본값으로 되돌리지 않는다."""
+    config, problem = parse_repo_config(
+        f"fix: {{max_retries: {requested}, require_approval: true}}\n"
+    )
+    assert problem is None and config.fix.require_approval
+    assert fix_limits(config.fix) == FixSettings(require_approval=True, max_retries=expected)
 
 
 def test_call_limits_default_and_parsed() -> None:

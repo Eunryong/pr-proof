@@ -104,3 +104,24 @@ def test_nested_files_with_same_name_are_not_read(repo_dir: Path) -> None:
     (repo_dir / "sub").mkdir()
     base = _commit(repo_dir, {"sub/ruff.toml": "line-length = 50\n"})
     assert base_config.load(repo_dir, base, max_memory_gb=4).ruff_config is None
+
+
+def test_fix_settings_come_from_base_and_are_clamped(repo_dir: Path) -> None:
+    """`fix.*`는 base에서만 읽는다. PR이 승인 없이 고치게 바꾸거나 회차를 늘려도 그 PR에는 쓰이지
+    않는다. base의 값이 파이프라인 최댓값을 넘으면 줄이고 "설정:"에 알린다 (10절, T13, T23)."""
+    base = _commit(
+        repo_dir, {".pipeline.yaml": "fix:\n  require_approval: true\n  max_retries: 9\n"}
+    )
+    _commit(repo_dir, {".pipeline.yaml": "fix:\n  require_approval: false\n  max_retries: 1\n"})
+    config = base_config.load(repo_dir, base, max_memory_gb=4)
+    assert config.repo.fix.require_approval is True
+    assert config.repo.fix.max_retries == 5
+    assert config.problems == ("`fix.max_retries` 9는 파이프라인 최댓값 5로 줄였습니다",)
+
+
+def test_old_fix_key_is_read_with_a_note(repo_dir: Path) -> None:
+    base = _commit(repo_dir, {".pipeline.yaml": "skills:\n  fix:\n    require_approval: true\n"})
+    config = base_config.load(repo_dir, base, max_memory_gb=4)
+    assert config.repo.fix.require_approval is True
+    (note,) = config.problems
+    assert note.startswith("`skills.fix`는 `fix`로 바뀌었습니다")

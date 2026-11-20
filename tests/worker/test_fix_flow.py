@@ -68,7 +68,7 @@ def fix_env(env):
 
 
 def _with_approval(env, required: bool) -> None:
-    repo_config = RepoConfig(skills=SkillsSettings(fix=FixSettings(require_approval=required)))
+    repo_config = RepoConfig(fix=FixSettings(require_approval=required))
     base = dataclasses.replace(BASE, repo=repo_config)
     env["monkeypatch"].setattr(base_config, "load", lambda *a, **k: base)
 
@@ -88,7 +88,7 @@ def test_update_suggests_fix_and_waits(fix_env) -> None:
     from app.worker import update
 
     target = PRJob.model_validate_json(_update())
-    assert update.has_pending_fix(target, fix_env["deps"])
+    assert update.pending_fix(target, fix_env["deps"])
 
 
 def test_fix_command_resumes_and_reports(fix_env) -> None:
@@ -185,11 +185,21 @@ def test_nothing_applied(fix_env) -> None:
     assert main.handle(_fix_command(), fix_env["deps"]) == "fix:nothing_fixed"
 
 
-@pytest.mark.parametrize("skill", ["structure", ""])
+@pytest.mark.parametrize("skill", ["structure", "lint static"])
 def test_other_fix_skills_are_not_supported(fix_env, skill: str) -> None:
-    text = f"/fix {skill}".strip()
+    text = f"/fix {skill}"
     assert main.handle(_fix_command(text=text), fix_env["deps"]) == "fix_unsupported"
-    assert f"`{text}`는 아직 지원하지 않습니다" in _replies(fix_env["gh"])[-1]
+    assert f"`{text}`는 지원하지 않습니다" in _replies(fix_env["gh"])[-1]
+
+
+@pytest.mark.parametrize("text", ["/fix", "/fix mechanical"])
+def test_bundle_arguments_resume_the_lint_fix(fix_env, text: str) -> None:
+    """`/fix`(남은 묶음 전부)와 `/fix mechanical`은 3단계 전까지 v1 lint 수정을 승인한다."""
+    main.handle(_update(), fix_env["deps"])
+    assert main.handle(_fix_command(text=text), fix_env["deps"]) == "fix:ready"
+    assert fix_env["state"]["fix_calls"] == 1
+    assert main.handle(_fix_command(78, text), fix_env["deps"]) == "no_pending_fix"
+    assert fix_env["state"]["fix_calls"] == 1
 
 
 def test_failed_fix_can_be_retried(fix_env) -> None:

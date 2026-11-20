@@ -8,7 +8,7 @@ lint·static 케이스와 같은 방식이다: 예제 리포의 로컬 git 원�
 v1 lint·static은 base의 `.pipeline.yaml`로 끈다. 이 케이스는 문서 규칙 절과 모델 수정안만 본다.
 수정안 PR의 생애를 보는 케이스는 `deliver_retry`(첫 push를 실패시키고 재시도),
 `recheck_without_calls`(같은 커밋의 `/recheck`), `rejected_next_commit`(수정안 PR을 닫고 새 커밋)을
-차례로 한다.
+차례로 한다. `fix_command`는 결과 코멘트 뒤에 그 명령(`/fix` 등)을 달고 수정 결과를 다시 본다.
 케이스에 `fix`가 있으면 수정 판단은 `model.skip`에 적은 위반만 skip하고 나머지를 fix로 답하며, 수정
 작성은 케이스의 `fix` 편집을 모델 폴더에 적용하는 가짜다(검증과 수정안 PR 푸시는 진짜). `fix`가 없는
 케이스는 모든 위반을 skip으로 답해 수정까지 가지 않는다.
@@ -258,6 +258,8 @@ def test_rules_case(case_path: Path, eval_repo: Path, deps_for, tmp_path: Path,
 
     if "fix" in expect:
         _check_fix(expect, section, gh, remote, fixer, real_model)
+    if "fix_command" in expect:
+        _check_fix_command(expect["fix_command"], deps, gh, remote, fixer, real_model)
     if expect.get("deliver_retry"):
         _check_same_patch_pushed(deps, remote)
     if expect.get("recheck_without_calls"):
@@ -341,14 +343,30 @@ def _check_rejection(then: dict, deps: Deps, gh: FakeGh, redis, remote: dict, fi
         assert text in section, (text, section)
 
 
+def _check_fix_command(then: dict, deps: Deps, gh: FakeGh, remote: dict, fixer, real_model):
+    """2-11: 결과 코멘트 뒤에 사람이 명령을 단다. 그 뒤의 문서 규칙 절과 수정 결과를 본다."""
+    job = PRJob(repo=REPO, pr_number=1, kind="command", command=then["command"], comment_id=71,
+                source="webhook")  # fmt: skip
+    assert main.handle(job.model_dump_json(), deps) == f"fix:{then['fix']}"
+    section = doc_rules_section(_bodies(gh)[-1])
+    for text in then.get("contains", ()):
+        assert text in section, (text, section)
+    for text in then.get("absent", ()):
+        assert text not in section, (text, section)
+    _check_fix(then, section, gh, remote, fixer, real_model)
+
+
 def _check_fix(expect: dict, section: str, gh: FakeGh, remote: dict, fixer, real_model: bool):
-    """모델 수정의 결과: ready면 수정안 PR과 푸시된 브랜치, failed·none이면 수정안 PR이 없다."""
+    """모델 수정의 결과: ready면 수정안 PR과 푸시된 브랜치, failed·budget·none이면 수정안 PR이
+    없다."""
     branch = _git(remote["path"], "branch", "--list", BRANCH)
     if expect["fix"] != "ready":
         assert gh.pulls == {} and branch == "", section
         if expect["fix"] == "none":
             assert "**수정안:**" not in section, section
             assert real_model or fixer.calls == []
+        elif expect["fix"] == "budget":
+            assert "**수정안:** 모델 호출 상한에 걸려 처리하지 못함" in section, section
         else:
             assert "**수정안:** 수정안을 만들지 못함" in section, section
         return
@@ -369,6 +387,9 @@ def _check_fix(expect: dict, section: str, gh: FakeGh, remote: dict, fixer, real
     for needle in expect.get("pr_absent", ()):
         assert needle not in pull["body"], (needle, pull["body"])
     assert "**검증** (파이프라인이 확인한 결과)" in pull["body"]
+    # 설명 JSON의 changes가 그 수정안 PR의 줄 리뷰 코멘트가 된다. 전달을 다시 해도 리뷰는 하나다
+    (review,) = gh.reviews[number]
+    assert review["comments"] and {c["path"] for c in review["comments"]} == {expect["fix_file"]}
 
 
 def test_case_files_are_well_formed() -> None:

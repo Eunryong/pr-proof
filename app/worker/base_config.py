@@ -9,7 +9,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
-from app.models.repo_config import RepoConfig, memory_limit, parse_repo_config
+from app.models.repo_config import (
+    RepoConfig,
+    fix_limits,
+    memory_limit,
+    parse_repo_config,
+    settings_notes,
+)
 from app.sandbox.container import OUT_DIR
 from app.worker import repo
 
@@ -22,12 +28,12 @@ RUFF_DEFAULT_SOURCE: Final = "기본 규칙"  # 코멘트에 "ruff (기본 규�
 
 @dataclass(frozen=True)
 class BaseConfig:
-    repo: RepoConfig
+    repo: RepoConfig  # `fix`는 파이프라인 쪽 최댓값을 적용한 값이다
     memory_gb: float  # 파이프라인 상한을 적용한 실제 한도
     max_memory_gb: float
     ruff_config: str | None  # worktree 기준 경로. None이면 ruff 기본 규칙
     ruff_source: str  # 코멘트에 적는 규칙 출처
-    problems: tuple[str, ...] = ()  # 읽지 못한 설정. 코멘트에 적는다
+    problems: tuple[str, ...] = ()  # 읽지 못했거나 바꿔 읽은 설정. 코멘트의 "설정:"에 적는다
 
 
 def load(worktree: Path, base_sha: str, max_memory_gb: float) -> BaseConfig:
@@ -37,6 +43,14 @@ def load(worktree: Path, base_sha: str, max_memory_gb: float) -> BaseConfig:
     repo_config, problem = parse_repo_config(files.get(PIPELINE_YAML))
     if problem:
         problems.append(f"`{PIPELINE_YAML}`을 읽지 못해 기본값을 씀: {problem}")
+    problems += settings_notes(files.get(PIPELINE_YAML))
+    fix = fix_limits(repo_config.fix)
+    if fix != repo_config.fix:
+        problems.append(
+            f"`fix.max_retries` {repo_config.fix.max_retries}는 파이프라인 최댓값 "
+            f"{fix.max_retries}로 줄였습니다"
+        )
+        repo_config = repo_config.model_copy(update={"fix": fix})
 
     ruff_config, ruff_source = None, RUFF_DEFAULT_SOURCE
     name = _ruff_config_name(files, problems)

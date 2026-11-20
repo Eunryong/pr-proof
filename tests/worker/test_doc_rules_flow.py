@@ -34,7 +34,6 @@ from app.models.repo_config import (
     ModelSettings,
     RepoConfig,
     RulesSettings,
-    SkillsSettings,
 )
 from app.models.rule import CheckMethod, Rule, RuleSource, rule_id
 from app.sandbox import checker_runner, toolcache
@@ -575,13 +574,14 @@ def test_decisions_follow_tests_and_show_in_the_comment(doc_env, tmp_path: Path)
     assert state["fix_decisions"] == Decided((
         FixDecision(first.id, "skip", "model", reason="risky", why=" ".join(why.split())),
         FixDecision(second.id, "skip", "pipeline", reason="undecided", why="모델이 답하지 않음"),
-    ), calls=1)  # fmt: skip
+    ), calls=1, input_tokens=1000, output_tokens=100)  # fmt: skip
     assert [kind for kind, _ in model.prompts] == ["rules", "checker", "decide"]
     body = _last_comment(doc_env)
     assert f"  - `orders/a.py:2` · skip (모델: {inline_code(why)})" in body
     assert "  - `orders/a.py:3` · skip (모델이 답하지 않음)" in body
     assert ("수정 판단: fix 0건, skip 2건 (모델이 고치지 않기로 함 1건, 수정 판단을 하지 못함 1건)"
-            " · 모델 호출 1회 · 저장된 판단 0건 사용") in body  # fmt: skip
+            " · 모델 호출 1회 · 저장된 판단 0건 사용 · 토큰 입력 1000, 출력 100"
+            ) in body  # fmt: skip
     # 모델이 모두 skip했으므로 모델 수정은 돌지 않는다. v1 lint 경로는 그대로
     assert "**수정안:**" not in body and "model_fix" not in state
     assert state["lint"].findings and "fixes" not in state
@@ -614,10 +614,13 @@ def test_decision_cap_is_shown_in_the_comment(doc_env, tmp_path: Path) -> None:
     model = use_model(doc_env, FakeModel(rule_answer(print_rule())))
     use_config(doc_env, RepoConfig(
         model=ModelSettings(calls=CallSettings(pr_max=0)),
-        skills=SkillsSettings(fix=FixSettings(require_approval=True)),
+        fix=FixSettings(require_approval=True),
     ))  # fmt: skip
     _covered_tests(doc_env, tmp_path, {"orders/a.py": [1, 2, 3]})
     state = check(doc_env, tmp_path, BASE_FILES, TWO_PRINTS)
     assert {d.reason for d in state["fix_decisions"].decisions} == {"call_limit"}
     assert "decide" not in [kind for kind, _ in model.prompts]
-    assert "모델 호출 상한에 걸려 처리하지 못함: 수정 판단 2건." in _last_comment(doc_env)
+    assert (
+        "모델 호출 상한에 걸려 처리하지 못함: 수정 판단 2건. `/fix`로 다시 돌릴 수 있습니다."
+        in _last_comment(doc_env)
+    )

@@ -4,11 +4,12 @@
 hunk에는 다시 묻지 않는다. 호출은 PR 상한(9.2)에서 센다. 모델 호출이 실패하거나 상한에 걸리면 남은
 위반을 `skip`으로 두고 저장하지 않으므로 다음 검사가 다시 묻는다.
 
-이 단계는 정하기만 한다. 문서 규칙 위반의 수정은 아직 잇지 않았다 (13절 2단계의 다음 작업).
+이 단계는 정하기만 한다. `fix`·`model`로 정한 위반은 worker/model_fix.py가 고친다.
 """
 
 import logging
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Final
 
 from app.models.ai_fix import CALL_BUDGET_USD
@@ -78,13 +79,26 @@ def decide(
     cached = len(questions) - len(to_ask)
     if cached:
         budget.record_hit(PrScope(), stage="decide", tier="light", model=model)
-    calls = 0
+    calls = input_tokens = output_tokens = 0
     for start in range(0, len(to_ask), per_call):
         chunk = to_ask[start : start + per_call]
-        answers, called = _ask(chunk, keys, store=store, budget=budget, model=model, ask=ask)
-        calls += called
-        decided |= {d.violation_id: d for d in answers}
-    return Decided(tuple(decided[v.id] for v in found.violations), calls=calls, cached=cached)
+        asked = _ask(chunk, keys, store=store, budget=budget, model=model, ask=ask)
+        calls += asked.calls
+        input_tokens += asked.input_tokens
+        output_tokens += asked.output_tokens
+        decided |= {d.violation_id: d for d in asked.decisions}
+    return Decided(
+        tuple(decided[v.id] for v in found.violations), calls=calls, cached=cached,
+        input_tokens=input_tokens, output_tokens=output_tokens,
+    )  # fmt: skip
+
+
+@dataclass(frozen=True)
+class _Asked:
+    decisions: tuple[FixDecision, ...]
+    calls: int  # 상한에서 센 호출 수
+    input_tokens: int = 0
+    output_tokens: int = 0
 
 
 def _ask(
@@ -95,13 +109,13 @@ def _ask(
     budget: CallBudget,
     model: str,
     ask: AskModel,
-) -> tuple[tuple[FixDecision, ...], int]:
-    """위반 묶음 하나를 묻는다. (판단들, 상한에서 센 호출 수)."""
+) -> _Asked:
+    """위반 묶음 하나를 묻는다."""
     asked = [q.violation for q in chunk]
     call = budget.begin(PrScope(), stage="decide", tier="light", model=model)
     if isinstance(call, Denied):
         log.info("수정 판단을 하지 않음: %s", call.reason)
-        return not_decided(asked, "call_limit", f"수정 판단을 하지 못함 ({call.reason})"), 0
+        return _Asked(not_decided(asked, "call_limit", f"수정 판단을 하지 못함 ({call.reason})"), 0)
     answer = ask(
         build_prompt(chunk),
         system_prompt=SYSTEM_PROMPT,
@@ -121,13 +135,14 @@ def _ask(
         input_tokens=answer.input_tokens, output_tokens=answer.output_tokens,
         permission_denials=answer.permission_denials,
     )  # fmt: skip
+    tokens = {"input_tokens": answer.input_tokens or 0, "output_tokens": answer.output_tokens or 0}
     if failure is not None:
         log.warning("수정 판단 실패: %s", failure)
-        return not_decided(asked, "undecided", CALL_FAILED), 1
+        return _Asked(not_decided(asked, "undecided", CALL_FAILED), 1, **tokens)
     decisions = reconcile(asked, parsed)
     for d in decisions:
         store.save_result(
             keys[d.violation_id], stage="decide", model=answer.model_id or model,
             prompt_version=PROMPT_VERSION, result_json=decision_to_json(d),
         )  # fmt: skip
-    return decisions, 1
+    return _Asked(decisions, 1, **tokens)

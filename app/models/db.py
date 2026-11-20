@@ -55,6 +55,21 @@ class CommandRecord(SQLModel, table=True):
     handled_at: datetime
 
 
+class CallGrant(SQLModel, table=True):
+    """`/fix`가 PR 호출 상한을 한 번 더 준 기록 (DESIGN.md 4.9 명령, 9.2 "걸렸을 때").
+
+    명령 코멘트 하나에 한 번이라 같은 명령을 다시 처리해도(재시도) 늘지 않는다. 그 PR의 기록 수가
+    수정 작성의 시도 세대다."""
+
+    __tablename__ = "call_grants"
+
+    comment_id: int = Field(primary_key=True)
+    repo: str = Field(index=True)
+    pr_number: int = Field(index=True)
+    head_sha: str
+    created_at: datetime
+
+
 class Run(SQLModel, table=True):
     """PR·커밋별 검사 한 번."""
 

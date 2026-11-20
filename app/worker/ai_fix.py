@@ -144,7 +144,7 @@ def code_fix(
         )  # fmt: skip
 
     try:
-        for attempt in range(1, config.skills.fix.max_retries + 1):
+        for attempt in range(1, config.fix.max_retries + 1):
             route = rules.choose_route(
                 light=config.model.light, heavy=config.model.heavy,
                 consecutive_failures=p.consecutive_failures, heavy_used=p.heavy_used,

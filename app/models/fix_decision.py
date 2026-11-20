@@ -146,6 +146,8 @@ class Decided:
     decisions: tuple[FixDecision, ...]  # 위반마다 하나, 위반 목록과 같은 순서
     calls: int = 0  # 이번 검사에서 한 모델 호출 (상한에서 센 값)
     cached: int = 0  # 저장된 답을 쓴 위반 수
+    input_tokens: int = 0  # 이번 검사의 호출이 쓴 토큰 (9.4). 저장된 답은 0이다
+    output_tokens: int = 0
 
 
 # 체크포인트에서 되살릴 수 있게 graph.py가 등록하는 타입

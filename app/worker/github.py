@@ -3,7 +3,7 @@
 import json
 import os
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Final
 
@@ -25,6 +25,13 @@ class PullRefs:
     # PR 작성자와 저장소의 관계, 로그인 이름. 워커가 체크아웃 전에 이 값으로 실행을 정한다 (8.6)
     author_association: str = ""
     author_login: str = ""
+
+
+@dataclass(frozen=True)
+class ReviewComment:
+    path: str
+    line: int  # 수정안 PR의 새 쪽(RIGHT) 줄 번호
+    body: str
 
 
 @dataclass(frozen=True)
@@ -120,6 +127,31 @@ class GitHub:
              "--jq", ".number"],
             payload,
         )  # fmt: skip
+
+    def has_review(self, repo: str, number: int, marker: str) -> bool:
+        """이 계정이 단, marker가 든 리뷰가 그 PR에 있는지. 저장한 기록이 아니라 GitHub을 본다."""
+        jq = f'.[] | select(.body | contains("{marker}")) | [.id, .user.login] | @tsv'
+        out = self._run(
+            ["api", "--paginate", f"repos/{repo}/pulls/{number}/reviews", "--jq", jq], None
+        )
+        me = self.login()
+        return any(line.partition("\t")[2] == me for line in out.splitlines())
+
+    def create_review(
+        self, repo: str, number: int, body: str, comments: Sequence[ReviewComment]
+    ) -> int:
+        """줄 리뷰 코멘트를 리뷰 하나로 한 번에 단다 (DESIGN.md 4.9). 줄은 PR의 새 쪽 줄 번호다."""
+        payload = json.dumps({
+            "body": body, "event": "COMMENT",
+            "comments": [{"path": c.path, "line": c.line, "side": "RIGHT", "body": c.body}
+                         for c in comments],
+        })  # fmt: skip
+        out = self._run(
+            ["api", "-X", "POST", f"repos/{repo}/pulls/{number}/reviews", "--input", "-",
+             "--jq", ".id"],
+            payload,
+        )  # fmt: skip
+        return int(out.strip())
 
     def pull_status(self, repo: str, number: int) -> PullStatus:
         jq = '[.state, .merged, (.merge_commit_sha // "")] | @tsv'
