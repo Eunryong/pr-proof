@@ -5,22 +5,32 @@ from typing import Final
 
 import pytest
 
+from app.models.checker import CheckerKind
 from app.models.checker_authoring import (
     ANSWER_SCHEMA,
+    EXAMPLE_FAILURES_TO_JUDGE,
     MAX_MODEL_EXAMPLES,
+    PATH_PROMPT_VERSION,
+    SYSTEM_PROMPT,
     Answer,
     AnswerExample,
+    Coverage,
+    Draft,
     Shortfall,
     Unchecked,
     answer_schema,
     build_prompt,
     checker_key,
     judge_examples,
+    judge_route,
+    judged_after_failures,
     kind_for_attempt,
     model_examples,
     parse_answer,
     plan_check,
+    route_before_run,
     shortfall,
+    system_prompt,
 )
 from app.models.rule import CheckMethod, Example, Rule, RuleSource
 
@@ -206,3 +216,68 @@ def test_path_example_outside_the_repo_shape_is_not_used(path: str) -> None:
     examples, problems = model_examples((), answer, "path-pattern")
     assert examples == ()
     assert problems
+
+
+# --- 모델 판단으로 보내는 때 (4.4 "의미 규칙을 모델 판단으로 보내는 때") ---
+
+
+def _draft(coverage: Coverage = "all", unfit: str = "", kind: CheckerKind = "ast-grep") -> Draft:
+    uncovered = "" if coverage == "all" else "뜻을 읽어야 한다"
+    return Draft(kind=kind, body="x\n", examples=(), example_problems=(), model="m",
+                 unfit=unfit, coverage=coverage, uncovered=uncovered)  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    ("coverage", "unfit", "route"),
+    [
+        ("all", "", None),
+        ("all", "스코프를 따져야 한다", None),  # unfit은 형식의 한계다: Python AST로 바꾼다
+        ("part", "", "part"),
+        ("part", "스코프를 따져야 한다", "part"),  # 검사기의 몫이 형식보다 먼저다
+        ("none", "", "none"),
+    ],
+)
+def test_part_and_none_answers_go_to_judgment_before_any_run(
+    coverage: Coverage, unfit: str, route: str | None
+) -> None:
+    assert route_before_run(_draft(coverage, unfit)) == route
+    assert route_before_run(_draft(coverage, kind="python-ast")) == route
+
+
+@pytest.mark.parametrize(("failures", "judged"), [(0, False), (1, False), (2, True), (3, True)])
+def test_second_failed_example_check_sends_a_content_rule_to_judgment(
+    failures: int, judged: bool
+) -> None:
+    assert EXAMPLE_FAILURES_TO_JUDGE == 2
+    assert judged_after_failures(RULE, failures) is judged
+    assert judged_after_failures(PATH_RULE, failures) is False  # 경로 규칙은 보내지 않는다
+
+
+def test_saved_route_reads_known_values_and_unknown_ones_as_attempts() -> None:
+    known = ("none", "part", "examples", "attempts")
+    assert [judge_route(v) for v in known] == list(known)
+    assert judge_route(None) is None
+    assert judge_route("later") == "attempts"
+
+
+def test_coverage_is_asked_of_content_checkers_only() -> None:
+    for kind in ("ast-grep", "python-ast"):
+        schema = answer_schema(kind)
+        assert {"coverage", "uncovered"} <= set(schema["required"])
+        assert schema["properties"]["coverage"]["enum"] == ["all", "part", "none"]
+        assert "coverage" in SYSTEM_PROMPT[kind]
+    assert "coverage" not in answer_schema("path-pattern")["properties"]
+    assert "coverage" not in system_prompt("path-pattern")
+
+
+def test_answer_without_coverage_reads_as_all() -> None:
+    assert parse_answer({"checker": "x", "examples": []}).coverage == "all"
+    parsed = parse_answer({"checker": "", "examples": [], "coverage": "none", "uncovered": "뜻"})
+    assert (parsed.coverage, parsed.uncovered) == ("none", "뜻")
+    with pytest.raises(ValueError):
+        parse_answer({"checker": "", "examples": [], "coverage": "most"})
+
+
+def test_path_prompt_version_did_not_change_so_path_checkers_are_kept() -> None:
+    # coverage를 더하기 전(a5e721e)의 값. 내용 규칙의 PROMPT_VERSION만 바뀌어 그 검사기만 다시 쓴다
+    assert PATH_PROMPT_VERSION == "d8878de23426"

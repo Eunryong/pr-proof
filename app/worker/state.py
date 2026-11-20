@@ -314,10 +314,11 @@ class Store:
             return session.get(CheckerEntry, key)
 
     def save_checker(self, key: str, *, rule_id: str, accepted: bool, checker_json: str | None,
-                     detail: str, attempts_json: str) -> None:  # fmt: skip
+                     detail: str, attempts_json: str,
+                     judge_route: str | None = None) -> None:  # fmt: skip
         entry = CheckerEntry(
             key=key, rule_id=rule_id, accepted=accepted, checker_json=checker_json, detail=detail,
-            attempts_json=attempts_json, created_at=_now(),
+            attempts_json=attempts_json, created_at=_now(), judge_route=judge_route,
         )  # fmt: skip
         with Session(self.engine) as session:
             session.merge(entry)

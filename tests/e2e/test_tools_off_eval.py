@@ -235,7 +235,7 @@ class Calls:
 def _method(outcome: RuleOutcome) -> tuple[Method, str]:
     """규칙이 쓴 확인 방법과 보일 글."""
     if isinstance(outcome, RuleJudged):
-        return "judge", f"judge ({outcome.reason[:120]})"
+        return "judge", f"judge:{outcome.route} ({outcome.reason[:120]})"
     if not isinstance(outcome, RuleChecked):
         return "unchecked", f"unchecked:{outcome.kind}: {outcome.detail[:200]}"
     if outcome.checker.kind in TOOL_KINDS:
@@ -376,6 +376,18 @@ def by_method(runs: Sequence[dict]) -> dict[str, dict[str, str]]:
             for key, (hit, truth, found) in sorted(totals.items())}  # fmt: skip
 
 
+def judged_rules(runs: Sequence[dict]) -> dict[str, str]:
+    """도구 끔·켬에서 운영 흐름이 모델 판단으로 보낸 규칙 수 / 규칙 수, 그리고 까닭별 수 (4.4)."""
+    out: dict[str, str] = {}
+    for arm in ("off", "on"):
+        methods = [rule["method"] for run in runs for s in run["scores"] if s["arm"] == arm
+                   for rule in s["rules"]]  # fmt: skip
+        routes = Counter(m.split(" ", 1)[0] for m in methods if m.startswith("judge:"))
+        detail = ", ".join(f"{k} {v}" for k, v in sorted(routes.items()))
+        out[arm] = f"{sum(routes.values())}/{len(methods)}" + (f" ({detail})" if detail else "")
+    return out
+
+
 def _jsonable(runs: Sequence[dict]) -> list[dict]:
     def plain(score: Score) -> dict[str, str]:
         return {"recall": score.recall, "precision": score.precision}
@@ -409,13 +421,15 @@ def test_tools_on_and_off_score_the_same_samples(
     if os.environ.get(OUT_ENV):
         out = Path(os.environ[OUT_ENV])
         out.mkdir(parents=True, exist_ok=True)
-        report = {"rows": _report(runs), "by_method": by_method(runs), "runs": _jsonable(runs)}
+        report = {"rows": _report(runs), "by_method": by_method(runs),
+                  "judged_rules": judged_rules(runs), "runs": _jsonable(runs)}  # fmt: skip
         (out / "tools_off.json").write_text(json.dumps(report, ensure_ascii=False, indent=1))
     for row in _report(runs):
         print(row)
     for run in runs:
         print(run["rep"], run["target"], Counter((c["arm"], c["stage"]) for c in run["calls"]))
     print(by_method(runs))
+    print(judged_rules(runs))
     if real:
         return
 
@@ -446,7 +460,9 @@ def test_tools_on_and_off_score_the_same_samples(
     assert [m[:3] for m in at("PLW0603", "judge")["extra"]] == [
         ["probe", "orders/services/probe.py", 19]
     ]
-    # 판단 케이스: 가짜 검사기가 예시를 통과하지 못해 도구 끔·켬 모두 모델 판단으로 내려간다
+    # 판단 케이스: 도구 끔·켬 모두 운영 흐름이 모델 판단으로 보낸다. 01은 가짜 검사기가 예시 확인을
+    # 두 번 통과하지 못해서, 06(주석)은 검사기 작성 모델이 검사기로 가릴 수 없다고(none) 답해서다
+    routes = {"01-verb-function-name": "judge:examples", "06-comment-matches-code": "judge:none"}
     for entry in SPEC["judge_cases"]:
         name = Path(entry["case"]).stem
         for arm in ARMS:
@@ -454,6 +470,10 @@ def test_tools_on_and_off_score_the_same_samples(
             assert got["truth_from"] == "case"
             assert set(got["by_method"]) == {"judge"}, got["rules"]
             assert got["score"].recall == got["score"].precision == "1/1", got
+            if arm != "judge":
+                assert got["rules"][0]["method"].startswith(routes[name] + " ("), got["rules"]
+    assert judged_rules(runs) == {"off": "2/5 (judge:examples 1, judge:none 1)",
+                                  "on": "2/5 (judge:examples 1, judge:none 1)"}  # fmt: skip
     totals = by_method(runs)
     assert totals["off/checker"]["recall"] == "8/9"
     assert totals["off/judge"] == {"recall": "2/2", "precision": "2/2"}

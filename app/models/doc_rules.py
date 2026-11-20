@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Final, Literal
 
 from app.models.checker import CheckerKind
-from app.models.checker_authoring import UncheckedKind
+from app.models.checker_authoring import JudgeRoute, UncheckedKind
 from app.models.db import ModelCall
 from app.models.judge import JudgeUsage
 from app.models.rag import Retrieval
@@ -51,13 +51,19 @@ JudgeGap = Literal["cap", "model_failed"]
 
 @dataclass(frozen=True)
 class RuleJudged:
-    """검사기를 만들지 못해 모델이 바뀐 hunk를 직접 보는 규칙 (4.4의 3번, 4.5 모델의 직접 판단).
+    """검사기를 채택하지 않아 모델이 바뀐 hunk를 직접 보는 규칙 (4.4의 3번, 4.5 모델의 직접 판단).
 
-    left는 이번 검사에서 판단하지 못한 (이 규칙, hunk) 쌍의 수다. 0이면 다 봤다.
+    route는 모델 판단으로 보낸 까닭이다(`JudgeRoute`). left는 이번 검사에서 판단하지 못한 (이 규칙,
+    hunk) 쌍의 수다. 0이면 다 봤다.
     """
 
     rule: Rule
-    reason: str  # 검사기를 만들지 못한 이유 (검사기 작성의 마지막 실패)
+    # none·part면 검사기 작성 모델이 적은 "검사기로 가릴 수 없는 부분", 아니면 검사기 작성의
+    # 마지막 실패
+    reason: str
+    # 기본값은 이 필드를 더하기 전에 저장된 그래프 상태(체크포인트)를 읽기 위한 것이다. 그때의 뜻은
+    # "회차를 다 씀"이었다
+    route: JudgeRoute = "attempts"
     left: int = 0
     left_kind: JudgeGap | None = None
     left_detail: str = ""

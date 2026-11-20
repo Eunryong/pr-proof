@@ -13,12 +13,13 @@ from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 
 from app.models import judge as judge_rules
 from app.models import state_keys
-from app.models.doc_rules import CallUsage, Found, RuleJudged
+from app.models.checker_authoring import ToJudge, Unchecked
+from app.models.doc_rules import CallUsage, Found, RuleJudged, RuleUnchecked
 from app.models.job import PRJob
 from app.models.judge import JudgeUsage
 from app.models.repo_config import CallSettings, ModelSettings
 from app.models.rule import CheckMethod, Rule, RuleSource, rule_id
-from app.worker import graph, main, update
+from app.worker import doc_rules, graph, main, update
 from app.worker.ai.claude_cli import StructuredResult
 
 from .helpers import bodies
@@ -71,7 +72,7 @@ class JudgeModel(FakeModel):
 
 
 def _model(**kwargs) -> JudgeModel:
-    """검사기 작성은 세 번 모두 예시를 통과하지 못한다 (grep이 아무 줄도 잡지 않는다)."""
+    """검사기 작성은 두 번 모두 예시를 통과하지 못한다 (grep이 아무 줄도 잡지 않는다)."""
     return JudgeModel(rule_answer(name_rule()), checker=checker_answer("grep:NOPE"), **kwargs)
 
 
@@ -101,18 +102,18 @@ def _kinds(model: FakeModel) -> list[str]:
 
 
 def test_rule_without_checker_is_judged_and_fixed(fix_env, tmp_path: Path) -> None:  # noqa: F811
-    """4-4: 검사기 작성이 세 번 실패한 규칙이 모델 판단으로 내려간다. 4-2: 그 줄이
+    """4-4: 검사기가 예시 확인을 두 번 통과하지 못한 규칙이 모델 판단으로 간다. 4-2: 그 줄이
     `found_by: model`로 나오고 수정 판단과 모델 수정을 거쳐 수정안 PR까지 가며, 본문에 "도구로
     재검사하지 못함"이 적힌다."""
     model = use_model(fix_env, _model())
     use_fixer(fix_env, FakeFixer([RENAME], [EXPLANATION]))
     state = _run(fix_env, tmp_path)
 
-    assert _kinds(model) == ["rules", "tool", "checker", "checker", "checker", "judge", "decide"]
+    assert _kinds(model) == ["rules", "tool", "checker", "checker", "judge", "decide"]
     found = state["doc_rules"]
     (outcome,) = found.outcomes
-    assert isinstance(outcome, RuleJudged) and outcome.left == 0
-    assert "회 안에 예시를 통과하지 못함" in outcome.reason
+    assert isinstance(outcome, RuleJudged) and outcome.left == 0 and outcome.route == "examples"
+    assert outcome.reason.startswith("예시 확인을 2번 통과하지 못함")
     (v,) = found.violations
     assert (v.rule_id, v.file, v.line, v.found_by, v.covered) == (
         NAME_ID, "orders/a.py", 2, "model", True
@@ -129,7 +130,7 @@ def test_rule_without_checker_is_judged_and_fixed(fix_env, tmp_path: Path) -> No
     assert pull["head"] == BRANCH
     assert "이 규칙은 도구로 재검사하지 못함" in pull["body"]
     comment = bodies(fix_env["gh"])[-1]
-    assert "모델 판단 (예시를 통과하는 검사기를 만들지 못함)" in comment
+    assert "모델 판단 (검사기가 예시 확인을 두 번 통과하지 못함)" in comment
     assert "모델 판단: 규칙 1개, hunk 1개 · 모델 호출 1회 · 저장된 판단 0건 사용" in comment
     assert "읽었지만 아직 검사하지 못하는" not in comment
 
@@ -219,10 +220,28 @@ def test_judged_rule_state_survives_checkpoint() -> None:
                 origin="document", scope=(), check=CheckMethod("checker"),
                 fix="model")  # fmt: skip
     usage = JudgeUsage(rules=1, hunks=2, calls=1, cached=1, dropped=0, models=("m",))
-    judged = RuleJudged(rule, "3회 실패", 1, "cap", "PR 상한")
+    judged = RuleJudged(rule, "주석의 뜻", "none", 1, "cap", "PR 상한")
     found = Found((judged,), (), 0, CallUsage(0, 10, 0, (), 0, 0), judge=usage)
     serde = JsonPlusSerializer(allowed_msgpack_modules=list(graph._STATE_TYPES))
     restored = serde.loads_typed(serde.dumps_typed({"doc_rules": found}))["doc_rules"]
     (outcome,) = restored.outcomes
     assert isinstance(outcome, RuleJudged) and outcome.left_kind == "cap"
+    assert outcome.route == "none"
     assert isinstance(restored.judge, JudgeUsage) and restored.judge.cached == 1
+
+
+def test_routed_rule_becomes_judged_with_its_route_and_path_rules_stay_unchecked() -> None:
+    rule = Rule(id=NAME_ID, text=NAME_RULE, source=RuleSource("README.md", "코드 규칙 > 이름", "b"),
+                origin="document", scope=(), check=CheckMethod("checker"),
+                fix="model")  # fmt: skip
+    models = ModelSettings()
+    judged = doc_rules._outcome(ToJudge(rule, "part", "뜻을 읽어야 한다"), models, None)
+    assert judged == RuleJudged(rule, "뜻을 읽어야 한다", "part")
+    path_rule = Rule(id="R-p", text="테스트 파일 이름은 test_로 시작한다.",
+                     source=RuleSource("README.md", "테스트", "b"), origin="document",
+                     scope=(), check=CheckMethod("path"), fix="none")  # fmt: skip
+    left = doc_rules._outcome(Unchecked(path_rule, "no_checker", "3회 실패"), models, None)
+    assert left == RuleUnchecked(path_rule, "no_checker", "3회 실패")
+    # 수정 뒤 재검사(4.8의 5번)는 모델 판단 규칙을 도구·검사기로 다시 돌리지 않는다
+    found = Found((judged,), (), 0, CallUsage(0, 10, 0, (), 0, 0))
+    assert doc_rules.saved_checks(found, store=None) == [ToJudge(rule, "part", "뜻을 읽어야 한다")]
