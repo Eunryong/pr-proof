@@ -117,12 +117,19 @@ class Comparison:
     other_changes: tuple[Change, ...]  # 그 밖의 결과 변화 (건너뜀이 됨 등)
     added: tuple[str, ...]  # 기준선에 없던 케이스
     removed: tuple[str, ...]  # 지금 없는 케이스
-    tools_off: tuple[Change, ...]  # 도구를 끈 평가의 "조건/방법 재현율·정밀도"가 바뀐 곳
+    tools_off: tuple[Change, ...]  # 도구를 끈 평가의 "조건/방법 재현율·정밀도" 전부 (같아도)
     settings: tuple[Change, ...]  # 프롬프트 판과 모델이 바뀐 곳
 
     @property
     def regressed(self) -> bool:
         return bool(self.newly_failed or self.removed)
+
+    @property
+    def changed(self) -> bool:
+        return bool(
+            self.newly_failed or self.newly_passed or self.other_changes or self.added
+            or self.removed or self.settings or any(c.before != c.after for c in self.tools_off)
+        )  # fmt: skip
 
 
 def compare(base: RunSummary, new: RunSummary) -> Comparison:
@@ -140,23 +147,21 @@ def compare(base: RunSummary, new: RunSummary) -> Comparison:
         other_changes=other,
         added=tuple(sorted(after.keys() - before.keys())),
         removed=tuple(sorted(before.keys() - after.keys())),
-        tools_off=_metric_changes(base.tools_off, new.tools_off),
+        tools_off=_metrics(base.tools_off, new.tools_off),
         settings=_changes("prompt", base.prompts, new.prompts)
         + _changes("model", base.models, new.models),
     )
 
 
-def _metric_changes(
+def _metrics(
     before: Mapping[str, Mapping[str, str]], after: Mapping[str, Mapping[str, str]]
 ) -> tuple[Change, ...]:
-    out = []
-    for key in sorted(before.keys() | after.keys()):
-        for metric in ("recall", "precision"):
-            old = (before.get(key) or {}).get(metric, "-")
-            new = (after.get(key) or {}).get(metric, "-")
-            if old != new:
-                out.append(Change(f"{key} {metric}", old, new))
-    return tuple(out)
+    return tuple(
+        Change(f"{key} {metric}", (before.get(key) or {}).get(metric, "-"),
+               (after.get(key) or {}).get(metric, "-"))
+        for key in sorted(before.keys() | after.keys())
+        for metric in ("recall", "precision")
+    )  # fmt: skip
 
 
 def _changes(kind: str, before: Mapping[str, str], after: Mapping[str, str]) -> tuple[Change, ...]:
@@ -200,13 +205,19 @@ def render_comparison(c: Comparison, base_id: int) -> str:
     block("새 케이스", c.added)
     block("없어진 케이스", c.removed)
     for title, changes in (("결과가 바뀐 케이스", c.other_changes),
-                           ("도구를 끈 평가", c.tools_off),
                            ("바뀐 프롬프트·모델", c.settings)):  # fmt: skip
         if changes:
             lines.append(f"{title}:")
             lines += [f"  {ch.key}: {ch.before} → {ch.after}" for ch in changes]
-    if len(lines) == 1:
-        lines.append("바뀐 것 없음")
+    if c.tools_off:
+        lines.append("도구를 끈 평가 (기준선 → 지금):")
+        lines += [f"  {ch.key}: {ch.before} → {ch.after}" + (" (바뀜)" if ch.before != ch.after
+                                                           else "")
+                  for ch in c.tools_off]  # fmt: skip
+    else:
+        lines.append("도구를 끈 평가: 두 실행 모두 결과 없음")
+    if not c.changed:
+        lines.append("케이스 결과, 프롬프트·모델, 도구를 끈 평가가 모두 기준선과 같음")
     return "\n".join(lines)
 
 

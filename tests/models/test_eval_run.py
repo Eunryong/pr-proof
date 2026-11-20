@@ -88,6 +88,7 @@ def test_compare_lists_regressions_fixes_and_changed_settings() -> None:
     assert c.added == ("rules/04",) and c.removed == ("lint/01",)
     assert [(x.key, x.before, x.after) for x in c.tools_off] == [
         ("off/checker recall", "8/9", "9/9"),
+        ("off/checker precision", "8/8", "8/8"),
         ("off/judge recall", "-", "2/2"),
         ("off/judge precision", "-", "2/2"),
     ]
@@ -99,15 +100,22 @@ def test_compare_lists_regressions_fixes_and_changed_settings() -> None:
     text = render_comparison(c, base_id=7)
     assert "기준선 #7과 비교:" in text
     assert "새로 실패 1개: rules/01" in text
-    assert "  off/checker recall: 8/9 → 9/9" in text
+    assert "  off/checker recall: 8/9 → 9/9 (바뀜)" in text
+    assert "  off/checker precision: 8/8 → 8/8\n" in text  # 같은 값도 보인다
     assert "  prompt.fix: a → b" in text
 
 
 def test_identical_runs_compare_to_nothing() -> None:
-    run = _summary(("rules/01", "passed"))
+    run = _summary(
+        ("rules/01", "passed"), tools={"off/judge": {"recall": "2/2", "precision": "2/2"}}
+    )
     c = compare(run, run)
-    assert not c.regressed
-    assert render_comparison(c, base_id=1).endswith("바뀐 것 없음")
+    assert not c.regressed and not c.changed
+    text = render_comparison(c, base_id=1)
+    assert "  off/judge recall: 2/2 → 2/2\n" in text
+    assert text.endswith("케이스 결과, 프롬프트·모델, 도구를 끈 평가가 모두 기준선과 같음")
+    bare = _summary(("rules/01", "passed"))
+    assert "도구를 끈 평가: 두 실행 모두 결과 없음" in render_comparison(compare(bare, bare), 1)
 
 
 def test_summary_counts_case_files_apart_from_other_tests() -> None:
