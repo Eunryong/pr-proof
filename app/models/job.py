@@ -11,7 +11,7 @@ class PRJob(BaseModel):
     kind: Literal["update", "command", "close"]
     head_sha: str | None = None  # issue_comment 웹훅에는 없다. 없으면 워커가 조회한다
     base_sha: str | None = None
-    command: str | None = None  # "/recheck", "/fix lint" 등. 값 검증과 꺼진 확장 안내는 워커가 한다
+    command: str | None = None  # "/recheck", "/fix mechanical" 등. 값 검증과 안내는 워커가 한다
     comment_id: int | None = None  # 명령의 코멘트 ID
     source: Literal["webhook", "sync"]
     delivery_id: str | None = None  # 웹훅으로 온 작업에만 있다

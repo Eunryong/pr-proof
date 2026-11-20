@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Final
 
 from app.models.checker import CheckerKind, is_repo_path, validate_body
+from app.models.text_edit import TextEdit
 from app.sandbox import docker_cli
 
 WORK: Final = "/work"
@@ -63,7 +64,9 @@ class Match:
     file: str  # 넘긴 파일 중 하나 (상대 경로)
     line: int  # 1부터
     end_line: int
-    message: str  # ast-grep 규칙의 message 또는 스크립트의 why
+    message: str  # ast-grep 규칙의 message, 스크립트의 why, ruff의 메시지
+    code: str = ""  # ruff의 규칙 코드
+    edits: tuple[TextEdit, ...] = ()  # ruff의 안전한 수정. 없으면 비어 있다
 
 
 @dataclass(frozen=True)
@@ -106,7 +109,7 @@ def run_checker(
     """
     if kind == "path-pattern":
         return run_path_pattern(body, files)
-    _check_paths(files)
+    check_paths(files)
     problem = validate_body(kind, body)
     if problem:
         return Invalid(problem)
@@ -137,7 +140,7 @@ def run_checker(
             "-v", f"{root.resolve()}:{WORK}:ro", "-v", f"{checker_dir}:{CHECKER_DIR}:ro", *mounts,
             "-w", workdir, docker_cli.TOOL_IMAGE, *argv,
         ]  # fmt: skip
-        result = _run_bounded(docker, stdin, timeout=timeout)
+        result = run_bounded(docker, stdin, timeout=timeout)
     return read_result(kind, result, frozenset(files), timeout)
 
 
@@ -183,7 +186,7 @@ def run_path_pattern(
     정규식은 모델이 쓴 것이라 끝없이 되짚을 수 있다. 그래서 호스트가 아니라 시간·자원 제한이 있는
     컨테이너에서 맞춘다.
     """
-    _check_paths(paths)
+    check_paths(paths)
     problem = validate_body("path-pattern", body)
     if problem:
         return Invalid(problem)
@@ -199,11 +202,11 @@ def run_path_pattern(
             "-v", f"{checker_dir}:{CHECKER_DIR}:ro", "-w", CHECKER_DIR, docker_cli.TOOL_IMAGE,
             "python", "-I", f"{CHECKER_DIR}/{SCRIPT_FILE}",
         ]  # fmt: skip
-        result = _run_bounded(docker, stdin, timeout=timeout)
+        result = run_bounded(docker, stdin, timeout=timeout)
     return read_result("path-pattern", result, frozenset(paths), timeout)
 
 
-def _check_paths(files: Sequence[str]) -> None:
+def check_paths(files: Sequence[str]) -> None:
     for f in files:
         if not _is_relative_inside(f):
             raise ValueError(f"검사할 파일은 root 안의 상대 경로여야 한다: {f!r}")
@@ -224,7 +227,7 @@ class RawRun:
     too_large: bool = False
 
 
-def _run_bounded(docker_args: list[str], stdin: bytes, *, timeout: int) -> RawRun:
+def run_bounded(docker_args: list[str], stdin: bytes, *, timeout: int) -> RawRun:
     """docker run을 시간과 출력 크기 안에서 돌린다. 넘으면 컨테이너를 지운다."""
     name = f"pr-proof-checker-{uuid.uuid4().hex[:12]}"
     cmd = ["docker", docker_args[0], "--name", name, *docker_args[1:]]

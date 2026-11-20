@@ -18,9 +18,11 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.models import records as rules
 from app.models.db import SeenViolation
 from app.models.doc_rules import Found, RuleChecked
+from app.models.fix import MechanicalFix
 from app.models.job import PRJob
 from app.models.model_fix import ModelFix
 from app.models.proposal import find_secret_in_text
+from app.models.tools import CONFIG_RULE_ID, RUFF_CODE
 from app.sandbox.safe_read import read_regular_file
 from app.worker import repo
 from app.worker.repo import GitError
@@ -32,6 +34,11 @@ MAX_FILE_BYTES: Final = 5 * 1024 * 1024
 
 # 기록을 만들다 날 수 있는 오류. 그 밖의 예외는 파이프라인 버그라 그대로 올린다
 _RECORD_ERRORS: Final = (SQLAlchemyError, GitError, OSError, ValueError)
+# 실패로 기록하는 수정 결과. 호출 상한, 실행하지 않음, 고칠 것이 없음은 실패가 아니다
+_FAILED_STATUSES: Final = frozenset({
+    "failed", "dropped", "new_violations", "out_of_scope", "secret", "tests_changed",
+    "unchecked", "too_big",
+})  # fmt: skip
 # 머지·닫힘을 기록하는 수정안 상태
 _FINISHED_STATES: Final[Mapping[str, str]] = {"merged": "adopted", "rejected": "rejected"}
 
@@ -73,14 +80,14 @@ def after_proposals(store: Store, repo_name: str, pr_number: int, secrets: Seque
 def after_failed_fix(
     store: Store,
     job: PRJob,
-    fix: ModelFix,
+    fix: ModelFix | MechanicalFix,
     notes: Sequence[rules.Target],
     worktree: Path,
     secrets: Sequence[str],
 ) -> None:
-    """검증에 실패한 수정(회차 소진, 재시도 없이 버림)의 실패 기록 (4.10). diff는 마지막 회차의
-    것이다."""
-    if fix.status not in ("failed", "dropped") or fix.attempt_id is None:
+    """검증에 실패한 수정(모델: 회차 소진·재시도 없이 버림, 기계적 수정: 검증의 어느 단계에서
+    떨어짐)의 실패 기록 (4.10). diff는 마지막 회차의 것이다."""
+    if fix.status not in _FAILED_STATUSES or fix.attempt_id is None:
         return
     try:
         new = rules.failure_records(
@@ -125,12 +132,17 @@ def after_detect(
         lines_of = _reader(worktree)
         if not merged_fix:
             previous = store.previous_violations(job.repo, job.pr_number, job.head_sha)
-            checked = frozenset(o.rule.id for o in found.outcomes if isinstance(o, RuleChecked))
+            checked = set(o.rule.id for o in found.outcomes if isinstance(o, RuleChecked))
+            if CONFIG_RULE_ID in checked:  # 도구 설정 규칙의 위반은 ruff 코드가 규칙 id다 (4.3)
+                checked |= {p.rule_id for p in previous if RUFF_CODE.match(p.rule_id)}
             fixed = rules.author_fixed(
-                previous, frozenset(v.id for v in found.violations), checked, lines_of
+                previous, frozenset(v.id for v in found.violations), frozenset(checked), lines_of
             )
             if fixed:
+                config = next((o.rule for o in found.outcomes if o.rule.id == CONFIG_RULE_ID), None)
                 texts = {o.rule.id: o.rule.text for o in found.outcomes}
+                if config is not None:
+                    texts |= {v.rule_id: config.text for v in fixed if RUFF_CODE.match(v.rule_id)}
                 new = rules.author_records(
                     fixed, rule_texts=texts, head_sha=job.head_sha,
                     diff_of=_commit_diff(worktree, fixed[0].head_sha, job.head_sha),

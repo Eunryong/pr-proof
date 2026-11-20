@@ -60,23 +60,22 @@ def test_memory_limit_is_capped(requested: float, expected: float) -> None:
     assert memory_limit(requested, 4) == expected
 
 
-def test_skills_enabled_default_and_lint_off() -> None:
-    assert "lint" in parse_repo_config(None)[0].skills.enabled
+def test_skills_enabled_is_read_only_when_present() -> None:
+    """3단계에 스킬이 없어졌다. 옛 파일의 `skills.enabled`는 읽기만 한다 (10절)."""
+    assert parse_repo_config(None)[0].skills.enabled is None
     config, problem = parse_repo_config("skills:\n  enabled: []\n")
     assert config.skills.enabled == [] and problem is None
 
 
-def test_removed_or_unknown_skill_is_ignored_with_a_note() -> None:
-    """2단계에 static을 없앴다. 옛 이름이나 모르는 이름이 있어도 설정 전체를 기본값으로 되돌리지
-    않고, 그 이름만 무시하고 "설정:"에 알린다 (10절)."""
+def test_old_skills_key_gets_a_note_and_breaks_nothing() -> None:
+    """옛 이름이 있어도 설정 전체를 기본값으로 되돌리지 않고 "설정:"에 알린다 (10절). lint를 뺀
+    파일의 알림은 도구 설정의 규칙을 끄는 쪽(worker/base_config.py)이 한다."""
     text = "skills:\n  enabled: [lint, static, structure]\nsandbox: {memory_gb: 2}\n"
     config, problem = parse_repo_config(text)
-    assert problem is None and config.sandbox.memory_gb == 2 and "lint" in config.skills.enabled
+    assert problem is None and config.sandbox.memory_gb == 2
     (note,) = settings_notes(text)
-    assert "`static`, `structure`는 무시합니다" in note
-    off = "skills:\n  enabled: [static]\n"
-    assert "lint" not in parse_repo_config(off)[0].skills.enabled  # lint를 끈 것은 그대로다
-    assert settings_notes("skills:\n  enabled: [lint]\n") == []
+    assert note.startswith("`skills.enabled`는 없어졌습니다")
+    assert settings_notes("skills:\n  enabled: [static]\n") == []
 
 
 def test_removed_static_and_dollar_keys_are_ignored_with_a_note() -> None:

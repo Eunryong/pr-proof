@@ -110,11 +110,12 @@ class ModelSettings(BaseModel):
 
 
 class SkillsSettings(BaseModel):
-    """v1의 스킬 설정. 남은 스킬은 lint 하나이고 3단계에 도구 규칙으로 옮긴다 (10절)."""
+    """v1의 스킬 설정. 3단계에 v1 lint를 도구 규칙으로 옮겨 스킬이 없어졌다 (10절). 옛 파일을 읽기만
+    한다: `enabled`에 lint가 없으면 그 저장소는 ruff를 끈 것이라 도구 설정의 규칙 묶음을 끈다
+    (worker/base_config.py)."""
 
     model_config = ConfigDict(extra="ignore")
-    # lint를 빼면 v1 lint 경로가 돌지 않는다. 옛 이름(static, structure)은 읽기만 하고 쓰지 않는다
-    enabled: list[str] = Field(default_factory=lambda: [LINT])
+    enabled: list[str] | None = None
 
 
 class RepoConfig(BaseModel):
@@ -182,10 +183,11 @@ def settings_notes(text: str | None) -> list[str]:
         if isinstance(part, dict) and key in part:
             notes.append(note)
     enabled = skills.get("enabled") if isinstance(skills, dict) else None
-    gone = [s for s in enabled if s != LINT] if isinstance(enabled, list) else []
-    if gone:
-        names = ", ".join(f"`{s}`" for s in gone)
-        notes.append(f"`skills.enabled`에 남은 스킬은 `lint`뿐이라 {names}는 무시합니다")
+    if isinstance(enabled, list) and LINT in enabled:
+        notes.append(
+            "`skills.enabled`는 없어졌습니다. 규칙은 문서와 도구 설정에서 읽고, 끌 규칙은 "
+            "`rules.disabled`에 적습니다"
+        )
     return notes
 
 

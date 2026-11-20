@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from app.models.scope import AI_POLICY, LINT_POLICY
+from app.models.scope import AI_POLICY, MECHANICAL_POLICY
 from app.worker import repo
 from app.worker.scope import check_scope, snapshot_ignored
 
@@ -190,7 +190,7 @@ def test_allowed_file_turned_into_symlink_fails(wt: Path) -> None:
 
 def test_lint_policy_rejects_new_file_in_allowed(wt: Path) -> None:
     (wt / "src/new.py").write_text("")
-    result = check_scope(wt, {"src/new.py"}, snapshot_ignored(wt), policy=LINT_POLICY)
+    result = check_scope(wt, {"src/new.py"}, snapshot_ignored(wt), policy=MECHANICAL_POLICY)
     assert [v.label for v in result.violations] == ["?? src/new.py"]
 
 

@@ -2,12 +2,14 @@ from typing import Final
 
 import pytest
 
-from app.models.finding import Finding, SkillResult
+from app.models.doc_rules import CallUsage, CheckerRef, Found, RuleChecked
 from app.models.repo_config import RepoConfig
 from app.models.test_run import PytestRun, ReportSummary
+from app.models.tools import RuffConfig, RuffSetup, config_rule
+from app.models.violation import Violation, violation_id
 from app.worker import report
 from app.worker.base_config import BaseConfig
-from app.worker.report import format_rules_line, format_test_line, render_result
+from app.worker.report import format_test_line, render_result
 
 SYMBOLS: Final = ("⚠️", "✅", "❌")
 HEAD: Final = "a" * 40
@@ -18,26 +20,30 @@ def _base(memory_gb: float = 1, max_memory_gb: float = 4, problems=()) -> BaseCo
         repo=RepoConfig(),
         memory_gb=memory_gb,
         max_memory_gb=max_memory_gb,
-        ruff_config=".pipeline-out/base/pyproject.toml",
-        ruff_source="pyproject.toml",
+        ruff=RuffSetup("0.17.5"),
         problems=tuple(problems),
     )
 
 
-def _finding(file: str = "orders/a.py", line: int = 3, code: str = "F401") -> Finding:
-    return Finding(
-        file=file,
-        line=line,
-        severity="error",
-        message="`os` imported but unused",
-        skill="lint",
-        source="pyproject.toml",
-        code=code,
-    )
+CONFIG_RULE: Final = config_rule(RuffConfig("pyproject.toml", "[tool.ruff]\n", "b" * 40))
 
 
-def _render(run: PytestRun, lint: SkillResult | None = None, base: BaseConfig | None = None):
-    return render_result(run, HEAD, 3.0, lint=lint, base=base or _base())
+def _found(*lines: int, file: str = "orders/a.py", message: str = "`os` imported but unused"):
+    """도구 설정의 규칙 묶음(ruff)이 찾은 F401 위반들."""
+    violations = tuple(
+        Violation(
+            id=violation_id("F401", file, f"import os  # {n}", 0), rule_id="F401", file=file,
+            line=n, message=message, found_by="tool", code="F401",
+            line_text=f"import os  # {n}", mechanical_fix=True,
+        )
+        for n in lines
+    )  # fmt: skip
+    ref = CheckerRef(key="tool-config:k", id="c" * 64, kind="ruff", cached=True)
+    return Found((RuleChecked(CONFIG_RULE, ref),), violations, 0, CallUsage(0, 10, 0, (), 0, 0))
+
+
+def _render(run: PytestRun, doc_rules=None, base: BaseConfig | None = None):
+    return render_result(run, HEAD, 3.0, doc_rules=doc_rules, base=base or _base())
 
 
 PASSED: Final = PytestRun(exit_code=0, summary=ReportSummary(passed=9, total=9))
@@ -127,43 +133,24 @@ def test_timeout_137_has_no_memory_hint() -> None:
 # --- 규칙 줄 --------------------------------------------------------------------
 
 
-def test_rules_line_with_violations() -> None:
-    lint = SkillResult(skill="lint", findings=(_finding(), _finding(line=9)), source="x")
-    assert format_rules_line([lint]) == "⚠️ 위반 2건 (lint 2)"
-
-
-def test_rules_line_clean() -> None:
-    assert format_rules_line([SkillResult(skill="lint", source="x")]) == "✅ 위반 없음"
-
-
-def test_unchecked_skill_has_no_symbol() -> None:
-    line = format_rules_line([SkillResult(skill="lint", error="ruff 실행 오류")])
-    assert line == "검사하지 못함 (lint)"
-    assert not any(symbol in line for symbol in SYMBOLS)  # 검사 못함은 위반도 통과도 아니다
-
-
 def test_result_has_two_top_lines_then_details() -> None:
-    lint = SkillResult(skill="lint", findings=(_finding(),), source="pyproject.toml")
-    text = _render(PASSED, lint=lint)
+    text = _render(PASSED, doc_rules=_found(3))
     lines = text.splitlines()
-    assert lines[2] == "**테스트:** 통과 (9개)"
-    assert lines[3] == "**규칙:** ⚠️ 위반 1건 (lint 1)"
-    assert "- `orders/a.py:3` `F401` `os` imported but unused" in text
-    assert "적용한 규칙: ruff (pyproject.toml)" in text
+    top = lines.index("**테스트:** 통과 (9개)")
+    assert lines[top + 1] == "**규칙:** ⚠️ 위반 1건 (규칙 1개)"
+    assert "- `F401` `pyproject.toml의 설정대로 ruff를 통과한다` · 1건" in text
+    assert "  출처: `pyproject.toml > [tool.ruff]` · 도구 `ruff` (`pyproject.toml`의 설정)" in text
+    assert "  - `orders/a.py:3` `` `os` imported but unused ``" in text
+    assert text.count("**규칙:**") == 1  # 규칙 결과를 한 줄로 합쳤다 (4.9)
 
 
 def test_failed_tests_still_show_rules() -> None:
-    lint = SkillResult(skill="lint", findings=(_finding(),), source="x")
-    text = _render(PytestRun(exit_code=1, summary=ReportSummary(failed=1, total=1)), lint=lint)
-    assert "**규칙:** ⚠️ 위반 1건" in text
+    run = PytestRun(exit_code=1, summary=ReportSummary(failed=1, total=1))
+    assert "**규칙:** ⚠️ 위반 1건" in _render(run, doc_rules=_found(3))
 
 
-def test_long_findings_list_is_truncated() -> None:
-    count = report.MAX_LISTED_FINDINGS + 2
-    lint = SkillResult(skill="lint", findings=tuple(_finding(line=i) for i in range(count)))
-    text = _render(PASSED, lint=lint)
-    assert f"⚠️ 위반 {count}건" in text  # 건수는 전체
-    assert "- 외 2건" in text
+def test_rule_line_is_absent_before_the_rule_path_ran() -> None:
+    assert "**규칙:**" not in _render(PASSED)
 
 
 def test_config_problems_are_listed() -> None:
@@ -172,8 +159,9 @@ def test_config_problems_are_listed() -> None:
 
 
 def test_install_failure_keeps_rules() -> None:
-    lint = SkillResult(skill="lint", findings=(_finding(),), source="x")
-    text = report.render_install_failure(HEAD, "ERROR: No matching distribution", lint=lint)
+    text = report.render_install_failure(
+        HEAD, "ERROR: No matching distribution", doc_rules=_found(3)
+    )
     assert "**테스트:** 실행 불가 (의존성을 설치하지 못함)" in text
     assert "**규칙:** ⚠️ 위반 1건" in text
     assert "No matching distribution" in text
@@ -197,40 +185,6 @@ def test_code_fence_outgrows_backticks_in_text() -> None:
     assert report.code_fence('x = """\n```py\n"""') == "````"
 
 
-def _ready_fix(tmp_path, patch: str):
-    from app.models.fix import FixOutcome
-
-    path = tmp_path / "fix.patch"
-    path.write_text(patch)
-    return FixOutcome(skill="lint", status="ready", fixed=1, patch_path=path)
-
-
-def test_patch_with_backticks_keeps_fence_closed(tmp_path) -> None:
-    lines = report.fix_section(_ready_fix(tmp_path, '-"""\n-```\n+x\n'))
-    text = "\n".join(lines)
-    assert "````diff" in text and text.rstrip().endswith("````\n\n</details>".rstrip())
-
-
-def test_secret_blocked_proposal_hides_patch(tmp_path) -> None:
-    from app.models.proposal import ProposalResult, push_blocker
-
-    reason = push_blocker("+token = ghp_" + "a" * 36 + "\n", ["a.py"])
-    result = ProposalResult(reason=reason)
-    assert result.secret_blocked
-    text = "\n".join(report.fix_section(_ready_fix(tmp_path, "+token\n"), result))
-    assert "제안 PR을 만들지 않았습니다 (비밀값으로 보이는 내용이 있음" in text
-    assert "수정 내용" not in text
-
-
-# --- 제안 상태, 커버리지 ---
-
-
-def test_suffix_lists_the_waiting_fix() -> None:
-    assert report.proposal_suffix({"lint": ("approval", None)}) == " · 자동 수정 가능: `/fix lint`"
-    assert report.proposal_suffix({"lint": ("tests", None)}) == ""
-    assert report.proposal_suffix("approval") == " · 자동 수정 가능: `/fix lint`"  # 2단계 호출
-
-
 def test_diff_coverage_line() -> None:
     from app.worker.coverage import DiffCoverage
 
@@ -241,9 +195,9 @@ def test_diff_coverage_line() -> None:
     ]
 
 
-def test_file_and_test_names_cannot_leave_their_code_span() -> None:
-    """파일 이름과 테스트 이름은 PR 작성자가 정한다. 백틱으로 스팬을 닫고 멘션을 넣지 못한다."""
+def test_file_names_and_tool_messages_cannot_leave_their_code_span() -> None:
+    """파일 이름은 PR 작성자가, ruff의 메시지는 코드의 식별자로 만들어진다. 백틱으로 스팬을 닫고
+    멘션을 넣지 못한다 (T10)."""
     nasty = "orders/`@team`<b>.py"
-    assert report.finding_line(_finding(file=nasty)).startswith(f"- ``{nasty}:3`` `F401` ")
-    assert f"``{nasty}:3``" in report.target_locations("lint", [_finding(file=nasty)])
-    assert report.finding_line(_finding()).startswith("- `orders/a.py:3` `F401` ")
+    text = _render(PASSED, doc_rules=_found(3, file=nasty, message="`x` @team <b>bad</b>"))
+    assert f"  - ``{nasty}:3`` `` `x` @team <b>bad</b> ``" in text

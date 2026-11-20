@@ -15,7 +15,7 @@ import pytest
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from sqlmodel import Session, select
 
-from app.models import fix_decision, rule_reading, state_keys
+from app.models import fix_decision, rule_reading, state_keys, tool_choice
 from app.models.checker import CheckerKind
 from app.models.db import ModelCall
 from app.models.doc_rules import (
@@ -110,14 +110,20 @@ def _ok(data: dict) -> StructuredResult:
     )  # fmt: skip
 
 
+NO_TOOL: Final = {"tool": "none", "codes": [], "reason": "도구 목록에 맞는 도구가 없다",
+                  "examples": []}  # fmt: skip
+
+
 class FakeModel:
-    """규칙 읽기에는 rules, 검사기 작성에는 checker의 답을 준다. 수정 판단에는 decide(받은 위반
-    id들)가 낸 decisions를 준다. 부른 기록을 남긴다."""
+    """규칙 읽기에는 rules, 도구 선택에는 tool(기본은 맞는 도구 없음), 검사기 작성에는 checker의
+    답을 준다. 수정 판단에는 decide(받은 위반 id들)가 낸 decisions를 준다. 부른 기록을 남긴다."""
 
     def __init__(
-        self, rules: StructuredResult, checker: StructuredResult | None = None, decide=None
-    ) -> None:
+        self, rules: StructuredResult, checker: StructuredResult | None = None, decide=None,
+        tool: StructuredResult | None = None,
+    ) -> None:  # fmt: skip
         self.rules, self.checker = rules, checker or checker_answer()
+        self.tool = tool or _ok(NO_TOOL)
         self.decide = decide or (lambda ids: [{"id": i, "action": "fix", "why": "고칠 수 있다"}
                                               for i in ids])  # fmt: skip
         self.prompts: list[tuple[str, str]] = []
@@ -127,6 +133,9 @@ class FakeModel:
             self.prompts.append(("decide", prompt))
             ids = re.findall(r"^<<<VIOLATION id=(\S+) ", prompt, re.M)
             return _ok({"decisions": self.decide(ids)})
+        if schema is tool_choice.ANSWER_SCHEMA:
+            self.prompts.append(("tool", prompt))
+            return self.tool
         reading = schema is rule_reading.ANSWER_SCHEMA
         self.prompts.append(("rules" if reading else "checker", prompt))
         return self.rules if reading else self.checker
@@ -172,7 +181,7 @@ def doc_env(env, tmp_path: Path):
     mp.setattr(repo, "list_base_entries", REAL_ENTRIES)
     mp.setattr(repo, "remote_url", lambda name: str(tmp_path / "remote"))
     sandbox = GrepSandbox()
-    mp.setattr(doc_rules, "sandbox_for", lambda cache: sandbox)
+    mp.setattr(doc_rules, "sandbox_for", lambda *a: sandbox)
     use_runner(env, lambda *a, **k: PASSED)
     env["sandbox"] = sandbox
     mp.setattr(claude_cli, "run_claude", _no_fix_model)
@@ -234,11 +243,12 @@ def test_finds_violation_on_changed_line_inside_scope(doc_env, tmp_path: Path) -
     assert isinstance(outcome, RuleChecked) and outcome.rule.source.section == SECTION
     assert [(v.file, v.line) for v in found.violations] == [("orders/a.py", 2)]
     assert doc_env["sandbox"].files == [["orders/a.py"]]  # 범위 밖 scripts/는 돌리지 않는다
-    assert [kind for kind, _ in model.prompts] == ["rules", "checker"]
-    assert found.usage == CallUsage(calls=2, limit=14, cache_hits=0,
-                                    models=("claude-haiku-5-5",), input_tokens=2000,
-                                    output_tokens=200)  # fmt: skip
-    assert state["test_run"] == PASSED and state["lint"].findings  # v1 경로와 테스트도 돈다
+    # 규칙 읽기, 도구 선택(맞는 도구 없음), 검사기 작성 (4.4의 순서)
+    assert [kind for kind, _ in model.prompts] == ["rules", "tool", "checker"]
+    assert found.usage == CallUsage(calls=3, limit=14, cache_hits=0,
+                                    models=("claude-haiku-5-5",), input_tokens=3000,
+                                    output_tokens=300)  # fmt: skip
+    assert state["test_run"] == PASSED
 
 
 def test_second_pr_reuses_rules_and_checker_without_calls(doc_env, tmp_path: Path) -> None:
@@ -246,8 +256,8 @@ def test_second_pr_reuses_rules_and_checker_without_calls(doc_env, tmp_path: Pat
     check(doc_env, tmp_path, BASE_FILES, PR_FILES)
     state = check(doc_env, tmp_path, BASE_FILES, PR_FILES, pr_number=2)
     found = state["doc_rules"]
-    assert len(model.prompts) == 2  # 첫 PR의 규칙 읽기와 검사기 작성뿐
-    assert found.usage.calls == 0 and found.usage.cache_hits == 2
+    assert len(model.prompts) == 3  # 첫 PR의 규칙 읽기, 도구 선택, 검사기 작성뿐
+    assert found.usage.calls == 0 and found.usage.cache_hits == 3
     assert [v.file for v in found.violations] == ["orders/a.py"]
 
 
@@ -277,14 +287,14 @@ def test_model_failure_does_not_fail_the_job(doc_env, tmp_path: Path) -> None:
     assert state["test_run"] == PASSED and state["commented"]
 
 
-def test_repo_daily_cap_stops_model_stages_but_not_lint(doc_env, tmp_path: Path) -> None:
+def test_repo_daily_cap_stops_model_stages_but_not_tests(doc_env, tmp_path: Path) -> None:
     model = use_model(doc_env, FakeModel(rule_answer(print_rule())))
     use_config(doc_env, RepoConfig(model=ModelSettings(calls=CallSettings(repo_daily=0))))
     state = check(doc_env, tmp_path, BASE_FILES, PR_FILES)
     assert model.prompts == []
     assert isinstance(state["doc_rules"], NotRun)
     assert "저장소 하루 상한" in state["doc_rules"].reason
-    assert state["lint"].findings and state["test_run"] == PASSED
+    assert state["test_run"] == PASSED
 
 
 def test_ruleset_cap_leaves_rules_unchecked(doc_env, tmp_path: Path) -> None:
@@ -356,7 +366,7 @@ def test_comment_shows_rules_violations_and_checker(doc_env, tmp_path: Path) -> 
     use_model(doc_env, FakeModel(rule_answer(print_rule())))
     check(doc_env, tmp_path, BASE_FILES, PR_FILES)
     body = _last_comment(doc_env)
-    assert "**문서 규칙:** ⚠️ 위반 1건 (규칙 1개)" in body
+    assert "**규칙:** ⚠️ 위반 1건 (규칙 1개)" in body
     rid = rule_id("README.md", PRINT_RULE)
     assert f"- `{rid}` `` {PRINT_RULE} `` · 1건" in body
     assert "  - `orders/a.py:2`" in body
@@ -366,17 +376,17 @@ def test_comment_shows_rules_violations_and_checker(doc_env, tmp_path: Path) -> 
     )
     assert "예시: 문서 0개, 모델이 쓴 것 4개" in body and "모델이 쓴 예시, 위반 (줄 1):" in body
     assert "<details><summary>읽은 규칙 1개</summary>" in body
-    assert "모델 호출 2회 / 상한 14회 (규칙 읽기와 검사기 작성)" in body
+    assert "모델 호출 3회 / 상한 14회 (규칙 읽기와 검사기 작성)" in body
     assert "`rules.disabled`에 규칙 id를 적으세요." in body
-    assert "**규칙:** ⚠️ 위반 1건 (lint 1)" in body  # v1 절은 그대로
+    assert body.count("**규칙:**") == 1  # 맨 위의 한 줄로 합쳤다 (4.9)
 
 
 def test_comment_for_base_without_rules_explains_how_to_write_them(doc_env, tmp_path) -> None:
     use_model(doc_env, FakeModel(rule_answer()))
     check(doc_env, tmp_path, {"orders/a.py": "x = 1\n"}, PR_FILES)
     body = _last_comment(doc_env)
-    assert "**문서 규칙:** 규칙을 찾지 못해 규칙 검사를 하지 않음" in body
-    assert "`## 코드 규칙` 같은 절을 두고 규칙을 한 문장씩 적으면" in body
+    assert "**규칙:** 규칙을 찾지 못해 규칙 검사를 하지 않음" in body
+    assert "`## 코드 규칙` 같은 절을 두고 규칙을 한 문장씩 적거나 ruff 설정" in body
 
 
 THREE_RULES: Final = (
@@ -398,7 +408,7 @@ def test_ruleset_cap_stops_authoring_and_next_check_continues(doc_env, tmp_path:
     quotes = [line[2:] for line in THREE_RULES.splitlines()]
     model = use_model(doc_env, FakeModel(rule_answer(*(print_rule(quote=q) for q in quotes))))
     readme = f"# demo\n\n## 코드 규칙\n\n### 출력\n\n{THREE_RULES}"
-    use_config(doc_env, RepoConfig(model=ModelSettings(calls=CallSettings(ruleset_max=3))))
+    use_config(doc_env, RepoConfig(model=ModelSettings(calls=CallSettings(ruleset_max=5))))
     found = check(doc_env, tmp_path, {**BASE_FILES, "README.md": readme}, PR_FILES)["doc_rules"]
     assert [o.kind for o in found.outcomes if isinstance(o, RuleUnchecked)] == ["cap"]
     assert "모델 호출 상한에 걸려 처리하지 못함: 검사기 작성 1개 규칙" in _last_comment(doc_env)
@@ -409,7 +419,7 @@ def test_ruleset_cap_stops_authoring_and_next_check_continues(doc_env, tmp_path:
         "doc_rules"
     ]
     assert [o.kind for o in found.outcomes if isinstance(o, RuleUnchecked)] == ["cap"]
-    assert [kind for kind, _ in model.prompts] == ["rules", "checker", "checker"]
+    assert [kind for kind, _ in model.prompts] == ["rules", "tool", "checker", "tool", "checker"]
 
     # 24시간이 지나면 상한을 올리지 않아도 남은 규칙만 작성한다 (작성한 둘은 저장된 것을 쓴다)
     _age_model_calls(doc_env, hours=25)
@@ -417,8 +427,10 @@ def test_ruleset_cap_stops_authoring_and_next_check_continues(doc_env, tmp_path:
         "doc_rules"
     ]
     assert all(isinstance(o, RuleChecked) for o in found.outcomes)
-    assert [kind for kind, _ in model.prompts] == ["rules", "checker", "checker", "checker"]
-    assert found.usage.calls == 1 and found.usage.cache_hits == 3
+    assert [kind for kind, _ in model.prompts] == [
+        "rules", "tool", "checker", "tool", "checker", "tool", "checker",
+    ]  # fmt: skip
+    assert found.usage.calls == 2 and found.usage.cache_hits == 5
 
 
 def test_source_only_dependency_makes_tests_unrunnable_and_keeps_rules(doc_env, tmp_path) -> None:
@@ -438,7 +450,7 @@ def test_source_only_dependency_makes_tests_unrunnable_and_keeps_rules(doc_env, 
     body = _last_comment(doc_env)
     assert ("**테스트:** 실행 불가 (의존성을 설치하지 못함: 소스 배포본만 있는 패키지 `docopt`. "
             "wheel만 설치합니다)") in body  # fmt: skip
-    assert "**문서 규칙:** ⚠️ 위반 1건 (규칙 1개)" in body and "```yaml" in body
+    assert "**규칙:** ⚠️ 위반 1건 (규칙 1개)" in body and "```yaml" in body
 
 
 @pytest.mark.parametrize(
@@ -474,13 +486,9 @@ def test_changed_sentence_on_base_reauthors_only_that_rule(doc_env, tmp_path: Pa
         "doc_rules"
     ]
     assert [kind for kind, _ in model.prompts] == [
-        "rules",
-        "checker",
-        "checker",
-        "rules",
-        "checker",
-    ]
-    (checker_prompt,) = [p for kind, p in model.prompts[3:] if kind == "checker"]
+        "rules", "tool", "checker", "tool", "checker", "rules", "tool", "checker",
+    ]  # fmt: skip
+    (checker_prompt,) = [p for kind, p in model.prompts[5:] if kind == "checker"]
     assert edited in checker_prompt
     assert [o.checker.cached for o in found.outcomes] == [True, False]
 
@@ -575,16 +583,15 @@ def test_decisions_follow_tests_and_show_in_the_comment(doc_env, tmp_path: Path)
         FixDecision(first.id, "skip", "model", reason="risky", why=" ".join(why.split())),
         FixDecision(second.id, "skip", "pipeline", reason="undecided", why="모델이 답하지 않음"),
     ), calls=1, input_tokens=1000, output_tokens=100)  # fmt: skip
-    assert [kind for kind, _ in model.prompts] == ["rules", "checker", "decide"]
+    assert [kind for kind, _ in model.prompts] == ["rules", "tool", "checker", "decide"]
     body = _last_comment(doc_env)
     assert f"  - `orders/a.py:2` · skip (모델: {inline_code(why)})" in body
     assert "  - `orders/a.py:3` · skip (모델이 답하지 않음)" in body
     assert ("수정 판단: fix 0건, skip 2건 (모델이 고치지 않기로 함 1건, 수정 판단을 하지 못함 1건)"
             " · 모델 호출 1회 · 저장된 판단 0건 사용 · 토큰 입력 1000, 출력 100"
             ) in body  # fmt: skip
-    # 모델이 모두 skip했으므로 모델 수정은 돌지 않는다. v1 lint 경로는 그대로
-    assert "**수정안:**" not in body and "model_fix" not in state
-    assert state["lint"].findings and "fixes" not in state
+    # 모델이 모두 skip했으므로 모델 수정은 돌지 않는다
+    assert "**모델 수정안:**" not in body and "model_fix" not in state
 
 
 def test_recheck_of_the_same_commit_makes_no_decision_call(doc_env, tmp_path: Path) -> None:
@@ -594,7 +601,7 @@ def test_recheck_of_the_same_commit_makes_no_decision_call(doc_env, tmp_path: Pa
     first = check(doc_env, tmp_path, BASE_FILES, TWO_PRINTS)
     job, deps = first["job"], doc_env["deps"]
     again = graph.run_flow(job, update._context(deps, deps.store.start_run(job), None))
-    assert [kind for kind, _ in model.prompts] == ["rules", "checker", "decide"]
+    assert [kind for kind, _ in model.prompts] == ["rules", "tool", "checker", "decide"]
     assert again["fix_decisions"].decisions == first["fix_decisions"].decisions
     assert again["fix_decisions"].calls == 0 and again["fix_decisions"].cached == 2
     assert {d.action for d in again["fix_decisions"].decisions} == {"fix"}

@@ -1,0 +1,35 @@
+name: no-ruff-rule-no-fetch
+description: >-
+  3-3 앞부분. ruff 설정이 없고, 문서 규칙도 도구 선택이 ruff로 잇지 않는(맞는 도구 없음) base.
+  ruff를 받지 않고, ruff 기본 규칙(v1이 설정 없는 base에 쓰던 `--isolated`)의 위반도 나오지 않는다.
+  PR에는 v1이라면 F401로 잡혔을 안 쓰는 import가 있다. 문서 규칙의 검사기는 그대로 돈다.
+pr:
+  - file: orders/services/pricing.py
+    find: "from orders.models.order import Order\n"
+    replace: "import os\n\nfrom orders.models.order import Order\n"
+  - file: orders/services/pricing.py
+    find: "def discount(order: Order) -> int:\n"
+    replace: "def discount(order: Order) -> int:\n    print(\"coupon\", order.coupon_percent)\n"
+model:
+  rules:
+    - section: 코드 규칙 > 출력
+      quote: "`orders/` 아래 모듈은 `print`를 쓰지 않는다."
+      scope: ["orders/**"]
+      checker:
+        body: |
+          id: no-print
+          language: python
+          severity: error
+          message: orders/ 아래 모듈은 print를 쓰지 않는다
+          rule:
+            pattern: print($$$ARGS)
+        examples:
+          - {code: "print(1)\n", violates: true, lines: [1]}
+          - {code: "def f(o):\n    print('o', o)\n", violates: true, lines: [2]}
+          - {code: "logger.info('x')\n", violates: false, lines: []}
+          - {code: "pprint_name = 1\n", violates: false, lines: []}
+expect:
+  rule_line: "**규칙:** ⚠️ 위반 1건 (규칙 1개)"
+  absent: ["F401", "도구 `ruff`"]
+  fetched: [ast-grep/0.51.3]
+  not_fetched: [ruff]

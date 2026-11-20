@@ -7,8 +7,9 @@ write는 모델 전용 폴더(`workdir.run_in_model_folder`)에서 파일 도구
 diff를 적용한다. 호출은 PR 상한(9.2)에서 센다.
 
 verify는 모델을 쓰지 않는다. 4.8의 순서대로 하고 앞에서 떨어지면 뒤는 하지 않는다: 허용 범위,
-파이프라인 파일, 비밀값(여기까지 떨어지면 재시도 없이 버림), 설명 JSON, 규칙 재검사, 테스트,
-크기 상한(여기는 이유를 다음 회차에 넘긴다). 샌드박스에서 무엇이든 돌리기 전에 앞의 셋을 끝낸다.
+비밀값(여기까지 떨어지면 재시도 없이 버림), 설명 JSON, 규칙 재검사, 테스트, 크기 상한(여기는 이유를
+다음 회차에 넘긴다). 샌드박스에서 무엇이든 돌리기 전에 앞의 둘을 끝낸다. 재검사가 읽는 base 설정은
+worktree 밖에 있어 모델이 바꿀 수 없다 (4.8의 2번).
 """
 
 import ast
@@ -25,9 +26,8 @@ from app.models.cache_key import text_hash
 from app.models.call_budget import CALL_BUDGET_USD, Denied, PrScope
 from app.models.db import FixAttempt
 from app.models.diff import ChangedLines, added_lines, change_blocks, new_files
-from app.models.doc_rules import Found
-from app.models.finding import Finding, SkillResult
-from app.models.fix import code_fix_tests_ok, compare
+from app.models.doc_rules import Found, outcomes_by_rule
+from app.models.fix import code_fix_tests_ok
 from app.models.job import PRJob
 from app.models.model_fix import (
     Explanation,
@@ -55,7 +55,6 @@ from app.worker.state import Store
 log = logging.getLogger(__name__)
 
 MAX_FILE_BYTES: Final = 5 * 1024 * 1024
-MAX_GUARDED_BYTES: Final = 1024 * 1024
 NOTHING_CHANGED: Final = "아무 파일도 바꾸지 않았다. 목록의 위반을 고친다."
 
 
@@ -86,15 +85,11 @@ class FixTools:
     # (worktree, 사용자 메시지, *, system_prompt, model, max_budget_usd) → 결과.
     # 그래프는 workdir.run_in_model_folder를 넘긴다
     run_model: Callable[..., ClaudeResult]
-    # 문서 규칙의 검사기를 다시 돌린다: (바뀐 줄, 새 파일) → 위반
+    # 도구·검사기로 확인하는 모든 규칙을 다시 돌린다: (바뀐 줄, 새 파일) → 위반
     recheck: Callable[[ChangedLines, frozenset[str]], Detection]
-    rules_rechecked: int  # recheck가 돌리는 검사기 수 (수정안 PR의 검증 절에 쓴다)
+    rules_rechecked: int  # recheck가 돌리는 도구·검사기 수 (수정안 PR의 검증 절에 쓴다)
     run_tests: Callable[[], PytestRun]
-    # v1 lint의 재검사. lint가 꺼져 있거나 수정 전 결과가 없으면 None. 중단되면 None을 낸다
-    recheck_lint: Callable[[ChangedLines], SkillResult | None] | None = None
     is_stale: Callable[[], bool] = lambda: False
-    # 재검사가 읽는 base 설정 사본(`.pipeline-out/base/`). 범위 검사에서 빠지므로 내용을 따로 본다
-    guarded: tuple[str, ...] = ()
     secrets: Sequence[str] = ()  # 파이프라인의 비밀값
 
 
@@ -115,7 +110,7 @@ class _Tally:
     models: list[str] = field(default_factory=list)
 
 
-def _file_hashes(worktree: Path, files: Sequence[str]) -> dict[str, str]:
+def file_hashes(worktree: Path, files: Sequence[str]) -> dict[str, str]:
     out = {}
     for rel in files:
         path = repo.worktree_file(worktree, rel)
@@ -127,7 +122,7 @@ def _file_hashes(worktree: Path, files: Sequence[str]) -> dict[str, str]:
 def notes_for(found: Found, picked: Picked, worktree: Path) -> tuple[record_rules.Target, ...]:
     """고치기 전에 대상 위반마다 규칙 원문과 위반 줄 앞뒤를 남긴다. 그 수정안이 머지·닫히거나
     검증에 실패하면 이것으로 기록을 만든다 (4.10)."""
-    texts = {o.rule.id: o.rule.text for o in found.outcomes}
+    texts = {rule_id: o.rule.text for rule_id, o in outcomes_by_rule(found).items()}
     lines: dict[str, list[str]] = {}
     for v in picked.targets:
         if v.file not in lines:
@@ -164,7 +159,7 @@ def save_attempt(
             patch=repo.head_diff(worktree) if ready else None,
             explanation_json=json.dumps(explanation, ensure_ascii=False) if ready else None,
             file_hashes_json=(
-                json.dumps(_file_hashes(worktree, fix.changed_files)) if ready else None
+                json.dumps(file_hashes(worktree, fix.changed_files)) if ready else None
             ),
         )
     )  # fmt: skip
@@ -183,7 +178,7 @@ def reapply(store: Store, attempt_id: int | None, worktree: Path) -> FixAttempt 
         log.warning("저장한 수정안을 다시 적용하지 못함 (시도 %s): %s", attempt_id, e)
         return "저장한 수정안을 새 worktree에 다시 적용하지 못함"
     expected = json.loads(attempt.file_hashes_json)
-    if _file_hashes(worktree, sorted(expected)) != expected:
+    if file_hashes(worktree, sorted(expected)) != expected:
         log.warning("다시 적용한 수정안의 파일 해시가 다름 (시도 %s)", attempt_id)
         return "다시 적용한 수정안이 검증한 파일과 다름"
     return attempt
@@ -196,7 +191,6 @@ def fix_violations(
     worktree: Path,
     merge_base: str,
     test_before: PytestRun,
-    lint_before: SkillResult | None,
     store: Store,
     budget: CallBudget,
     models: ModelSettings,
@@ -209,7 +203,7 @@ def fix_violations(
     found는 수정 전 위반 전체, picked는 `model_fix.pick_targets`의 결과다(대상이 하나 이상).
     generation은 시도 세대다. `/fix`가 다시 돌릴 때마다 올라 저장된 수정 작성을 쓰지 않는다 (4.9).
     """
-    by_rule = {o.rule.id: o.rule for o in found.outcomes}
+    by_rule = {rule_id: o.rule for rule_id, o in outcomes_by_rule(found).items()}
     targets = picked.targets
     allowed = sorted({v.file for v in targets})
     target_rules = frozenset(v.rule_id for v in targets)
@@ -230,12 +224,10 @@ def fix_violations(
     if outside:  # 링크 폴더를 거친 쓰기는 worktree 밖으로 가고 범위 검사에도 안 보인다
         shown = ", ".join(outside[:5])
         return outcome("refused", 0, f"worktree 밖을 가리키는 심볼릭 링크: {shown}")
-    guarded = {rel: read_regular_file(worktree / rel, max_bytes=MAX_GUARDED_BYTES)
-               for rel in tools.guarded}  # fmt: skip
     # 모델을 처음 실행하기 직전에 한 번만 찍는다. 재시도 사이에 다시 찍지 않는다 (4.8의 1번)
     ignored_before = scope.snapshot_ignored(worktree)
     constants = module_constants(worktree, allowed)
-    start = _file_hashes(worktree, allowed)
+    start = file_hashes(worktree, allowed)
     asked = [Target(v, by_rule[v.rule_id]) for v in targets]
 
     def write(state: LoopState) -> WriteResult:
@@ -243,7 +235,7 @@ def fix_violations(
         model = models.heavy if tier == "heavy" else models.light
         feedback = state.get("feedback", [])
         key = rules.write_key(
-            targets, start, _file_hashes(worktree, allowed), feedback, model, generation
+            targets, start, file_hashes(worktree, allowed), feedback, model, generation
         )
         entry = store.cached_result(key)
         if entry is not None:
@@ -306,13 +298,6 @@ def fix_violations(
         checked = scope.check_scope(worktree, set(allowed), ignored_before)
         if not checked.ok:
             return Verdict("drop", f"허용 범위 밖의 변경: {checked.detail}")
-        tampered = [
-            rel
-            for rel, data in guarded.items()
-            if read_regular_file(worktree / rel, max_bytes=MAX_GUARDED_BYTES) != data
-        ]
-        if tampered:  # fmt: skip
-            return Verdict("drop", f"파이프라인 설정 파일이 바뀜: {', '.join(tampered)}")
         entries = [
             e for e in parse_porcelain(repo.status(worktree)) if not is_pipeline_output(e.path)
         ]
@@ -338,20 +323,11 @@ def fix_violations(
             what = "; ".join(f"{u.rule.id}: {u.detail}" for u in detection.unchecked)
             return Verdict("retry", f"고친 뒤 규칙 재검사를 하지 못함: {what}")
         left, new = rules.recheck(found.violations, targets, detection.violations)
-        new_lint: list[Finding] = []
-        if tools.recheck_lint is not None and lint_before is not None and lint_before.checked:
-            lint_after = tools.recheck_lint(changed)
-            if lint_after is None:
-                raise _Cancelled
-            if lint_after.checked:
-                new_lint = compare(lint_before.findings, lint_after)[1]
-        if left or new or new_lint:
-            feedback = (
-                rules.violation_feedback("아직 남은 위반", left)
-                + rules.violation_feedback("새로 생긴 위반", new)
-                + [f"새로 생긴 lint 위반: {f.file}:{f.line} {f.code} {f.message}" for f in new_lint]
+        if left or new:
+            feedback = rules.violation_feedback("아직 남은 위반", left) + rules.violation_feedback(
+                "새로 생긴 위반", new
             )
-            detail = f"남은 위반 {len(left)}건, 새 위반 {len(new) + len(new_lint)}건"
+            detail = f"남은 위반 {len(left)}건, 새 위반 {len(new)}건"
             return Verdict("retry", detail, tuple(feedback))
 
         after = tools.run_tests()
@@ -373,9 +349,7 @@ def fix_violations(
             return Verdict("retry", too_big)
         verification = Verification(
             tests=after.passed_count, resolved=len(targets),
-            rules_rechecked=tools.rules_rechecked,
-            lint_rechecked=tools.recheck_lint is not None and lint_before is not None,
-            files=len(files), lines=lines,
+            rules_rechecked=tools.rules_rechecked, files=len(files), lines=lines,
         )  # fmt: skip
         passed.append((explanation, tuple(files), verification))
         return Verdict("pass")

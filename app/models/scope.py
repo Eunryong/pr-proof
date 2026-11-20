@@ -93,9 +93,9 @@ class ScopePolicy:
     test_files_allowed: frozenset[str] = frozenset()
 
 
-# lint: 위반이 있는 파일의 내용만 바꾼다. 파일을 만들거나 지울 이유가 없다.
-# 테스트 파일의 lint 위반도 고치므로 테스트 파일을 막지 않는다 (결과는 테스트 비교로 검증)
-LINT_POLICY: Final = ScopePolicy(modify_only=True, protect_tests=False, protect_github=False)
+# 기계적 수정: 위반이 있는 파일의 내용만 바꾼다. 파일을 만들거나 지울 이유가 없다.
+# 테스트 파일의 위반도 고치므로 테스트 파일을 막지 않는다 (결과는 테스트 비교로 검증, 4.8의 1번)
+MECHANICAL_POLICY: Final = ScopePolicy(modify_only=True, protect_tests=False, protect_github=False)
 # 모델 수정: 허용 파일 안에서 새 파일·삭제·이름 변경까지 허락한다
 AI_POLICY: Final = ScopePolicy(modify_only=False, protect_tests=True, protect_github=True)
 

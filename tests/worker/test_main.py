@@ -6,12 +6,12 @@ from sqlmodel import Session, select
 
 from app.models import state_keys
 from app.models.db import Run
+from app.models.doc_rules import NoRuleDocs
 from app.models.job import PRJob
 from app.sandbox.docker_cli import SandboxError
 from app.sandbox.venv import DependencyInstallError
-from app.worker import main, retry, update
+from app.worker import doc_rules, main, retry, update
 from app.worker.github import GitHubError
-from app.worker.skills import lint
 
 from .helpers import BASE, HEAD, PASSED, bodies, use_runner
 
@@ -29,12 +29,13 @@ def test_passed_run_posts_progress_then_result(env) -> None:
     assert main.handle(_payload(), env["deps"]) == "passed"
     posted = bodies(env["gh"])
     assert "진행 중 (체크아웃)" in posted[0]
-    assert "진행 중 (규칙 검사)" in posted[1] and "진행 중 (문서 규칙)" in posted[2]
-    assert "진행 중 (테스트 실행)" in posted[3]
+    assert "진행 중 (규칙 읽기)" in posted[1]
+    assert "진행 중 (테스트 실행)" in posted[2]
     assert "**테스트:** 통과 (9개)" in posted[-1]
-    assert "**규칙:** ⚠️ 위반 1건 (lint 1)" in posted[-1]
+    # 규칙 문서도 ruff 설정도 없는 base다. 파이프라인이 정한 규칙으로 검사하지 않는다 (2.2)
+    assert "**규칙:** 규칙을 찾지 못해 규칙 검사를 하지 않음" in posted[-1]
     # 첫 코멘트 뒤에는 같은 코멘트를 고친다
-    assert env["gh"].kinds() == ["find", "create", "patch", "patch", "patch", "patch"]
+    assert env["gh"].kinds() == ["find", "create", "patch", "patch", "patch"]
     assert env["deps"].store.last_comment_id("o/r", 1) == 555
 
 
@@ -170,7 +171,7 @@ def test_resolution_failure_is_unrunnable_at_once(env) -> None:
     assert main.handle(_payload(), env["deps"]) == "unrunnable"
     body = bodies(env["gh"])[-1]
     assert "실행 불가 (의존성을 설치하지 못함)" in body
-    assert "**규칙:** ⚠️ 위반 1건" in body  # 규칙 검사는 설치와 따로 돈다
+    assert "**규칙:** 규칙을 찾지 못해" in body  # 규칙 경로는 설치와 따로 돈다
 
 
 def test_tests_get_repo_memory_limit(env) -> None:
@@ -185,8 +186,12 @@ def test_tests_get_repo_memory_limit(env) -> None:
     assert seen["memory_gb"] == BASE.memory_gb
 
 
-def test_commit_that_goes_stale_during_lint_stops(env) -> None:
-    env["monkeypatch"].setattr(lint, "run_lint", lambda *a, **k: None)  # 취소됨
+def test_commit_that_goes_stale_during_rule_reading_stops(env) -> None:
+    def newer_commit_arrives(*a, **k):
+        env["redis"].set(state_keys.latest_head("o/r", 1), "c" * 40)
+        return NoRuleDocs()
+
+    env["monkeypatch"].setattr(doc_rules, "read", newer_commit_arrives)
     use_runner(env, lambda *a, **k: pytest.fail("테스트까지 가면 안 된다"))
     assert main.handle(_payload(), env["deps"]) == "stale"
 

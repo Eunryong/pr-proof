@@ -156,7 +156,7 @@ def test_flaky_test_passes_on_rerun(job: str, worktree: Path) -> None:
     )
     run = pytest_runner.run_tests(job, worktree)
     assert run.flaky == ("tests/test_flaky.py::test_sometimes",)
-    assert run.status == "passed" and not run.allows_code_fix and run.allows_lint_fix
+    assert run.status == "passed" and not run.allows_code_fix and run.allows_mechanical_fix
 
 
 def test_container_has_no_capabilities(job: str) -> None:

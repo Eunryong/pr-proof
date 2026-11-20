@@ -120,13 +120,13 @@ class PytestRun:
         return self.status == "unrunnable" and (self.oom_killed or self.exit_code == KILLED_EXIT)
 
     @property
-    def allows_lint_fix(self) -> bool:
-        """동작을 바꾸지 않는 컨벤션 수정을 제안할 수 있는지 (DESIGN.md F8)."""
+    def allows_mechanical_fix(self) -> bool:
+        """동작을 바꾸지 않는 기계적 수정을 할 수 있는지 (4.6 표)."""
         return self.status in ("passed", "no_tests")
 
     @property
     def allows_code_fix(self) -> bool:
-        """정적변수·구조처럼 코드를 바꾸는 수정을 제안할 수 있는지. 위반 줄 커버리지는 따로 본다.
+        """모델 수정처럼 코드를 바꾸는 수정을 할 수 있는지. 위반 줄 커버리지는 따로 본다.
 
         불안정한 테스트(flaky)가 있으면 수정 뒤 결과를 믿을 수 없으므로 막는다.
         """

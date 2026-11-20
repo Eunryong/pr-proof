@@ -14,7 +14,7 @@ from typing import Final
 
 from app.models.call_budget import CALL_BUDGET_USD, Denied, PrScope
 from app.models.diff import hunk_around
-from app.models.doc_rules import Found
+from app.models.doc_rules import Found, outcomes_by_rule
 from app.models.fix_decision import (
     ANSWER_SCHEMA,
     HUNK_RADIUS,
@@ -56,7 +56,7 @@ def decide(
     per_call: int = MAX_PER_CALL,
 ) -> Decided:
     """found의 위반마다 수정 판단 하나. model은 `model.decide`다. per_call개씩 묶어 묻는다."""
-    rules = {o.rule.id: o.rule for o in found.outcomes}
+    rules = {rule_id: o.rule for rule_id, o in outcomes_by_rule(found).items()}
     planned = plan(
         found.violations, {rid: r.fix for rid, r in rules.items()}, tests,
         require_covered=require_covered,

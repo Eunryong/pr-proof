@@ -47,25 +47,41 @@ def test_run_lifecycle_and_last_comment(store: Store) -> None:
     assert store.last_comment_id("o/r", 1) == 7  # 마지막으로 단 코멘트를 기억한다
 
 
-def test_rejected_targets_come_only_from_closed_proposals(store: Store) -> None:
-    key = ("a.py", "F401", "import sys")
-    store.record_proposal("o/r", 1, "lint", "h1", "pipeline/pr-1-fix-lint", 900, [key, key])
-    store.record_proposal("o/r", 1, "static", "h1", "pipeline/pr-1-fix-static", 901,
-                          [("b.py", "PLR2004", "if n > 3:")])  # fmt: skip
-    assert store.rejected_targets("o/r", 1) == {}  # 열려 있는 제안은 거절이 아니다
-    lint_row, static_row = store.proposals("o/r", 1)
-    store.set_proposal_state(lint_row.id, "rejected")
-    store.set_proposal_state(static_row.id, "superseded")  # 파이프라인이 닫은 것은 거절이 아니다
-    assert store.rejected_targets("o/r", 1) == {key: 900}
-    assert store.rejected_targets("o/r", 2) == {}
+def test_reproposal_of_the_same_bundle_updates_the_open_record(store: Store) -> None:
+    store.record_proposal("o/r", 1, "mechanical", "h1", "b", 900, attempt_id=1)
+    store.record_proposal("o/r", 1, "mechanical", "h2", "b", 902, attempt_id=2)
+    store.record_proposal("o/r", 1, "model", "h2", "m", 903, attempt_id=3)
+    rows = store.proposals("o/r", 1)
+    assert [(r.skill, r.head_sha, r.number, r.attempt_id) for r in rows] == [
+        ("mechanical", "h2", 902, 2),
+        ("model", "h2", 903, 3),
+    ]
 
 
-def test_reproposal_replaces_targets(store: Store) -> None:
-    store.record_proposal("o/r", 1, "lint", "h1", "b", 900, [("a.py", "F401", "import os")])
-    store.record_proposal("o/r", 1, "lint", "h2", "b", 902, [("a.py", "F401", "import sys")])
-    (row,) = store.proposals("o/r", 1)
-    store.set_proposal_state(row.id, "rejected")
-    assert store.rejected_targets("o/r", 1) == {("a.py", "F401", "import sys"): 902}
+def test_old_v1_proposal_targets_table_is_left_alone(tmp_path: Path) -> None:
+    """3단계에 v1 lint의 수정안 기록(`proposaltarget`)을 쓰지 않게 되었다. 그 테이블이 남은
+    데이터베이스도 그대로 열리고, 그 테이블과 행은 지우지 않는다."""
+    path = tmp_path / "pipeline.db"
+    old = create_engine(f"sqlite:///{path}")
+    with old.begin() as conn:
+        conn.execute(
+            text(
+                "CREATE TABLE proposaltarget (id INTEGER PRIMARY KEY, proposal_id INTEGER NOT NULL,"
+                " file VARCHAR NOT NULL, code VARCHAR NOT NULL, line_text VARCHAR NOT NULL)"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO proposaltarget (proposal_id, file, code, line_text) "
+                "VALUES (1, 'a.py', 'F401', 'import os')"
+            )
+        )
+    old.dispose()
+    store = Store(path, fakeredis.FakeStrictRedis())
+    with store.engine.connect() as conn:
+        assert conn.execute(text("SELECT count(*) FROM proposaltarget")).scalar() == 1
+    store.record_proposal("o/r", 1, "mechanical", "h1", "b", 900)
+    assert [p.number for p in store.proposals("o/r", 1)] == [900]
 
 
 def test_old_dollar_table_is_left_alone(tmp_path: Path) -> None:
@@ -89,7 +105,7 @@ def test_old_dollar_table_is_left_alone(tmp_path: Path) -> None:
     Store(path, fakeredis.FakeStrictRedis())  # 다시 열어도 같은 상태
     with store.engine.connect() as conn:
         assert conn.execute(text("SELECT count(*) FROM aicall")).scalar() == 1
-    store.record_proposal("o/r", 1, "lint", "h1", "b", 900, [])
+    store.record_proposal("o/r", 1, "mechanical", "h1", "b", 900)
     assert [p.number for p in store.proposals("o/r", 1)] == [900]
 
 

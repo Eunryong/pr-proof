@@ -1,0 +1,28 @@
+name: pinned-ruff-version
+description: >-
+  3-4, 3-5. ruff 설정(`ruff.toml`)이 있고 의존성 파일(`requirements-dev.txt`)이 `ruff==0.17.4`로
+  고정한 base. 기본 버전(0.17.5)이 아니라 그 버전을 받아 검사하고 고친다. 같은 데이터 폴더로 두 번째
+  PR을 검사하면 아무것도 받지 않는다.
+base:
+  - file: ruff.toml
+    create: ""
+  - file: requirements-dev.txt
+    create: "ruff==0.17.4\n"
+pr:
+  - file: orders/services/pricing.py
+    find: "from orders.models.order import Order\n"
+    replace: "import os\n\nfrom orders.models.order import Order\n"
+model:
+  rules: []
+expect:
+  rule_line: "**규칙:** ⚠️ 위반 1건 (규칙 1개) · 수정안 #900"
+  contains:
+    - "- `F401` `ruff.toml의 설정대로 ruff를 통과한다` · 1건"
+    - "출처: `ruff.toml` · 도구 `ruff` (`ruff.toml`의 설정)"
+  pr_contains: ["도구: ruff 0.17.4 (requirements-dev.txt가 고정)"]
+  fetched: [ruff/0.17.4]
+  not_fetched: [ruff/0.17.5]
+  branch: pipeline/pr-1-fix-mechanical
+  fix_file: orders/services/pricing.py
+  same_as_base: true
+  second_run_fetches_nothing: true

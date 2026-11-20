@@ -93,7 +93,7 @@ FLAKY_SUMMARY: Final = ReportSummary(passed=8, failed=1, total=9, failed_tests=(
     ids=["passed", "no_tests", "failed", "timeout", "unrunnable", "cancelled", "flaky"],
 )
 def test_fix_permissions_follow_safety_net(run: PytestRun, lint: bool, code: bool) -> None:
-    assert (run.allows_lint_fix, run.allows_code_fix) == (lint, code)
+    assert (run.allows_mechanical_fix, run.allows_code_fix) == (lint, code)
 
 
 @pytest.mark.parametrize(

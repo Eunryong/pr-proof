@@ -5,7 +5,8 @@ lint 케이스와 같은 방식이다: 예제 리포의 로컬 git 원격, 실�
 `pytest -m docker`가 결정적이고 비용이 없다. 원문 확인, 예시 확인, 검사기 실행, 바뀐 줄 거르기는
 모두 진짜다. `PR_PROOF_REAL_MODEL=1`이면 로그인된 claude를 실제로 부른다 (비용이 든다. 비교용).
 
-v1 lint는 base의 `.pipeline.yaml`로 끈다. 이 케이스는 문서 규칙 절과 모델 수정안만 본다.
+예제 리포에는 ruff 설정이 없어 도구 설정의 규칙이 없다. 이 케이스는 문서 규칙과 모델 수정안만
+본다. 도구 선택에는 케이스의 규칙에 `tool`이 없으면 "맞는 도구 없음"으로 답한다.
 수정안 PR의 생애를 보는 케이스는 `deliver_retry`(첫 push를 실패시키고 재시도),
 `recheck_without_calls`(같은 커밋의 `/recheck`), `rejected_next_commit`(수정안 PR을 닫고 새 커밋)을
 차례로 한다. `fix_command`는 결과 코멘트 뒤에 그 명령(`/fix` 등)을 달고 수정 결과를 다시 본다.
@@ -26,7 +27,7 @@ import pytest
 import yaml
 
 from app import config
-from app.models import fix_decision, rule_reading, state_keys
+from app.models import fix_decision, rule_reading, state_keys, tool_choice
 from app.models.job import PRJob
 from app.models.rule import rule_id
 from app.worker import main, repo, retry
@@ -44,8 +45,9 @@ CASES_DIR: Final = Path(__file__).resolve().parents[2] / "eval" / "rules"
 CASES: Final = sorted(CASES_DIR.glob("*.yaml"))
 REPO: Final = "o/r"
 REAL_MODEL_ENV: Final = "PR_PROOF_REAL_MODEL"
-# v1 스킬을 끈다. 케이스가 `pipeline`을 주면 그 위에 덮는다
-PIPELINE_YAML: Final = {"skills": {"enabled": []}}
+# base의 .pipeline.yaml. 케이스가 `pipeline`을 주면 그 위에 덮는다
+PIPELINE_YAML: Final = {}
+NO_TOOL: Final = {"tool": "none", "codes": [], "reason": "케이스", "examples": []}
 BRANCH: Final = "pipeline/pr-1-fix-model"
 # 위치 뒤에 수정 판단(" · skip (...)")이 붙을 수 있다
 _LOCATION: Final = re.compile(r"^- (`+) ?(.+?) ?\1(?: \(파일 이름·경로\))?(?: · .+)?$")
@@ -114,7 +116,8 @@ _DECIDE_BLOCK: Final = re.compile(
 
 
 def scripted_model(case: dict):
-    """규칙 읽기에는 케이스의 규칙 목록을, 검사기 작성에는 프롬프트에 든 규칙의 검사기를 답한다.
+    """규칙 읽기에는 케이스의 규칙 목록을, 도구 선택에는 그 규칙의 `tool`(없으면 맞는 도구 없음)을,
+    검사기 작성에는 프롬프트에 든 규칙의 검사기를 답한다.
     수정 판단에는 케이스에 `fix`가 있으면 `model.skip`의 위반만 skip, 나머지는 fix로 답한다."""
     skip = case["model"].get("skip") or {}
     rules = case["model"]["rules"]
@@ -129,6 +132,9 @@ def scripted_model(case: dict):
     def ask(prompt: str, *, schema, **kw) -> StructuredResult:
         if schema is rule_reading.ANSWER_SCHEMA:
             return _answer(reading)
+        if schema is tool_choice.ANSWER_SCHEMA:
+            (rule,) = [r for r in rules if r["quote"] in prompt]
+            return _answer(rule.get("tool") or NO_TOOL)
         if schema is fix_decision.ANSWER_SCHEMA:
             decisions = []
             for vid, file, line in _DECIDE_BLOCK.findall(prompt):
@@ -169,7 +175,7 @@ def scripted_fixer(case: dict):
 
 
 def doc_rules_section(body: str) -> str:
-    start = body.index("**문서 규칙:**")
+    start = body.index("**규칙:**")
     return body[start : body.index("<sub>", start)]
 
 
@@ -247,9 +253,9 @@ def test_rules_case(case_path: Path, eval_repo: Path, deps_for, tmp_path: Path,
     assert found == sorted(expect["violations"]), section
     assert not set(found) & set(expect.get("not_flagged", ())), section
     if expect["violations"]:
-        assert "**문서 규칙:** ⚠️ 위반" in section, section
+        assert "**규칙:** ⚠️ 위반" in section, section
     else:
-        assert "**문서 규칙:** ✅ 위반 없음" in section, section
+        assert "**규칙:** ✅ 위반 없음" in section, section
     assert "확인: 검사기 `" in section, "검사기가 예시를 통과해 채택되어야 한다"
     for text in expect.get("contains", ()):
         assert text in section, (text, section)
@@ -363,12 +369,12 @@ def _check_fix(expect: dict, section: str, gh: FakeGh, remote: dict, fixer, real
     if expect["fix"] != "ready":
         assert gh.pulls == {} and branch == "", section
         if expect["fix"] == "none":
-            assert "**수정안:**" not in section, section
+            assert "**모델 수정안:**" not in section, section
             assert real_model or fixer.calls == []
         elif expect["fix"] == "budget":
-            assert "**수정안:** 모델 호출 상한에 걸려 처리하지 못함" in section, section
+            assert "**모델 수정안:** 모델 호출 상한에 걸려 처리하지 못함" in section, section
         else:
-            assert "**수정안:** 수정안을 만들지 못함" in section, section
+            assert "**모델 수정안:** 수정안을 만들지 못함" in section, section
         return
     ((number, pull),) = gh.pulls.items()
     assert f"수정안 PR #{number}을 열었습니다." in section, section
@@ -403,7 +409,7 @@ def test_case_files_are_well_formed() -> None:
 
 def test_flagged_reads_locations_from_section() -> None:
     section = (
-        "**문서 규칙:** ⚠️ 위반 2건 (규칙 1개)\n\n위반:\n"
+        "**규칙:** ⚠️ 위반 2건 (규칙 1개)\n\n위반:\n"
         "- `R-readme-1` `` `x` `` · 2건\n  출처: `README.md > 코드 규칙`\n"
         "  - `a/b.py:3` · skip (모델: `x`)\n\n"
         "<details><summary><code>R-readme-1</code>의 나머지 1건</summary>\n\n"

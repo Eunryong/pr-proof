@@ -18,10 +18,14 @@ from typing import Final, Literal
 import yaml
 
 from app.models.rule import Example
+from app.models.tools import RUFF_CODE
 
 # path-pattern은 코드가 아니라 선언(JSON)이다: 경로에 거는 정규식 조건. 파이프라인이 쓴 고정
-# 스크립트가 샌드박스에서 맞춘다 (sandbox/checker_runner.py)
-CheckerKind = Literal["ast-grep", "python-ast", "path-pattern"]
+# 스크립트가 샌드박스에서 맞춘다 (sandbox/checker_runner.py).
+# ruff·ruff-format은 저장소의 도구다 (4.4 (a)). 본문은 선언(JSON)이다: ruff는 {"codes": [...]}(비면
+# base 설정의 규칙 전부), ruff-format은 {}. 모델이 쓴 검사기가 아니다
+CheckerKind = Literal["ast-grep", "python-ast", "path-pattern", "ruff", "ruff-format"]
+TOOL_KINDS: Final = frozenset({"ruff", "ruff-format"})
 PATH_PATTERN_KEYS: Final = frozenset({"applies_to", "condition", "pattern", "message"})
 PATH_CONDITIONS: Final = ("must_match", "must_not_match")
 MAX_REGEX_CHARS: Final = 300
@@ -69,7 +73,33 @@ def validate_body(kind: CheckerKind, body: str) -> str | None:
         return _validate_ast_grep(body)
     if kind == "path-pattern":
         return _validate_path_pattern(body)
+    if kind in TOOL_KINDS:
+        return _validate_tool(kind, body)
     return _validate_python_ast(body)
+
+
+def tool_codes(body: str) -> tuple[str, ...]:
+    """ruff 검사기 본문의 코드. 비면 base 설정의 규칙 전부다. 본문은 `validate_body`를 거쳤다."""
+    return tuple(json.loads(body).get("codes", ()))
+
+
+def _validate_tool(kind: CheckerKind, body: str) -> str | None:
+    try:
+        decl = json.loads(body)
+    except ValueError as e:
+        return f"JSON을 읽지 못함: {e}"
+    if not isinstance(decl, dict):
+        return "선언의 최상위가 객체가 아님"
+    allowed = {"codes"} if kind == "ruff" else set()
+    extra = sorted(str(k) for k in decl if k not in allowed)
+    if extra:
+        return f"쓸 수 없는 키: {', '.join(extra)}"
+    codes = decl.get("codes", [])
+    if not isinstance(codes, list) or not all(
+        isinstance(c, str) and RUFF_CODE.match(c) for c in codes
+    ):
+        return "codes는 ruff 규칙 코드의 목록이어야 함"
+    return None
 
 
 def _validate_path_pattern(body: str) -> str | None:

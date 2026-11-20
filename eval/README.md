@@ -2,9 +2,10 @@
 
 예제 리포(`Eunryong/eval`)에 위반을 일부러 넣은 PR을 만들고, 파이프라인이 무엇을 찾고 어떻게 고쳐야 하는지를 정답으로 적은 것이다 (docs/DESIGN.md "회귀 테스트").
 
-- `lint/*.yaml`: 2단계 컨벤션(lint) 케이스. `tests/e2e/test_lint_cases.py`가 읽어, 로컬 git 원격 + 실제 ruff + 실제 샌드박스 테스트로 처음부터 끝까지 돌린다. GitHub만 가짜로 바꾼다.
+- `lint/*.yaml`: v1 2단계 컨벤션(lint) 케이스. v2 3단계부터는 도구 설정의 규칙 묶음과 기계적 수정 묶음으로 돈다(완료 기준 3-1). `tests/e2e/test_lint_cases.py`가 읽어, 로컬 git 원격 + 실제 ruff(도구 캐시에 받음) + 실제 샌드박스 테스트로 처음부터 끝까지 돌린다. GitHub만 가짜로 바꾼다. 예제 리포에는 ruff 설정이 없어 하네스가 base에 빈 `ruff.toml`을 둔다. 케이스 파일은 v1 그대로이고 수정안 브랜치만 `fix-mechanical`이다.
+- `tools/*.yaml`: v2 3단계 도구 연결 케이스(3-2–3-5). 문서 규칙을 ruff 코드로 잇기, ruff를 받지 않는 base, 규칙이 없는 base, 저장소가 고정한 ruff 버전과 두 번째 실행. `tests/e2e/test_tool_cases.py`가 케이스마다 빈 도구 캐시로 돌려 무엇을 받았는지 본다. 형식은 그 파일의 독스트링에 있다.
 - 옛 `static/*.yaml` 다섯 개(파이프라인 내장 정적변수 검사)는 v2 2단계에 내장 검사기와 함께 지웠다. 확인하던 것은 README 규칙 케이스 `rules/09`–`12`, `15`, `16`으로 옮겼다(01 매직 값의 수정, 02 모듈 수준 상태의 수정, 03 테스트가 지나가지 않는 위반, 04 고치면 테스트가 깨지는 수정, 05 테스트가 실패한 PR, 그리고 README에 그 문장이 없는 base).
-- `rules/*.yaml`: v2 1단계 문서 규칙 케이스. 예제 리포 README의 "코드 규칙" 절의 규칙을 읽어 검사기를 만들고 PR이 바꾼 줄의 위반을 찾는지 본다. `tests/e2e/test_rules_cases.py`가 같은 방식으로 돌리고, base에 `.pipeline.yaml`(`skills.enabled: []`)을 넣어 v1 lint를 끈다. 모델은 케이스의 `model` 답을 돌려주는 가짜이고(원문 확인, ast-grep 예시 확인, 검사기 실행은 진짜), `PR_PROOF_REAL_MODEL=1`이면 로그인된 claude를 실제로 부른다(비용이 든다. 비교용). `scripted_only: true`인 케이스는 실제 모델로 돌릴 때 건너뛴다.
+- `rules/*.yaml`: v2 1단계 문서 규칙 케이스. 예제 리포 README의 "코드 규칙" 절의 규칙을 읽어 검사기를 만들고 PR이 바꾼 줄의 위반을 찾는지 본다. `tests/e2e/test_rules_cases.py`가 같은 방식으로 돌린다. 예제 리포에는 ruff 설정이 없어 도구 설정의 규칙은 없고, 가짜 모델은 도구 선택에 규칙의 `tool`(없으면 맞는 도구 없음)을 답한다. 모델은 케이스의 `model` 답을 돌려주는 가짜이고(원문 확인, ast-grep 예시 확인, 검사기 실행은 진짜), `PR_PROOF_REAL_MODEL=1`이면 로그인된 claude를 실제로 부른다(비용이 든다. 비교용). `scripted_only: true`인 케이스는 실제 모델로 돌릴 때 건너뛴다.
 - 실행: `pytest -m docker tests/e2e`
 - 6단계에서 케이스를 20–30개로 늘리고, 결과를 `eval_runs`에 남겨 기준선과 비교한다.
 

@@ -1,9 +1,9 @@
-"""결과 코멘트의 "문서 규칙" 절 (docs/DESIGN.md 4.9, 9.4, 13절 1·2단계). 판정을 새로 내지 않는다.
+"""결과 코멘트의 규칙 줄과 규칙 절 (docs/DESIGN.md 4.9, 9.4). 판정을 새로 내지 않는다.
 
 `DocRules` 값 하나와, 위반을 찾은 검사기의 본문(`checkers` 테이블에서 읽은 것), 위반마다의 수정
-판단(`Decided`)만 받는다. 규칙의 인용, 문서의 절 이름, 파일 경로, 검사기 본문과 예시, 실패 이유,
-모델이 쓴 수정 판단의 이유는 모두 믿지 않는 글이라 코드 스팬이나 코드 울타리 안에만 넣는다
-(worker/markdown.py).
+판단(`Decided`), 묶음마다의 수정 상태(`FixView`)만 받는다. 규칙의 인용, 문서의 절 이름, 파일 경로,
+도구의 메시지, 검사기 본문과 예시, 실패 이유, 모델이 쓴 수정 판단의 이유는 모두 믿지 않는 글이라
+코드 스팬이나 코드 울타리 안에만 넣는다 (worker/markdown.py).
 """
 
 from collections import Counter
@@ -11,7 +11,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final, Literal
 
-from app.models.checker import Checker
+from app.models.checker import TOOL_KINDS, Checker
 from app.models.doc_rules import (
     CallUsage,
     DocRules,
@@ -22,7 +22,9 @@ from app.models.doc_rules import (
     RuleChecked,
     RuleOutcome,
     RuleUnchecked,
+    outcomes_by_rule,
 )
+from app.models.fix import MECHANICAL_BUNDLE, MechanicalFix
 from app.models.fix_decision import Decided, FixDecision
 from app.models.model_fix import ModelFix
 from app.models.proposal import ProposalResult
@@ -30,13 +32,14 @@ from app.models.rule import Rule
 from app.models.violation import Violation
 from app.worker.markdown import code_fence, inline_code
 
-TITLE: Final = "**문서 규칙:**"
+TITLE: Final = "**규칙:**"
 VIOLATION: Final = "⚠️"
 CLEAN: Final = "✅"
 NO_RULES: Final = "규칙을 찾지 못해 규칙 검사를 하지 않음"
 HOW_TO_WRITE: Final = (
     "규칙 문서(기본은 `README.md`, `CONTRIBUTING.md`)에 `## 코드 규칙` 같은 절을 두고 규칙을 "
-    "한 문장씩 적으면 다음 검사부터 그 규칙으로 검사합니다. "
+    "한 문장씩 적거나 ruff 설정(`ruff.toml`, `pyproject.toml`의 `[tool.ruff]`)을 두면 다음 "
+    "검사부터 그 규칙으로 검사합니다. "
     '예: "`orders/` 아래 모듈은 `print`를 쓰지 않는다." '
     "다른 문서에 적었으면 base 브랜치 `.pipeline.yaml`의 `rules.docs`에 그 경로를 적으세요."
 )
@@ -87,7 +90,15 @@ _FIX_FAILED: Final[Mapping[str, str]] = {
     "failed": "정해진 회차 안에 검증을 통과하지 못함",
     "dropped": "수정안을 버림",
     "refused": "모델을 실행하지 않음",
+    "nothing_fixed": "적용할 수 있는 수정이 없음",
+    "new_violations": "수정안을 버림: 고친 뒤 원래 없던 위반이 생김",
+    "out_of_scope": "수정안을 버림: 허용 범위 밖의 파일이 바뀜",
+    "secret": "수정안을 버림: 비밀값으로 보이는 내용이 있음",
+    "tests_changed": "수정안을 버림: 고친 뒤 테스트 결과가 달라짐",
+    "unchecked": "수정안을 버림: 고친 뒤 규칙 재검사를 하지 못함",
+    "too_big": "수정안을 버림: 크기 상한을 넘음",
 }
+_LABEL: Final[Mapping[str, str]] = {MECHANICAL_BUNDLE: "기계적 수정안", "model": "모델 수정안"}
 MAX_PATCH_CHARS: Final = 6000
 # `/fix`는 PR 호출 상한을 한 번 더 받아 남은 수정 판단과 수정을 이어 한다 (4.9, 9.2)
 RERUN_HINT: Final = "`/fix`로 다시 돌릴 수 있습니다."
@@ -98,11 +109,11 @@ FixState = Literal["running", "approval", "merged", "open", "rejected", "done"]
 class FixView:
     """모델 수정 묶음의 지금 상태 (4.9 "수정 결과"). 그래프가 만들고 코멘트는 그리기만 한다."""
 
-    targets: int  # 모델 수정 대상 위반 수
+    targets: int  # 그 묶음의 수정 대상 위반 수
     size_capped: int  # 크기 상한으로 수정안에 넣지 못한 위반 수 (11.2 D6)
     state: FixState
     number: int | None = None  # merged·open·rejected의 수정안 PR 번호
-    fix: ModelFix | None = None  # state가 done일 때
+    fix: ModelFix | MechanicalFix | None = None  # state가 done일 때
     proposal: ProposalResult | None = None
     patch: str = ""  # 검증을 통과한 패치 (`fix_attempts`). 수정안 PR을 열지 못했을 때 보인다
 
@@ -111,43 +122,70 @@ class FixView:
 _OTHER_TARGETS: Final = frozenset({"pr", "human"})
 
 
+def title(result: DocRules | None, fixes: Mapping[str, FixView] | None = None) -> str | None:
+    """코멘트 맨 위의 "규칙:" 줄 (4.9). 규칙 경로를 돌기 전에 끝났으면 None."""
+    match result:
+        case None:
+            return None
+        case NotRun(reason=reason):
+            return f"{TITLE} 검사하지 못함 ({inline_code(reason, MAX_DETAIL_CHARS)})"
+        case NoRuleDocs() | NoRulesFound():
+            return f"{TITLE} {NO_RULES}"
+        case Found():
+            numbers = [n for v in (fixes or {}).values() if (n := _proposal_number(v)) is not None]
+            line = f"{TITLE} {_title_line(result)}"
+            return line + (f" · 수정안 {', '.join(f'#{n}' for n in numbers)}" if numbers else "")
+
+
+def _proposal_number(view: FixView) -> int | None:
+    """이 커밋의 그 묶음 수정안 PR 번호 (이번에 열었거나 이미 열려 있음)."""
+    if view.proposal is not None and view.proposal.number is not None:
+        return view.proposal.number
+    return view.number if view.state == "open" else None
+
+
 def section(
     result: DocRules | None,
     checkers: Mapping[str, Checker],
     decisions: Decided | None = None,
-    fix: FixView | None = None,
+    fixes: Mapping[str, FixView] | None = None,
 ) -> list[str]:
-    """ "문서 규칙" 절의 줄들. checkers는 위반을 찾은 검사기의 {CheckerRef.key: 검사기}다.
+    """규칙 절의 줄들 ("규칙:" 줄 아래). checkers는 위반을 찾은 검사기의 {CheckerRef.key: 검사기}다.
 
     decisions는 테스트 뒤의 수정 판단이다. 아직 없으면(테스트 전에 끝남) 판단 없이 그린다.
-    fix는 모델 수정 묶음의 상태다. fix로 정한 위반이 없으면 None이다.
+    fixes는 묶음(mechanical, model)마다의 수정 상태다. 그 묶음으로 정한 위반이 없으면 없다.
     """
     match result:
-        case None:
+        case None | NotRun():
             return []
-        case NotRun(reason=reason):
-            return ["", f"{TITLE} 검사하지 못함 ({inline_code(reason, MAX_DETAIL_CHARS)})"]
         case NoRuleDocs(unread=unread):
-            lines = ["", f"{TITLE} {NO_RULES}", "", HOW_TO_WRITE]
+            lines = ["", HOW_TO_WRITE]
             if unread:
                 lines += ["", "읽지 못한 규칙 문서:"]
                 lines += [f"- {inline_code(d.path)}: {inline_code(d.reason)}" for d in unread]
             return lines
         case NoRulesFound():
-            return ["", f"{TITLE} {NO_RULES}", "", HOW_TO_WRITE]
+            return ["", HOW_TO_WRITE]
         case Found():
-            return _found(result, checkers, decisions, fix)
+            return _found(result, checkers, decisions, fixes or {})
 
 
 def _found(
-    found: Found, checkers: Mapping[str, Checker], decisions: Decided | None, fix: FixView | None
+    found: Found,
+    checkers: Mapping[str, Checker],
+    decisions: Decided | None,
+    fixes: Mapping[str, FixView],
 ) -> list[str]:
-    head = ["", f"{TITLE} {_title_line(found)}"]
+    head = (
+        ["", f"규칙 문서를 읽지 못해 도구 설정의 규칙만 검사함 "
+         f"({inline_code(found.note, MAX_DETAIL_CHARS)})"]
+        if found.note else []
+    )  # fmt: skip
     tail = ["", usage_line(found.usage), "", HOW_TO_CORRECT]
     by_id = {d.violation_id: d for d in decisions.decisions} if decisions else {}
     blocks = [
         _decision_summary(decisions),
-        _fix_lines(fix),
+        *(_fix_lines(view, bundle) for bundle, view in fixes.items()),
         _violations(found, by_id),
         _not_checkable(found.outcomes),
         _failed(found.outcomes),
@@ -207,6 +245,11 @@ def _quote(rule: Rule) -> str:
 def _how_checked(outcome: RuleOutcome) -> str:
     if isinstance(outcome, RuleChecked):
         ref = outcome.checker
+        if outcome.rule.origin == "tool_config":
+            return f"도구 `ruff` (`{outcome.rule.source.file}`의 설정)"
+        if ref.kind in TOOL_KINDS:
+            codes = f" {', '.join(f'`{c}`' for c in ref.codes)}" if ref.codes else ""
+            return f"도구 `{ref.kind}`{codes} (모델이 도구 목록에서 고르고 예시로 확인함)"
         saved = ", 저장된 것" if ref.cached else ""
         return f"검사기 `{ref.id[:8]}` ({ref.kind}{saved})"
     return _UNCHECKED_TEXT[outcome.kind]
@@ -232,39 +275,82 @@ def _decision_summary(decisions: Decided | None) -> list[str]:
     return lines
 
 
-def _fix_lines(view: FixView | None) -> list[str]:
-    """모델 수정 묶음의 결과: 수정안 PR 번호, 만들지 못한 이유, 크기 상한 건수, 호출 수
-    (4.9, 9.4)."""
-    if view is None:
-        return []
+def _fix_lines(view: FixView, bundle: str) -> list[str]:
+    """묶음 하나의 결과: 수정안 PR 번호, 만들지 못한 이유, 크기 상한 건수, 호출 수 (4.9, 9.4)."""
+    label = _LABEL[bundle]
     ref = f" #{view.number}" if view.number is not None else ""
     match view.state:
         case "running":
             line = f"fix로 정한 위반 {view.targets}건의 수정안을 만드는 중입니다."
         case "approval":
             line = (
-                "base의 `.pipeline.yaml`이 `require_approval: true`라 문서 규칙 위반의 수정안을 "
-                "아직 만들지 않았습니다. `/fix model`을 달면 만듭니다."
+                "base의 `.pipeline.yaml`이 `require_approval: true`라 수정안을 아직 만들지 "
+                f"않았습니다. `/fix {bundle}`을 달면 만듭니다."
             )
         case "merged":
-            line = (
-                f"이 커밋은 모델 수정안 PR{ref}을 머지한 결과라 같은 수정안을 다시 만들지 않습니다."
-            )
+            line = f"이 커밋은 {label} PR{ref}을 머지한 결과라 같은 수정안을 다시 만들지 않습니다."
         case "open":
-            line = f"이 커밋의 모델 수정안 PR{ref}이 열려 있습니다. 그 PR을 확인해 주세요."
+            line = f"이 커밋의 {label} PR{ref}이 열려 있습니다. 그 PR을 확인해 주세요."
         case "rejected":
-            line = f"이 커밋의 모델 수정안 PR{ref}이 머지되지 않고 닫혀 다시 만들지 않습니다."
+            line = f"이 커밋의 {label} PR{ref}이 머지되지 않고 닫혀 다시 만들지 않습니다."
         case "done":
+            if isinstance(view.fix, MechanicalFix):
+                return _mechanical_result(view, view.fix)
             return _fix_result(view)
-    lines = ["", f"**수정안:** {line}"]
+    lines = ["", f"**{label}:** {line}"]
     if view.size_capped:
         lines.append(f"수정안 크기 상한으로 처리하지 못함: {view.size_capped}건")
     return lines
 
 
+def _mechanical_result(view: FixView, fix: MechanicalFix) -> list[str]:
+    """기계적 수정 묶음의 결과. 모델을 부르지 않았으므로 호출 수가 없다."""
+    proposal = view.proposal
+    if not fix.ready:
+        line = _FIX_FAILED[fix.status]
+        if fix.detail:
+            line += f" ({inline_code(fix.detail, MAX_DETAIL_CHARS)})"
+        if fix.format_skipped:
+            line += f". `ruff format`은 적용하지 않음 ({inline_code(fix.format_skipped, 200)})"
+        return ["", f"**{_LABEL[MECHANICAL_BUNDLE]}:** {line}"]
+    what = f"위반 {len(fix.fixed)}건을 고쳤습니다" if fix.fixed else "포맷만 고쳤습니다"
+    line = (
+        f"{what} (도구의 안전한 수정). 검증: 고친 뒤 테스트 {fix.test_line} (수정 전과 같은 결과), "
+        "새 위반 없음."
+    )
+    if proposal is not None and proposal.number is not None:
+        verb = "갱신했습니다" if proposal.updated else "열었습니다"
+        line += f" 수정안 PR #{proposal.number}을 {verb}."
+    elif proposal is not None:
+        line += f" 수정안 PR을 만들지 않았습니다 ({proposal.reason})."
+    lines = ["", f"**{_LABEL[MECHANICAL_BUNDLE]}:** {line}"]
+    if fix.formatted_files:
+        lines.append(f"`ruff format`을 고친 파일 {len(fix.formatted_files)}개에 적용했습니다.")
+    elif fix.format_skipped:
+        lines.append(
+            f"`ruff format`은 적용하지 않았습니다 ({inline_code(fix.format_skipped, 200)})."
+        )
+    if fix.remaining:
+        lines.append(f"자동으로 고치지 못한 위반 {len(fix.remaining)}건은 그대로 남습니다.")
+    return lines + _patch_block(view, proposal)
+
+
+def _patch_block(view: FixView, proposal: ProposalResult | None) -> list[str]:
+    """수정안 PR을 열지 못했을 때 검증을 통과한 패치를 접어 보인다. 비밀값이면 싣지 않는다."""
+    shown = proposal is not None and proposal.number is None
+    if not shown or proposal.secret_blocked or not view.patch:
+        return []
+    patch = view.patch
+    if len(patch) > MAX_PATCH_CHARS:
+        patch = patch[:MAX_PATCH_CHARS] + "\n… (생략)"
+    fence = code_fence(patch)
+    return ["", "<details><summary>수정 내용</summary>", "", f"{fence}diff", patch, fence, "",
+            "</details>"]  # fmt: skip
+
+
 def _fix_result(view: FixView) -> list[str]:
     fix, proposal = view.fix, view.proposal
-    if fix is None:
+    if not isinstance(fix, ModelFix):
         return []
     if fix.status == "budget":
         line = (
@@ -288,19 +374,11 @@ def _fix_result(view: FixView) -> list[str]:
             line += f" 수정안 PR #{proposal.number}을 {verb}."
         elif proposal is not None:
             line += f" 수정안 PR을 만들지 않았습니다 ({proposal.reason})."
-    lines = ["", f"**수정안:** {line}"]
+    lines = ["", f"**{_LABEL['model']}:** {line}"]
     if view.size_capped:
         lines.append(f"수정안 크기 상한으로 처리하지 못함: {view.size_capped}건")
     lines.append(_fix_usage(fix))
-    shown = fix.ready and proposal is not None and proposal.number is None
-    if shown and not proposal.secret_blocked and view.patch:
-        patch = view.patch
-        if len(patch) > MAX_PATCH_CHARS:
-            patch = patch[:MAX_PATCH_CHARS] + "\n… (생략)"
-        fence = code_fence(patch)
-        lines += ["", "<details><summary>수정 내용</summary>", "", f"{fence}diff", patch, fence,
-                  "", "</details>"]  # fmt: skip
-    return lines
+    return lines + (_patch_block(view, proposal) if fix.ready else [])
 
 
 def _fix_usage(fix: ModelFix) -> str:
@@ -334,7 +412,7 @@ def _violations(found: Found, decisions: Mapping[str, FixDecision]) -> list[str]
     """
     if not found.violations:
         return []
-    by_rule = {o.rule.id: o for o in found.outcomes}
+    by_rule = outcomes_by_rule(found)
     grouped: dict[str, list[Violation]] = {}
     for v in found.violations:
         grouped.setdefault(v.rule_id, []).append(v)
@@ -368,7 +446,9 @@ def _violations(found: Found, decisions: Mapping[str, FixDecision]) -> list[str]
 def _where(v: Violation) -> str:
     if v.unit == "file":
         return f"{inline_code(v.file, 200)} (파일 이름·경로)"
-    return inline_code(f"{v.file}:{v.line}", 200)
+    where = inline_code(f"{v.file}:{v.line}", 200)
+    # 도구 설정 규칙은 원문이 "설정대로 통과한다" 하나라 위반마다 도구의 메시지를 보인다
+    return f"{where} {inline_code(v.message, MAX_DETAIL_CHARS)}" if v.rule_id == v.code else where
 
 
 def _rule_lines(outcomes: Sequence[RuleUnchecked], *, detail: bool) -> list[str]:
@@ -438,6 +518,7 @@ def _checker_details(found: Found, checkers: Mapping[str, Checker]) -> list[str]
     shown = [
         o for o in found.outcomes
         if isinstance(o, RuleChecked) and o.rule.id in found_by and o.checker.key in checkers
+        and o.checker.kind not in TOOL_KINDS
     ]  # fmt: skip
     lines: list[str] = []
     for o in shown[:MAX_CHECKER_DETAILS]:

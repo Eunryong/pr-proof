@@ -8,7 +8,7 @@ from typing import Final
 
 import pytest
 
-from app.models.checker import Checker, CheckerKind
+from app.models.checker import Checker, CheckerKind, tool_codes
 from app.models.checker_authoring import Checked, Unchecked
 from app.models.diff import added_lines
 from app.models.rule import CheckMethod, Rule, RuleSource
@@ -180,3 +180,41 @@ def test_content_rule_ignores_new_file_list(worktree: Path) -> None:
     detect([CHECKED], worktree, {}, new_files=frozenset({"orders/services/pricing.py"}),
            sandbox=sandbox)  # fmt: skip
     assert sandbox.files == []
+
+
+def _ruff_checked(rule: Rule, codes: tuple[str, ...] = ()) -> Checked:
+    import json
+
+    body = json.dumps({"codes": list(codes)})
+    checker = Checker(id="r", rule_id=rule.id, rule_text_hash="h", kind="ruff", body=body,
+                      examples=(), engine_version="ruff-0.17.5")  # fmt: skip
+    return Checked(rule, checker, cached=True)
+
+
+def test_tool_settings_violations_use_the_ruff_code_as_rule_id(worktree: Path) -> None:
+    """도구 설정의 규칙 묶음이 찾은 위반은 ruff 코드가 규칙 id다 (4.3). 안전한 수정의 편집은 위반
+    id로 따로 돌려준다. 문서 규칙이 같은 코드로 같은 줄을 잡으면 문서 규칙의 위반만 남는다.
+    `rules.disabled`에 적은 코드의 위반은 남지 않는다."""
+    from app.models.text_edit import TextEdit
+    from app.models.tools import RuffConfig, config_rule
+
+    edit = TextEdit(3, 1, 4, 1, "")
+    matches = (
+        Match("orders/services/pricing.py", 3, 3, "`x` unused", "F401", (edit,)),
+        Match("orders/services/pricing.py", 3, 3, "print found", "T201"),
+        Match("orders/services/pricing.py", 3, 3, "ambiguous", "E741"),
+    )
+    config = _ruff_checked(config_rule(RuffConfig("ruff.toml", "", "b")))
+    document = _ruff_checked(replace(RULE, scope=()), ("T201",))
+
+    class Ruff(GrepSandbox):  # ruff처럼 `--select`의 코드만 낸다
+        def on_files(self, kind, body, root, files):
+            codes = tool_codes(body)
+            return Ran(tuple(m for m in matches if not codes or m.code in codes))
+
+    result = detect([config, document], worktree, CHANGED, sandbox=Ruff(), disabled=("E741",))
+    by_rule = {(v.rule_id, v.code, v.found_by, v.mechanical_fix) for v in result.violations}
+    assert by_rule == {("F401", "F401", "tool", True), (RULE.id, "T201", "tool", False)}
+    (f401,) = [v for v in result.violations if v.code == "F401"]
+    assert result.edits == {f401.id: (edit,)}
+    assert f401.id == violation_id("F401", "orders/services/pricing.py", "print('new')", 0)

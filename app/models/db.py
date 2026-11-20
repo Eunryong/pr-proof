@@ -29,19 +29,9 @@ class Proposal(SQLModel, table=True):
     merge_commit: str | None = None
     created_at: datetime
     updated_at: datetime
-    # 이 제안이 올린 수정 시도 (`fix_attempts`). 문서 규칙 경로만 있다. 머지·닫힘의 기록이 읽는다
+    # 이 수정안이 올린 수정 시도 (`fix_attempts`). 머지·닫힘의 기록이 읽는다. v1 lint의 수정안은
+    # 없다(그 경로가 쓰던 `proposaltarget` 테이블은 3단계에 쓰지 않게 되었고 지우지 않는다)
     attempt_id: int | None = None
-
-
-class ProposalTarget(SQLModel, table=True):
-    """제안 PR이 고친 위반 (파일, 규칙 코드, 줄 내용). 사람이 그 제안을 닫으면 다음 커밋에서
-    같은 위반을 수정 대상에서 뺀다 (DESIGN.md F10, app/models/rejection.py)."""
-
-    id: int | None = Field(default=None, primary_key=True)
-    proposal_id: int = Field(index=True)
-    file: str
-    code: str
-    line_text: str
 
 
 class CommandRecord(SQLModel, table=True):
@@ -178,8 +168,8 @@ class FixAttempt(SQLModel, table=True):
     pr_number: int = Field(index=True)
     head_sha: str  # 검증한 원본 PR의 커밋
     merge_base: str  # 바뀐 줄을 다시 센 기준
-    bundle: str  # 수정 묶음 (지금은 "model")
-    status: str  # model_fix.ModelFixStatus
+    bundle: str  # 수정 묶음 ("mechanical", "model")
+    status: str  # model_fix.ModelFixStatus 또는 fix.MechanicalStatus
     attempts: int  # 작성 회차
     models_json: str  # 쓴 모델 목록 (JSON 배열)
     detail: str = ""  # 실패 이유

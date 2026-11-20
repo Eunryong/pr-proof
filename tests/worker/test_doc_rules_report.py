@@ -1,4 +1,5 @@
-"""worker/doc_rules_report.py: 결과 코멘트의 "문서 규칙" 절. 믿지 않는 글의 처리와 길이 상한."""
+"""worker/doc_rules_report.py: 결과 코멘트의 "규칙:" 줄과 규칙 절. 믿지 않는 글의 처리와 길이
+상한."""
 
 import re
 from dataclasses import replace
@@ -15,6 +16,7 @@ from app.models.doc_rules import (
     RuleChecked,
     RuleUnchecked,
 )
+from app.models.fix import MechanicalFix
 from app.models.fix_decision import Decided, FixDecision
 from app.models.model_fix import ModelFix, Verification
 from app.models.proposal import ProposalResult
@@ -22,7 +24,7 @@ from app.models.rule import CheckMethod, Example, Rule, RuleSource, UnreadDoc
 from app.models.test_run import PytestRun
 from app.models.violation import Violation
 from app.worker import doc_rules_report, report
-from app.worker.doc_rules_report import HOW_TO_CORRECT, NO_RULES, FixView, section
+from app.worker.doc_rules_report import HOW_TO_CORRECT, NO_RULES, FixView, section, title
 from app.worker.markdown import inline_code
 
 USAGE: Final = CallUsage(calls=3, limit=14, cache_hits=1, models=("claude-haiku-5-5",),
@@ -51,7 +53,8 @@ def _found(*outcomes, violations=(), disabled: int = 0) -> Found:
 
 
 def _text(result, checkers=None) -> str:
-    return "\n".join(section(result, checkers or {}))
+    """ "규칙:" 줄과 그 아래 규칙 절. 코멘트에서는 그 사이에 테스트 상세가 들어간다."""
+    return "\n".join(["", title(result) or "", *section(result, checkers or {})]).rstrip("\n")
 
 
 def _outside_code(text: str) -> str:
@@ -62,7 +65,7 @@ def _outside_code(text: str) -> str:
 
 def test_violation_lists_location_quote_source_and_checker() -> None:
     text = _text(_found(RuleChecked(RULE, REF), violations=(_violation(),)), {"k1": CHECKER})
-    assert "**문서 규칙:** ⚠️ 위반 1건 (규칙 1개)" in text
+    assert "**규칙:** ⚠️ 위반 1건 (규칙 1개)" in text
     assert "- `R-readme-1` `` `orders/` 아래 모듈은 `print`를 쓰지 않는다. `` · 1건" in text
     assert "  - `orders/a.py:2`" in text
     assert doc_rules_report.MANY_VIOLATIONS_NOTE not in text
@@ -78,7 +81,7 @@ def test_violation_lists_location_quote_source_and_checker() -> None:
 
 def test_checker_without_violation_has_no_body() -> None:
     text = _text(_found(RuleChecked(RULE, REF)), {"k1": CHECKER})
-    assert "**문서 규칙:** ✅ 위반 없음 (규칙 1개 검사)" in text
+    assert "**규칙:** ✅ 위반 없음 (규칙 1개 검사)" in text
     assert "모델이 쓴 검사기" not in text and "읽은 규칙 1개" in text
 
 
@@ -128,7 +131,7 @@ def test_unchecked_rules_are_grouped_by_reason() -> None:
     )
     text = _text(_found(*outcomes, disabled=2))
     assert (
-        "**문서 규칙:** 검사한 규칙 없음 (읽은 규칙 6개) · PR 단위 규칙 1개 · "
+        "**규칙:** 검사한 규칙 없음 (읽은 규칙 6개) · PR 단위 규칙 1개 · "
         "사람이 확인하는 규칙 1개 · `rules.disabled`로 끈 규칙 2개" in text
     )
     assert (
@@ -152,16 +155,15 @@ def test_title_counts_rules_outside_code_apart_from_unchecked() -> None:
         RuleUnchecked(replace(RULE, id="R-3", target="human"), "human", "절차"),
     )
     assert (
-        "**문서 규칙:** ✅ 위반 없음 (규칙 1개 검사) · 검사하지 못한 규칙 1개 · "
-        "사람이 확인하는 규칙 2개"
+        "**규칙:** ✅ 위반 없음 (규칙 1개 검사) · 검사하지 못한 규칙 1개 · 사람이 확인하는 규칙 2개"
     ) in _text(_found(*outcomes))
 
 
 def test_no_rules_explains_how_to_write_them() -> None:
     for result in (NoRuleDocs(), NoRulesFound(dropped=2)):
         text = _text(result)
-        assert f"**문서 규칙:** {NO_RULES}" in text
-        assert "`## 코드 규칙` 같은 절을 두고 규칙을 한 문장씩 적으면" in text
+        assert f"**규칙:** {NO_RULES}" in text
+        assert "`## 코드 규칙` 같은 절을 두고 규칙을 한 문장씩 적거나 ruff 설정" in text
     unread = _text(NoRuleDocs((UnreadDoc("CONTRIBUTING.md", "400KB를 넘음"),)))
     assert "- `CONTRIBUTING.md`: `400KB를 넘음`" in unread
 
@@ -171,7 +173,7 @@ def test_not_run_shows_reason() -> None:
         NotRun("규칙을 읽지 않음: 호출 상한: 저장소 하루 상한 (500/500회 사용, 이 호출 1회)")
     )
     assert text == (
-        "\n**문서 규칙:** 검사하지 못함 "
+        "\n**규칙:** 검사하지 못함 "
         "(`규칙을 읽지 않음: 호출 상한: 저장소 하루 상한 (500/500회 사용, 이 호출 1회)`)"
     )
 
@@ -194,7 +196,7 @@ def test_install_failure_comment_keeps_doc_rules() -> None:
     text = report.render_install_failure("a" * 40, "only sdist", doc_rules=found,
                                          checkers={"k1": CHECKER})  # fmt: skip
     assert "**테스트:** 실행 불가 (의존성을 설치하지 못함)" in text
-    assert "**문서 규칙:** ⚠️ 위반 1건 (규칙 1개)" in text and "```yaml" in text
+    assert "**규칙:** ⚠️ 위반 1건 (규칙 1개)" in text and "```yaml" in text
 
 
 def test_result_without_doc_rules_has_no_section() -> None:
@@ -233,7 +235,7 @@ def test_many_violations_show_counts_and_first_ten_per_rule_and_fold_the_rest() 
         _violation("orders/b.py", 7, rule="R-readme-2"),
     )
     text = _text(_found(RuleChecked(RULE, REF), RuleChecked(other, REF), violations=violations))
-    assert "**문서 규칙:** ⚠️ 위반 143건 (규칙 2개)" in text
+    assert "**규칙:** ⚠️ 위반 143건 (규칙 2개)" in text
     assert doc_rules_report.MANY_VIOLATIONS_NOTE in text
     assert "· 142건" in text and "- `R-readme-2` `다른 규칙` · 1건" in text
     head, _, folded = text.partition("<details><summary><code>R-readme-1</code>의 나머지 132건")
@@ -265,7 +267,7 @@ def test_each_violation_shows_its_decision_and_the_counts() -> None:
     assert "  - `orders/a.py:5` · fix (기계적 수정)" in text
     assert ("수정 판단: fix 2건, skip 2건 (모델이 고치지 않기로 함 1건, 테스트가 지나가지 않음 1건)"
             " · 모델 호출 1회 · 저장된 판단 2건 사용 · 토큰 입력 900, 출력 70") in text  # fmt: skip
-    assert "**수정안:**" not in text  # 모델 수정 묶음의 상태는 따로 넘긴다
+    assert "수정안:**" not in text  # 묶음의 상태는 따로 넘긴다
     assert "모델 호출 상한에 걸려" not in text
 
 
@@ -307,23 +309,26 @@ def test_without_decisions_the_section_is_unchanged() -> None:
 
 READY: Final = ModelFix(
     status="ready", targets=("v1", "v2"), explanation=None,
-    verification=Verification(tests=9, resolved=2, rules_rechecked=1, lint_rechecked=False,
-                              files=1, lines=4),
+    verification=Verification(tests=9, resolved=2, rules_rechecked=1, files=1, lines=4),
     changed_files=("orders/a.py",), calls=1, input_tokens=1200, output_tokens=80,
     models=("claude-haiku-5-5",), attempts=1,
 )  # fmt: skip
 
 
-def _fix_text(view: FixView) -> str:
+def _fix_text(view: FixView, bundle: str = "model") -> str:
     found = _found(RuleChecked(RULE, REF), violations=(_violation(),))
-    return "\n".join(section(found, {}, None, view))
+    return "\n".join(
+        [title(found, {bundle: view}) or "", *section(found, {}, None, {bundle: view})]
+    )
 
 
 def test_fix_result_names_the_pull_request_and_the_verification() -> None:
     """수정안 PR 번호와 파이프라인이 확인한 검증 결과가 보인다 (4.9). 아직 안 만든다는 글은 없다."""
     text = _fix_text(FixView(2, 0, "done", fix=READY, proposal=ProposalResult(number=901)))
-    assert ("**수정안:** 위반 2건을 고쳤습니다. 검증: 테스트 9개가 수정 전과 같은 결과로 통과, "
-            "대상 위반 2건 해소, 새 위반 없음. 수정안 PR #901을 열었습니다.") in text  # fmt: skip
+    assert ("**모델 수정안:** 위반 2건을 고쳤습니다. 검증: 테스트 9개가 수정 전과 같은 결과로 "
+            "통과, 대상 위반 2건 해소, 새 위반 없음. 수정안 PR #901을 열었습니다."
+            ) in text  # fmt: skip
+    assert text.startswith("**규칙:** ⚠️ 위반 1건 (규칙 1개) · 수정안 #901")
     assert ("수정 작성: 모델 호출 1회, 회차 1 · `claude-haiku-5-5` · 저장된 결과 0건 사용 · "
             "토큰 입력 1200, 출력 80") in text  # fmt: skip
     assert "아직 만들지 않습니다" not in text
@@ -339,7 +344,8 @@ def test_fix_states_before_and_without_a_fix(tmp_path) -> None:
     failed = replace(READY, status="failed", verification=None, detail="고친 뒤 테스트: 실패")
     text = _fix_text(FixView(2, 0, "done", fix=failed))
     assert (
-        "**수정안:** 수정안을 만들지 못함: 정해진 회차 안에 검증을 통과하지 못함 (`고친 뒤" in text
+        "**모델 수정안:** 수정안을 만들지 못함: 정해진 회차 안에 검증을 통과하지 못함 (`고친 뒤"
+        in text
     )
     capped_calls = replace(READY, status="budget", detail="호출 상한: PR 상한 (3/3회 사용)")
     capped_text = _fix_text(FixView(2, 0, "done", fix=capped_calls))
@@ -358,4 +364,67 @@ def test_fork_shows_the_fix_in_the_comment_instead_of_a_pull_request() -> None:
     secret = ProposalResult(reason="비밀값으로 보이는 내용이 있음 (토큰·키 형식)")
     assert "+log(x)" not in _fix_text(
         FixView(2, 0, "done", fix=READY, proposal=secret, patch=patch)
+    )
+
+
+MECHANICAL: Final = MechanicalFix(
+    status="ready", targets=("v1", "v2"), fixed=("v1",), remaining=("v2",),
+    changed_files=("orders/a.py",), formatted_files=("orders/a.py",), tests=9,
+    test_line="통과 (9개)", attempt_id=3,
+)  # fmt: skip
+
+
+def test_mechanical_fix_result_names_the_pull_request_format_and_what_is_left() -> None:
+    text = _fix_text(
+        FixView(2, 0, "done", fix=MECHANICAL, proposal=ProposalResult(number=902)), "mechanical"
+    )
+    assert text.startswith("**규칙:** ⚠️ 위반 1건 (규칙 1개) · 수정안 #902")
+    assert (
+        "**기계적 수정안:** 위반 1건을 고쳤습니다 (도구의 안전한 수정). 검증: 고친 뒤 테스트 "
+        "통과 (9개) (수정 전과 같은 결과), 새 위반 없음. 수정안 PR #902을 열었습니다."
+    ) in text
+    assert "`ruff format`을 고친 파일 1개에 적용했습니다." in text
+    assert "자동으로 고치지 못한 위반 1건은 그대로 남습니다." in text
+    assert "수정 작성: 모델 호출" not in text  # 기계적 수정은 모델을 부르지 않는다
+
+
+def test_mechanical_fix_failures_and_waiting_states() -> None:
+    dropped = replace(MECHANICAL, status="tests_changed", detail="실패 (9개 중 1개)",
+                      format_skipped="base 브랜치가 ruff format을 따르지 않음")  # fmt: skip
+    text = _fix_text(FixView(2, 0, "done", fix=dropped), "mechanical")
+    assert ("**기계적 수정안:** 수정안을 버림: 고친 뒤 테스트 결과가 달라짐 (`실패 (9개 중 1개)`)"
+            ) in text  # fmt: skip
+    approval = _fix_text(FixView(2, 0, "approval"), "mechanical")
+    assert "`/fix mechanical`을 달면 만듭니다." in approval
+    merged = _fix_text(FixView(2, 0, "merged", number=903), "mechanical")
+    assert "기계적 수정안 PR #903을 머지한 결과라" in merged
+
+
+def test_mechanical_fix_without_a_pull_request_shows_the_patch_unless_it_has_a_secret() -> None:
+    patch = '-"""\n-```\n+x\n'
+    fork = ProposalResult(reason="포크에서 온 PR이라 수정안 PR을 열 수 없음")
+    text = _fix_text(FixView(2, 0, "done", fix=MECHANICAL, proposal=fork, patch=patch),
+                     "mechanical")  # fmt: skip
+    assert "````diff" in text and "</details>" in text  # 패치의 백틱이 울타리를 닫지 못한다
+    secret = ProposalResult(reason="비밀값으로 보이는 내용이 있음 (토큰·키 형식)")
+    hidden = _fix_text(FixView(2, 0, "done", fix=MECHANICAL, proposal=secret, patch=patch),
+                       "mechanical")  # fmt: skip
+    assert "수정 내용" not in hidden
+
+
+def test_rule_checked_by_a_tool_names_the_tool_and_codes() -> None:
+    """문서 규칙을 ruff 코드로 확인하면 출처는 문서이고 확인 방법은 도구와 코드다 (3-2)."""
+    ref = CheckerRef(key="k2", id="d" * 64, kind="ruff", cached=False, codes=("F401",))
+    v = replace(_violation(), found_by="tool", code="F401", message="`os` imported but unused")
+    text = _text(_found(RuleChecked(RULE, ref), violations=(v,)), {})
+    assert ("  출처: `README.md > 코드 규칙 > 출력` · 도구 `ruff` `F401` (모델이 도구 목록에서 "
+            "고르고 예시로 확인함)") in text  # fmt: skip
+    assert "모델이 쓴 검사기" not in text  # 도구는 모델이 쓴 검사기가 아니다
+
+
+def test_rule_documents_that_could_not_be_read_are_named_when_tool_rules_ran() -> None:
+    found = replace(_found(RuleChecked(RULE, REF)), note="규칙 읽기의 모델 호출이 실패함: x")
+    assert (
+        "규칙 문서를 읽지 못해 도구 설정의 규칙만 검사함 (`규칙 읽기의 모델 호출이 실패함: x`)"
+        in (_text(found))
     )
