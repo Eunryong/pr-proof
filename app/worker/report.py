@@ -12,6 +12,7 @@ from app.models.checker import Checker
 from app.models.doc_rules import DocRules
 from app.models.fix_decision import Decided
 from app.models.install import InstallFailureKind
+from app.models.rag_switch import RagSwitch
 from app.models.test_run import PytestRun
 from app.sandbox.docker_cli import MEMORY_LIMIT_GB
 from app.worker import doc_rules_report
@@ -127,6 +128,7 @@ def _compose(
     checkers: Mapping[str, Checker] | None = None,
     decisions: Decided | None = None,
     fixes: Mapping[str, FixView] | None = None,
+    rag: RagSwitch | None = None,
 ) -> str:
     lines = [HEADER, "", f"**테스트:** {test_line}"]
     rules_line = doc_rules_report.title(doc_rules, fixes)
@@ -134,7 +136,7 @@ def _compose(
         lines.append(rules_line)
     lines += details
     lines += extra or []
-    lines += doc_rules_report.section(doc_rules, checkers or {}, decisions, fixes)
+    lines += doc_rules_report.section(doc_rules, checkers or {}, decisions, fixes, rag)
     if base is not None and base.problems:
         lines += ["", "설정:"] + [f"- {p}" for p in base.problems]
     lines += ["", _footer(head_sha, seconds, from_sync=from_sync)]
@@ -168,8 +170,10 @@ def render_result(
     checkers: Mapping[str, Checker] | None = None,
     decisions: Decided | None = None,
     fixes: Mapping[str, FixView] | None = None,
+    rag: RagSwitch | None = None,
 ) -> str:
-    """결과 코멘트. fixes는 묶음마다 수정했으면 그 결과, 아니면 상태(대기, 진행 중 등)다."""
+    """결과 코멘트. fixes는 묶음마다 수정했으면 그 결과, 아니면 상태(대기, 진행 중 등)다. rag는 이
+    검사의 검색 상태다(규칙 절에 한 줄로 보인다)."""
     memory_gb = base.memory_gb if base else MEMORY_LIMIT_GB
     max_memory_gb = base.max_memory_gb if base else MEMORY_LIMIT_GB
     return _compose(
@@ -184,6 +188,7 @@ def render_result(
         checkers=checkers,
         decisions=decisions,
         fixes=fixes,
+        rag=rag,
     )
 
 

@@ -14,8 +14,11 @@ from pydantic import (
     Field,
     StringConstraints,
     ValidationError,
+    field_validator,
     model_validator,
 )
+
+from app.models.rag_switch import DEFAULT_MODE, MODES, RagMode, parse_mode
 
 # docker가 받는 최소 메모리보다 넉넉히 크게. 너무 작으면 컨테이너가 뜨지 않아 환경 오류로 보인다
 MIN_MEMORY_GB: Final = 0.5
@@ -125,12 +128,20 @@ class RagSettings(BaseModel):
     """과거 기록 검색 (DESIGN.md 6.4–6.6, 10절 `rag`). 기록 저장은 이 값과 관계없이 한다."""
 
     model_config = ConfigDict(extra="ignore")
-    enabled: bool = False  # 검색 결과를 프롬프트에 넣을지 (5단계의 비교 뒤 기본값을 정한다)
+    # 검색 결과를 프롬프트에 넣을지. auto는 기록 수와 채택률로 정한다 (models/rag_switch.py)
+    enabled: RagMode = DEFAULT_MODE
     top_k: int = Field(default=20, ge=1, le=200)  # 검색이 가져오는 후보 수
     # 이 유사도 미만의 기록은 넣지 않는다. recall@k와 관련 없는 짝의 분포로 정한 값 (6.7)
     min_similarity: float = Field(default=DEFAULT_MIN_SIMILARITY, ge=-1, le=1)
     # 한 호출의 프롬프트에 넣는 기록 수 상한. top_k와 따로 둔다
     max_records: int = Field(default=3, ge=0, le=MAX_RECORDS_CAP)
+
+    @field_validator("enabled", mode="before")
+    @classmethod
+    def _mode(cls, value: object) -> RagMode:
+        """옛 불리언도 읽는다. 모르는 값은 설정 전체를 버리지 않고 이 값만 기본값으로 읽는다
+        ("설정:"의 알림은 `settings_notes`가 단다)."""
+        return parse_mode(value) or DEFAULT_MODE
 
 
 class RepoConfig(BaseModel):
@@ -198,6 +209,13 @@ def settings_notes(text: str | None) -> list[str]:
         part = data.get(section)
         if isinstance(part, dict) and key in part:
             notes.append(note)
+    rag = data.get("rag")
+    if isinstance(rag, dict) and "enabled" in rag and parse_mode(rag["enabled"]) is None:
+        # 받은 값은 적지 않는다. 저장소의 글이 코멘트에 그대로 들어가지 않게
+        notes.append(
+            f"`rag.enabled`는 {', '.join(MODES)} 중 하나여야 합니다. 기본값 {DEFAULT_MODE}로 "
+            "읽었습니다"
+        )
     enabled = skills.get("enabled") if isinstance(skills, dict) else None
     if isinstance(enabled, list) and LINT in enabled:
         notes.append(

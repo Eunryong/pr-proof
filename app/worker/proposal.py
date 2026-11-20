@@ -19,7 +19,7 @@ from app.models import proposal as rules
 from app.models.doc_rules import Found, outcomes_by_rule
 from app.models.fix import MECHANICAL_BUNDLE, MechanicalFix
 from app.models.job import PRJob
-from app.models.model_fix import Explanation, ModelFix
+from app.models.model_fix import MODEL_BUNDLE, Explanation, ModelFix
 from app.models.proposal import ProposalResult
 from app.worker import records, repo
 from app.worker.github import GitHub, GitHubError, ReviewComment
@@ -27,8 +27,6 @@ from app.worker.markdown import inline_code
 from app.worker.report import code_fence
 from app.worker.state import Store
 
-# 모델 수정 묶음 (DESIGN.md 4.9, 3.1의 C7). 브랜치는 pipeline/pr-<n>-fix-model
-MODEL_BUNDLE: Final = "model"
 # v1의 lint 수정안 기록. 기계적 수정 묶음의 기록으로 본다 (머지로 생긴 커밋, 열린 수정안)
 LEGACY_SKILLS: Final[Mapping[str, str]] = {"lint": MECHANICAL_BUNDLE}
 MAX_LISTED_TARGETS: Final = 30

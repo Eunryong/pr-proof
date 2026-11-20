@@ -22,12 +22,14 @@ from app.models.db import (
     ModelCacheEntry,
     ModelCall,
     Proposal,
+    RagAutoOff,
     Record,
     RulesetEntry,
     Run,
     SeenViolation,
 )
 from app.models.job import PRJob
+from app.models.rag_switch import COUNTED_KINDS, Evidence, FixOutcome, Outcomes, outcomes
 from app.models.records import NewRecord
 
 
@@ -420,6 +422,50 @@ class Store:
             if pr_number is not None:
                 stmt = stmt.where(Record.pr_number == pr_number)
             return list(session.exec(stmt.order_by(Record.id)))
+
+    # --- 검색을 켜는 조건 (6.7) ---
+
+    def rag_evidence(self, repo: str) -> Evidence:
+        """auto가 보는 이 저장소의 숫자. 채택·거절 기록 수와 결과를 아는 수정 시도이고, 어느 시도를
+        세는지는 `rag_switch.outcomes`가 정한다."""
+        with Session(self.engine) as session:
+            records = session.exec(
+                select(func.count()).select_from(Record).where(
+                    Record.repo == repo, Record.kind.in_(sorted(COUNTED_KINDS))
+                )
+            ).one()  # fmt: skip
+            rows = session.exec(
+                select(FixAttempt.id, FixAttempt.bundle, Proposal.state, FixAttempt.references_json)
+                .join(FixAttempt, FixAttempt.id == Proposal.attempt_id)
+                .where(Proposal.repo == repo, FixAttempt.repo == repo)
+            ).all()  # fmt: skip
+        with_refs, without_refs = outcomes(FixOutcome(*row) for row in rows)
+        return Evidence(int(records), with_refs, without_refs)
+
+    def rag_turned_off(self, repo: str, min_attempts: int, min_baseline: int) -> Evidence | None:
+        """auto가 같은 비교 기준값으로 이 저장소의 검색을 끈 때의 숫자. 없으면 None."""
+        with Session(self.engine) as session:
+            row = session.get(RagAutoOff, repo)
+        if row is None or (row.min_attempts, row.min_baseline) != (min_attempts, min_baseline):
+            return None
+        return Evidence(
+            row.records, Outcomes(row.with_adopted, row.with_known),
+            Outcomes(row.without_adopted, row.without_known),
+        )  # fmt: skip
+
+    def turn_rag_off(
+        self, repo: str, evidence: Evidence, min_attempts: int, min_baseline: int
+    ) -> None:
+        """auto가 검색을 끈 사실을 남긴다. 다시 불려도 저장소마다 한 줄이다."""
+        with Session(self.engine) as session:
+            session.merge(RagAutoOff(
+                repo=repo, min_attempts=min_attempts, min_baseline=min_baseline,
+                records=evidence.records,
+                with_adopted=evidence.with_refs.adopted, with_known=evidence.with_refs.known,
+                without_adopted=evidence.without_refs.adopted,
+                without_known=evidence.without_refs.known, created_at=_now(),
+            ))  # fmt: skip
+            session.commit()
 
     def command_handled(self, comment_id: int) -> bool:
         with Session(self.engine) as session:
