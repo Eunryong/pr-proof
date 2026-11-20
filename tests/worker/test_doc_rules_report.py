@@ -14,6 +14,7 @@ from app.models.doc_rules import (
     NoRulesFound,
     NotRun,
     RuleChecked,
+    RuleJudged,
     RuleUnchecked,
 )
 from app.models.fix import MechanicalFix
@@ -410,6 +411,23 @@ def test_mechanical_fix_without_a_pull_request_shows_the_patch_unless_it_has_a_s
     hidden = _fix_text(FixView(2, 0, "done", fix=MECHANICAL, proposal=secret, patch=patch),
                        "mechanical")  # fmt: skip
     assert "수정 내용" not in hidden
+
+
+def test_judged_rule_shows_why_it_went_to_model_judgment() -> None:
+    """모델 판단으로 보낸 까닭마다 다른 글. none·part는 모델이 적은 부분을 붙인다 (4.4)."""
+    cases = {
+        "none": "모델 판단 (검사기로 가릴 수 없는 규칙이라고 검사기 작성 모델이 답함: `주석의 뜻`)",
+        "part": "모델 판단 (검사기로는 일부만 가릴 수 있다고 검사기 작성 모델이 답함: `주석의 뜻`)",
+        "examples": "모델 판단 (검사기가 예시 확인을 두 번 통과하지 못함)",
+        "attempts": "모델 판단 (예시를 통과하는 검사기를 만들지 못함)",
+    }
+    for route, shown in cases.items():
+        text = _text(_found(RuleJudged(RULE, "주석의 뜻", route)))
+        assert f"  출처: `README.md > 코드 규칙 > 출력` · 범위: `orders/**` · 확인: {shown}" in text
+    # 실패 이유(예시 확인의 기대와 실제)는 확인 방법 칸에 넣지 않는다
+    assert "예시 2개" not in _text(_found(RuleJudged(RULE, "예시 2개를 틀리게 가림", "examples")))
+    bare = _text(_found(RuleJudged(RULE, "", "none")))
+    assert "모델 판단 (검사기로 가릴 수 없는 규칙이라고 검사기 작성 모델이 답함)" in bare
 
 
 def test_rule_checked_by_a_tool_names_the_tool_and_codes() -> None:

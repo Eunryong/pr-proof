@@ -11,7 +11,7 @@ ast-grep·ruff(도구 캐시에 받는다), GitHub만 가짜. 모델은 기본�
     model.rules[].judge: 모델 판단의 답 ({file, line, quote, why}). 그 파일을 물을 때만 낸다
     record_only: 실제 모델로 돌 때 결과를 남기기만 하고 위반 목록은 확인하지 않는다 (4-5)
     real_checker_scripted: 실제 모델로 돌 때도 검사기 작성만 케이스의 답(예시를 통과하지 못하는
-        검사기)으로 둔다. 모델 판단부터의 경로를 실제 모델로 보려는 것이다
+        검사기나 `coverage: none`)으로 둔다. 모델 판단부터의 경로를 실제 모델로 보려는 것이다
     expect.judge_calls: 모델 판단의 실제 호출 수 (저장된 답을 쓴 것은 세지 않는다)
     expect.next_commit: {edits, contains} 같은 PR에 새 커밋을 올려 모델 판단의 호출이 늘지 않는다
     expect.then_fix: {command, result, judge_calls, violations, absent} 결과 코멘트 뒤의 명령
@@ -126,7 +126,8 @@ def _scripted_checker(case: dict, real):
     """검사기 작성의 호출만 케이스의 답으로 돌려주고, 나머지(규칙 읽기, 모델 판단, 수정 판단)는
     실제 모델을 부른다."""
     scripted = scripted_model(case)
-    schemas = (checker_authoring.ANSWER_SCHEMA, checker_authoring.AST_GREP_SCHEMA)
+    schemas = (checker_authoring.ANSWER_SCHEMA, checker_authoring.AST_GREP_SCHEMA,
+               checker_authoring.PYTHON_AST_SCHEMA)  # fmt: skip
 
     def ask(prompt: str, *, schema, **kw):
         if any(schema is s for s in schemas):

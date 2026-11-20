@@ -1,14 +1,15 @@
 name: repo-daily-keeps-tools
 description: >-
-  4-7. base의 `.pipeline.yaml`이 `repo_daily: 6`이다. 규칙 읽기 1회, 도구 선택 2회(F401로 이어지는
-  규칙과 맞는 도구가 없는 이름 규칙), 이름 규칙의 검사기 작성 3회로 하루 상한을 다 쓴다. 이름 규칙의
+  4-7. base의 `.pipeline.yaml`이 `repo_daily: 5`이다. 규칙 읽기 1회, 도구 선택 2회(F401로 이어지는
+  규칙과 맞는 도구가 없는 이름 규칙), 이름 규칙의 검사기 작성 2회(예시 확인을 두 번 통과하지 못해
+  모델 판단으로 감)로 하루 상한을 다 쓴다. 이름 규칙의
   모델 판단은 저장소 하루 상한에 걸려 하지 못하고 그 사실이 코멘트에 나온다. 도구(ruff `F401`) 검사와
   기계적 수정은 모델을 쓰지 않으므로 계속되어 기계적 수정안 PR이 열린다.
 scripted_only: true
 pipeline:
   model:
     calls:
-      repo_daily: 6
+      repo_daily: 5
 base:
   - file: README.md
     create: |
@@ -66,6 +67,6 @@ expect:
   judge_calls: 0
   contains:
     - "`orders/services/pricing.py:1` · fix (기계적 수정)"
-    - "모델 호출 상한에 걸려 처리하지 못함: 위반 판단 1개 규칙 (hunk 1개, `호출 상한: 저장소 하루 상한 (6/6회 사용, 이 호출 1회)`)"
+    - "모델 호출 상한에 걸려 처리하지 못함: 위반 판단 1개 규칙 (hunk 1개, `호출 상한: 저장소 하루 상한 (5/5회 사용, 이 호출 1회)`)"
   mechanical_branch: pipeline/pr-1-fix-mechanical
   fix_file: orders/services/pricing.py

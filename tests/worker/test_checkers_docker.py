@@ -73,7 +73,20 @@ def test_real_fix_rule_is_rejected_before_running(
 def test_third_attempt_switches_to_python_script(
     store: Store, tool_cache: Path, sandbox_image: str
 ) -> None:
+    # 예시 확인을 두 번 통과하지 못하면 세 번째 회차 없이 모델 판단으로 간다(4.4). 세 번째 회차는
+    # 형식이 틀린 답(예시 확인의 실패로 세지 않음)이 섞였을 때만 온다
+    malformed = _reply(data={"examples": []})
     wrong = _reply(checker=PRINT_RULE.replace("print(", "pprint("))
-    model = FakeModel(wrong, wrong, _reply(checker=PRINT_SCRIPT))
+    model = FakeModel(malformed, wrong, _reply(checker=PRINT_SCRIPT))
+    (result,) = _author(store, model, Sandbox(tool_cache, image=sandbox_image))
+    assert isinstance(result, Checked) and result.checker.kind == "python-ast"
+
+
+def test_unfit_answer_is_followed_by_a_python_script_that_is_accepted(
+    store: Store, tool_cache: Path, sandbox_image: str
+) -> None:
+    """2-1의 02가 검사기로 잡히던 길: unfit은 모델 판단으로 보내지 않고 Python AST로 바꾼다."""
+    unfit = _reply(checker=PRINT_RULE, unfit="별칭으로 부른 print를 가릴 수 없다")
+    model = FakeModel(unfit, _reply(checker=PRINT_SCRIPT))
     (result,) = _author(store, model, Sandbox(tool_cache, image=sandbox_image))
     assert isinstance(result, Checked) and result.checker.kind == "python-ast"

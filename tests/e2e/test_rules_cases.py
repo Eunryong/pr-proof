@@ -118,7 +118,8 @@ _DECIDE_BLOCK: Final = re.compile(
 def scripted_model(case: dict):
     """규칙 읽기에는 케이스의 규칙 목록을, 도구 선택에는 그 규칙의 `tool`(없으면 맞는 도구 없음)을,
     검사기 작성에는 프롬프트에 든 규칙의 검사기를 답한다. 모델 판단에는 프롬프트에 든 규칙의
-    `judge` 답 중 프롬프트에 든 파일의 것을 답한다(없으면 위반 없음).
+    `judge` 답 중 프롬프트에 든 파일의 것을 답한다(없으면 위반 없음). 검사기의 `coverage`(없으면
+    all)와 `uncovered`는 내용 검사기의 답에 넣는다.
     수정 판단에는 케이스에 `fix`가 있으면 `model.skip`의 위반만 skip, 나머지는 fix로 답한다."""
     skip = case["model"].get("skip") or {}
     rules = case["model"]["rules"]
@@ -153,8 +154,12 @@ def scripted_model(case: dict):
             return _answer({"decisions": decisions})
         own = prompt.split("<<<RECORDS")[0]  # 검색이 넣은 다른 규칙의 기록은 보지 않는다
         (rule,) = [r for r in rules if r["quote"] in own]
+        # coverage·uncovered는 내용 검사기의 답에만 있다(경로 패턴의 스키마에는 없다, 4.4)
+        extra = ({"coverage": rule["checker"].get("coverage", "all"),
+                  "uncovered": rule["checker"].get("uncovered", "")}
+                 if "coverage" in schema["properties"] else {})  # fmt: skip
         return _answer({"checker": rule["checker"]["body"],
-                        "examples": rule["checker"]["examples"]})  # fmt: skip
+                        "examples": rule["checker"]["examples"], **extra})  # fmt: skip
 
     return ask
 

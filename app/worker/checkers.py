@@ -11,9 +11,16 @@
 답(초안)을 `model_cache`에 저장한다. verify는 초안을 샌드박스에서 예시에 돌려 결정적으로
 판정한다. 처음 두 회차는 ast-grep 규칙, 세 번째는 Python AST 스크립트다. ast-grep 회차에서
 모델이 그 형식으로 가릴 수 없다고 답하면(`unfit`) 그 초안은 돌리지 않고 다음 회차부터 Python AST
-스크립트로 쓴다. 모델은 세 회차 모두 `model.checker`다. 결과는 `checkers` 테이블에 규칙의 캐시
-키별로 둔다. 채택한 검사기와 끝내 통과하지 못한 기록은 다시 묻지 않는다. 호출 상한, 모델 호출
-실패, 도구 준비 실패로 끝난 규칙은 저장하지 않으므로 다음 검사가 이어 한다. 호출은 규칙 묶음
+스크립트로 쓴다. 모델은 세 회차 모두 `model.checker`다.
+
+내용을 보는 규칙은 아래 때에 검사기를 채택하지 않고 모델 판단(`ToJudge`, 4.5)으로 보낸다 (4.4
+"의미 규칙을 모델 판단으로 보내는 때"): 모델이 검사기로 일부만·전혀 가릴 수 없다고 답한 회차(그
+초안은 돌리지 않는다), 예시 확인의 두 번째 실패, 세 회차를 다 쓴 때. 경로 규칙은 모델 판단으로
+보내지 않고 세 회차 뒤 "검사하지 못한 규칙"으로 남는다.
+
+결과는 `checkers` 테이블에 규칙의 캐시 키별로 둔다(모델 판단으로 보낸 까닭은 `judge_route`).
+채택한 검사기, 모델 판단으로 보낸 기록, 끝내 통과하지 못한 기록은 다시 묻지 않는다. 호출 상한, 모델
+호출 실패, 도구 준비 실패로 끝난 규칙은 저장하지 않으므로 다음 검사가 이어 한다. 호출은 규칙 묶음
 상한(9.2)에서 세고 재시도도 센다.
 """
 
@@ -41,7 +48,9 @@ from app.models.checker_authoring import (
     Answer,
     Checked,
     Draft,
+    JudgeRoute,
     RuleCheck,
+    ToJudge,
     Unchecked,
     answer_schema,
     build_prompt,
@@ -52,12 +61,15 @@ from app.models.checker_authoring import (
     draft_key,
     draft_to_json,
     judge_examples,
+    judge_route,
+    judged_after_failures,
     kind_for_attempt,
     model_examples,
     parse_answer,
     plan_check,
     previous_body_feedback,
     prompt_version_for,
+    route_before_run,
     shortfall,
     system_prompt,
 )
@@ -316,6 +328,9 @@ class _Author:
                                    model=self.models.checker)  # fmt: skip
             if saved.accepted and saved.checker_json is not None:
                 return Checked(rule, checker_from_json(saved.checker_json), cached=True)
+            route = judge_route(saved.judge_route)
+            if route is not None:
+                return ToJudge(rule, route, saved.detail)
             return Unchecked(rule, "no_checker", saved.detail)
         try:
             final = self._loop(rule, key).invoke({"task": {"rule_id": rule.id}})
@@ -338,11 +353,26 @@ class _Author:
                                     attempts_json=attempts)  # fmt: skip
             self._remember(rule, checker)
             return Checked(rule, checker, cached=False)
-        detail = f"{MAX_ATTEMPTS}회 안에 예시를 통과하지 못함: {final.get('detail', '')}"
-        log.info("검사기 작성 실패 (%s): %s", rule.id, detail)
+        route: JudgeRoute | None
+        if outcome == "dropped":
+            # verify가 모델 판단으로 보냈다: 모델이 검사기로 다 가릴 수 없다고 답했거나, 예시 확인의
+            # 두 번째 실패다
+            last = self._draft(final["history"][-1]["artifact"])
+            route = route_before_run(last) or "examples"
+            detail = final.get("detail", "")
+        elif looks_at_paths(rule):
+            route = None
+            detail = f"{MAX_ATTEMPTS}회 안에 예시를 통과하지 못함: {final.get('detail', '')}"
+        else:
+            route = "attempts"
+            detail = f"{MAX_ATTEMPTS}회 안에 예시를 통과하지 못함: {final.get('detail', '')}"
+        log.info("검사기를 채택하지 않음 (%s, %s): %s", rule.id, route or "경로 규칙", detail)
         self.store.save_checker(key, rule_id=rule.id, accepted=False, checker_json=None,
-                                detail=detail, attempts_json=attempts)  # fmt: skip
-        return Unchecked(rule, "no_checker", detail)
+                                detail=detail, attempts_json=attempts,
+                                judge_route=route)  # fmt: skip
+        if route is None:
+            return Unchecked(rule, "no_checker", detail)
+        return ToJudge(rule, route, detail)
 
     def _config(self, rule: Rule) -> RuleCheck:
         """도구 설정의 규칙 묶음. 모델을 부르지 않는다. 받을 수 없는 ruff 버전이면 검사하지
@@ -523,14 +553,28 @@ class _Author:
                 kind=kind, body=parsed.checker, examples=examples,
                 example_problems=tuple(problems), model=answer.model_id or model,
                 unfit=parsed.unfit.strip() if kind == "ast-grep" else "",
+                coverage=parsed.coverage if kind != "path-pattern" else "all",
+                uncovered=parsed.uncovered.strip() if kind != "path-pattern" else "",
             )  # fmt: skip
             self.store.save_result(artifact, stage="checker", model=draft.model,
                                    prompt_version=prompt_version_for(rule),
                                    result_json=draft_to_json(draft))  # fmt: skip
             return WriteResult(artifact=artifact)
 
+        def failed(state: LoopState, detail: str, feedback: tuple[str, ...]) -> Verdict:
+            """예시 확인을 통과하지 못한 회차. 두 번째면 더 돌리지 않는다 (경로 규칙 빼고)."""
+            failures = 1 + sum(
+                1 for a in state.get("history", [])
+                if a["result"] == "rejected" and not self._draft(a["artifact"]).unfit
+            )  # fmt: skip
+            if judged_after_failures(rule, failures):
+                return Verdict("drop", detail=f"예시 확인을 {failures}번 통과하지 못함: {detail}")
+            return Verdict("retry", detail=detail, feedback=feedback)
+
         def verify(state: LoopState) -> Verdict:
             draft = self._draft(state["artifact"])
+            if route_before_run(draft) is not None:
+                return Verdict("drop", detail=draft.uncovered)
             if draft.unfit:
                 said = f"직전 시도는 이 규칙을 ast-grep으로 가릴 수 없다고 답했다: {draft.unfit}"
                 return Verdict(
@@ -539,15 +583,14 @@ class _Author:
                 )  # fmt: skip
             previous = previous_body_feedback(draft)
             if draft.example_problems:
-                return Verdict("retry", detail=draft.example_problems[0],
-                               feedback=(*draft.example_problems, previous))  # fmt: skip
+                return failed(state, draft.example_problems[0],
+                              (*draft.example_problems, previous))  # fmt: skip
             examples = (*rule.examples, *draft.examples)
             run = self.sandbox.on_examples(draft.kind, draft.body, [e.code for e in examples])
             if isinstance(run, Invalid | Failed):
                 what = "검사기가 틀림" if isinstance(run, Invalid) else "검사기 실행이 실패함"
                 first = run.reason.strip().splitlines()[0] if run.reason.strip() else ""
-                return Verdict("retry", detail=f"{what}: {first}",
-                               feedback=(f"{what}:\n{run.reason}", previous))  # fmt: skip
+                return failed(state, f"{what}: {first}", (f"{what}:\n{run.reason}", previous))
             spans = [
                 [(m.line, m.end_line) for m in run.matches
                  if m.file == checker_runner.example_file(draft.kind, i, e.code)]
@@ -556,8 +599,7 @@ class _Author:
             problems = judge_examples(examples, spans)
             if not problems:
                 return Verdict("pass")
-            return Verdict("retry", detail=f"예시 {len(problems)}개를 틀리게 가림",
-                           feedback=(*problems, previous))  # fmt: skip
+            return failed(state, f"예시 {len(problems)}개를 틀리게 가림", (*problems, previous))
 
         policy = LoopPolicy(max_attempts=MAX_ATTEMPTS, may_call=self.budget.may_call(self.scope),
                             heavy_after=None)  # fmt: skip

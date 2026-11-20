@@ -10,7 +10,7 @@ import fakeredis
 import pytest
 
 from app.models.checker import CheckerKind
-from app.models.checker_authoring import SYSTEM_PROMPT, Checked, Unchecked
+from app.models.checker_authoring import SYSTEM_PROMPT, Checked, ToJudge, Unchecked, checker_key
 from app.models.repo_config import CallSettings, ModelSettings
 from app.models.rule import CheckMethod, Example, Rule, RuleSource
 from app.sandbox import checker_runner, toolcache
@@ -67,12 +67,12 @@ class GrepSandbox:
 
 def _reply(
     checker: str = "grep:print(", examples: list | None = None, unfit: str = "",
-    **fields: object,
+    coverage: str = "all", uncovered: str = "", **fields: object,
 ) -> StructuredResult:  # fmt: skip
     values = {
         "ok": True, "error": None,
         "data": {"checker": checker, "examples": MODEL_EXAMPLES if examples is None else examples,
-                 "unfit": unfit},  # fmt: skip
+                 "unfit": unfit, "coverage": coverage, "uncovered": uncovered},  # fmt: skip
         "model_id": "claude-haiku-5-5", "input_tokens": 1000, "output_tokens": 100,
         "cost_usd": 0.001, "permission_denials": 0,
     }  # fmt: skip
@@ -150,20 +150,91 @@ def test_checker_flagging_a_good_example_is_retried(store: Store) -> None:
     assert "정상 예시 1 (문서): 잡히면 안 됨, 실제로는 1번째 줄에서 잡힘." in model.calls[1][0]
 
 
-def test_exhausted_attempts_end_as_not_yet_checkable_and_are_remembered(store: Store) -> None:
+def test_second_failed_example_check_sends_the_rule_to_judgment_and_is_remembered(
+    store: Store,
+) -> None:
     wrong = _reply(checker="grep:nothing")
-    model = FakeModel(wrong, wrong, wrong)
+    model = FakeModel(wrong, wrong)
     (result,) = _author(store, model)
+    assert isinstance(result, ToJudge) and result.route == "examples"
+    assert result.detail.startswith("예시 확인을 2번 통과하지 못함: 예시 2개를 틀리게 가림")
+    # 세 번째 회차는 없다. 모델은 올리지 않는다 (11.2 D7)
+    assert [call[1]["model"] for call in model.calls] == ["sonnet"] * 2
+    assert [c[:2] for c in _counted(store)] == [("light", 1), ("light", 1)]
+    saved = store.saved_checker(checker_key(RULE, MODELS.checker))
+    assert saved is not None and not saved.accepted and saved.judge_route == "examples"
+    (again,) = _author(store, FakeModel())  # 다시 쓰지 않는다
+    assert again == result
+    assert _counted(store)[-1] == ("light", 0, True)
+
+
+def test_attempts_used_up_without_two_example_failures_still_go_to_judgment(store: Store) -> None:
+    malformed = _reply(data={"examples": []})
+    model = FakeModel(malformed, _reply(checker="grep:nothing"), malformed)
+    (result,) = _author(store, model)
+    assert isinstance(result, ToJudge) and result.route == "attempts"
+    assert "3회 안에 예시를 통과하지 못함" in result.detail
+    assert model.calls[2][1]["system_prompt"] == SYSTEM_PROMPT["python-ast"]
+
+
+def test_path_rule_runs_all_three_attempts_and_never_goes_to_judgment(store: Store) -> None:
+    path_rule = replace(RULE, check=CheckMethod("path"), examples=(), scope=())
+    wrong = _reply(checker="grep:nothing", examples=[
+        {"code": "orders/a.py", "violates": True, "lines": []},
+        {"code": "orders/b.py", "violates": True, "lines": []},
+        {"code": "tests/test_a.py", "violates": False, "lines": []},
+        {"code": "tests/test_b.py", "violates": False, "lines": []},
+    ], coverage="none", uncovered="무시되어야 한다")  # fmt: skip
+    model = FakeModel(wrong, wrong, wrong)
+    (result,) = _author(store, model, rules=(path_rule,))
     assert isinstance(result, Unchecked) and result.kind == "no_checker"
     assert "3회 안에 예시를 통과하지 못함" in result.detail
-    third = model.calls[2][1]
-    # 형식만 바꾸고 모델은 올리지 않는다 (11.2 D7)
-    assert [call[1]["model"] for call in model.calls] == ["sonnet"] * 3
-    assert third["system_prompt"] == SYSTEM_PROMPT["python-ast"]
-    assert [c[:2] for c in _counted(store)] == [("light", 1), ("light", 1), ("light", 1)]
-    (again,) = _author(store, FakeModel())
+    assert all("coverage" not in c[1]["schema"]["properties"] for c in model.calls)
+    saved = store.saved_checker(checker_key(path_rule, MODELS.checker))
+    assert saved is not None and saved.judge_route is None
+    (again,) = _author(store, FakeModel(), rules=(path_rule,))
     assert isinstance(again, Unchecked) and again.kind == "no_checker"
-    assert _counted(store)[-1] == ("light", 0, True)
+
+
+@pytest.mark.parametrize("coverage", ["none", "part"])
+def test_none_or_part_answer_goes_to_judgment_without_running_the_checker(
+    store: Store, coverage: str
+) -> None:
+    # "일부"라고 답한 검사기는 예시를 통과할 수 있어도 돌리지 않고 채택하지 않는다
+    answer = _reply(checker="grep:print(", coverage=coverage, uncovered="주석의 뜻을 읽어야 한다")
+    model, sandbox = FakeModel(answer), GrepSandbox()
+    (result,) = _author(store, model, sandbox)
+    assert result == ToJudge(RULE, coverage, "주석의 뜻을 읽어야 한다")
+    assert sandbox.runs == []
+    assert [c[:2] for c in _counted(store)] == [("light", 1)]
+    saved = store.saved_checker(checker_key(RULE, MODELS.checker))
+    assert saved is not None and saved.judge_route == coverage and saved.checker_json is None
+    (again,) = _author(store, FakeModel(), GrepSandbox())
+    assert again == result
+
+
+def test_part_answer_on_the_python_attempt_after_unfit_goes_to_judgment(store: Store) -> None:
+    model = FakeModel(_reply(unfit="스코프를 따져야 한다"),
+                      _reply(coverage="part", uncovered="뜻을 읽어야 하는 모양"))  # fmt: skip
+    (result,) = _author(store, model)
+    assert isinstance(result, ToJudge) and result.route == "part"
+    assert model.calls[1][1]["system_prompt"] == SYSTEM_PROMPT["python-ast"]
+
+
+def test_one_failed_example_check_then_none_goes_to_judgment_as_none(store: Store) -> None:
+    model = FakeModel(_reply(checker="grep:nothing"), _reply(coverage="none", uncovered="뜻"))
+    (result,) = _author(store, model)
+    assert isinstance(result, ToJudge) and result.route == "none"
+
+
+def test_cap_before_judgment_routing_is_not_saved_and_is_retried(store: Store) -> None:
+    wrong = _reply(checker="grep:nothing")
+    (first,) = _author(store, FakeModel(wrong), ruleset_base=1, per_rule=0)
+    assert isinstance(first, Unchecked) and first.kind == "cap"
+    assert store.saved_checker(checker_key(RULE, MODELS.checker)) is None
+    # 다음 검사는 저장한 1회차를 다시 쓰고 2회차의 두 번째 실패로 모델 판단에 보낸다
+    (second,) = _author(store, FakeModel(wrong))
+    assert isinstance(second, ToJudge) and second.route == "examples"
 
 
 def test_ast_grep_unfit_answer_switches_to_a_python_script_on_the_next_attempt(
@@ -172,6 +243,7 @@ def test_ast_grep_unfit_answer_switches_to_a_python_script_on_the_next_attempt(
     unfit = _reply(checker="grep:print(", unfit="이름이 정의된 곳을 따져야 한다")
     model, sandbox = FakeModel(unfit, _reply()), GrepSandbox()
     (result,) = _author(store, model, sandbox)
+    # 2-1의 02가 잡히는 길: unfit(형식의 한계)은 모델 판단으로 보내지 않는다
     assert isinstance(result, Checked) and result.checker.kind == "python-ast"
     # unfit이라고 답한 ast-grep 초안은 예시를 통과할 수 있어도 돌리지 않는다
     assert [run[0] for run in sandbox.runs] == ["python-ast"]
@@ -185,13 +257,11 @@ def test_ast_grep_unfit_answer_switches_to_a_python_script_on_the_next_attempt(
     assert [c[:2] for c in _counted(store)] == [("light", 1), ("light", 1)]
 
 
-def test_unfit_rule_that_no_script_catches_still_ends_unchecked_after_three_attempts(
-    store: Store,
-) -> None:
+def test_unfit_does_not_count_as_a_failed_example_check(store: Store) -> None:
     wrong = _reply(checker="grep:nothing")
     model = FakeModel(_reply(unfit="정의된 곳을 따져야 한다"), wrong, wrong)
     (result,) = _author(store, model)
-    assert isinstance(result, Unchecked) and result.kind == "no_checker"
+    assert isinstance(result, ToJudge) and result.route == "examples"
     assert [c[1]["system_prompt"] for c in model.calls] == [
         SYSTEM_PROMPT["ast-grep"], SYSTEM_PROMPT["python-ast"], SYSTEM_PROMPT["python-ast"],
     ]  # fmt: skip
@@ -224,6 +294,16 @@ def test_model_call_failure_is_not_saved(store: Store) -> None:
     (result,) = _author(store, FakeModel(failed))
     assert isinstance(result, Unchecked) and result.kind == "model_failed"
     assert _counted(store) == [("light", 1, False)]
+    (retried,) = _author(store, FakeModel(_reply()))
+    assert isinstance(retried, Checked)
+
+
+def test_model_call_failure_after_one_failed_example_check_is_retried(store: Store) -> None:
+    failed = _reply(ok=False, error=AIErrorKind.TIMEOUT, data=None, detail="600초")
+    model = FakeModel(_reply(checker="grep:nothing"), failed)
+    (result,) = _author(store, model)
+    assert isinstance(result, Unchecked) and result.kind == "model_failed"
+    assert store.saved_checker(checker_key(RULE, MODELS.checker)) is None
     (retried,) = _author(store, FakeModel(_reply()))
     assert isinstance(retried, Checked)
 

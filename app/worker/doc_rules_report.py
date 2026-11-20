@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Final, Literal
 
 from app.models.checker import TOOL_KINDS, Checker
+from app.models.checker_authoring import JudgeRoute
 from app.models.doc_rules import (
     CallUsage,
     DocRules,
@@ -83,6 +84,14 @@ _UNCHECKED_TEXT: Final[Mapping[str, str]] = {
     "run_failed": "검사하지 못함 (검사기 실행 실패)",
 }
 _FAILED_KINDS: Final = frozenset({"model_failed", "tool_unavailable", "run_failed"})
+# 모델 판단으로 보낸 까닭 (4.4 "의미 규칙을 모델 판단으로 보내는 때"). none·part 뒤에는 모델이 적은
+# "검사기로 가릴 수 없는 부분"을 붙인다
+_JUDGE_ROUTE_TEXT: Final[Mapping[JudgeRoute, str]] = {
+    "none": "검사기로 가릴 수 없는 규칙이라고 검사기 작성 모델이 답함",
+    "part": "검사기로는 일부만 가릴 수 있다고 검사기 작성 모델이 답함",
+    "examples": "검사기가 예시 확인을 두 번 통과하지 못함",
+    "attempts": "예시를 통과하는 검사기를 만들지 못함",
+}
 _SKIP_LABEL: Final[Mapping[str, str]] = {
     "rejected_before": "이전에 거절됨",
     "notify_only": "알리기만 하는 규칙",
@@ -269,8 +278,11 @@ def _how_checked(outcome: RuleOutcome) -> str:
         saved = ", 저장된 것" if ref.cached else ""
         return f"검사기 `{ref.id[:8]}` ({ref.kind}{saved})"
     if isinstance(outcome, RuleJudged):
+        why = _JUDGE_ROUTE_TEXT[outcome.route]
+        if outcome.route in ("none", "part") and outcome.reason:
+            why += f": {inline_code(outcome.reason, MAX_DETAIL_CHARS)}"
         left = f", 이번에 판단하지 못한 hunk {outcome.left}개" if outcome.left else ""
-        return f"모델 판단 (예시를 통과하는 검사기를 만들지 못함{left})"
+        return f"모델 판단 ({why}{left})"
     return _UNCHECKED_TEXT[outcome.kind]
 
 

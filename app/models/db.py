@@ -183,7 +183,8 @@ class RulesetEntry(SQLModel, table=True):
 
 
 class CheckerEntry(SQLModel, table=True):
-    """규칙별 검사기 작성 결과 (DESIGN.md 4.4, 7.8): 채택한 검사기 또는 끝내 통과하지 못한 기록.
+    """규칙별 검사기 작성 결과 (DESIGN.md 4.4, 7.8): 채택한 검사기, 모델 판단으로 보낸 기록(그
+    까닭), 또는 끝내 통과하지 못한 경로 규칙의 기록.
 
     키는 app/models/checker_authoring.py의 `checker_key`다. 회차마다의 답(초안)은 `model_cache`에
     있고, attempts_json의 각 회차 `artifact`가 그 키다. 호출 상한·모델 호출 실패로 끝난 작성은
@@ -199,6 +200,9 @@ class CheckerEntry(SQLModel, table=True):
     detail: str = ""  # 실패한 이유 (마지막 회차)
     attempts_json: str  # worker/loop.py의 Attempt 목록
     created_at: datetime
+    # 채택하지 않고 모델 판단으로 보낸 까닭 (models/checker_authoring.py의 `JudgeRoute`). 경로
+    # 규칙과 도구 선택의 줄은 없다
+    judge_route: str | None = None
 
 
 class FixAttempt(SQLModel, table=True):

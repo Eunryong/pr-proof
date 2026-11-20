@@ -1,15 +1,17 @@
 name: comment-matches-code
 description: >-
   4-1, 4-2를 실제 모델로 보는 케이스. README에 "주석은 바로 아래 코드가 하는 일과 맞게 쓴다."만 적은
-  base. 주석과 코드의 뜻을 견줘야 하는 규칙이라 검사기로 가리기 어렵다(가짜 검사기는 세 번 모두 예시를
-  통과하지 못한다). PR이 더한 함수의 주석이 코드와 다르다. 위반은 주석 줄이라 테스트가 지나가지 않으므로
+  base. 주석과 코드의 뜻을 견줘야 하는 규칙이라 검사기로 가릴 수 없다. 가짜 검사기 작성 모델은 첫
+  회차에 `coverage: none`(검사기로 가릴 수 없음)이라고 답하고, 그 규칙은 검사기를 돌리지 않고 모델
+  판단으로 간다(4.4 "의미 규칙을 모델 판단으로 보내는 때"). PR이 더한 함수의 주석이 코드와 다르다. 위반은 주석 줄이라 테스트가 지나가지 않으므로
   base의 `.pipeline.yaml`이 `fix.require_covered: false`를 둔다. 모델이 찾은 위반이 수정 판단과 모델
   수정을 거쳐 수정안 PR까지 가고 본문에 "도구로 재검사하지 못함"이 적힌다. 같은 hunk를 가진 다음 커밋은
   모델 판단을 다시 부르지 않는다.
-  실제 모델로 돌릴 때도 검사기 작성만 케이스의 답이다(real_checker_scripted). sonnet은 이 규칙에도
-  자기가 쓴 예시를 통과하는 Python AST 검사기를 써서(2026-11-20, 2/2) 규칙이 모델 판단까지 오지 않고
-  PR의 어긋난 주석을 잡지 못했다. 모델 판단부터의 경로(규칙 읽기, 모델 판단, 수정 판단, 수정)는 실제
-  모델이다.
+  실제 모델로 돌릴 때도 검사기 작성만 케이스의 답이다(real_checker_scripted). coverage를 묻기 전의
+  sonnet은 이 규칙에도 자기가 쓴 예시를 통과하는 Python AST 검사기를 써서(2026-11-20, 2/2) 규칙이 모델
+  판단까지 오지 않았다. coverage를 물은 뒤의 sonnet은 도구를 끈 평가에서 4/4 none으로 답했다(같은 날).
+  이 케이스의 실제 모델 실행은 그 뒤로 다시 돌리지 않아 real_checker_scripted를 그대로 둔다. 모델
+  판단부터의 경로(규칙 읽기, 모델 판단, 수정 판단, 수정)는 실제 모델이다.
 real_checker_scripted: true
 pipeline:
   fix:
@@ -35,18 +37,10 @@ model:
     - section: 코드 규칙 > 주석
       quote: "주석은 바로 아래 코드가 하는 일과 맞게 쓴다."
       checker:
-        body: |
-          id: comment-matches-code
-          language: python
-          severity: error
-          message: 주석은 코드가 하는 일과 맞게 쓴다
-          rule:
-            kind: lambda
-        examples:
-          - {code: "# 더한다\nx = a - b\n", violates: true, lines: [1]}
-          - {code: "# 비어 있으면 0\nreturn 1\n", violates: true, lines: [1]}
-          - {code: "# 뺀다\nx = a - b\n", violates: false, lines: []}
-          - {code: "x = 1\n", violates: false, lines: []}
+        body: ""
+        examples: []
+        coverage: none
+        uncovered: 주석이 말하는 일과 아래 코드가 하는 일이 같은지는 뜻을 읽어야 안다
       judge:
         - {file: orders/services/pricing.py, line: 9, quote: "# 할인을 뺀 금액을 돌려준다", why: 아래 코드는 할인을 빼지 않는다}
 fix:
@@ -61,7 +55,7 @@ fix:
 expect:
   violations: ["orders/services/pricing.py:9"]
   contains:
-    - "모델 판단 (예시를 통과하는 검사기를 만들지 못함)"
+    - "모델 판단 (검사기로 가릴 수 없는 규칙이라고 검사기 작성 모델이 답함: `주석이 말하는 일과 아래 코드가 하는 일이 같은지는 뜻을 읽어야 안다`)"
     - "모델 판단: 규칙 1개, hunk 1개"
   fix: ready
   fix_file: orders/services/pricing.py

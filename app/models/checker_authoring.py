@@ -13,7 +13,7 @@ import ast
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Final, Literal
+from typing import Final, Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, TypeAdapter
 
@@ -44,17 +44,27 @@ MAX_ATTEMPTS: Final = 3
 # 모델이 ast-grep으로 가릴 수 없다고 답하면 그다음 회차에 바로 바꾼다 (4.4, 11.1 2026-11-20).
 # 모델은 바꾸지 않는다: 세 회차 모두 `model.checker`다 (11.2 D7)
 AST_GREP_ATTEMPTS: Final = 2
+# 내용을 보는 규칙의 검사기가 예시 확인을 이만큼 통과하지 못하면 회차를 더 돌리지 않고 모델 판단으로
+# 보낸다 (4.4 "의미 규칙을 모델 판단으로 보내는 때", 11.2 D7). 경로 규칙은 MAX_ATTEMPTS까지 돈다
+EXAMPLE_FAILURES_TO_JUDGE: Final = 2
 MIN_VIOLATING: Final = 2
 MIN_PASSING: Final = 2
 MAX_MODEL_EXAMPLES: Final = 8
 
-# 검사하지 못한 이유. pr·human은 확인 대상이 코드 줄이 아닌 규칙(4.3), no_checker는 "읽었지만
-# 아직 검사하지 못하는 규칙"(모델 판단은 4단계)이다. 나머지는 저장하지 않으므로 다음 검사가
-# 다시 시도한다.
+# 검사하지 못한 이유. pr·human은 확인 대상이 코드 줄이 아닌 규칙(4.3), no_checker는 검사기를
+# 끝내 만들지 못한 경로 규칙이다(모델 판단으로 보내지 않는다, 4.5). 나머지는 저장하지 않으므로
+# 다음 검사가 다시 시도한다.
 # run_failed는 채택한 검사기가 이 PR의 파일에서 돌지 못한 것이다 (worker/detect.py)
 UncheckedKind = Literal[
     "pr", "human", "no_checker", "cap", "model_failed", "tool_unavailable", "run_failed"
 ]
+# 검사기 작성 모델의 답: 파일의 코드만 읽는 결정적 검사기가 이 규칙의 위반을 얼마나 가릴 수 있는지
+Coverage = Literal["all", "part", "none"]
+# 모델 판단으로 보낸 까닭 (4.4). none·part는 모델이 검사기로 다 가릴 수 없다고 답했고(검사기를
+# 돌리지 않는다), examples는 예시 확인을 EXAMPLE_FAILURES_TO_JUDGE번 통과하지 못했고, attempts는
+# 그 밖의 실패(답의 형식 등)로 MAX_ATTEMPTS회를 다 썼다
+JudgeRoute = Literal["none", "part", "examples", "attempts"]
+_JUDGE_ROUTES: Final[Mapping[str, JudgeRoute]] = {r: r for r in get_args(JudgeRoute)}
 
 
 @dataclass(frozen=True)
@@ -71,7 +81,18 @@ class Unchecked:
     detail: str
 
 
-RuleCheck = Checked | Unchecked
+@dataclass(frozen=True)
+class ToJudge:
+    """검사기를 채택하지 않고 모델이 바뀐 hunk를 직접 보게 할 규칙 (4.4의 3번, 4.5). 경로 규칙은
+    오지 않는다. detail은 none·part면 모델이 적은 "검사기로 가릴 수 없는 부분", 아니면 마지막
+    실패다."""
+
+    rule: Rule
+    route: JudgeRoute
+    detail: str
+
+
+RuleCheck = Checked | Unchecked | ToJudge
 
 _CHECKER: Final = TypeAdapter(Checker)
 
@@ -171,6 +192,17 @@ _COMMON: Final = """\
 이전 시도의 실패가 자료에 있으면 그 실패를 고친 새 검사기를 쓴다.
 규칙 중 코드를 읽어서는 가릴 수 없는 부분(실행해 봐야 아는 것, 코드 밖의 사정)만 무시하고, 파일의
 코드를 따져 가릴 수 있는 위반은 모두 잡는다.
+
+검사기로 가릴 수 있는 만큼(coverage): 검사기를 쓰기 전에, 파일의 코드만 읽는 결정적 검사기(ast-grep
+규칙이든 Python ast 스크립트든)가 이 규칙의 위반을 얼마나 가릴 수 있는지 정한다. 형식 하나로 안
+되는 것은 여기에 넣지 않는다.
+- all: 위반을 모두 코드의 모양(노드의 종류, 이름, 이름이 정의된 곳, 대입과 호출의 관계)으로 가릴 수
+  있다. 규칙의 낱말을 그런 모양으로 옮길 수 있으면 all이다.
+- part: 위반의 일부만 그렇게 가릴 수 있고, 나머지는 글이나 이름의 뜻을 읽어야 안다.
+- none: 뜻을 읽어야만 가릴 수 있어 어떤 모양으로도 가릴 수 없다.
+part나 none이면 이 규칙은 검사기 대신 모델이 바뀐 코드를 직접 읽어 판단하고, 네 검사기는 쓰지
+않는다. 그때 checker는 빈 문자열, examples는 빈 목록으로 둔다. uncovered에는 검사기로 가릴 수 없는
+부분을 한 줄로 적는다. all이면 uncovered는 빈 문자열이다.
 답은 주어진 JSON 스키마로만 한다. checker에는 검사기 본문만 넣고 ``` 표시를 붙이지 않는다."""
 
 SYSTEM_PROMPT: Final[Mapping[str, str]] = {
@@ -192,7 +224,9 @@ SYSTEM_PROMPT: Final[Mapping[str, str]] = {
 - ast-grep 규칙은 잡을 노드와 그 안팎의 노드 모양만 본다. 규칙이 덮는 모양 중 그것만으로 가릴 수
   없는 것이 있으면(이름이 파일의 어디에 정의됐는지, 앞에서 무엇을 대입했는지를 따져야 하는 경우
   등) 그 모양을 빼고 쓰지 않는다. 대신 unfit에 무엇을 가릴 수 없는지 한 줄로 적는다. 그러면 다음
-  시도는 같은 규칙을 Python ast 스크립트로 쓴다. 모두 가릴 수 있으면 unfit은 빈 문자열이다.""",
+  시도는 같은 규칙을 Python ast 스크립트로 쓴다. 모두 가릴 수 있으면 unfit은 빈 문자열이다.
+- unfit은 ast-grep 형식의 한계이고 coverage와 따로다. Python ast 스크립트로 모두 가릴 수 있으면
+  coverage는 all이다.""",
     "python-ast": _COMMON
     + """
 
@@ -255,18 +289,31 @@ ANSWER_SCHEMA: Final[Mapping[str, object]] = {
     "required": ["checker", "examples"],
     "properties": _ANSWER_PROPERTIES,
 }
-# ast-grep 회차만 unfit을 받는다. 다른 형식의 스키마는 그대로라 경로 패턴의 프롬프트 버전이
-# 바뀌지 않는다
+# 내용을 보는 검사기(ast-grep, Python AST)만 coverage를 받고, ast-grep 회차만 unfit을 받는다. 경로
+# 패턴의 스키마는 그대로라 그 프롬프트 버전이 바뀌지 않는다
+_CODE_PROPERTIES: Final[Mapping[str, object]] = {
+    **_ANSWER_PROPERTIES,
+    "coverage": {"type": "string", "enum": list(get_args(Coverage))},
+    "uncovered": {"type": "string"},
+}
+PYTHON_AST_SCHEMA: Final[Mapping[str, object]] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["checker", "examples", "coverage", "uncovered"],
+    "properties": _CODE_PROPERTIES,
+}
 AST_GREP_SCHEMA: Final[Mapping[str, object]] = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["checker", "examples", "unfit"],
-    "properties": {**_ANSWER_PROPERTIES, "unfit": {"type": "string"}},
+    "required": ["checker", "examples", "coverage", "uncovered", "unfit"],
+    "properties": {**_CODE_PROPERTIES, "unfit": {"type": "string"}},
 }
 
 
 def answer_schema(kind: CheckerKind) -> Mapping[str, object]:
-    return AST_GREP_SCHEMA if kind == "ast-grep" else ANSWER_SCHEMA
+    if kind == "ast-grep":
+        return AST_GREP_SCHEMA
+    return PYTHON_AST_SCHEMA if kind == "python-ast" else ANSWER_SCHEMA
 
 
 @dataclass(frozen=True)
@@ -356,6 +403,9 @@ class Answer(BaseModel):
     checker: str
     examples: list[AnswerExample] = []
     unfit: str = ""
+    # 스키마가 받는 형식(ast-grep, Python AST)만 낸다. 경로 패턴의 답에는 없어 all이다
+    coverage: Coverage = "all"
+    uncovered: str = ""
 
 
 _FENCE: Final = re.compile(r"^```[\w-]*\n(.*?)\n?```\s*$", re.DOTALL)
@@ -382,6 +432,9 @@ class Draft:
     # ast-grep 회차에서 모델이 그 형식으로 가릴 수 없다고 답한 이유. 있으면 돌리지 않고 다음 회차를
     # Python AST 스크립트로 한다
     unfit: str = ""
+    # 모델이 답한 검사기의 몫과 가릴 수 없는 부분. all이 아니면 돌리지 않고 모델 판단으로 보낸다
+    coverage: Coverage = "all"
+    uncovered: str = ""
 
 
 _DRAFT: Final = TypeAdapter(Draft)
@@ -509,6 +562,34 @@ def _lines(numbers: Sequence[int]) -> str:
 
 def _numbered(code: str) -> str:
     return "\n".join(f"{n:>3}| {line}" for n, line in enumerate(code.splitlines(), 1))
+
+
+# --- 모델 판단으로 보내는 때 (4.4 "의미 규칙을 모델 판단으로 보내는 때") ---
+
+
+def route_before_run(draft: Draft) -> JudgeRoute | None:
+    """예시에 돌리기 전에 정한다. 모델이 검사기로 일부만(part) 또는 전혀(none) 가릴 수 없다고 답한
+    초안은 돌리지 않고 그 규칙을 모델 판단으로 보낸다. "일부" 검사기는 혼자 채택하지 않으므로 같은
+    규칙을 검사기와 모델 판단이 둘 다 보는 일이 없다. unfit(ast-grep 형식만의 한계)은 여기서 보지
+    않는다."""
+    if draft.coverage == "part":
+        return "part"
+    if draft.coverage == "none":
+        return "none"
+    return None
+
+
+def judged_after_failures(rule: Rule, failures: int) -> bool:
+    """예시 확인을 failures번 통과하지 못한 규칙을 모델 판단으로 보내는지. 경로 규칙은 보내지 않는다
+    (MAX_ATTEMPTS까지 돌고 "검사하지 못한 규칙"으로 남는다)."""
+    return not looks_at_paths(rule) and failures >= EXAMPLE_FAILURES_TO_JUDGE
+
+
+def judge_route(value: str | None) -> JudgeRoute | None:
+    """`checkers.judge_route`에 저장한 값. 모르는 값은 attempts(옛 뜻: 회차를 다 씀)로 읽는다."""
+    if value is None:
+        return None
+    return _JUDGE_ROUTES.get(value, "attempts")
 
 
 def previous_body_feedback(draft: Draft) -> str:

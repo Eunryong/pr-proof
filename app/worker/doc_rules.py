@@ -17,6 +17,7 @@ from app.models.checker import TOOL_KINDS, Checker, tool_codes
 from app.models.checker_authoring import (
     Checked,
     RuleCheck,
+    ToJudge,
     Unchecked,
     checker_from_json,
     checker_key,
@@ -39,7 +40,7 @@ from app.models.doc_rules import (
 )
 from app.models.rag import Retrieval, merge_retrievals
 from app.models.repo_config import ModelSettings, RulesSettings
-from app.models.rule import checked_exclude, looks_at_paths
+from app.models.rule import checked_exclude
 from app.models.rule_reading import apply_disabled
 from app.models.tool_choice import choice_key
 from app.models.tools import RuffSetup, config_rule
@@ -143,11 +144,11 @@ def author(
 
 
 def _outcome(check: RuleCheck, models: ModelSettings, ruff: RuffSetup | None) -> RuleOutcome:
+    if isinstance(check, ToJudge):
+        # 검사기를 채택하지 않은 내용 규칙은 모델이 hunk를 직접 본다 (4.4의 3번). 경로 규칙은 오지
+        # 않는다 (worker/checkers.py)
+        return RuleJudged(check.rule, check.detail, check.route)
     if isinstance(check, Unchecked):
-        # 검사기 작성이 끝내 안 된 규칙은 모델이 hunk를 직접 본다 (4.4의 3번). 경로 규칙은 hunk가
-        # 아니라 파일 이름을 보므로 모델 판단으로 내려가지 않는다
-        if check.kind == "no_checker" and not looks_at_paths(check.rule):
-            return RuleJudged(check.rule, check.detail)
         return RuleUnchecked(check.rule, check.kind, check.detail)
     key = _saved_key(check, models, ruff)
     codes = tool_codes(check.checker.body) if check.checker.kind == "ruff" else ()
@@ -234,8 +235,8 @@ def judge(
             return o
         gap = result.gaps.get(o.rule.id)
         if gap is None:
-            return RuleJudged(o.rule, o.reason)
-        return RuleJudged(o.rule, o.reason, gap.pairs, gap.kind, gap.detail)
+            return RuleJudged(o.rule, o.reason, o.route)
+        return RuleJudged(o.rule, o.reason, o.route, gap.pairs, gap.kind, gap.detail)
 
     return replace(
         found, outcomes=tuple(judged(o) for o in found.outcomes),
@@ -259,7 +260,7 @@ def _saved_check(outcome: RuleOutcome, store: Store) -> RuleCheck:
     if isinstance(outcome, RuleUnchecked):
         return Unchecked(outcome.rule, outcome.kind, outcome.detail)
     if isinstance(outcome, RuleJudged):  # 도구·검사기로 다시 돌릴 것이 없다 (4.8의 5번)
-        return Unchecked(outcome.rule, "no_checker", outcome.reason)
+        return ToJudge(outcome.rule, outcome.route, outcome.reason)
     entry = store.saved_checker(outcome.checker.key)
     if entry is None or entry.checker_json is None:
         return Unchecked(outcome.rule, "run_failed", "저장한 검사기를 찾지 못함")
