@@ -24,6 +24,8 @@ from app.models.rule import CheckMethod, Rule, RuleSource
 from app.models.rule_reading import prompt_version
 from app.models.violation import Violation
 
+# 모델 수정 묶음 (DESIGN.md 4.9, 3.1의 C7). 브랜치는 pipeline/pr-<n>-fix-model
+MODEL_BUNDLE: Final = "model"
 MAX_SUMMARY_CHARS: Final = 1000
 MAX_WHY_CHARS: Final = 300
 MAX_CHANGES: Final = 200  # 설명의 changes 수. 넘으면 형식이 틀린 답으로 본다

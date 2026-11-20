@@ -7,21 +7,23 @@
   id)만 넣는다. 원본은 SQLite의 `records`다. 지워지면 `reindex`로 다시 만든다.
 
 chromadb, onnxruntime, tokenizers, numpy는 선택 의존성(`pip install pr-proof[rag]`)이라 이 모듈의
-함수 안에서만 import한다. `rag.enabled: false`인 검사는 이 모듈의 함수를 부르지 않으므로 넷 다
-import되지 않고 `chroma/` 폴더와 임베딩 모델도 만들어지지 않는다 (완료 기준 5-8).
+함수 안에서만 import한다. 검색이 꺼진 검사(`rag.enabled: off`, 기록이 기준에 못 미친 `auto`)는
+`switch_for`(SQLite만 읽음) 밖의 이 모듈 함수를 부르지 않으므로 넷 다 import되지 않고 `chroma/`
+폴더와 임베딩 모델도 만들어지지 않는다 (완료 기준 5-8).
 
 임베딩 모델은 `models/rag.py`의 `EMBED_MODELS`가 고정한 판(revision)의 파일만 https로 받아 SHA256을
 맞춰 본 뒤 `data_dir/models/`에 둔다 (위협 T30).
 """
 
 import hashlib
+import importlib.util
 import json
 import logging
 import os
 import tempfile
 import urllib.request
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final, Protocol
@@ -39,11 +41,21 @@ from app.models.rag import (
     text_of_record,
     with_prefix,
 )
+from app.models.rag_switch import (
+    AUTO_MIN_ATTEMPTS,
+    AUTO_MIN_BASELINE,
+    AUTO_MIN_RECORDS,
+    RagMode,
+    RagSwitch,
+    decide,
+)
 from app.models.repo_config import RagSettings
 from app.worker.state import Store
 
 log = logging.getLogger(__name__)
 
+# 선택 의존성 `[rag]` (pyproject.toml). 검색을 켜야 할 때 있는지만 본다
+RAG_MODULES: Final = ("chromadb", "onnxruntime", "tokenizers", "numpy")
 CHROMA_DIR: Final = "chroma"
 MODEL_DIR: Final = "models"
 INDEX_BATCH: Final = 32
@@ -342,6 +354,47 @@ def reindex(
     return out
 
 
+# --- 검색을 켤지 (6.7 "검색을 켜는 조건") ---
+
+
+def missing_extras(modules: Sequence[str] = RAG_MODULES) -> bool:
+    """선택 의존성 `[rag]`가 없는지. 모듈을 import하지 않고 찾기만 한다."""
+    for name in modules:
+        try:
+            if importlib.util.find_spec(name) is None:
+                return True
+        except (ImportError, ValueError):
+            return True
+    return False
+
+
+def switch_for(
+    store: Store,
+    repo: str,
+    mode: RagMode,
+    *,
+    min_records: int = AUTO_MIN_RECORDS,
+    min_attempts: int = AUTO_MIN_ATTEMPTS,
+    min_baseline: int = AUTO_MIN_BASELINE,
+    extras_missing: Callable[[], bool] = missing_extras,
+) -> RagSwitch:
+    """이 검사의 검색 상태. auto는 SQLite의 숫자만 읽는다(임베딩 모델과 Chroma를 열지 않는다).
+    auto가 채택률 비교로 끄면 그 사실을 남겨 워커를 다시 띄워도 꺼진 채다. 켜야 하는데 선택
+    의존성이 없으면 검색 없이 검사하도록 표시한다."""
+    evidence = turned_off = None
+    if mode == "auto":
+        turned_off = store.rag_turned_off(repo, min_attempts, min_baseline)
+        evidence = store.rag_evidence(repo) if turned_off is None else None
+    switch = decide(mode, evidence, turned_off, min_records=min_records,
+                    min_attempts=min_attempts, min_baseline=min_baseline)  # fmt: skip
+    if switch.why == "worse" and turned_off is None and switch.evidence is not None:
+        store.turn_rag_off(repo, switch.evidence, min_attempts, min_baseline)
+        log.info("auto가 검색을 끔 %s: %s", repo, switch.evidence)
+    if switch.wanted and extras_missing():
+        return replace(switch, missing_extras=True)
+    return switch
+
+
 # --- 쓰는 곳의 입구 (6.6의 4–6번) ---
 
 
@@ -423,8 +476,8 @@ def open_retriever(
     data_dir: Path, db: Store, repo: str, settings: RagSettings, spec: EmbedModel,
     download: Downloader = _download,
 ) -> Retriever:  # fmt: skip
-    """`rag.enabled`인 검사의 검색. 임베딩 모델을 받고(처음 한 번) 벡터 저장소를 연다. 받지 못하면
-    검색 없이 계속하도록 error가 채워진 Retriever를 돌려준다."""
+    """검색이 켜진 검사(`switch_for`)의 검색. 임베딩 모델을 받고(처음 한 번) 벡터 저장소를 연다.
+    받지 못하면 검색 없이 계속하도록 error가 채워진 Retriever를 돌려준다."""
     vectors = VectorStore(data_dir / CHROMA_DIR, spec.name, spec.dim)
     try:
         folder = ensure_model(data_dir / MODEL_DIR, spec, download)

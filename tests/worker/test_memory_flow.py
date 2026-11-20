@@ -13,10 +13,10 @@ from typing import Final
 import pytest
 
 from app.models import model_fix as model_fix_rules
-from app.models.repo_config import RagSettings, RepoConfig
-from app.worker import memory
+from app.models.repo_config import FixSettings, RagSettings, RepoConfig
+from app.worker import main, memory
 
-from .rag_helpers import FAKE_SPEC, FakeEncoder, record
+from .rag_helpers import FAKE_SPEC, FakeEncoder, fix_outcomes, record
 from .test_doc_rules_flow import (  # noqa: F401
     FakeModel,
     doc_env,
@@ -29,6 +29,7 @@ from .test_model_fix_flow import (  # noqa: F401
     FIX_LINE_2,
     RID,
     FakeFixer,
+    _command,
     _comment,
     _explanation,
     first_fix_then_skip,
@@ -37,7 +38,7 @@ from .test_model_fix_flow import (  # noqa: F401
     use_fixer,
 )
 
-ON: Final = RepoConfig(rag=RagSettings(enabled=True, min_similarity=0.9, max_records=3))
+ON: Final = RepoConfig(rag=RagSettings(enabled="on", min_similarity=0.9, max_records=3))
 CONTEXT: Final = "x = 1\nprint(x)\nprint(x + 1)"
 HEAVY: Final = ("chromadb", "onnxruntime", "tokenizers")
 
@@ -56,8 +57,8 @@ def _fake_retriever(env, encoder: FakeEncoder | None = None) -> list[Path]:
 
 
 def test_search_off_touches_nothing(fix_env, tmp_path: Path) -> None:  # noqa: F811
-    """5-8: `rag.enabled: false`(기본)면 chroma 폴더도 임베딩 모델도 없고 chromadb를 import하지
-    않는다. import하려 하면 실패하도록 막고 돌린다."""
+    """5-8: 기본 설정(`auto`)에 채택·거절 기록이 20건 미만이면 chroma 폴더도 임베딩 모델도 없고
+    chromadb를 import하지 않는다. import하려 하면 실패하도록 막고 돌린다."""
     for name in HEAVY:
         fix_env["monkeypatch"].setitem(sys.modules, name, None)
     for r in (record("adopted", 1, context=CONTEXT),):
@@ -72,7 +73,103 @@ def test_search_off_touches_nothing(fix_env, tmp_path: Path) -> None:  # noqa: F
     assert opened == []
     assert not (data / memory.CHROMA_DIR).exists() and not (data / memory.MODEL_DIR).exists()
     assert all(r.embedded_at is None for r in fix_env["deps"].store.records("o/r"))
-    assert "참고한 과거 기록" not in _comment(fix_env)
+    comment = _comment(fix_env)
+    assert "참고한 과거 기록" not in comment
+    assert "검색: 꺼짐 (자동, 채택·거절 기록 1/20건)" in comment
+    assert state["rag_switch"].why == "few_records"
+
+
+def _twenty_records(store) -> None:
+    for n in range(20):
+        store.add_record(record("adopted" if n % 2 else "rejected", n, context=CONTEXT))
+
+
+def test_auto_turns_search_on_at_twenty_records(fix_env, tmp_path: Path) -> None:  # noqa: F811
+    """auto는 그 저장소의 채택·거절 기록이 20건이 되면 검색을 켠다. 첫 검사에서 폴더가 생기고 밀린
+    기록이 임베딩되며 코멘트에 상태와 숫자가 나온다."""
+    pytest.importorskip("chromadb")
+    store = fix_env["deps"].store
+    _twenty_records(store)
+    use_model(fix_env, FakeModel(rule_answer(print_rule()), decide=first_fix_then_skip))
+    use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation(("orders/a.py", 2))]))
+    opened = _fake_retriever(fix_env)
+    run(fix_env, tmp_path)
+
+    assert opened == [fix_env["deps"].settings.data_dir]
+    pending = [r for r in store.records("o/r") if r.kind in ("adopted", "rejected")]
+    assert len(pending) == 20 and all(r.embedded_at is not None for r in pending)
+    assert "검색: 켜짐 (자동, 채택·거절 기록 20/20건. 수정안 채택률 넣음 0/0, 넣지 않음 0/0. " \
+           "넣음 30건, 넣지 않음 10건부터 비교)" in _comment(fix_env)  # fmt: skip
+
+
+def test_auto_without_the_extras_keeps_checking_without_search(fix_env, tmp_path: Path) -> None:  # noqa: F811
+    """auto가 켜야 하는데 선택 의존성 `[rag]`가 없으면 검사를 실패시키지 않고 검색 없이 끝까지
+    가며(수정안까지), 코멘트에 그 사실을 적는다."""
+    for name in HEAVY:
+        fix_env["monkeypatch"].setitem(sys.modules, name, None)
+    _twenty_records(fix_env["deps"].store)
+    use_model(fix_env, FakeModel(rule_answer(print_rule()), decide=first_fix_then_skip))
+    use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation(("orders/a.py", 2))]))
+    opened = _fake_retriever(fix_env)
+    state = run(fix_env, tmp_path)
+
+    assert state["model_fix"].ready
+    assert opened == []
+    data = fix_env["deps"].settings.data_dir
+    assert not (data / memory.CHROMA_DIR).exists() and not (data / memory.MODEL_DIR).exists()
+    assert ("검색: 꺼짐 (자동, 채택·거절 기록 20/20건. 수정안 채택률 넣음 0/0, 넣지 않음 0/0. "
+            "넣음 30건, 넣지 않음 10건부터 비교). 켜야 하지만 선택 의존성 `pr-proof[rag]`이 "
+            "설치되지 않아 검색 없이 검사함") in _comment(fix_env)  # fmt: skip
+
+
+def test_auto_turns_search_off_when_search_lowers_adoption(fix_env, tmp_path: Path) -> None:  # noqa: F811
+    """검색으로 기록을 넣은 수정안 30건의 채택률(9/30)이 넣지 않은 30건(10/30)보다 낮으면 auto가
+    검색을 끄고 그 사실을 SQLite에 남긴다. 검색 함수는 부르지 않는다."""
+    for name in HEAVY:
+        fix_env["monkeypatch"].setitem(sys.modules, name, None)
+    store = fix_env["deps"].store
+    _twenty_records(store)
+    nxt = fix_outcomes(store, 100, 30, adopted=9, references="[1]")
+    fix_outcomes(store, nxt, 30, adopted=10, references=None)
+    use_model(fix_env, FakeModel(rule_answer(print_rule()), decide=first_fix_then_skip))
+    use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation(("orders/a.py", 2))]))
+    opened = _fake_retriever(fix_env)
+    state = run(fix_env, tmp_path)
+
+    assert state["model_fix"].ready and opened == []
+    assert store.rag_turned_off("o/r", 30, 10) is not None
+    assert ("검색: 꺼짐 (자동, 검색으로 기록을 넣은 수정안의 채택률이 낮음. 넣음 9/30, 넣지 않음 "
+            "10/30). 다시 켜려면 `rag.enabled: on`") in _comment(fix_env)  # fmt: skip
+
+
+def test_resumed_fix_uses_the_search_state_of_its_check(fix_env, tmp_path: Path) -> None:  # noqa: F811
+    """검색 상태는 규칙 읽기에서 한 번 정해 thread에 남는다. 승인을 기다리는 동안 기록이 20건이
+    되어도 `/fix model`로 이은 수정(새 프로세스)은 그 검사의 상태(꺼짐)를 쓰고 코멘트도 같다."""
+    use_config(fix_env, RepoConfig(fix=FixSettings(require_approval=True)))
+    use_model(fix_env, FakeModel(rule_answer(print_rule()), decide=first_fix_then_skip))
+    use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation(("orders/a.py", 2))]))
+    opened = _fake_retriever(fix_env)
+    run(fix_env, tmp_path)
+    assert "검색: 꺼짐 (자동, 채택·거절 기록 0/20건)" in _comment(fix_env)
+
+    _twenty_records(fix_env["deps"].store)
+    assert main.handle(_command("/fix model", 71), fix_env["deps"]) == "fix:ready"
+    assert opened == []
+    assert "검색: 꺼짐 (자동, 채택·거절 기록 0/20건)" in _comment(fix_env)
+
+
+def test_off_ignores_enough_records(fix_env, tmp_path: Path) -> None:  # noqa: F811
+    for name in HEAVY:
+        fix_env["monkeypatch"].setitem(sys.modules, name, None)
+    _twenty_records(fix_env["deps"].store)
+    use_config(fix_env, RepoConfig(rag=RagSettings(enabled="off")))
+    use_model(fix_env, FakeModel(rule_answer(print_rule()), decide=first_fix_then_skip))
+    use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation(("orders/a.py", 2))]))
+    opened = _fake_retriever(fix_env)
+    run(fix_env, tmp_path)
+
+    assert opened == []
+    assert "검색: 꺼짐 (`rag.enabled: off`)" in _comment(fix_env)
 
 
 def test_first_search_check_embeds(fix_env, tmp_path: Path) -> None:  # noqa: F811

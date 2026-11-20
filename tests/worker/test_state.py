@@ -6,10 +6,13 @@ from sqlalchemy import create_engine, inspect, text
 
 from app.models import state_keys
 from app.models.access import Author
-from app.models.db import SeenViolation
+from app.models.db import FixAttempt, SeenViolation
 from app.models.job import PRJob
+from app.models.rag_switch import Evidence, Outcomes
 from app.models.records import NewRecord
 from app.worker.state import Store
+
+from .rag_helpers import fix_outcome, record
 
 
 @pytest.fixture
@@ -217,3 +220,70 @@ def test_approval_is_recorded_once_per_comment(store: Store) -> None:
     store.add_approval("o/r", 2, "b" * 40, "maintainer", 10)
     assert store.approved_shas("o/r", 1) == {"a" * 40}
     assert store.approved_shas("o/r", 3) == set()
+
+
+def test_rag_evidence_counts_this_repos_adopted_and_rejected_records(store: Store) -> None:
+    for n, kind in enumerate(["adopted", "rejected", "adopted", "failed", "checker"]):
+        store.add_record(record(kind, n))
+    store.add_record(record("adopted", 9, repo="o/other"))
+    store.add_record(NewRecord(
+        repo="o/r", kind="adopted", origin="author_commit", source_id="seen:h:v",
+        rule_id="R-1", rule_text="규칙", file="a.py", line_text="x", context="", diff="",
+    ))  # fmt: skip
+    assert store.rag_evidence("o/r") == Evidence(4)  # 수정안 PR 셋과 작성자 커밋 하나
+    assert store.rag_evidence("o/other") == Evidence(1)
+    assert store.rag_evidence("o/none") == Evidence(0)
+
+
+def test_rag_evidence_reads_fix_pull_request_outcomes_of_this_repo(store: Store) -> None:
+    fix_outcome(store, 1, "merged", "[5]")
+    fix_outcome(store, 2, "rejected", "[5]")
+    fix_outcome(store, 3, "merged", None)
+    fix_outcome(store, 4, "open", None)
+    fix_outcome(store, 5, "superseded", "[5]")
+    fix_outcome(store, 6, "merged", None, bundle="mechanical")
+    fix_outcome(store, 7, "merged", "[5]", repo="o/other")
+    store.save_fix_attempt(FixAttempt(  # 수정안 PR이 없는 시도 (검증 실패)
+        repo="o/r", pr_number=8, head_sha="h", merge_base="m", bundle="model", status="failed",
+        attempts=3, models_json="[]", targets_json="[]", references_json="[5]",
+    ))  # fmt: skip
+    assert store.rag_evidence("o/r") == Evidence(0, Outcomes(1, 2), Outcomes(1, 1))
+    assert store.rag_evidence("o/other") == Evidence(0, Outcomes(1, 1), Outcomes(0, 0))
+
+
+def test_turned_off_is_one_row_per_repo_and_bound_to_the_comparison_threshold(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "pipeline.db"
+    store = Store(path, fakeredis.FakeStrictRedis())
+    first = Evidence(25, Outcomes(9, 30), Outcomes(10, 30))
+    assert store.rag_turned_off("o/r", 30, 10) is None
+    store.turn_rag_off("o/r", first, 30, 10)
+    store.turn_rag_off("o/r", first, 30, 10)  # 다시 불려도 한 줄
+    # 워커를 다시 띄운 것과 같다: 새 연결이 같은 사실을 읽는다
+    again = Store(path, fakeredis.FakeStrictRedis())
+    assert again.rag_turned_off("o/r", 30, 10) == first
+    assert again.rag_turned_off("o/r", 40, 10) is None  # 기준값을 바꾸면 다시 정한다
+    assert again.rag_turned_off("o/r", 30, 5) is None
+    assert again.rag_turned_off("o/other", 30, 10) is None
+    with again.engine.connect() as conn:
+        assert conn.execute(text("SELECT count(*) FROM rag_auto_off")).scalar() == 1
+
+
+def test_existing_database_gets_rag_auto_off_and_keeps_its_rows(tmp_path: Path) -> None:
+    """이 작업 전의 데이터베이스(`rag_auto_off` 없음)를 그대로 연다. 있던 기록은 남고 auto가 그
+    기록을 센다."""
+    path = tmp_path / "pipeline.db"
+    store = Store(path, fakeredis.FakeStrictRedis())
+    for n in range(3):
+        store.add_record(record("adopted", n))
+    fix_outcome(store, 1, "merged", "[1]")
+    old = create_engine(f"sqlite:///{path}")
+    with old.begin() as conn:
+        conn.execute(text("DROP TABLE rag_auto_off"))
+    old.dispose()
+
+    store = Store(path, fakeredis.FakeStrictRedis())
+    assert "rag_auto_off" in inspect(store.engine).get_table_names()
+    assert store.rag_evidence("o/r") == Evidence(3, Outcomes(1, 1), Outcomes(0, 0))
+    assert store.rag_turned_off("o/r", 30, 10) is None

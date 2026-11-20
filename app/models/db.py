@@ -227,6 +227,28 @@ class FixAttempt(SQLModel, table=True):
     references_json: str | None = None
 
 
+class RagAutoOff(SQLModel, table=True):
+    """`rag.enabled: auto`가 검색을 다시 끈 저장소 (DESIGN.md 6.7 "검색을 켜는 조건").
+
+    검색을 붙인 수정안의 채택률이 낮았던 때의 숫자를 남긴다. 이 줄이 있는 동안 auto는 검색을 켜지
+    않는다(끄면 검색을 붙인 쪽의 숫자가 더 늘지 않아, 숫자만으로 다시 정하면 같은 근거로 켜고 끄기를
+    되풀이한다). 비교 기준값(min_attempts, min_baseline)이 바뀌면 이 줄은 쓰지 않고 다시 정한다.
+    저장소마다 한 줄.
+    """
+
+    __tablename__ = "rag_auto_off"
+
+    repo: str = Field(primary_key=True)
+    min_attempts: int  # 끈 때의 비교 기준값 (검색을 넣은 쪽)
+    min_baseline: int  # 끈 때의 견줄 쪽 최소 수
+    records: int
+    with_adopted: int
+    with_known: int
+    without_adopted: int
+    without_known: int
+    created_at: datetime
+
+
 class SeenViolation(SQLModel, table=True):
     """검사 한 번에서 찾은 문서 규칙 위반 (DESIGN.md 7.8의 `violations`). 다음 커밋의 검사가
     "작성자가 직접 고침"을 알아내는 데 쓴다. 같은 커밋을 다시 검사하면 그 커밋의 줄을 바꿔 쓴다."""

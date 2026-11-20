@@ -42,6 +42,7 @@ from app.models import fix as fix_models
 from app.models import fix_decision as fix_decision_models
 from app.models import model_fix as model_fix_models
 from app.models import rag as rag_models
+from app.models import rag_switch as rag_switch_models
 from app.models.checker_authoring import Checked
 from app.models.doc_rules import DocRules, Found, RuleOutcome, RulesRead
 from app.models.fix import MECHANICAL_BUNDLE, MechanicalFix
@@ -51,6 +52,7 @@ from app.models.model_fix import ModelFix, Picked
 from app.models.ops_alert import Alert
 from app.models.proposal import SECRET_BLOCKED, ProposalResult
 from app.models.rag import E5_SMALL, EMBED_MODELS, Retrieval
+from app.models.rag_switch import RagSwitch
 from app.models.repo_config import call_limits
 from app.models.test_run import PytestRun
 from app.notify import slack
@@ -122,6 +124,7 @@ _STATE_TYPES: Final = (
     *model_fix_models.STATE_TYPES,
     *fix_models.STATE_TYPES,
     *rag_models.STATE_TYPES,
+    *rag_switch_models.STATE_TYPES,
 )
 
 
@@ -159,6 +162,7 @@ class FlowState(TypedDict, total=False):
     rules_read: RulesRead  # 규칙 읽기 → 검사 방법 정하기 → 위반 찾기 사이에만 쓴다
     rule_checks: tuple[RuleOutcome, ...]
     checker_retrievals: tuple[Retrieval, ...]  # 검사기 작성에 넣은 과거 기록 (Found로 옮긴다)
+    rag_switch: RagSwitch  # 이 검사의 검색 상태와 이유 (규칙 읽기에서 정함, 6.7)
     doc_rules: DocRules  # 규칙 경로의 결과. 코멘트의 규칙 절은 이 값으로만 그린다
     fix_decisions: Decided  # 위반마다 수정 판단 (테스트 뒤, 4.6)
     mechanical_fix: MechanicalFix | None  # 기계적 수정 묶음의 결과. 수정안 PR은 proposals에
@@ -264,7 +268,16 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
         enter_checkout(state["job"])
         return {}
 
-    def doc_runtime(job: PRJob) -> DocRuntime:
+    def rag_switch(state: FlowState) -> RagSwitch:
+        """이 검사의 검색 상태. 규칙 읽기에서 한 번 정해 상태에 두고, 재개한 프로세스도 그 값을
+        쓴다. 상태에 없으면(이 값이 생기기 전의 체크포인트) 지금 정한다 (6.7)."""
+        saved = state.get("rag_switch")
+        if saved is not None:
+            return saved
+        return memory.switch_for(ctx.store, state["job"].repo, ctx.base.repo.rag.enabled)
+
+    def doc_runtime(state: FlowState) -> DocRuntime:
+        job = state["job"]
         if ctx.doc_runtime is None:
             models = ctx.base.repo.model
             limits = call_limits(models.calls, **ctx.call_maxima.model_dump())
@@ -278,19 +291,18 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
                 ),
                 ruff=ctx.base.ruff,
                 disabled=frozenset(ctx.base.repo.rules.disabled),
-                retriever=retriever_for(job),
+                retriever=retriever_for(job, rag_switch(state)),
                 secrets=tuple(proposal.pipeline_secrets()),
             )
         return ctx.doc_runtime
 
-    def retriever_for(job: PRJob) -> memory.Retriever | None:
-        """`rag.enabled`인 저장소만 검색한다 (6.5). 꺼져 있으면 memory의 함수를 부르지 않으므로
+    def retriever_for(job: PRJob, switch: RagSwitch) -> memory.Retriever | None:
+        """검색이 켜진 검사만 검색한다 (6.5, 6.7). 꺼져 있으면 memory의 검색 함수를 부르지 않으므로
         chromadb도 임베딩 모델도 쓰지 않는다 (완료 기준 5-8)."""
-        rag = ctx.base.repo.rag
-        if not rag.enabled:
+        if not switch.on:
             return None
         return memory.open_retriever(
-            ctx.data_dir, ctx.store, job.repo, rag, EMBED_MODELS[ctx.rag_model]
+            ctx.data_dir, ctx.store, job.repo, ctx.base.repo.rag, EMBED_MODELS[ctx.rag_model]
         )
 
     def doc_rules_done(result: DocRules) -> FlowState:
@@ -302,20 +314,21 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
         job = state["job"]
         progress(job, "규칙 읽기")
         ctx.first_call = doc_rules.last_call_id(ctx.store, job.repo, job.pr_number)
-        rt = doc_runtime(job)
+        switch = rag_switch(state)
+        rt = doc_runtime({**state, "rag_switch": switch})
         if rt.retriever is not None:  # 검색을 켠 첫 검사에서 폴더를 만들고 밀린 기록을 넣는다 (6.5)
             rt.retriever.prepare()
         read = doc_rules.read(ctx.worktree, job.base_sha, ctx.base.repo.rules, rt, ctx.changes_diff)
         if isinstance(read, RulesRead):
-            return {"rules_read": read}
-        return doc_rules_done(read)
+            return {"rules_read": read, "rag_switch": switch}
+        return {**doc_rules_done(read), "rag_switch": switch}
 
     def author_checkers(state: FlowState) -> FlowState:
         """규칙마다 도구나 검사기를 정하거나 저장한 것을 쓴다 (5.1 plan_checks, author_checker)."""
         job = state["job"]
         used: list[Retrieval] = []
         outcomes = doc_rules.author(
-            state["rules_read"], doc_runtime(job), is_stale=lambda: ctx.store.is_stale(job),
+            state["rules_read"], doc_runtime(state), is_stale=lambda: ctx.store.is_stale(job),
             on_retrieval=used.append,
         )  # fmt: skip
         if isinstance(outcomes, tuple):
@@ -324,10 +337,9 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
 
     def detect_rules(state: FlowState) -> FlowState:
         """채택한 도구와 검사기를 PR이 바꾼 파일에 돌린다 (5.1 detect). 바뀐 줄의 위반만 남긴다."""
-        job = state["job"]
         result = doc_rules.find(
             state["rules_read"], state["rule_checks"], ctx.worktree, ctx.changes_diff,
-            doc_runtime(job), since_call=ctx.first_call,
+            doc_runtime(state), since_call=ctx.first_call,
             retrievals=state.get("checker_retrievals", ()),
         )  # fmt: skip
         return doc_rules_done(result)
@@ -345,7 +357,7 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
         if any(isinstance(o, doc_rule_models.RuleJudged) for o in result.outcomes):
             progress(job, "모델 판단")
             result = doc_rules.judge(
-                result, ctx.worktree, ctx.changes_diff, doc_runtime(job),
+                result, ctx.worktree, ctx.changes_diff, doc_runtime(state),
                 is_stale=lambda: ctx.store.is_stale(job),
             )  # fmt: skip
         result = records.mark_rejected(ctx.store, job, result)
@@ -387,7 +399,7 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
             return {}
         ensure_checkout(job)  # `/fix`가 다시 돌릴 때는 새 프로세스다
         progress(job, "수정 판단")
-        rt, run = doc_runtime(job), state["test_run"]
+        rt, run = doc_runtime(state), state["test_run"]
         decided = decide.decide(
             found, SafetyNet(run.status, flaky=bool(run.flaky)), ctx.changes_diff,
             require_covered=ctx.base.repo.fix.require_covered, store=rt.store,
@@ -449,6 +461,7 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
             checkers=doc_rules.shown_checkers(state.get("doc_rules"), ctx.store),
             decisions=state.get("fix_decisions"),
             fixes={b: v for b in BUNDLES if (v := fix_view(state, b)) is not None},
+            rag=state.get("rag_switch"),
         )
 
     def comment(state: FlowState) -> FlowState:
@@ -493,7 +506,7 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
         picked = targets(state, MECHANICAL)
         fresh_worktree(job)
         progress(job, "기계적 수정")
-        rt = doc_runtime(job)
+        rt = doc_runtime(state)
         notes = model_fix.notes_for(found, picked, ctx.worktree)
         outcome = mechanical_fix.fix_violations(
             found, picked, worktree=ctx.worktree, merge_base=ctx.merge_base,
@@ -539,7 +552,7 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
         picked = targets(state, MODEL)
         fresh_worktree(job)
         progress(job, "모델 수정")
-        rt = doc_runtime(job)
+        rt = doc_runtime(state)
         budget = rt.budget.with_targets(open_targets(state["fix_decisions"].decisions))
         checks = doc_rules.saved_checks(found, rt.store)
         tools = model_fix.FixTools(

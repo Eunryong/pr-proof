@@ -30,6 +30,7 @@ from app.models.fix_decision import Decided, FixDecision
 from app.models.model_fix import ModelFix
 from app.models.proposal import ProposalResult
 from app.models.rag import KIND_LABEL, SITE_LABEL, Retrieval, merge_retrievals
+from app.models.rag_switch import RagSwitch, describe
 from app.models.rule import Rule
 from app.models.violation import Violation
 from app.worker.markdown import code_fence, inline_code
@@ -157,11 +158,13 @@ def section(
     checkers: Mapping[str, Checker],
     decisions: Decided | None = None,
     fixes: Mapping[str, FixView] | None = None,
+    rag: RagSwitch | None = None,
 ) -> list[str]:
     """규칙 절의 줄들 ("규칙:" 줄 아래). checkers는 위반을 찾은 검사기의 {CheckerRef.key: 검사기}다.
 
     decisions는 테스트 뒤의 수정 판단이다. 아직 없으면(테스트 전에 끝남) 판단 없이 그린다.
     fixes는 묶음(mechanical, model)마다의 수정 상태다. 그 묶음으로 정한 위반이 없으면 없다.
+    rag는 이 검사의 검색 상태다. 규칙을 찾은 검사에서 참고 기록 블록 앞에 한 줄로 보인다.
     """
     match result:
         case None | NotRun():
@@ -175,7 +178,7 @@ def section(
         case NoRulesFound():
             return ["", HOW_TO_WRITE]
         case Found():
-            return _found(result, checkers, decisions, fixes or {})
+            return _found(result, checkers, decisions, fixes or {}, rag)
 
 
 def _found(
@@ -183,6 +186,7 @@ def _found(
     checkers: Mapping[str, Checker],
     decisions: Decided | None,
     fixes: Mapping[str, FixView],
+    rag: RagSwitch | None = None,
 ) -> list[str]:
     head = (
         ["", f"규칙 문서를 읽지 못해 도구 설정의 규칙만 검사함 "
@@ -202,7 +206,7 @@ def _found(
         _capped(found.outcomes),
         _other_targets(found.outcomes),
         _checker_details(found, checkers),
-        references_block(_retrievals(found, decisions, fixes)),
+        references_block(_retrievals(found, decisions, fixes), rag),
         _read_rules(found),
     ]
     budget = MAX_SECTION_CHARS - _size(head) - _size(tail)
@@ -635,17 +639,18 @@ def _retrievals(
     return merge_retrievals(items)
 
 
-def references_block(retrievals: Sequence[Retrieval]) -> list[str]:
-    """참고한 과거 기록 (6.6 끝, 4.9). 건마다 종류, 원래 PR과 수정안 PR의 번호, 규칙 id, 유사도,
-    쓰인 단계. diff는 넣지 않는다(그 PR에 있다). 기준값에 못 미쳐 버린 후보는 개수만 적는다.
-    검색을 켜지 않았으면 retrievals가 비어 아무것도 그리지 않는다."""
+def references_block(retrievals: Sequence[Retrieval], rag: RagSwitch | None = None) -> list[str]:
+    """검색 상태 한 줄(rag, 6.7)과 참고한 과거 기록 (6.6 끝, 4.9). 건마다 종류, 원래 PR과 수정안
+    PR의 번호, 규칙 id, 유사도, 쓰인 단계. diff는 넣지 않는다(그 PR에 있다). 기준값에 못 미쳐
+    버린 후보는 개수만 적는다. 검색을 켜지 않았으면 retrievals가 비어 상태 줄만 그린다."""
+    status = ["", describe(rag)] if rag is not None else []
     rows = [(r, ref) for r in retrievals for ref in r.references]
     below = [(r.site, r.below) for r in retrievals if r.below]
     errors = sorted({r.error for r in retrievals if r.error})
     if not rows and not below and not errors:
-        return []
+        return status
     distinct = len({ref.record_id for _, ref in rows})
-    lines = ["", f"<details><summary>참고한 과거 기록 {distinct}건</summary>", ""]
+    lines = [*status, "", f"<details><summary>참고한 과거 기록 {distinct}건</summary>", ""]
     for r, ref in rows[:MAX_REFERENCES]:
         line = f"- 기록 {ref.record_id} · {KIND_LABEL.get(ref.kind, ref.kind)}"
         if ref.pr_number is not None:
