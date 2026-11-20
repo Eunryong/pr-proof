@@ -39,7 +39,7 @@ OLD_ROW: Final = (
 
 @pytest.fixture
 def deploy(tmp_path: Path, monkeypatch):
-    """운영자의 설정 폴더 대신 임시 폴더. 워커는 preflight를 지나고 큐를 기다리는 자리에서 멈춘다."""
+    """운영자의 설정 폴더 대신 임시 폴더. 워커는 preflight를 지나 큐를 기다리는 자리에서 멈춘다."""
     config_dir, data_dir = tmp_path / "config", tmp_path / "data"
     config_dir.mkdir()
     (config_dir / "config.yaml").write_text(f"repos: [o/r]\ndata_dir: {data_dir}\n")
@@ -159,15 +159,13 @@ def test_start_up_keeps_existing_rows(deploy) -> None:
 def test_unwritable_db_path_stops_the_worker_loudly(deploy, caplog) -> None:
     locked = deploy["data_dir"].parent / "locked"
     locked.mkdir(mode=0o500)
-    settings = deploy["settings"].model_copy(update={"data_dir": locked / "data"})
-    (Path(config.config_dir()) / "config.yaml").write_text(
-        f"repos: [o/r]\ndata_dir: {settings.data_dir}\n"
-    )
+    data_dir = locked / "data"
+    (config.config_dir() / "config.yaml").write_text(f"repos: [o/r]\ndata_dir: {data_dir}\n")
     try:
         assert main.main() == 1
     finally:
         locked.chmod(0o700)
-    _assert_refused(deploy, caplog, settings.db_path)
+    _assert_refused(deploy, caplog, data_dir / "pipeline.db")
 
 
 def test_column_the_upgrader_refuses_stops_the_worker_loudly(deploy, caplog) -> None:
@@ -185,4 +183,3 @@ def _assert_refused(deploy, caplog, db_path: Path) -> None:
     (record,) = [r for r in caplog.records if r.levelno == logging.ERROR]
     assert record.getMessage() == f"DB 스키마를 맞추지 못해 워커를 시작하지 않는다: {db_path}"
     assert record.exc_info is not None
-
