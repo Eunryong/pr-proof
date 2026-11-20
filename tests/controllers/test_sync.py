@@ -10,8 +10,7 @@ from app import config
 from app.controllers import sync
 from app.models import state_keys
 from app.models.job import PRJob
-from app.models.ops_alert import Alert
-from app.notify import slack
+from app.models.ops_alert import TEXT
 from app.services.github import GitHubReadError, OpenPR, PRComment
 from app.services.history import History
 from app.worker.state import Store
@@ -29,14 +28,6 @@ def env(tmp_path: Path):
         "store": Store(settings.db_path, redis),
         "history": History(settings.db_path),
     }
-
-
-@pytest.fixture
-def alerts(monkeypatch) -> list[Alert]:
-    """보낸 운영 알림. 보내기 자체는 tests/notify/test_slack.py가 본다."""
-    sent: list[Alert] = []
-    monkeypatch.setattr(slack, "send", lambda alert, redis, **kw: sent.append(alert) or "sent")
-    return sent
 
 
 def _pr(number: int = 1, head: str = HEAD, ref: str = "feature") -> OpenPR:
@@ -116,12 +107,12 @@ def test_env_error_waits_for_backoff(env) -> None:
     assert _sync(env, [_pr()], now=later).enqueued == [("o/r", 1, "env_error_backoff")]
 
 
-def test_dead_worker_job_key_is_cleared_and_requeued(env, alerts) -> None:
+def test_dead_worker_job_key_is_cleared_and_requeued(env, notifications) -> None:
     env["store"].start_run(_job())  # running으로 남음
     env["redis"].set(state_keys.job(_job().dedup_key), "1")  # 죽은 워커가 남긴 키
     later = datetime.now(UTC) + timedelta(minutes=21)
     assert _sync(env, [_pr()], now=later).enqueued == [("o/r", 1, "dead_worker")]
-    assert alerts == [Alert("worker_lost", "o/r", 1)]
+    assert notifications == []  # 다시 넣기는 사람이 할 일이 아니라 알리지 않는다
 
 
 def test_already_queued_job_is_not_duplicated(env) -> None:
@@ -134,13 +125,43 @@ def test_pipeline_branches_are_skipped(env) -> None:
     assert _sync(env, [_pr(ref="pipeline/pr-1-fix-lint")]).enqueued == []
 
 
-def test_github_failure_skips_repo_without_raising(env, alerts) -> None:
+@pytest.mark.parametrize(("auth", "environment"), [(False, {"gh_login"}), (True, set())])
+def test_github_failure_skips_repo_without_raising(env, auth: bool, environment) -> None:
+    """조회가 실패하면 `gh auth status`로 가린다. 로그인 확인도 실패해야 사람이 할 일(gh_login)로
+    본다. 로그인이 통과하면(저장소 하나의 조회 실패, GitHub 장애) 환경 오류로 보지 않는다."""
+
     def broken(repo: str):
         raise GitHubReadError("gh 로그인 만료")
 
-    result = sync.run_once(env["settings"], env["redis"], env["history"], list_prs=broken)
+    result = sync.run_once(
+        env["settings"], env["redis"], env["history"], list_prs=broken, auth_ok=lambda: auth
+    )
     assert result.failed_repos == ["o/r"] and result.enqueued == []
-    assert alerts == [Alert("sync_failed", "o/r")]
+    assert result.environment == environment
+
+
+def test_successful_listing_does_not_check_gh_login(env) -> None:
+    def never() -> bool:
+        raise AssertionError("조회가 됐는데 로그인을 확인함")
+
+    result = sync.run_once(
+        env["settings"], env["redis"], env["history"], list_prs=lambda r: [],
+        auth_ok=never,
+    )  # fmt: skip
+    assert result.environment == frozenset()
+
+
+def test_only_errors_seen_in_two_cycles_in_a_row_notify(tmp_path: Path, notifications) -> None:
+    """동기화의 다시 하기는 다음 주기다. 한 주기만 실패한 것은 알리지 않고, 연속 두 주기면 띄운다.
+    같은 종류는 30분에 한 번이라 셋째 주기는 띄우지 않는다."""
+    gh = frozenset({"gh_login"})
+    sync.alert_lasting(frozenset(), gh, tmp_path)
+    assert notifications == []
+    sync.alert_lasting(gh, frozenset({"redis"}), tmp_path)
+    assert notifications == []
+    sync.alert_lasting(gh, gh, tmp_path)
+    sync.alert_lasting(gh, gh, tmp_path)
+    assert notifications == [TEXT["gh_login"]]
 
 
 # --- 놓친 명령 ---------------------------------------------------------------------

@@ -11,6 +11,19 @@ def test_load_config(tmp_path: Path) -> None:
     assert settings.repos == ["Eunryong/eval"]
 
 
+def test_old_slack_settings_are_ignored(tmp_path: Path) -> None:
+    """Slack 운영 알림을 지웠다 (저장소 주인, 2026-11-20). 옛 설정의 키와 남은 URL 파일은 오류
+    없이 무시하고 읽지 않는다."""
+    (tmp_path / "config.yaml").write_text(
+        "repos: [o/r]\nnotify:\n  slack:\n    ops: true\n    webhook_url: https://x\n"
+    )
+    leftover = tmp_path / "slack_webhook_url"
+    leftover.write_text("https://hooks.example/abc\n")
+    leftover.chmod(0o644)  # 권한이 넓어도 읽지 않으므로 오류가 아니다
+    settings = config.load_config(tmp_path)
+    assert settings.repos == ["o/r"] and not hasattr(settings, "notify")
+
+
 def test_missing_config_is_error(tmp_path: Path) -> None:
     with pytest.raises(config.ConfigError, match="설정 파일이 없다"):
         config.load_config(tmp_path)

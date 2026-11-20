@@ -23,6 +23,20 @@ def test_list_open_prs_parses_fields() -> None:
     assert calls[0][:4] == ["pr", "list", "--repo", "o/r"]
 
 
+def test_auth_ok_runs_gh_auth_status_and_reads_failure_as_false() -> None:
+    calls: list[list[str]] = []
+
+    def ok(args: list[str]) -> str:
+        calls.append(args)
+        return ""
+
+    def expired(args: list[str]) -> str:
+        raise github.GitHubReadError("gh auth status 실패")
+
+    assert github.auth_ok(ok) is True and calls == [["auth", "status"]]
+    assert github.auth_ok(expired) is False
+
+
 def test_no_open_prs() -> None:
     assert github.list_open_prs("o/r", lambda args: "[]") == []
 

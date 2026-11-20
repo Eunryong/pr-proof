@@ -43,6 +43,15 @@ def run_gh(args: list[str]) -> str:
     return proc.stdout
 
 
+def auth_ok(runner: GhRunner = run_gh) -> bool:
+    """`gh auth status`가 통과하는지. 네트워크가 끊겨도 실패한다(gh가 둘을 가르지 못한다)."""
+    try:
+        runner(["auth", "status"])
+    except GitHubReadError:
+        return False
+    return True
+
+
 @dataclass(frozen=True)
 class PRComment:
     id: int
