@@ -17,6 +17,7 @@ from app.models.db import (
     CallGrant,
     CheckerEntry,
     CommandRecord,
+    EvalRun,
     FixAttempt,
     ModelCacheEntry,
     ModelCall,
@@ -52,12 +53,37 @@ def add_missing_columns(engine: Engine) -> None:
                 conn.execute(text(f"ALTER TABLE {table.name} ADD COLUMN {ddl}"))
 
 
+def open_engine(db_path: Path) -> Engine:
+    """SQLite를 열고 새 테이블과 새 열을 만든다. 있던 줄은 그대로 둔다."""
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    engine = create_engine(f"sqlite:///{db_path}")
+    SQLModel.metadata.create_all(engine)
+    add_missing_columns(engine)
+    return engine
+
+
+def add_eval_run(engine: Engine, run: EvalRun) -> int:
+    with Session(engine) as session:
+        session.add(run)
+        session.commit()
+        return run.id
+
+
+def latest_baseline(
+    engine: Engine, real_model: bool, before_id: int | None = None
+) -> EvalRun | None:
+    """가장 최근의 기준선. 가짜 모델의 실행과 실제 모델의 실행은 서로의 기준선이 아니다. before_id를
+    주면 그보다 앞선 것."""
+    with Session(engine) as session:
+        stmt = select(EvalRun).where(EvalRun.baseline == True, EvalRun.real_model == real_model)  # noqa: E712
+        if before_id is not None:
+            stmt = stmt.where(EvalRun.id < before_id)
+        return session.exec(stmt.order_by(EvalRun.id.desc())).first()
+
+
 class Store:
     def __init__(self, db_path: Path, redis: Redis) -> None:
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-        self.engine = create_engine(f"sqlite:///{db_path}")
-        SQLModel.metadata.create_all(self.engine)
-        add_missing_columns(self.engine)
+        self.engine = open_engine(db_path)
         self.redis = redis
 
     # --- Redis ---
