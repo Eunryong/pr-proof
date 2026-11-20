@@ -5,7 +5,8 @@
 
 import codecs
 import re
-from collections.abc import Mapping
+from collections import Counter
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from typing import Final
 
@@ -35,6 +36,57 @@ def added_lines(diff: str) -> ChangedLines:
     diff에는 `+++`로 보이므로, 줄 수를 세지 않으면 파일 헤더로 잘못 읽는다.
     """
     result: dict[str, set[int]] = {}
+    for path, tag, line_no, _ in _content_lines(diff):
+        if tag == "+":
+            result.setdefault(path, set()).add(line_no)
+    return {path: frozenset(lines) for path, lines in result.items()}
+
+
+def added_texts(diff: str) -> Mapping[str, Counter[str]]:
+    """파일별로 추가·수정된 줄의 내용(같은 내용은 개수로)."""
+    result: dict[str, Counter[str]] = {}
+    for path, tag, _, text in _content_lines(diff):
+        if tag == "+":
+            result.setdefault(path, Counter())[text] += 1
+    return result
+
+
+def added_lines_except_moved(diff: str, pr_added: Mapping[str, Counter[str]]) -> ChangedLines:
+    """`added_lines`에서, 수정이 자리만 옮긴 base의 줄을 뺀다.
+
+    수정을 적용한 뒤 갈라진 커밋과 다시 비교하면, import 정렬처럼 줄의 자리만 바꾸는 수정이 옮긴
+    base의 줄도 추가된 줄로 보인다. 그 줄은 PR이 바꾼 줄이 아니다(같은 파일에서 같은 내용이 지워진
+    줄로도 나온다). pr_added는 수정 전 PR이 추가한 줄의 내용이고(`added_texts`), 그 내용의 줄은 몇
+    개까지 PR의 줄로 남긴다.
+    """
+    added: dict[str, list[tuple[int, str]]] = {}
+    removed: dict[str, Counter[str]] = {}
+    for path, tag, line_no, text in _content_lines(diff):
+        if tag == "+":
+            added.setdefault(path, []).append((line_no, text))
+        else:
+            removed.setdefault(path, Counter())[text] += 1
+    result: dict[str, frozenset[int]] = {}
+    for path, lines in added.items():
+        own = Counter(pr_added.get(path, {}))
+        gone = removed.get(path, Counter())
+        kept = set()
+        for line_no, text in lines:
+            if own[text] > 0:
+                own[text] -= 1
+                kept.add(line_no)
+            elif gone[text] > 0:
+                gone[text] -= 1
+            else:
+                kept.add(line_no)
+        if kept:
+            result[path] = frozenset(kept)
+    return result
+
+
+def _content_lines(diff: str) -> Iterator[tuple[str, str, int, str]]:
+    """diff의 추가(`+`)·삭제(`-`) 줄: (경로, 표시, 새 파일의 줄 번호, 내용). 삭제 줄의 줄 번호는 그
+    자리의 새 파일 줄 번호다. 지워진 파일의 줄은 내지 않는다."""
     current: str | None = None
     old_left = new_left = 0
     line_no = 0
@@ -43,10 +95,12 @@ def added_lines(diff: str) -> ChangedLines:
             tag = raw[:1]
             if tag == "+":
                 if current is not None:
-                    result.setdefault(current, set()).add(line_no)
+                    yield current, "+", line_no, raw[1:]
                 line_no += 1
                 new_left -= 1
             elif tag == "-":
+                if current is not None:
+                    yield current, "-", line_no, raw[1:]
                 old_left -= 1
             elif tag == "\\":
                 pass  # "\ No newline at end of file"
@@ -66,7 +120,6 @@ def added_lines(diff: str) -> ChangedLines:
             old_left = int(old_count) if old_count is not None else 1
             new_left = int(new_count) if new_count is not None else 1
             line_no = int(new_start)
-    return {path: frozenset(lines) for path, lines in result.items()}
 
 
 def new_files(diff: str) -> frozenset[str]:
