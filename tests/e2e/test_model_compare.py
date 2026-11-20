@@ -20,7 +20,8 @@
 
 기본은 가짜 수정 모델로 구성마다 한 번 돌아 하네스만 본다. `PR_PROOF_REAL_MODEL=1`이면 수정 작성만
 로그인된 claude를 부르고 `PR_PROOF_MODEL_COMPARE_RUNS`(기본 1)번씩 돈다.
-`PR_PROOF_MODEL_COMPARE_OUT`이 있으면 결과 JSON을 쓴다.
+`PR_PROOF_MODEL_COMPARE_OUT`이 있으면 결과 JSON을 쓴다. 없으면 평가 명령의 출력 폴더
+(`PR_PROOF_TOOLS_EVAL_OUT`)에 쓴다.
 """
 
 import ast
@@ -41,6 +42,7 @@ from app.models.db import FixAttempt
 from app.worker import repo
 from app.worker.ai import claude_cli
 from app.worker.deps import Deps
+from app.worker.evaluation import TOOLS_OFF_OUT_ENV
 from app.worker.github import GitHub
 from app.worker.state import Store
 from tests.sandbox_names import TEST_NAMES
@@ -231,8 +233,8 @@ def test_model_arms(eval_repo: Path, shared_venvs, tool_cache: Path, tmp_path: P
         for n in range(runs_n) for name in _chosen() for arm in ARMS
     ]  # fmt: skip
     table = summarize(runs)
-    if os.environ.get(OUT_ENV):
-        out = Path(os.environ[OUT_ENV])
+    if folder := os.environ.get(OUT_ENV) or os.environ.get(TOOLS_OFF_OUT_ENV):
+        out = Path(folder)
         out.mkdir(parents=True, exist_ok=True)
         (out / "model_compare.json").write_text(
             json.dumps({"summary": table, "runs": runs}, ensure_ascii=False, indent=1)
