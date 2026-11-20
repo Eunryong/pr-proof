@@ -70,6 +70,28 @@ def test_unseen_head_is_queued_as_sync_job(env) -> None:
     assert env["redis"].get(state_keys.latest_head("o/r", 1)) == HEAD.encode()
 
 
+def test_author_values_are_carried_for_the_record(env) -> None:
+    """동기화도 판단하지 않고 실어 넘기기만 한다 (8.6). `gh pr list`에는 PR 작성자의
+    author_association이 없어 로그인 이름만 싣는다."""
+    pr = OpenPR(number=1, head_sha=HEAD, base_sha="b" * 40, head_ref="f", draft=False,
+                author_login="outsider")  # fmt: skip
+    comment = PRComment(id=7, author_association="MEMBER", created_at="2026-11-17T10:05:00Z",
+                        body="/fix", login="maintainer")  # fmt: skip
+    _sync(env, [pr], comments=[comment])
+    command, update = sorted(_queued(env), key=lambda j: j.kind)
+    assert (update.author_association, update.author_login) == (None, "outsider")
+    assert (command.author_login, command.commenter_association, command.commenter_login) == (
+        "outsider", "MEMBER", "maintainer",
+    )  # fmt: skip
+
+
+def test_blocked_head_is_not_queued_again(env) -> None:
+    """승인을 기다리는 외부 작성자의 PR은 주기마다 다시 넣지 않는다 (8.6)."""
+    run = env["store"].start_run(_job())
+    env["store"].finish_run(run, "blocked")
+    assert _sync(env, [_pr()]).enqueued == []
+
+
 def test_done_head_is_not_queued_again(env) -> None:
     run = env["store"].start_run(_job())
     env["store"].finish_run(run, "done", test_status="passed")

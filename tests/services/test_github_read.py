@@ -10,13 +10,15 @@ def test_list_open_prs_parses_fields() -> None:
         calls.append(args)
         pr = {"headRefOid": "h1", "baseRefOid": "b1", "headRefName": "f"}
         return json.dumps(
-            [pr | {"number": 1, "isDraft": False}, pr | {"number": 2, "isDraft": True}]
-        )
+            [pr | {"number": 1, "isDraft": False, "author": {"login": "a", "is_bot": False}},
+             pr | {"number": 2, "isDraft": True}]
+        )  # fmt: skip
 
     prs = github.list_open_prs("o/r", runner)
     assert prs[0] == github.OpenPR(
-        number=1, head_sha="h1", base_sha="b1", head_ref="f", draft=False
+        number=1, head_sha="h1", base_sha="b1", head_ref="f", draft=False, author_login="a"
     )
+    assert prs[1].author_login == ""
     assert prs[1].draft is True
     assert calls[0][:4] == ["pr", "list", "--repo", "o/r"]
 
