@@ -6,7 +6,9 @@
 - `heavy_only`: 무거운 모델만 (light·heavy 모두 sonnet).
 - `light_then_heavy`: 기본값 (haiku로 시작하고 두 번 실패하면 sonnet으로 한 번 올린다).
 
-케이스는 `rules/09`, `10`, `26`, `30`이다. `PR_PROOF_MODEL_COMPARE_CASES`(쉼표)로 고를 수 있다.
+케이스는 `rules/09`, `10`, `26`, `30`, `31`이다. `31`은 음수에서도 짝수 쪽 반올림을 지켜야 해서
+가벼운 모델이 두 번 연이어 실패하면 무거운 모델로 올라가는지 보는 표본이다.
+`PR_PROOF_MODEL_COMPARE_CASES`(쉼표)로 고를 수 있다.
 
 규칙 읽기·검사기 작성·수정 판단은 케이스의 답(가짜)이고 수정 작성만 실제 모델이다. 그래서 세 구성의
 차이는 수정 작성의 모델 하나다. 매번 빈 데이터 폴더다(저장된 답이 구성 사이에 섞이지 않게).
@@ -69,8 +71,8 @@ ARMS: Final[Mapping[str, Mapping[str, str]]] = {
 }
 
 
-def _discount_body(text: str) -> str:
-    start = text.index("def discount(")
+def _discount_body(text: str, name: str = "discount") -> str:
+    start = text.index(f"def {name}(")
     end = text.find("\ndef ", start + 1)
     return text[start : end if end > 0 else len(text)]
 
@@ -95,6 +97,7 @@ ADOPTED: Final[Mapping[str, Callable[[str], bool]]] = {
     # float·round·`/` 없이 정수 연산으로 반올림을 지킨다 (주석의 글은 보지 않는다)
     "26-money-rounding-fix": lambda text: _integer_only(_discount_body(text)),
     "30-money-half-even-fix": lambda text: _integer_only(_discount_body(text)),
+    "31-money-signed-half-even-fix": lambda text: _integer_only(_discount_body(text, "adjustment")),
 }
 
 
@@ -241,15 +244,16 @@ def test_model_arms(eval_repo: Path, shared_venvs, tool_cache: Path, tmp_path: P
     # 가짜 수정 모델은 구성과 관계없이 같은 편집을 하므로 세 구성의 결과가 같고, 반올림 케이스는
     # 1회차에 테스트가 깨져 2회차에 통과한다
     for row in table:
-        assert row["resolved"] == row["adopted"] == "4/4", row
+        assert row["resolved"] == row["adopted"] == "5/5", row
     rounding = [r for r in runs if r["case"] == "26-money-rounding-fix"]
     assert all(r["fix_calls"] == 2 and r["attempts"] == [2] for r in rounding), rounding
     # 짝수 쪽 반올림 케이스는 두 번 실패한 뒤 3회차에 통과한다. 3회차는 무거운 단계다
-    half_even = {r["arm"]: r for r in runs if r["case"] == "30-money-half-even-fix"}
-    assert all(r["attempts"] == [3] and r["tiers"] == ["light", "light", "heavy"]
-               for r in half_even.values()), half_even  # fmt: skip
-    assert half_even["light_then_heavy"]["models"] == ["haiku", "haiku", "sonnet"]
-    assert half_even["light_only"]["models"] == ["haiku"] * 3
+    for name in ("30-money-half-even-fix", "31-money-signed-half-even-fix"):
+        half_even = {r["arm"]: r for r in runs if r["case"] == name}
+        assert all(r["attempts"] == [3] and r["tiers"] == ["light", "light", "heavy"]
+                   for r in half_even.values()), half_even  # fmt: skip
+        assert half_even["light_then_heavy"]["models"] == ["haiku", "haiku", "sonnet"]
+        assert half_even["light_only"]["models"] == ["haiku"] * 3
     by_arm = {r["arm"]: r for r in rounding}
     # 상한은 회차의 단계(light·heavy)로 센다. 무거운 모델만 구성의 sonnet도 1회차·2회차는 가벼운
     # 단계라 1로 센다. 9.2의 "무거운 모델 3"으로 다시 센 값이 fix_units다
