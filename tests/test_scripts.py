@@ -3,8 +3,10 @@
 임시 HOME과 임시 체크아웃에 스크립트를 복사하고, launchctl·pgrep은 PATH 앞의 가짜로 바꾼다.
 """
 
+import ast
 import os
 import plistlib
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -168,3 +170,33 @@ def test_uninstall_without_an_agent_only_removes_the_file(box) -> None:
     result = _run(box, "uninstall-launchd.sh")
     assert result.returncode == 0, result.stderr
     assert "bootout" not in box["log"].read_text()
+
+
+def _procfile() -> dict[str, str]:
+    lines = (REPO / "Procfile").read_text().splitlines()
+    return dict(line.split(": ", 1) for line in lines if line.strip())
+
+
+def test_procfile_entry_points_exist() -> None:
+    """Procfile이 가리키는 모듈과 앱 객체가 저장소에 있다. 폴더를 옮기면 문자열이라 조용히
+    깨진다."""
+    procs = _procfile()
+    worker = re.fullmatch(r"python -m ([\w.]+)", procs["worker"])
+    api = re.match(r"uvicorn ([\w.]+):(\w+) ", procs["api"])
+    assert worker and api
+    assert REPO.joinpath(*worker.group(1).split(".")).with_suffix(".py").is_file()
+    tree = ast.parse(REPO.joinpath(*api.group(1).split(".")).with_suffix(".py").read_text())
+    assigned = {t.id for n in tree.body if isinstance(n, ast.Assign) for t in n.targets
+                if isinstance(t, ast.Name)}  # fmt: skip
+    assert api.group(2) in assigned
+
+
+def test_install_detects_the_procfile_processes() -> None:
+    """install-launchd.sh가 launchd 밖에서 도는 서버를 찾는 pgrep 패턴이 Procfile의 두 명령에
+    맞는다."""
+    pattern = re.search(
+        r"pgrep -f '([^']+)'", (REPO / "scripts" / "install-launchd.sh").read_text()
+    )
+    assert pattern
+    for name, command in _procfile().items():
+        assert re.search(pattern.group(1), command.split(" --")[0]), name

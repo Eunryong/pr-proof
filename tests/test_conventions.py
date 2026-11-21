@@ -34,7 +34,7 @@ def constants_without_final(source: str) -> list[str]:
 
 @pytest.mark.parametrize(
     "path",
-    sorted([*(ROOT / "app").rglob("*.py"), *(ROOT / "tests").rglob("*.py")]),
+    sorted(p for d in ("api", "worker", "shared", "tests") for p in (ROOT / d).rglob("*.py")),
     ids=lambda p: str(p.relative_to(ROOT)),
 )
 def test_constants_are_final(path: Path) -> None:
