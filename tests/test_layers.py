@@ -32,14 +32,17 @@ ALLOWED: Final[Mapping[str, frozenset[str]]] = {
     "app.worker": frozenset({"app.worker", "app.shared"}),
     "app.shared": frozenset({"app.shared"}),
 }
-# 순수 모듈이 import하지 않는 표준·외부 라이브러리 (외부 호출, 프로세스, 파일 시스템)
+# 순수 모듈이 import하지 않는 표준·외부 라이브러리 (외부 호출, 프로세스, 파일 시스템, 로그, 시계,
+# 난수, 동적 import)
 PURE_FORBIDDEN: Final = frozenset(
     {
         "os", "shutil", "tempfile", "subprocess", "socket", "http", "urllib", "sqlite3",
         "redis", "rq", "httpx", "requests", "fastapi", "uvicorn", "langgraph", "chromadb",
-        "onnxruntime", "tokenizers",
+        "onnxruntime", "tokenizers", "logging", "time", "random", "importlib",
     }
 )  # fmt: skip
+# 순수 모듈이 부르지 않는 내장 함수
+PURE_FORBIDDEN_CALLS: Final = frozenset({"open"})
 
 
 def _module_of(path: Path, root: Path) -> list[str]:
@@ -78,6 +81,17 @@ def imports_of(path: Path, root: Path = ROOT) -> tuple[set[str], set[str]]:
             else:
                 outer.add(top)
     return inner, outer
+
+
+def builtin_calls(path: Path) -> set[str]:
+    """이름 그대로 부른 함수 중 금지한 내장 함수 (`open(...)`). 속성 호출은 보지 않는다."""
+    return {
+        node.func.id
+        for node in ast.walk(ast.parse(path.read_text()))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in PURE_FORBIDDEN_CALLS
+    }
 
 
 def package_of(name: str) -> str:
@@ -129,7 +143,7 @@ def _pure_modules() -> list[Path]:
 
 def test_pure_modules_are_found() -> None:
     # 이름 규칙이 깨져 순수 모듈을 찾지 못하면 아래 검사가 아무것도 보지 않고 통과한다
-    assert len(_pure_modules()) >= 37
+    assert len(_pure_modules()) >= 41
 
 
 @pytest.mark.parametrize("path", _pure_modules(), ids=lambda p: str(p.relative_to(ROOT)))
@@ -137,6 +151,7 @@ def test_pure_module_imports_only_pure_and_allowed(path: Path) -> None:
     inner, outer = imports_of(path)
     assert sorted(n for n in inner if not n.endswith(PURE_SUFFIX)) == []
     assert sorted(outer & PURE_FORBIDDEN) == []
+    assert builtin_calls(path) == set()
 
 
 def test_detects_violation(tmp_path: Path) -> None:
@@ -156,3 +171,10 @@ def test_detects_violation(tmp_path: Path) -> None:
     }  # fmt: skip
     assert outer == {"subprocess"}
     assert {package_of(n) for n in inner} == {"app.api", "app.worker", "app.shared"}
+
+
+def test_detects_builtin_open(tmp_path: Path) -> None:
+    bad = tmp_path / "bad_pure.py"
+    bad.write_text("import logging\n\ndef f(p):\n    return open(p).read(), p.open()\n")
+    assert builtin_calls(bad) == {"open"}
+    assert imports_of(bad, tmp_path)[1] & PURE_FORBIDDEN == {"logging"}

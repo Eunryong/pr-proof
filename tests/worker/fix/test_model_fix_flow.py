@@ -22,7 +22,7 @@ from app.worker.ai.claude_cli import AIErrorKind, ClaudeResult
 from app.worker.fix import model_fix_pure
 from app.worker.fix.proposal import FORK_NO_PR
 from app.worker.github import GitHubError
-from app.worker.markdown import inline_code
+from app.worker.markdown_pure import inline_code
 from app.worker.repo_config_pure import (
     CallSettings,
     FixSettings,

@@ -16,7 +16,7 @@ from app.worker.doc_rules_pure import DocRules
 from app.worker.doc_rules_report import FixView
 from app.worker.fix.fix_decision_pure import Decided
 from app.worker.lang.install_pure import InstallFailureKind
-from app.worker.markdown import code_fence, inline_code
+from app.worker.markdown_pure import code_fence, inline_code
 from app.worker.rag_switch_pure import RagSwitch
 from app.worker.rules.pr_check_pure import PrChecks
 from app.worker.sandbox.docker_cli import MEMORY_LIMIT_GB

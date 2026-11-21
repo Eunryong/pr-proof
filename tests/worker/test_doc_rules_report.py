@@ -23,7 +23,7 @@ from app.worker.fix.fix_decision_pure import Decided, FixDecision
 from app.worker.fix.fix_pure import MechanicalFix
 from app.worker.fix.model_fix_pure import ModelFix, Verification
 from app.worker.fix.proposal_pure import ProposalResult
-from app.worker.markdown import inline_code
+from app.worker.markdown_pure import inline_code
 from app.worker.rule_pure import CheckMethod, Example, Rule, RuleSource, UnreadDoc
 from app.worker.test_run_pure import PytestRun
 from app.worker.violation_pure import Violation

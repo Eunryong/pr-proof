@@ -23,7 +23,7 @@ from app.worker.fix.fix_pure import MECHANICAL_BUNDLE, MechanicalFix
 from app.worker.fix.model_fix_pure import MODEL_BUNDLE, Explanation, ModelFix
 from app.worker.fix.proposal_pure import ProposalResult
 from app.worker.github import GitHub, GitHubError, ReviewComment
-from app.worker.markdown import inline_code
+from app.worker.markdown_pure import inline_code
 from app.worker.report import code_fence
 from app.worker.state import Store
 from app.worker.test_lines import generated_lines, runs_without_new_tests, status_lines

@@ -3,7 +3,7 @@
 `DocRules` 값 하나와, 위반을 찾은 검사기의 본문(`checkers` 테이블에서 읽은 것), 위반마다의 수정
 판단(`Decided`), 묶음마다의 수정 상태(`FixView`)만 받는다. 규칙의 인용, 문서의 절 이름, 파일 경로,
 도구의 메시지, 검사기 본문과 예시, 실패 이유, 모델이 쓴 수정 판단의 이유는 모두 믿지 않는 글이라
-코드 스팬이나 코드 울타리 안에만 넣는다 (app/worker/markdown.py).
+코드 스팬이나 코드 울타리 안에만 넣는다 (app/worker/markdown_pure.py).
 """
 
 from collections import Counter
@@ -11,7 +11,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final, Literal
 
-from app.worker import pr_check_report
+from app.worker import pr_check_report_pure
 from app.worker.checker_authoring_pure import JudgeRoute
 from app.worker.checker_pure import TOOL_KINDS, Checker
 from app.worker.doc_rules_pure import (
@@ -31,7 +31,7 @@ from app.worker.fix.fix_decision_pure import Decided, FixDecision
 from app.worker.fix.fix_pure import MECHANICAL_BUNDLE, MechanicalFix
 from app.worker.fix.model_fix_pure import ModelFix
 from app.worker.fix.proposal_pure import ProposalResult
-from app.worker.markdown import code_fence, inline_code
+from app.worker.markdown_pure import code_fence, inline_code
 from app.worker.rag_pure import KIND_LABEL, SITE_LABEL, Retrieval, merge_retrievals
 from app.worker.rag_switch_pure import RagSwitch, describe
 from app.worker.rule_pure import Rule
@@ -223,7 +223,7 @@ def _found(
         _decision_summary(decisions),
         *(_fix_lines(view, bundle, _test_lines(found, view)) for bundle, view in fixes.items()),
         _violations(found, by_id, fixed_in(fixes)),
-        pr_check_report.section(pr) if pr is not None else [],
+        pr_check_report_pure.section(pr) if pr is not None else [],
         _not_checkable(found.outcomes),
         _failed(found.outcomes),
         _capped(found.outcomes),
@@ -252,7 +252,7 @@ def _title_line(found: Found, pr_checks: PrChecks | None = None) -> str:
     if unchecked and (found.violations or checked):
         line += f" · 검사하지 못한 규칙 {unchecked}개"
     if pr_checks is not None:
-        line += pr_check_report.title_part(pr_checks)
+        line += pr_check_report_pure.title_part(pr_checks)
     elif pr:
         line += f" · PR 단위 규칙 {pr}개"
     if human:

@@ -17,7 +17,7 @@ from app.worker.generated_tests_pure import (
     group_lines,
     line_runs,
 )
-from app.worker.markdown import inline_code
+from app.worker.markdown_pure import inline_code
 from app.worker.violation_pure import Violation
 
 MAX_LINES_SHOWN: Final = 30

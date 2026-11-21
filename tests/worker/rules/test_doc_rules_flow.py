@@ -33,7 +33,7 @@ from app.worker.doc_rules_pure import (
 from app.worker.fix import fix_decision_pure
 from app.worker.fix.fix_decision_pure import Decided, FixDecision
 from app.worker.lang.python import DependencyInstallError
-from app.worker.markdown import inline_code
+from app.worker.markdown_pure import inline_code
 from app.worker.repo_config_pure import (
     CallSettings,
     FixSettings,
