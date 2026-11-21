@@ -138,6 +138,11 @@ def _statements(source: str) -> list[_Stmt] | None:
     return result
 
 
+def statements(source: str) -> list[_Stmt] | None:
+    """`line_covered`에 넘기는 문장 범위. 파싱할 수 없으면 None."""
+    return _statements(source)
+
+
 def line_covered(file_cov: FileCoverage, line: int, statements: list[_Stmt] | None) -> bool:
     """줄 하나가 테스트로 실행됐는지.
 

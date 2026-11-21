@@ -1,6 +1,7 @@
 """worker/fix/scope_pure.py: porcelain 출력 읽기와 허용 범위 판정."""
 
 from dataclasses import replace
+from typing import Final
 
 import pytest
 
@@ -9,6 +10,8 @@ from worker.fix.scope_pure import (
     MECHANICAL_POLICY,
     PIPELINE_OUTPUTS,
     StatusEntry,
+    generated_test_dir,
+    is_generated_test,
     is_test_file,
     judge_scope,
     parse_ignored,
@@ -144,3 +147,64 @@ def test_every_violation_is_listed_and_detail_has_reasons() -> None:
 def test_lint_policy_modify_only(entry: StatusEntry, labels: list[str]) -> None:
     result = judge_scope([entry], ["tests/test_a.py"], MECHANICAL_POLICY)
     assert [v.label for v in result.violations] == labels
+
+
+GEN: Final = replace(AI_POLICY, generated_test_dir="tests")
+
+
+@pytest.mark.parametrize(
+    ("entry", "expected"),
+    [
+        (StatusEntry("??", "tests/test_pipeline_orders.py"), []),
+        (StatusEntry(" A", "tests/test_pipeline_orders.py"), []),
+        (StatusEntry(" M", "tests/test_pipeline_orders.py"),
+         [("M", "tests/test_pipeline_orders.py", "테스트 파일 변경")]),
+        (StatusEntry(" D", "tests/test_pipeline_orders.py"),
+         [("D", "tests/test_pipeline_orders.py", "테스트 파일 변경")]),
+        (StatusEntry(" M", "tests/test_a.py"), [("M", "tests/test_a.py", "테스트 파일 변경")]),
+        (StatusEntry(" D", "tests/test_a.py"), [("D", "tests/test_a.py", "테스트 파일 변경")]),
+        (StatusEntry("??", "tests/conftest.py"), [("??", "tests/conftest.py", "테스트 파일 변경")]),
+        (StatusEntry("??", "tests/sub/test_pipeline_x.py"),
+         [("??", "tests/sub/test_pipeline_x.py", "테스트 파일 변경")]),
+        (StatusEntry("??", "tests/test_pipeline_X.py"),
+         [("??", "tests/test_pipeline_X.py", "테스트 파일 변경")]),
+        (StatusEntry("??", "test/test_pipeline_x.py"),
+         [("??", "test/test_pipeline_x.py", "테스트 파일 변경")]),
+        (StatusEntry("??", "pytest.ini"), [("??", "pytest.ini", "허용 목록 밖")]),
+        (StatusEntry("R ", "tests/test_pipeline_x.py", "tests/test_a.py"),
+         [("R", "tests/test_pipeline_x.py", "테스트 파일 변경"),
+          ("R", "tests/test_a.py", "테스트 파일 변경")]),
+    ],
+    ids=lambda v: repr(v) if isinstance(v, StatusEntry) else "",
+)  # fmt: skip
+def test_only_new_generated_test_files_are_allowed(entry: StatusEntry, expected) -> None:
+    """만든 테스트는 정한 자리의 정한 이름으로 새로 만든 파일뿐이다. 있던 테스트, conftest, 설정은
+    밖이다."""
+    assert _reasons([entry], policy=GEN) == expected
+
+
+def test_without_a_test_dir_no_test_file_can_be_created() -> None:
+    entry = StatusEntry("??", "tests/test_pipeline_x.py")
+    assert _reasons([entry]) == [("??", "tests/test_pipeline_x.py", "테스트 파일 변경")]
+
+
+def test_a_generated_test_that_is_a_symlink_is_still_rejected() -> None:
+    entry = StatusEntry("??", "tests/test_pipeline_x.py")
+    got = _reasons([entry], policy=GEN, symlinks=frozenset({entry.path}))
+    assert got == [("??", entry.path, "심볼릭 링크")]
+
+
+@pytest.mark.parametrize(
+    ("dirs", "expected"),
+    [(["tests", "test"], "tests"), (["test", "src"], "test"), (["src"], "tests"), ([], "tests")],
+)
+def test_generated_test_dir(dirs, expected) -> None:
+    assert generated_test_dir(dirs) == expected
+
+
+def test_generated_test_name_rule() -> None:
+    assert is_generated_test("tests/test_pipeline_a1_b.py", "tests")
+    assert not is_generated_test("tests/test_pipeline_.py", "tests")
+    assert not is_generated_test("tests/test_pipeline_" + "a" * 41 + ".py", "tests")
+    assert not is_generated_test("tests/test_pipeline_a.pyc", "tests")
+    assert not is_generated_test("tests/../test_pipeline_a.py", "tests")

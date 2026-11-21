@@ -3,6 +3,7 @@
 `git status --porcelain=v1 -z` 출력을 읽어 판정만 한다. git 실행은 `worker/fix/scope.py`가 한다.
 """
 
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import PurePosixPath
@@ -17,6 +18,12 @@ _PIPELINE_OUTPUT_DIRS: Final = (".pipeline-out", ".venv")
 TEST_DIRS: Final = frozenset({"tests", "test"})
 TEST_FILE_NAMES: Final = frozenset({"conftest.py"})
 GITHUB_DIR: Final = ".github/"
+# 수정 작성의 모델이 새로 만드는 테스트 파일 (4.7). 저장소의 테스트 폴더 바로 아래, 이름으로
+# 파이프라인이 만든 것임이 보이는 새 파일만이다. 있던 테스트 파일, conftest.py, 테스트 설정은 밖이다
+GENERATED_TEST_PREFIX: Final = "test_pipeline_"
+_GENERATED_NAME: Final = re.compile(r"test_pipeline_[a-z0-9_]{1,40}\.py")
+# 새 파일로 보이는 porcelain 상태: 추적하지 않는 새 파일, 그리고 diff에 보이려고 `git add -N`한 파일
+_NEW_FILE_CODES: Final = frozenset({"??", " A"})
 
 # porcelain v1의 병합 충돌 상태 (XY)
 _UNMERGED: Final = frozenset({"DD", "AU", "UD", "UA", "DU", "AA", "UU"})
@@ -81,6 +88,19 @@ def is_test_file(path: str) -> bool:
     )
 
 
+def generated_test_dir(dirs: Iterable[str]) -> str:
+    """새 테스트 파일을 둘 폴더. dirs는 저장소 맨 위의 진짜 폴더 이름들이다. `tests`가 있으면
+    그것, 없고 `test`가 있으면 그것, 둘 다 없으면 `tests`."""
+    names = set(dirs)
+    return "test" if "tests" not in names and "test" in names else "tests"
+
+
+def is_generated_test(path: str, test_dir: str) -> bool:
+    """test_dir 바로 아래의 `test_pipeline_<이름>.py`인지. 이름은 영문 소문자·숫자·밑줄 40자까지."""
+    folder, _, name = path.rpartition("/")
+    return folder == test_dir and bool(_GENERATED_NAME.fullmatch(name))
+
+
 @dataclass(frozen=True)
 class ScopePolicy:
     """수정 방식마다 다른 허용 규칙."""
@@ -91,6 +111,8 @@ class ScopePolicy:
     # 테스트 파일이지만 바꿔도 되는 경로. 코드 이동에 따른 import 경로 변경용 (4단계 structure).
     # 호출하는 쪽이 바뀐 내용이 import 줄뿐인지 따로 확인해야 한다. 기본은 비어 있다
     test_files_allowed: frozenset[str] = frozenset()
+    # 새로 만들어도 되는 테스트 파일의 폴더 (`is_generated_test`). None이면 만들 수 없다
+    generated_test_dir: str | None = None
 
 
 # 기계적 수정: 위반이 있는 파일의 내용만 바꾼다. 파일을 만들거나 지울 이유가 없다.
@@ -123,6 +145,16 @@ class ScopeResult:
     def detail(self) -> str:
         """코멘트에 넣는 한 줄. 경로마다 이유를 붙인다."""
         return ", ".join(f"{v.label} ({v.reason})" for v in self.violations)
+
+
+def _new_generated_test(e: StatusEntry, policy: ScopePolicy) -> bool:
+    """정한 자리에 새로 만든 테스트 파일. 이름 변경·복사의 결과는 새 파일로 보지 않는다."""
+    return (
+        policy.generated_test_dir is not None
+        and e.orig_path is None
+        and e.code in _NEW_FILE_CODES
+        and is_generated_test(e.path, policy.generated_test_dir)
+    )
 
 
 def _path_reason(path: str, allowed: set[str], policy: ScopePolicy) -> str | None:
@@ -161,6 +193,8 @@ def judge_scope(
       가리킬 수 있어 허용 파일이라도 버린다.
     - new_ignored: AI 실행 직전 스냅샷에 없던 무시된 파일. 경로와 무관하게 버린다.
     - 경로가 모두 파이프라인 산출물인 변경은 보지 않는다.
+    - policy.generated_test_dir가 있으면 그 폴더에 정한 이름으로 새로 만든 테스트 파일은 허용 목록
+      밖이어도 받는다. 같은 이름이라도 있던 파일의 수정·삭제는 테스트 파일 변경이다.
     """
     allowed_set = set(allowed)
     bad: list[ScopeViolation] = []
@@ -175,6 +209,8 @@ def judge_scope(
                 continue
         elif reason := _entry_reason(e, symlinks):
             bad.append(ScopeViolation(code, e.path, reason))
+            continue
+        if _new_generated_test(e, policy):
             continue
         for p in paths:
             if reason := _path_reason(p, allowed_set, policy):
