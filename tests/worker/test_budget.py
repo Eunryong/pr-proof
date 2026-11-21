@@ -147,18 +147,16 @@ def test_model_cache_round_trip(store: Store) -> None:
     assert (entry.stage, entry.result_json) == ("checker", '{"a":2}')
 
 
-def test_denied_tool_calls_alert_the_operator(store: Store, monkeypatch) -> None:
-    """모델이 목록 밖 도구를 부르려 한 호출은 운영 알림으로 간다 (위협 T25). 없으면 알리지
-    않는다."""
-    from app.models.ops_alert import Alert
-    from app.notify import slack
+def test_denied_tool_calls_are_recorded_without_a_notification(store: Store, notifications) -> None:
+    """모델이 목록 밖 도구를 부르려 한 호출은 `ai_calls.permission_denials`에 남는다 (위협 T25).
+    사람이 할 환경 오류가 아니라 운영 알림은 띄우지 않는다 (6-4, 저장소 주인 2026-11-20)."""
+    from sqlmodel import Session
 
-    sent: list[Alert] = []
-    monkeypatch.setattr(slack, "send", lambda alert, redis, **kw: sent.append(alert) or "sent")
+    from app.models.db import ModelCall
+
     budget = _budget(store, pr=7)
-    clean = budget.begin(PrScope(), stage="fix", tier="light", model="haiku")
-    budget.finish(clean, ok=True, permission_denials=0)
-    assert sent == []
     denied = budget.begin(PrScope(), stage="fix", tier="light", model="haiku")
     budget.finish(denied, ok=True, permission_denials=2)
-    assert sent == [Alert("tool_denied", "o/r", 7)]
+    with Session(store.engine) as session:
+        assert session.get(ModelCall, denied).permission_denials == 2
+    assert notifications == []

@@ -1,11 +1,15 @@
+import asyncio
 import json
 from pathlib import Path
 
 import fakeredis
 import pytest
 from fastapi.testclient import TestClient
+from redis import exceptions as redis_errors
 
-from app import api
+from app import api, config
+from app.controllers.sync import SyncResult
+from app.models.ops_alert import TEXT
 from app.services import signature
 
 
@@ -48,3 +52,32 @@ def test_unsigned_webhook_is_rejected(client: TestClient) -> None:
 
 def test_healthz(client: TestClient) -> None:
     assert client.get("/healthz").json() == {"status": "ok"}
+
+
+def _down(*args, **kwargs):
+    raise redis_errors.ConnectionError("Redis가 꺼짐")
+
+
+def _gh_login(*args, **kwargs) -> SyncResult:
+    return SyncResult(failed_repos=["o/r"], environment=frozenset({"gh_login"}))
+
+
+@pytest.mark.parametrize(("run_once", "kind"), [(_down, "redis"), (_gh_login, "gh_login")])
+def test_sync_loop_notifies_once_from_the_second_failing_cycle(
+    tmp_path: Path, monkeypatch, notifications, run_once, kind: str
+) -> None:
+    """6-4: 동기화가 본 Redis 꺼짐과 gh 로그인 실패는 둘째 주기부터 알리고, 같은 종류는 30분에
+    한 번이다. 표시가 Redis가 아니라 data_dir의 파일이라 Redis가 꺼져도 센다."""
+    settings = config.PipelineConfig(repos=["o/r"], data_dir=tmp_path)
+    monkeypatch.setattr(api.sync, "run_once", run_once)
+    seen: list[int] = []
+
+    async def sleep(seconds: float) -> None:
+        seen.append(len(notifications))
+        if len(seen) == 3:
+            raise asyncio.CancelledError
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(api.sync_loop(settings, fakeredis.FakeStrictRedis(), sleep=sleep))
+    assert seen == [0, 1, 1]
+    assert notifications == [TEXT[kind]]

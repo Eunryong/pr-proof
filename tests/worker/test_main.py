@@ -1,5 +1,8 @@
 """worker/main.py·update.py: update 작업이 체크아웃부터 코멘트까지 가는 흐름. Docker·GitHub 없이."""
 
+from pathlib import Path
+
+import fakeredis
 import pytest
 from rq.timeouts import JobTimeoutException
 from sqlmodel import Session, select
@@ -10,13 +13,11 @@ from app.models.db import Run
 from app.models.doc_rules import NoRuleDocs
 from app.models.job import PRJob
 from app.models.ops_alert import TEXT
-from app.notify import slack
 from app.sandbox.docker_cli import SandboxError
-from app.worker import doc_rules, main, retry, update
+from app.worker import doc_rules, main, preflight, retry, update
 from app.worker.github import GitHubError
 from app.worker.lang.python import DependencyInstallError
 
-from ..notify.test_slack import Endpoint, endpoint  # noqa: F401
 from .helpers import BASE, HEAD, PASSED, bodies, use_runner
 
 
@@ -221,35 +222,55 @@ def test_sync_job_result_says_so(env) -> None:
     assert "동기화로 처리됨 (웹훅 누락)" in bodies(env["gh"])[-1]
 
 
-def test_last_failures_reach_slack_once_per_window(env, endpoint: Endpoint) -> None:  # noqa: F811
-    """6-4: 마지막 시도의 운영 오류가 Slack(로컬 https 가짜 엔드포인트)에 온다. 같은 저장소의 같은
-    오류는 다른 PR에서 다시 나도 30분 안에는 한 번만 온다. 앞 시도의 실패와 다른 종류는 따로 본다.
-    메시지에는 오류의 종류, 저장소#번호, 정한 글만 있다."""
-    folder = config.config_dir()  # worker/conftest.py가 정한 빈 설정 폴더
-    folder.mkdir(parents=True, exist_ok=True)
-    (folder / slack.SECRET_NAME).write_text(endpoint.url)
-    (folder / slack.SECRET_NAME).chmod(0o600)
-    env["monkeypatch"].setenv("SSL_CERT_FILE", str(endpoint.cert))
+def _checks(*failing: str):
+    """시작 전 확인의 결과. failing에 든 종류만 실패한다."""
+    names = {"gh_login": "GitHub 로그인", "claude_login": "Claude 로그인", "docker": "Docker"}
+
+    def run(redis) -> list[preflight.Check]:
+        return [preflight.Check(n, k not in failing, "", k) for k, n in names.items()]
+
+    return run
+
+
+def _never(redis) -> list[preflight.Check]:
+    raise AssertionError("알리지 않을 실패에서 시작 전 확인을 다시 돌림")
+
+
+def test_only_used_up_environment_failures_notify_what_to_do(env, notifications) -> None:
+    """6-4: 재시도를 모두 쓴 환경 오류만 시작 전 확인으로 다시 가려, 실패한 확인의 정한 한 줄을
+    띄운다. 재시도가 남은 실패, 확인이 모두 통과하는 환경 오류(가리지 못함), 파이프라인 오류는
+    알리지 않는다. 같은 종류는 다른 PR에서 다시 나도 30분에 한 번이다. 예외 메시지는 들어가지
+    않는다."""
     env["gh"].head_error = "gh: 401 token=ghp_should_not_leave"
 
-    def fail(final: bool, pr: int) -> None:
+    def fail(final: bool, checks, pr: int = 1) -> None:
         env["monkeypatch"].setattr(retry, "attempt", lambda: (4 if final else 1, final))
         with pytest.raises(GitHubError):
-            main.handle(_payload(pr_number=pr), env["deps"])
+            main.handle(_payload(pr_number=pr), env["deps"], checks=checks)
 
-    fail(False, 1)
-    assert endpoint.bodies == []  # 재시도가 남은 실패는 알리지 않는다
-    fail(True, 1)
-    fail(True, 2)
-    fail(True, 1)
+    fail(False, _never)
+    fail(True, _checks())
+    assert notifications == []
+    fail(True, _checks("docker"))
+    fail(True, _checks("docker"), pr=2)
+    assert notifications == [TEXT["docker"]]
     env["gh"].head_error = None
     use_runner(env, lambda *a, **k: (_ for _ in ()).throw(RuntimeError("버그 ghp_x")))
     env["monkeypatch"].setattr(retry, "attempt", lambda: (4, True))
     with pytest.raises(RuntimeError):
-        main.handle(_payload(), env["deps"])
-    texts = [b["text"] for b in endpoint.bodies]
-    assert texts == [
-        "pr-proof 운영 알림 · env_error_final · o/r#1 · " + TEXT["env_error_final"],
-        "pr-proof 운영 알림 · pipeline_error · o/r#1 · " + TEXT["pipeline_error"],
-    ]
-    assert not any("ghp_" in text or "401" in text or "버그" in text for text in texts)
+        main.handle(_payload(), env["deps"], checks=_never)
+    assert notifications == [TEXT["docker"]]
+    assert not any("ghp_" in text or "401" in text for text in notifications)
+
+
+def test_repeated_start_up_failures_notify_once_per_window(
+    tmp_path: Path, monkeypatch, notifications
+) -> None:
+    """launchd가 시작 전 확인에서 멈춘 워커를 1분마다 다시 띄워도 같은 오류는 30분에 한 번만 뜬다.
+    표시는 data_dir의 파일이라 프로세스를 넘어 남는다. 종류가 다르면 따로 뜬다."""
+    settings = config.PipelineConfig(repos=["o/r"], data_dir=tmp_path)
+    monkeypatch.setattr(main.config, "load_config", lambda: settings)
+    monkeypatch.setattr(main.Redis, "from_url", lambda url: fakeredis.FakeStrictRedis())
+    monkeypatch.setattr(main.preflight, "run_checks", _checks("claude_login", "docker"))
+    assert [main.main() for _ in range(5)] == [1] * 5
+    assert notifications == [TEXT["claude_login"], TEXT["docker"]]
