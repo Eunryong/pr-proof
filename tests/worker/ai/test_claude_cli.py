@@ -498,3 +498,54 @@ def test_file_tool_call_reads_usage_and_model_id() -> None:
         "claude-haiku-5-5", 1105, 70,
     )  # fmt: skip
     assert _run(FakeRunner(_output())).input_tokens is None
+
+
+PIPELINE_TOOLS: Final = [*FILE_TOOLS, "mcp__proof__check_rules", "mcp__proof__run_tests"]
+
+
+def test_fix_tools_call_adds_only_the_pipeline_server_and_its_two_tools() -> None:
+    """수정 작성의 새 모양: 파일 도구 다섯에 파이프라인 도구 둘. MCP 서버는 넘긴 것 하나뿐이다."""
+    runner = FakeRunner(_output(tools=PIPELINE_TOOLS))
+    result = _run(runner, mcp_config='{"mcpServers": {}}')
+    args, _, _, env, _ = runner.calls[0]
+    assert result.ok
+    assert args[args.index("--tools") + 1] == "Read,Grep,Glob,Write,Edit"
+    assert args[args.index("--allowedTools") + 1] == (
+        "Read,Grep,Glob,Write,Edit,mcp__proof__check_rules,mcp__proof__run_tests"
+    )
+    assert args[args.index("--mcp-config") + 1] == '{"mcpServers": {}}'
+    assert "--strict-mcp-config" in args and "--restricted" in args and "Bash" not in args
+    assert env["MCP_TOOL_TIMEOUT"] == ai.MCP_TOOL_TIMEOUT_MS
+    assert "--mcp-config" not in _run_args() and "MCP_TOOL_TIMEOUT" not in runner_env()
+
+
+def runner_env() -> dict[str, str]:
+    runner = FakeRunner(_output())
+    _run(runner)
+    return runner.calls[0][3]
+
+
+@pytest.mark.parametrize(
+    "tools",
+    [FILE_TOOLS, [*FILE_TOOLS, "mcp__proof__check_rules"],
+     [*PIPELINE_TOOLS, "mcp__other__run"], [*PIPELINE_TOOLS, "Bash"]],
+)  # fmt: skip
+def test_fix_tools_call_stops_unless_the_list_is_exactly_the_seven(tools: list[str]) -> None:
+    result = _run(FakeRunner(_output(tools=tools)), mcp_config="{}")
+    assert result.error == AIErrorKind.TOOLS
+
+
+def test_pipeline_tool_uses_are_expected_and_others_are_counted() -> None:
+    """T25: 파이프라인 도구 호출은 목록 안으로 센다. 다른 MCP 도구는 목록 밖이다."""
+
+    def use(name: str) -> dict:
+        return {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": name}]}}
+
+    events = [
+        {"type": "system", "subtype": "init", "tools": PIPELINE_TOOLS},
+        use("mcp__proof__run_tests"), use("Edit"), use("mcp__other__x"),
+        json.loads(_output(tools=None).splitlines()[-1]),
+    ]  # fmt: skip
+    result = _run(FakeRunner("".join(json.dumps(e) + "\n" for e in events)), mcp_config="{}")
+    assert result.ok and result.tool_uses == 2
+    assert result.unexpected_tools == (("mcp__other__x", 1),)

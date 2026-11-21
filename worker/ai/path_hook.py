@@ -21,6 +21,9 @@ _PATH_KEYS: Final[Mapping[str, Mapping[str, bool]]] = {
     "Edit": {"file_path": True},
     "Grep": {"path": False},
     "Glob": {"path": False},
+    # 파이프라인 도구(`worker/mcp_pure.TOOL_NAMES`). 경로를 받지 않고 파이프라인의 코드가 돈다
+    "mcp__proof__check_rules": {},
+    "mcp__proof__run_tests": {},
 }
 # 경로가 아니라 패턴인 입력. 패턴이 폴더를 벗어나는 모양이면 거부한다
 _PATTERN_KEYS: Final[Mapping[str, tuple[str, ...]]] = {"Grep": ("glob",), "Glob": ("pattern",)}

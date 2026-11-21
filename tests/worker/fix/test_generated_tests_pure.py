@@ -2,6 +2,7 @@
 
 import json
 from dataclasses import replace
+from typing import Final
 
 import pytest
 
@@ -14,7 +15,6 @@ from worker.fix.generated_tests_pure import (
     GeneratedTest,
     LineRun,
     Suite,
-    ToolUsage,
     after_check,
     file_of_test,
     group_lines,
@@ -26,11 +26,12 @@ from worker.fix.generated_tests_pure import (
     render_before,
     render_check,
 )
+from worker.mcp_pure import ToolUsage
 from worker.test_run_pure import PytestRun, ReportSummary
 from worker.violation_pure import Violation
 
-SRC = "pkg/m.py"
-SOURCE = (
+SRC: Final = "pkg/m.py"
+SOURCE: Final = (
     "LIMIT = 10\n\n"
     "def f(x):\n"
     "    if x > LIMIT:\n"
@@ -39,10 +40,10 @@ SOURCE = (
     "def g(x):\n"
     "    return x * 2\n"
 )
-OK_TEST = "from pkg.m import f\n\ndef test_f():\n    assert f(11) == 1\n"
-PASSED = PytestRun(exit_code=0, summary=ReportSummary(passed=2, total=2))
-EXISTING = "tests/test_a.py"
-NEW = "tests/test_pipeline_f.py"
+OK_TEST: Final = "from pkg.m import f\n\ndef test_f():\n    assert f(11) == 1\n"
+PASSED: Final = PytestRun(exit_code=0, summary=ReportSummary(passed=2, total=2))
+EXISTING: Final = "tests/test_a.py"
+NEW: Final = "tests/test_pipeline_f.py"
 
 
 def violation(line: int, covered: bool | None = False, vid: str = "") -> Violation:
@@ -61,10 +62,10 @@ def suite(by: dict[int, set[str]], outcomes=None, counts=None, run=PASSED) -> Su
 
 
 # 있던 테스트는 6줄(return 0)을, 만든 테스트는 4·5줄(if, return 1)을 실행한다
-BEFORE = suite({1: {""}, 3: {""}, 8: {""}, 4: {EXISTING, NEW}, 6: {EXISTING}, 5: {NEW}})
+BEFORE: Final = suite({1: {""}, 3: {""}, 8: {""}, 4: {EXISTING, NEW}, 6: {EXISTING}, 5: {NEW}})
 
 
-TARGETS = (violation(5),)
+TARGETS: Final = (violation(5),)
 
 
 def judge(candidates, targets=TARGETS, before=BEFORE, **kw):

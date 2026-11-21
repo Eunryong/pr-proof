@@ -358,11 +358,11 @@ def list_files(worktree: Path) -> list[str]:
     return sorted({path for path in out.split("\0") if path})
 
 
-def apply_patch(worktree: Path, patch: bytes) -> None:
+def apply_patch(worktree: Path, patch: bytes, *, reverse: bool = False) -> None:
     """모델 폴더에서 뽑은 diff를 worktree의 파일에 적용한다. 인덱스는 건드리지 않는다.
 
     git은 심볼릭 링크 너머의 경로에 쓰지 않고("beyond a symbolic link"), 하나라도 맞지 않으면
-    아무것도 적용하지 않는다.
+    아무것도 적용하지 않는다. reverse면 diff를 거꾸로 적용해 되돌린다.
     """
     try:
         git_dir = _git_dir_record(worktree).read_text().strip()
@@ -372,7 +372,7 @@ def apply_patch(worktree: Path, patch: bytes) -> None:
     command = [
         "git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
         "-c", "core.autocrlf=false", f"--git-dir={git_dir}", f"--work-tree={worktree}",
-        "apply", "--binary", "--whitespace=nowarn", "-",
+        "apply", "--binary", "--whitespace=nowarn", *(["-R"] if reverse else []), "-",
     ]  # fmt: skip
     try:
         proc = subprocess.run(

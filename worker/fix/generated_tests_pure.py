@@ -100,33 +100,9 @@ class LineRun:
     why: str = ""
 
 
-ToolName = Literal["check_rules", "run_tests"]
-
-
-@dataclass(frozen=True)
-class ToolUsage:
-    """수정 작성 호출들 안의 도구 호출 (9.4). limited는 상한에 닿아 돌리지 않은 호출이 있었다."""
-
-    check_rules: int = 0
-    run_tests: int = 0
-    seconds: float = 0.0
-    limited: bool = False
-
-    @property
-    def calls(self) -> int:
-        return self.check_rules + self.run_tests
-
-    def __add__(self, other: "ToolUsage") -> "ToolUsage":
-        return ToolUsage(
-            self.check_rules + other.check_rules, self.run_tests + other.run_tests,
-            self.seconds + other.seconds, self.limited or other.limited,
-        )  # fmt: skip
-
-
 STATE_TYPES: Final = (
     ("worker.fix.generated_tests_pure", "GeneratedTest"),
     ("worker.fix.generated_tests_pure", "LineRun"),
-    ("worker.fix.generated_tests_pure", "ToolUsage"),
 )
 
 
