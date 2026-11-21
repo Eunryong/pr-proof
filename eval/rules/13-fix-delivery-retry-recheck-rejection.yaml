@@ -3,7 +3,7 @@ description: >-
   수정안 PR의 한 생애 (완료 기준 2-3, 2-4, 2-6). 옛 static 01의 `> 50`을 README 규칙의 검사기가 잡고
   가짜 모델이 고친 수정안이 검증을 통과한다. 첫 전달(push)을 일부러 실패시키고 재시도하면 모델 호출
   기록이 늘지 않고 저장한 패치가 그대로 올라간다. 같은 커밋에 `/recheck`를 달면 모델 호출이 0이다.
-  사람이 수정안 PR을 닫은 뒤 새 커밋을 올리면 거절 기록이 하나 남고 같은 줄은 skip(이전에 거절됨)이다.
+  사람이 수정안 PR을 닫은 뒤 새 커밋을 올리면 거절 기록이 하나 남고 같은 줄은 직접 고쳐야 함(이전에 거절됨)이다.
 scripted_only: true
 pr:
   - file: orders/services/pricing.py
@@ -56,4 +56,4 @@ expect:
     edits:
       - file: orders/services/pricing.py
         append: "\n\n# 다음 커밋\n"
-    contains: ["  - `orders/services/pricing.py:13` · skip (이전에 거절됨 (#900))"]
+    contains: ["  - `orders/services/pricing.py:13` · 이전에 거절됨 (#900)"]

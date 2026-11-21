@@ -4,12 +4,12 @@
 
 - `lint/*.yaml`: v1 2단계 컨벤션(lint) 케이스. v2 3단계부터는 도구 설정의 규칙 묶음과 기계적 수정 묶음으로 돈다(완료 기준 3-1). `tests/e2e/test_lint_cases.py`가 읽어, 로컬 git 원격 + 실제 ruff(도구 캐시에 받음) + 실제 샌드박스 테스트로 처음부터 끝까지 돌린다. GitHub만 가짜로 바꾼다. 예제 리포에는 ruff 설정이 없어 하네스가 base에 빈 `ruff.toml`을 둔다. 케이스 파일은 v1 그대로이고 수정안 브랜치만 `fix-mechanical`이다.
 - `tools/*.yaml`: v2 3단계 도구 연결 케이스(3-2–3-5). 문서 규칙을 ruff 코드로 잇기, ruff를 받지 않는 base, 규칙이 없는 base, 저장소가 고정한 ruff 버전과 두 번째 실행. `tests/e2e/test_tool_cases.py`가 케이스마다 빈 도구 캐시로 돌려 무엇을 받았는지 본다. 형식은 그 파일의 독스트링에 있다.
-- 옛 `static/*.yaml` 다섯 개(파이프라인 내장 정적변수 검사)는 v2 2단계에 내장 검사기와 함께 지웠다. 확인하던 것은 README 규칙 케이스 `rules/09`–`12`, `15`, `16`으로 옮겼다(01 매직 값의 수정, 02 모듈 수준 상태의 수정, 03 테스트가 지나가지 않는 위반, 04 고치면 테스트가 깨지는 수정, 05 테스트가 실패한 PR, 그리고 README에 그 문장이 없는 base).
+- 옛 `static/*.yaml` 다섯 개(파이프라인 내장 정적변수 검사)는 v2 2단계에 내장 검사기와 함께 지웠다. 확인하던 것은 README 규칙 케이스 `rules/09`–`12`, `15`, `16`으로 옮겼다(01 매직 값의 수정, 02 모듈 수준 상태의 수정, 03 테스트가 지나가지 않는 위반(2026-11-21부터 고치고 그 사실을 적는다), 04 고치면 테스트가 깨지는 수정, 05 테스트가 실패한 PR, 그리고 README에 그 문장이 없는 base).
 - `rules/*.yaml`: v2 1단계 문서 규칙 케이스. 예제 리포 README의 "코드 규칙" 절의 규칙을 읽어 검사기를 만들고 PR이 바꾼 줄의 위반을 찾는지 본다. `tests/e2e/test_rules_cases.py`가 같은 방식으로 돌린다. 예제 리포에는 ruff 설정이 없어 도구 설정의 규칙은 없고, 가짜 모델은 도구 선택에 규칙의 `tool`(없으면 맞는 도구 없음)을 답한다. 모델은 케이스의 `model` 답을 돌려주는 가짜이고(원문 확인, ast-grep 예시 확인, 검사기 실행은 진짜), `PR_PROOF_REAL_MODEL=1`이면 로그인된 claude를 실제로 부른다(비용이 든다. 비교용). `scripted_only: true`인 케이스는 실제 모델로 돌릴 때 건너뛴다.
 - `judge/*.yaml`: v2 4단계 모델의 직접 판단 케이스(4-1–4-7). 검사기 작성이 세 번 모두 예시를 통과하지 못한 규칙이 모델 판단으로 내려가, 위반이 수정안 PR까지 가는지, 답의 줄 인용 확인, hunk의 지시 주석(기록만), 위반 수에 비례하는 PR 상한과 `/fix`, 저장소 하루 상한을 본다. `tests/e2e/test_judge_cases.py`가 문서 규칙 케이스와 같은 방식으로 돌리고, 더한 키(`model.rules[].judge`, `record_only`, `real_checker_scripted`, `expect.judge_calls`·`next_commit`·`then_fix`·`mechanical_branch`)는 그 파일의 독스트링에 있다.
 - `tools_off.yaml`: 도구를 끈 평가(DESIGN 13절, 완료 기준 1-16, 3-7, 3-8, 4-8)의 표본과 개념. 위 케이스 열 개(옛 static 다섯과 lint 다섯)와 1단계 기준선의 probe 파일(ruff가 정답지), 판단 케이스 `judge/01`·`06`(케이스가 표시한 줄이 정답)을 같은 규칙 읽기 결과로 모델 판단만·도구 끔·도구 켬에서 돌려, 개념과 확인 방법(도구 / 검사기 / 모델 판단)마다 재현율·정밀도를 낸다. `tests/e2e/test_tools_off_eval.py`가 읽고, 실행 방법은 그 파일의 독스트링에 있다.
 - 실행: `python -m app.cli eval --baseline`으로 `tests/e2e`의 docker 테스트 전부(케이스 파일, 도구를 끈 평가, 비교 하네스)를 돌려 결과를 SQLite의 `eval_runs`에 기준선으로 남긴다. 프롬프트나 모델을 바꾼 뒤 `python -m app.cli eval`을 돌리면 같은 종류(가짜 모델 / `--real-model`)의 가장 최근 기준선과 비교한다(6단계, 완료 기준 6-1, 6-3). 하네스만 보려면 `pytest -m docker tests/e2e`.
-- 케이스 수 (2026-11-20): `rules` 30, `judge` 6, `lint` 5, `tools` 4, `rag` 10, 합 55. 팀 고유 규칙 케이스(DESIGN 13절 "eval에 더할 케이스: 팀 고유 규칙 (`eval/rules/`)")는 `rules`의 30개다(린터에도 있는 옛 static 여덟 개를 빼고 판단 케이스를 더해 세면 28개). `rules/17`–`30`은 6단계에 더했다: 금액 타입(17), 모델 메서드의 `self` 대입(18), 예외 이름(19), 상수 위치(20), 환경변수 위치(21), 테스트의 `time.sleep`(22), 로거 이름(23), `requests` import 위치(24), 현재 시각 읽기(25), 금액 반올림의 모델 수정(26), API 함수 이름(27), services의 `dict` 인자(28), models의 `logging` import(29), 짝수 쪽 반올림의 모델 수정(30). 26과 30은 6-2 모델 비교의 표본이다.
+- 케이스 수 (2026-11-21): `rules` 31, `judge` 6, `lint` 5, `tools` 4, `rag` 10, 합 56. `rules/31`은 2026-11-21에 더했다: 다른 파일이 import하는 이름이라 고칠 수 없는 위반이 이유와 함께 사람에게 남는다. 팀 고유 규칙 케이스(DESIGN 13절 "eval에 더할 케이스: 팀 고유 규칙 (`eval/rules/`)")는 2026-11-20까지 `rules`의 30개였다(린터에도 있는 옛 static 여덟 개를 빼고 판단 케이스를 더해 세면 28개). `rules/17`–`30`은 6단계에 더했다: 금액 타입(17), 모델 메서드의 `self` 대입(18), 예외 이름(19), 상수 위치(20), 환경변수 위치(21), 테스트의 `time.sleep`(22), 로거 이름(23), `requests` import 위치(24), 현재 시각 읽기(25), 금액 반올림의 모델 수정(26), API 함수 이름(27), services의 `dict` 인자(28), models의 `logging` import(29), 짝수 쪽 반올림의 모델 수정(30). 26과 30은 6-2 모델 비교의 표본이다.
 - `tests/e2e/test_model_compare.py`: 수정 작성의 모델 세 구성(가벼운 모델만 / 무거운 모델만 / 가벼운 다음 무거운)을 `rules/09`, `10`, `26`, `30`으로 비교한다(6-2). 해소율·채택률·호출 수를 낸다. 실행 방법은 그 파일의 독스트링에 있다.
 
 ## 케이스 형식
@@ -61,6 +61,7 @@ expect:
   not_flagged: [파일:줄, ...]  # 잡히면 안 되는 바뀐 줄
   contains: [...]              # 문서 규칙 절에 있어야 할 글
   absent: [...]                # 없어야 할 글
+  body_contains: [...]         # 결과 코멘트 전체("설정:" 포함)에 있어야 할 글
   second_pr_without_calls: true  # 같은 base의 두 번째 PR은 모델 호출 0회
 ```
 
@@ -70,7 +71,8 @@ expect:
 ```yaml
 model:
   skip:                    # 수정 판단이 skip으로 답할 위반과 이유. 나머지는 fix
-    orders/services/pricing.py:21: 이유
+    orders/services/pricing.py:21: 이유            # 이유 글만 (skip 이유 이름 없음)
+    orders/services/pricing.py:30: {reason: needs_other_file, why: 이유}
 fix:                       # 가짜 수정 모델 (실제 모델로 돌리면 쓰지 않는다)
   edits:                   # 회차마다 모델 폴더에 적용할 편집 (모자라면 마지막 것을 다시 쓴다)
     - - {file: 경로, find: 바꿀 문자열, replace: 바꿀 내용}

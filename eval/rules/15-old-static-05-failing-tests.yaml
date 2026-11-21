@@ -1,7 +1,7 @@
 name: old-static-05-failing-tests
 description: >-
   옛 static 05를 README 규칙 케이스로 옮긴 것. PR이 매직 값을 넣으면서 테스트도 깨뜨렸다. 위반은
-  그대로 보이지만 안전망이 없으므로 수정 판단의 표가 skip(테스트가 실패함)으로 정하고, 수정 모델을
+  그대로 보이지만 안전망이 없으므로 수정 판단의 표가 직접 고쳐야 함(테스트가 실패함)으로 정하고, 수정 모델을
   부르지 않으며 수정안 PR이 없다.
 pr:
   - file: orders/services/pricing.py
@@ -41,5 +41,5 @@ fix:
   answer: {summary: "", changes: []}
 expect:
   violations: ["orders/services/pricing.py:13"]
-  contains: ["  - `orders/services/pricing.py:13` · skip (테스트가 실패함)"]
+  contains: ["  - `orders/services/pricing.py:13` · 테스트가 실패함", "  직접 고쳐야 함 1건 (테스트가 실패함 1건)"]
   fix: none

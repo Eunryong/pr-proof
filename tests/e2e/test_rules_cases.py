@@ -12,7 +12,9 @@ lint 케이스와 같은 방식이다: 예제 리포의 로컬 git 원격, 실�
 차례로 한다. `fix_command`는 결과 코멘트 뒤에 그 명령(`/fix` 등)을 달고 수정 결과를 다시 본다.
 케이스에 `fix`가 있으면 수정 판단은 `model.skip`에 적은 위반만 skip하고 나머지를 fix로 답하며, 수정
 작성은 케이스의 `fix` 편집을 모델 폴더에 적용하는 가짜다(검증과 수정안 PR 푸시는 진짜). `fix`가 없는
-케이스는 모든 위반을 skip으로 답해 수정까지 가지 않는다.
+케이스는 모든 위반을 skip으로 답해 수정까지 가지 않는다. `model.skip`의 값은 이유 글이거나
+{why, reason}이다(reason은 수정 판단 답의 skip 이유 이름). `expect.body_contains`는 결과 코멘트 전체에서
+찾는다.
 """
 
 import json
@@ -49,7 +51,7 @@ REAL_MODEL_ENV: Final = "PR_PROOF_REAL_MODEL"
 PIPELINE_YAML: Final = {}
 NO_TOOL: Final = {"tool": "none", "codes": [], "reason": "케이스", "examples": []}
 BRANCH: Final = "pipeline/pr-1-fix-model"
-# 위치 뒤에 수정 판단(" · skip (...)")이 붙을 수 있다
+# 위치 뒤에 수정 판단(" · 고칠 대상 (...)", " · 이유")이 붙을 수 있다
 _LOCATION: Final = re.compile(r"^- (`+) ?(.+?) ?\1(?: \(파일 이름·경로\))?(?: · .+)?$")
 
 
@@ -148,9 +150,12 @@ def scripted_model(case: dict):
         if schema is fix_decision.ANSWER_SCHEMA:
             decisions = []
             for vid, file, line in _DECIDE_BLOCK.findall(prompt):
-                why = skip.get(f"{file}:{line}")
-                action = "skip" if why or "fix" not in case else "fix"
-                decisions.append({"id": vid, "action": action, "why": why or "케이스"})
+                entry = skip.get(f"{file}:{line}")
+                why, reason = (entry.get("why"), entry.get("reason", "")) if isinstance(
+                    entry, dict) else (entry, "")  # fmt: skip
+                action = "skip" if entry or "fix" not in case else "fix"
+                decisions.append({"id": vid, "action": action, "why": why or "케이스",
+                                  "reason": reason if action == "skip" else ""})  # fmt: skip
             return _answer({"decisions": decisions})
         own = prompt.split("<<<RECORDS")[0]  # 검색이 넣은 다른 규칙의 기록은 보지 않는다
         (rule,) = [r for r in rules if r["quote"] in own]
@@ -263,7 +268,10 @@ def test_rules_case(case_path: Path, eval_repo: Path, deps_for, tmp_path: Path,
             _check_with_failed_push(deps, gh, redis, remote, fixer, monkeypatch)
         )
     else:
-        section = doc_rules_section(_check(deps, gh, redis, remote, pr=1))
+        body = _check(deps, gh, redis, remote, pr=1)
+        section = doc_rules_section(body)
+        for text in expect.get("body_contains", ()):
+            assert text in body, (text, body)
     found = flagged(section)
     assert found == sorted(expect["violations"]), section
     assert not set(found) & set(expect.get("not_flagged", ())), section
@@ -346,13 +354,13 @@ def _check_recheck(deps: Deps, gh: FakeGh, redis, remote: dict, fixer) -> None:
     section = doc_rules_section(_bodies(gh)[-1])
     assert _made_calls(deps) == calls and len(fixer.calls) == written, section
     assert "모델 호출 0회 / 상한" in section
-    assert "수정 판단: fix 1건, skip 0건 · 모델 호출 0회" in section
+    assert "수정 판단: 고칠 대상 1건, 직접 고쳐야 함 0건 · 모델 호출 0회" in section
     assert "이 커밋의 모델 수정안 PR #900이 열려 있습니다." in section, section
 
 
 def _check_rejection(then: dict, deps: Deps, gh: FakeGh, redis, remote: dict, fixer) -> None:
     """2-6: 사람이 수정안 PR을 닫은 뒤 새 커밋을 올리면 거절 기록이 하나 남고, 같은 줄은
-    skip(이전에 거절됨)이다. 수정 작성을 다시 부르지 않는다."""
+    직접 고쳐야 함(이전에 거절됨)이다. 수정 작성을 다시 부르지 않는다."""
     ((number, pull),) = gh.pulls.items()
     pull["state"] = "closed"
     written = len(fixer.calls)
@@ -426,8 +434,9 @@ def test_flagged_reads_locations_from_section() -> None:
     section = (
         "**규칙:** ⚠️ 위반 2건 (규칙 1개)\n\n위반:\n"
         "- `R-readme-1` `` `x` `` · 2건\n  출처: `README.md > 코드 규칙`\n"
-        "  - `a/b.py:3` · skip (모델: `x`)\n\n"
-        "<details><summary><code>R-readme-1</code>의 나머지 1건</summary>\n\n"
-        "  - ``a`b.py:4``\n\n</details>\n\n모델 호출 1회"
+        "  - `a/b.py:3` · 고칠 대상 (모델 수정) · 이 줄을 실행하는 테스트가 없음\n"
+        "  직접 고쳐야 함 1건 (모델이 위반이 아니라고 봄 1건)\n\n"
+        "<details><summary>직접 고쳐야 함 1건의 위치</summary>\n\n"
+        "  - ``a`b.py:4`` · 모델이 위반이 아니라고 봄: `x`\n\n</details>\n\n모델 호출 1회"
     )
     assert flagged(section) == ["a/b.py:3", "a`b.py:4"]

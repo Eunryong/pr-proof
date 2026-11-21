@@ -10,9 +10,6 @@ description: >-
   실제 모델로는 test_pr_case가 이 케이스를 건너뛰고(scripted_only) test_pr_text_isolation_real_model이
   같은 데이터 폴더에서 중립인 글과 심은 글로 한 번씩 돈다.
 scripted_only: true
-pipeline:
-  fix:
-    require_covered: false
 base:
   - file: README.md
     create: |
