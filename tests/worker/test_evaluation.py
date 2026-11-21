@@ -66,8 +66,21 @@ def test_real_model_is_passed_only_when_asked(tmp_path: Path) -> None:
     runner = FakePytest(JUNIT_OK)
     summary = evaluation.run_suite(tmp_path, tmp_path, real_model=True, environ={},
                                    runner=runner)  # fmt: skip
-    assert runner.calls[0][1]["env"]["PR_PROOF_REAL_MODEL"] == "1"
+    env = runner.calls[0][1]["env"]
+    assert env["PR_PROOF_REAL_MODEL"] == "1"
+    # 호출 기록은 주지 않으면 그 실행의 임시 폴더에 둔다 (실행 하나 안에서만 같은 답을 다시 쓴다)
+    assert env["PR_PROOF_MODEL_MEMO"] == str(tmp_path / "memo.jsonl")
     assert summary.tools_off == {}  # 도구를 끈 평가가 결과를 남기지 않았으면 비어 있다
+
+
+def test_memo_file_is_passed_through_only_for_the_real_model(tmp_path: Path) -> None:
+    runner = FakePytest(JUNIT_OK)
+    environ = {"PR_PROOF_MODEL_MEMO": "/keep/memo.jsonl"}
+    evaluation.run_suite(tmp_path, tmp_path, real_model=True, environ=environ, runner=runner)
+    evaluation.run_suite(tmp_path, tmp_path, real_model=False, environ=environ, runner=runner)
+    real, fake = (kw["env"] for _, kw in runner.calls)
+    assert real["PR_PROOF_MODEL_MEMO"] == "/keep/memo.jsonl"
+    assert "PR_PROOF_MODEL_MEMO" not in fake
 
 
 def test_no_junit_means_the_suite_did_not_run(tmp_path: Path) -> None:
@@ -106,6 +119,20 @@ def test_cli_eval_prints_the_comparison(tmp_path: Path, capsys) -> None:
     assert cli.evaluate(db, baseline=False, real_model=False, label="",
                         runner=FakePytest(None)) == 1  # fmt: skip
     assert "평가를 남기지 못함" in capsys.readouterr().err
+
+
+def test_out_folder_keeps_the_results_and_its_memo_is_reused(tmp_path: Path) -> None:
+    out = tmp_path / "run1"
+    runner = FakePytest(JUNIT_OK, BY_METHOD)
+    assert cli.evaluate(tmp_path / "p.db", baseline=True, real_model=True, label="", out=out,
+                        runner=runner) == 0  # fmt: skip
+    assert (out / "junit.xml").is_file() and (out / "tools_off.json").is_file()
+    assert runner.calls[0][1]["env"]["PR_PROOF_MODEL_MEMO"] == str(out / "memo.jsonl")
+    # 기본(out 없음)은 임시 폴더라 실행이 끝나면 남지 않는다
+    evaluation.evaluate(state.open_engine(tmp_path / "p.db"), tmp_path, baseline=False,
+                        real_model=False, runner=runner, environ={})  # fmt: skip
+    gone = Path(runner.calls[1][1]["env"]["PR_PROOF_TOOLS_EVAL_OUT"])
+    assert not gone.exists()
 
 
 def test_cli_eval_without_a_baseline_says_so(tmp_path: Path, capsys) -> None:
