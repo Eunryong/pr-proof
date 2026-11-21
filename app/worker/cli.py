@@ -3,10 +3,11 @@
 - `python -m app.worker.cli reindex [--repo owner/name]`: SQLite의 기록(`records`)으로 벡터 저장소
   (`data_dir/chroma/`)를 다시 만든다 (DESIGN.md 6.5). 벡터 저장소가 지워졌거나 임베딩 모델을 바꿨을
   때 쓴다. 선택 의존성 `[rag]`가 필요하고, 처음이면 임베딩 모델을 받는다.
-- `python -m app.worker.cli eval [--baseline] [--real-model] [--label 이름] [--db 경로] [--out
-  폴더]`: 평가 세트 전부(`tests/e2e`의 docker 테스트, 도구를 끈 평가 포함)를 돌려 `eval_runs`에
-  남긴다 (DESIGN.md 13절 6단계). `--baseline`이면 기준선으로 남기고, 아니면 같은 종류(가짜 모델 /
-  실제 모델)의 가장 최근 기준선과 비교해 보인다. 프롬프트나 모델을 바꾼 뒤 이 명령 하나로 비교한다.
+- `python -m app.worker.cli eval [--baseline] [--real-model] [--label 이름] [--db 경로]
+  [--out 폴더]`: 평가 세트 전부(`tests/e2e`의 docker 테스트, 도구를 끈 평가 포함)를 돌려
+  `eval_runs`에 남긴다 (DESIGN.md 13절 6단계). `--baseline`이면 기준선으로 남기고, 아니면 같은
+  종류(가짜 모델 / 실제 모델)의 가장 최근 기준선과 비교해 보인다. 프롬프트나 모델을 바꾼 뒤 이 명령
+  하나로 비교한다.
   `--real-model`은 claude를 부른다. `--out`을 주면 그 폴더에 junit, 도구를 끈 평가의 JSON, 실제
   모델의 호출 기록(`memo.jsonl`)을 남긴다. 그 폴더에 이미 `memo.jsonl`이 있으면 그 답을 다시 쓴다.
 """
@@ -21,7 +22,7 @@ from redis import Redis
 
 from app.shared import config
 
-REPO_ROOT: Final = Path(__file__).resolve().parent.parent
+REPO_ROOT: Final = Path(__file__).resolve().parents[2]
 
 
 def main(argv: list[str] | None = None) -> int:

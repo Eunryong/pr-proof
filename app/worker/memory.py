@@ -76,8 +76,9 @@ class SearchUnavailable(RuntimeError):
 
 
 class ReindexNeeded(SearchUnavailable):
-    """컬렉션을 만든 임베딩 모델이나 차원이 지금 설정과 다르다. `python -m app.worker.cli
-    reindex`."""
+    """컬렉션을 만든 임베딩 모델이나 차원이 지금 설정과 다르다.
+
+    `python -m app.worker.cli reindex`로 다시 만든다."""
 
 
 # --- 임베딩 모델 받기 ---

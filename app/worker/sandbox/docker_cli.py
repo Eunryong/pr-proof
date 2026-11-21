@@ -20,7 +20,7 @@ PULL_EVERY_SECONDS: Final = 24 * 60 * 60
 # 작업 컨테이너 이름 접두어. 이름 뒤에는 runs ID가 붙는다
 CONTAINER_PREFIX: Final = "pr-proof-job"
 # 이미지 Dockerfile과 컨테이너에 읽기 전용으로 넣는 파이프라인 설정(coveragerc)
-IMAGE_DIR: Final = Path(__file__).resolve().parents[2] / "docker" / "sandbox"
+IMAGE_DIR: Final = Path(__file__).resolve().parents[3] / "docker" / "sandbox"
 
 # 설치·작업 컨테이너 공통 자원 제한. 메모리는 대상 리포의 sandbox.memory_gb로 바꿀 수 있다
 MEMORY_LIMIT_GB: Final = 1.0
