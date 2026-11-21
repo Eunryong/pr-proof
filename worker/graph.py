@@ -9,8 +9,9 @@
 
 규칙은 base의 문서와 도구 설정(ruff 설정)에서 나온다. 규칙이 하나도 없으면 규칙 검사를 하지 않고
 테스트로 넘어간다. 테스트 뒤에 위반마다 수정 판단(fix/skip과 이유, 4.6)을 정해 코멘트에 보인다.
-`fix`로 정한 위반은 수정 방법별 묶음(`mechanical`: 도구의 수정, `model`: 모델, 3.1의 C7)으로 고치고
-결정적으로 검증한 뒤 묶음마다 수정안 PR로 올린다. 파이프라인이 정한 규칙의 검사와 수정은 없다 (2.2).
+`fix`로 정한 위반은 수정 방법별 묶음(`mechanical`: 도구의 수정, `model`: 모델이 검사기와 샌드박스
+테스트를 도구로 부르며 고침, 3.1의 C7)으로 고치고 출구 검사를 통과한 것만 묶음마다 수정안 PR로
+올린다. 파이프라인이 정한 규칙의 검사와 수정은 없다 (2.2).
 
 묶음마다 수정은 한 번이다. 수정마다 새 worktree에서 시작한다 (앞 수정의 변경이 섞이지 않게).
 `/fix`로 다시 돌리면 그 묶음은 수정 판단부터 다시 돈다. 모델 묶음은 호출 상한으로 남은 판단과
@@ -595,7 +596,7 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
         return {"proposals": {**state.get("proposals", {}), MECHANICAL: result}}
 
     def fix_model(state: FlowState) -> FlowState:
-        """fix·model로 정한 위반을 모델로 고치고 결정적으로 검증한다 (5.1 fix_model)."""
+        """fix·model로 정한 위반을 모델이 도구로 확인하며 고치고 출구 검사를 한다 (5.1)."""
         job, found = state["job"], state["doc_rules"]
         picked = targets(state, MODEL)
         fresh_worktree(job)

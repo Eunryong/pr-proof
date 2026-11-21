@@ -100,7 +100,7 @@ _LEFT_LABEL: Final[Mapping[str, str]] = {
     "rejected_before": "이전에 거절됨",
     "notify_only": "알리기만 하는 규칙",
     "tests_failed": "테스트가 실패함",
-    "no_safety_net": "안전망이 없음",
+    "no_safety_net": "테스트로 확인할 수 없음",
     "team_pattern": "팀이 닫은 수정과 비슷함",
     "needs_other_file": "다른 파일이나 공개 이름을 바꿔야 함",
     "changes_behavior": "고치면 동작이 바뀜",

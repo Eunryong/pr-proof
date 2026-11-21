@@ -61,7 +61,6 @@ expect:
   same_as_base: true
   pushed_contains: ["order.coupon_percent > MAX_COUPON_PERCENT", "discount(order) >= FREE_SHIPPING_MIN"]
   pr_contains:
-    - "  - `orders/services/pricing.py:13` · "
-    - "  - `orders/services/pricing.py:21` · "
+    - "  - `orders/services/pricing.py` 줄 13, 21"
     - "- 규칙 재검사: 대상 위반 2건 해소, 새 위반 없음"
   pr_absent: ["파이프라인이 고치지 않은 위반"]
