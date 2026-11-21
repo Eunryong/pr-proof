@@ -1,4 +1,4 @@
-"""과거 기록 저장 (docs/DESIGN.md 4.10, 6.5). 무엇을 기록할지는 app/models/records.py가 정한다.
+"""과거 기록 저장 (docs/DESIGN.md 4.10, 6.5). 무엇을 기록할지는 worker/records_pure.py가 정한다.
 
 - 수정안 PR이 머지·닫힘: 수정안 PR 상태를 확인하는 곳(`proposal.refresh`)에서 남긴다.
 - 작성자가 자기 커밋으로 고침, 이번 검사의 위반: 새 커밋의 위반 찾기 뒤에 남긴다.

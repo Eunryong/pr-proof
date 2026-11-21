@@ -1,4 +1,5 @@
-"""models/judge.py: hunk 만들기, 프롬프트의 경계, 답의 결정적 확인(4-3), 저장한 답 되살리기."""
+"""worker/rules/judge_pure.py: hunk 만들기, 프롬프트의 경계, 답의 결정적 확인(4-3), 저장한 답
+되살리기."""
 
 import re
 from typing import Final

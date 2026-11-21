@@ -1,4 +1,4 @@
-"""worker/checkers.py: 검사기 작성 루프. 가짜 모델과 가짜 샌드박스, 실제 SQLite로 확인한다."""
+"""worker/rules/checkers.py: 검사기 작성 루프. 가짜 모델과 가짜 샌드박스, 실제 SQLite로 확인한다."""
 
 from collections.abc import Sequence
 from dataclasses import replace

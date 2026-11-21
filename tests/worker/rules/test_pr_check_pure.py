@@ -1,4 +1,5 @@
-"""models/pr_check.py: PR 사실의 상한, PR 패턴의 계획과 예시 확인, 모델 판단의 답 확인 (4.5 끝)."""
+"""worker/rules/pr_check_pure.py: PR 사실의 상한, PR 패턴의 계획과 예시 확인, 모델 판단의 답 확인
+(4.5 끝)."""
 
 import json
 from typing import Final

@@ -1,5 +1,5 @@
 """PR 단위 확인 (docs/DESIGN.md 4.5 끝, 결정 2): PR 사실, PR 패턴, 모델 판단의 프롬프트와 답의
-결정적 확인, 캐시 키, 결과. 판단만 한다. 읽고 부르고 저장하는 것은 worker/pr_check.py가 한다.
+결정적 확인, 캐시 키, 결과. 판단만 한다. 읽고 부르고 저장하는 것은 worker/rules/pr_check.py가 한다.
 
 확인 대상이 `pr`인 규칙(4.3)은 코드 줄이 아니라 PR 자체를 본다: 커밋 메시지, PR 제목·본문, 브랜치
 이름, 바뀐 파일의 경로. 이 글은 모두 PR 작성자가 쓴 믿지 않는 글이다(위협 T27).
@@ -47,7 +47,8 @@ MAX_EXAMPLE_CHARS: Final = 2000
 MAX_EXAMPLE_PATHS: Final = 10
 # 내용 규칙과 같다: 예시 확인을 두 번 통과하지 못하면 모델 판단으로 보낸다 (4.4)
 PATTERN_ATTEMPTS: Final = 2
-# 샌드박스의 고정 스크립트(sandbox/checker_runner.py의 PR 패턴). 바꾸면 올린다 (캐시 키에 들어간다)
+# 샌드박스의 고정 스크립트(worker/sandbox/checker_runner.py의 PR 패턴). 바꾸면 올린다 (캐시 키에
+# 들어간다)
 ENGINE_VERSION: Final = "py3.11-re-pr-1"
 
 # --- 모델 판단 ---

@@ -1,4 +1,5 @@
-"""models/model_fix.py: 수정 대상 고르기, 프롬프트, 설명 JSON 확인, 재검사 비교, 저장 키."""
+"""worker/fix/model_fix_pure.py: 수정 대상 고르기, 프롬프트, 설명 JSON 확인, 재검사 비교, 저장
+키."""
 
 import json
 from typing import Final

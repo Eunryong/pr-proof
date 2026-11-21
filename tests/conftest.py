@@ -39,7 +39,7 @@ def isolated_config_dir(tmp_path_factory: pytest.TempPathFactory, monkeypatch) -
 @pytest.fixture(autouse=True)
 def notifications(monkeypatch) -> list[str]:
     """어느 테스트도 이 Mac에 실제 알림을 띄우지 않는다. 띄웠을 글을 모은다. 실제로 띄우는 것은
-    `PR_PROOF_REAL_NOTIFY=1`일 때의 tests/notify/test_macos_real.py뿐이다."""
+    `PR_PROOF_REAL_NOTIFY=1`일 때의 tests/shared/test_notify_real.py뿐이다."""
     from shared import notify as macos
 
     shown: list[str] = []

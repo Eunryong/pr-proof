@@ -1,4 +1,4 @@
-"""models/access.py: 외부 작성자 PR 가드레일의 판단 (DESIGN 8.6, 완료 기준 6-8)."""
+"""worker/access_pure.py: 외부 작성자 PR 가드레일의 판단 (DESIGN 8.6, 완료 기준 6-8)."""
 
 from typing import Final
 

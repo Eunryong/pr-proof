@@ -1,4 +1,4 @@
-"""worker/detect.py: 채택한 검사기를 PR이 바꾼 파일에 돌려 바뀐 줄의 위반만 남긴다."""
+"""worker/rules/detect.py: 채택한 검사기를 PR이 바꾼 파일에 돌려 바뀐 줄의 위반만 남긴다."""
 
 from collections.abc import Sequence
 from dataclasses import replace

@@ -1,4 +1,4 @@
-"""app/models/checker_authoring.py: 검사 방법 계획, 캐시 키, 프롬프트, 예시 확인."""
+"""worker/checker_authoring_pure.py: 검사 방법 계획, 캐시 키, 프롬프트, 예시 확인."""
 
 from dataclasses import replace
 from typing import Final

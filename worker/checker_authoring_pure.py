@@ -1,7 +1,7 @@
 """검사기 작성의 결정적 부분 (docs/DESIGN.md 4.4, 5.3 (a), 9.1): 검사 방법 계획, 캐시 키, 프롬프트,
 답 읽기, 예시 확인.
 
-모델을 부르지 않는다. 부르고 저장하고 샌드박스에서 돌리는 것은 worker/checkers.py가 한다.
+모델을 부르지 않는다. 부르고 저장하고 샌드박스에서 돌리는 것은 worker/rules/checkers.py가 한다.
 
 예시 확인(채택 조건): 위반 예시 2개 이상과 정상 예시 2개 이상. 문서의 예시를 먼저 쓰고 모자란
 수만 모델이 쓴다. 위반 예시는 표시한 줄이 모두 잡히고 표시하지 않은 곳은 잡히지 않아야 하며,
@@ -25,15 +25,16 @@ from worker.rule_reading_pure import prompt_version
 # 예시 확인(judge_examples, model_examples)의 규칙을 바꾸면 올린다 (캐시 키에 들어간다).
 # 프롬프트와 스키마의 버전은 그 글에서 만든다 (PROMPT_VERSION)
 JUDGE_VERSION: Final = "1"
-# 검사기 작성 키의 도구 부분. 검사기는 도구 선택(models/tool_choice.py)이 맞는 도구가 없다고 정한
-# 뒤에만 쓰므로 도구 목록의 버전은 도구 선택의 키에 둔다. 이 값을 바꾸면 모든 저장소가 검사기를 다시
-# 쓴다
+# 검사기 작성 키의 도구 부분. 검사기는 도구 선택(worker/rules/tool_choice_pure.py)이 맞는 도구가
+# 없다고 정한 뒤에만 쓰므로 도구 목록의 버전은 도구 선택의 키에 둔다. 이 값을 바꾸면 모든 저장소가
+# 검사기를 다시 쓴다
 TOOLS_VERSION: Final = "none-1"
-# 검사 엔진 버전 (7.2). sandbox/toolcache.py의 ast-grep 버전, Python 런타임의 버전(3.11)과 맞춘다
+# 검사 엔진 버전 (7.2). worker/sandbox/toolcache.py의 ast-grep 버전, Python 런타임의 버전(3.11)과
+# 맞춘다
 ENGINE_VERSION: Final[Mapping[str, str]] = {
     "ast-grep": "ast-grep-0.51.3",
     "python-ast": "py3.11",
-    "path-pattern": "py3.11-re-1",  # sandbox/checker_runner.py의 고정 스크립트
+    "path-pattern": "py3.11-re-1",  # worker/sandbox/checker_runner.py의 고정 스크립트
 }
 # 규칙이 쓸 수 있는 검사기 종류. 내용을 보는 규칙과 경로를 보는 규칙은 서로의 종류를 쓰지 않는다
 _CODE_KINDS: Final[tuple[CheckerKind, ...]] = ("ast-grep", "python-ast")
@@ -54,7 +55,7 @@ MAX_MODEL_EXAMPLES: Final = 8
 # 검사하지 못한 이유. pr·human은 확인 대상이 코드 줄이 아닌 규칙(4.3), no_checker는 검사기를
 # 끝내 만들지 못한 경로 규칙이다(모델 판단으로 보내지 않는다, 4.5). 나머지는 저장하지 않으므로
 # 다음 검사가 다시 시도한다.
-# run_failed는 채택한 검사기가 이 PR의 파일에서 돌지 못한 것이다 (worker/detect.py)
+# run_failed는 채택한 검사기가 이 PR의 파일에서 돌지 못한 것이다 (worker/rules/detect.py)
 UncheckedKind = Literal[
     "pr", "human", "no_checker", "cap", "model_failed", "tool_unavailable", "run_failed"
 ]
@@ -112,7 +113,7 @@ def plan_check(rule: Rule) -> Unchecked | None:
     """검사기를 작성하지 않을 규칙이면 Unchecked, 작성할 규칙이면 None.
 
     확인 대상이 코드 줄인 규칙만 검사한다. PR 단위 규칙과 사람이 확인하는 규칙은 목록으로만 보인다.
-    4.4의 순서는 기존 도구 → 검사기 → 모델 판단이다 (worker/checkers.py). 규칙 읽기의 힌트가
+    4.4의 순서는 기존 도구 → 검사기 → 모델 판단이다 (worker/rules/checkers.py). 규칙 읽기의 힌트가
     "model"인 규칙도 도구나 코드 모양으로 가릴 수 있으면 그쪽이 더 싸다 (9.3).
     """
     if rule.target != "code":

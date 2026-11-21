@@ -1,4 +1,4 @@
-"""app/sandbox/docker_cli.py 단위 테스트."""
+"""worker/sandbox/docker_cli.py 단위 테스트."""
 
 from worker.sandbox import docker_cli
 

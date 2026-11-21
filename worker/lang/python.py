@@ -4,9 +4,9 @@
 읽기(pytest, report.json), 커버리지 읽기(coverage.xml), 도구(ruff, ruff-format).
 3단계에서는 흩어져 있던 코드를 옮기기만 했다. 두 번째 언어를 붙일 때 그 차이를 보고 인터페이스를
 정한다. 판단 규칙(coverage.xml과 문장 범위 읽기, 테스트 파일의 정의, ruff 설정과 버전 읽기, 도구
-목록)은 웹·워커 공용의 `models/`(`models/coverage.py`, `models/scope.py`의 `is_test_file`,
-`models/tools.py`)에 남는다. 그 규칙을 쓰는 판정(허용 범위, 도구 선택)이 models에 있고, 계층이
-worker → sandbox → models라 models가 이 모듈을 부를 수 없기 때문이다.
+목록)은 외부 호출이 없는 `_pure` 모듈(`worker/coverage_pure.py`, `worker/fix/scope_pure.py`의
+`is_test_file`, `worker/tools_pure.py`)에 남는다. 그 규칙을 쓰는 판정(허용 범위, 도구 선택)도
+`_pure` 모듈이고, `_pure` 모듈은 실행 코드인 이 모듈을 import하지 않기 때문이다.
 
 .venv (4.5, 8.1): 의존성만 설치하고 대상 리포 자체는 설치하지 않는다. 설치는 네트워크가 열린
 별도 컨테이너에서 wheel만 받고(`--only-binary :all:`, 소스 배포본은 PR이 고를 수 있는 빌드 코드를
@@ -16,14 +16,14 @@ worker → sandbox → models라 models가 이 모듈을 부를 수 없기 때�
 coverage.xml과 worktree의 소스는 샌드박스 안의 PR 코드가 바꿀 수 있다. 호스트에서 읽을 때 심볼릭
 링크·FIFO·장치 파일을 따라가지 않고, worktree 밖을 가리키는 경로와 큰 파일은 읽지 않는다.
 
-ruff는 이미지에 없다. 도구 캐시(sandbox/toolcache.py)에 받은 실행 파일을 읽기 전용으로 붙인다.
-컨테이너 하나에 명령 하나다: 네트워크 없음, 루트 파일 시스템 읽기 전용, 권한 없음, 자원 제한, 호스트
-UID. 검사할 폴더는 읽기 전용이고 고치는 `format_apply`만 쓰기를 연다. 설정은 base 커밋에서 읽은
-파일을 검사할 폴더 밖에 두고 `--config`로 넘긴다. PR이 넣은 설정 파일은 읽히지 않고(`--config`는
-설정 찾기를 끈다), PR 코드가 그 사본을 바꿀 수도 없다. 설정이 없으면 `--isolated`다. `--config`의
-상대 경로(per-file-ignores, exclude)는 작업 폴더(/work) 기준으로 풀린다. 파일 경로는 `--` 뒤에만
-둔다 (T9). 출력은 믿지 않는 입력이다. 크기 상한 안의 JSON·diff만 읽고, 넘긴 파일 밖을 가리키면
-결과를 버린다.
+ruff는 이미지에 없다. 도구 캐시(worker/sandbox/toolcache.py)에 받은 실행 파일을 읽기 전용으로
+붙인다. 컨테이너 하나에 명령 하나다: 네트워크 없음, 루트 파일 시스템 읽기 전용, 권한 없음, 자원
+제한, 호스트 UID. 검사할 폴더는 읽기 전용이고 고치는 `format_apply`만 쓰기를 연다. 설정은 base
+커밋에서 읽은 파일을 검사할 폴더 밖에 두고 `--config`로 넘긴다. PR이 넣은 설정 파일은 읽히지
+않고(`--config`는 설정 찾기를 끈다), PR 코드가 그 사본을 바꿀 수도 없다. 설정이 없으면
+`--isolated`다. `--config`의 상대 경로(per-file-ignores, exclude)는 작업 폴더(/work) 기준으로
+풀린다. 파일 경로는 `--` 뒤에만 둔다 (T9). 출력은 믿지 않는 입력이다. 크기 상한 안의 JSON·diff만
+읽고, 넘긴 파일 밖을 가리키면 결과를 버린다.
 """
 
 import hashlib
@@ -170,7 +170,8 @@ _DIRECT: Final = re.compile(r"://|\s@\s|^[./~]|^file:", re.IGNORECASE)
 
 
 class DependencyInstallError(Exception):
-    """pip이 의존성을 설치하지 못했다. 처리는 models.install.install_failure_outcome()이 정한다."""
+    """pip이 의존성을 설치하지 못했다. 처리는 lang/install_pure.install_failure_outcome()이
+    정한다."""
 
     def __init__(
         self, kind: InstallFailureKind, cache_key: str, detail: str, packages: tuple[str, ...] = ()

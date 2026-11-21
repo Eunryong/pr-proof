@@ -1,4 +1,4 @@
-"""models/doc_rules.py: 위반의 규칙 id로 그 규칙을 찾는다."""
+"""worker/doc_rules_pure.py: 위반의 규칙 id로 그 규칙을 찾는다."""
 
 from worker.doc_rules_pure import CallUsage, CheckerRef, Found, RuleChecked, outcomes_by_rule
 from worker.rule_pure import CheckMethod, Rule, RuleSource

@@ -1,6 +1,6 @@
 """AI 수정의 허용 범위 검사 (docs/DESIGN.md F7 범위 검사 방법·무시된 파일).
 
-git은 호스트에서 실행한다. 판정은 `app/models/scope.py`가 한다.
+git은 호스트에서 실행한다. 판정은 `worker/fix/scope_pure.py`가 한다.
 
 순서: AI를 처음 실행하기 직전에 `snapshot_ignored`로 스냅샷을 남기고, AI 실행이 끝날 때마다
 샌드박스에서 코드를 실행하기 전에 `check_scope`로 확인한다. 재시도 사이에 스냅샷을 다시 찍지 않는다

@@ -1,4 +1,4 @@
-"""app/sandbox/checker_runner.py: 출력 읽기와 실행 전 거절. Docker 없이 돈다."""
+"""worker/sandbox/checker_runner.py: 출력 읽기와 실행 전 거절. Docker 없이 돈다."""
 
 import json
 from pathlib import Path

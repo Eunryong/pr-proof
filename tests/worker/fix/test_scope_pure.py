@@ -1,4 +1,4 @@
-"""models/scope.py: porcelain 출력 읽기와 허용 범위 판정."""
+"""worker/fix/scope_pure.py: porcelain 출력 읽기와 허용 범위 판정."""
 
 from dataclasses import replace
 

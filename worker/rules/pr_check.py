@@ -6,7 +6,7 @@
 
 1. 사실 읽기 (`gather`): 커밋은 이 작업이 받은 git 객체(merge-base..head)에서, 제목·본문·브랜치
    이름은 GitHub의 PR 조회에서, 바뀐 파일은 worktree의 diff에서 읽는다. 크기 상한은
-   models/pr_check.py에 있다.
+   worker/rules/pr_check_pure.py에 있다.
 2. 계획 (`plan`): 규칙마다 PR 패턴(결정적) 또는 모델 판단을 정한다. 모델은 규칙 원문과 문서의
    예시만 보고 PR의 글은 보지 않는다. 예시 확인은 샌드박스의 고정 스크립트가 한다. 계획은 규칙
    묶음 상한에서 세고 `model_cache`에 저장한다.

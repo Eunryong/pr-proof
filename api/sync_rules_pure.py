@@ -14,7 +14,7 @@ EnqueueReason = Literal["no_record", "env_error_backoff", "dead_worker", "cancel
 
 @dataclass(frozen=True)
 class RunSnapshot:
-    state: str  # models.db.RunState
+    state: str  # shared/db_pure.RunState
     heartbeat_at: datetime
     finished_at: datetime | None
 

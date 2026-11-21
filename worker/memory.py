@@ -11,7 +11,7 @@ chromadb, onnxruntime, tokenizers, numpy는 선택 의존성(`pip install pr-pro
 `switch_for`(SQLite만 읽음) 밖의 이 모듈 함수를 부르지 않으므로 넷 다 import되지 않고 `chroma/`
 폴더와 임베딩 모델도 만들어지지 않는다 (완료 기준 5-8).
 
-임베딩 모델은 `models/embed_models.py`의 `EMBED_MODELS`가 고정한 판(revision)의 파일만 https로
+임베딩 모델은 `shared/embed_models_pure.py`의 `EMBED_MODELS`가 고정한 판(revision)의 파일만 https로
 받아 SHA256을 맞춰 본 뒤 `data_dir/models/`에 둔다 (위협 T30).
 """
 

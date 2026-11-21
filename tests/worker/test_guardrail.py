@@ -16,14 +16,14 @@ import pytest
 from rq import Queue
 from sqlmodel import Session, select
 
-from api import signature, sync, webhook
+from api import cli, signature, sync, webhook
 from api.github import OpenPR
 from api.history import History
 from shared import state_keys_pure as state_keys
 from shared.comment_pure import COMMENT_MARKER
 from shared.db_pure import Approval, Run
 from shared.job_pure import PRJob
-from worker import base_config, cli, graph, guard, main, repo, retry
+from worker import base_config, graph, guard, main, repo, retry
 from worker.access_pure import AccessSettings
 from worker.ai import claude_cli
 from worker.github import GitHubError

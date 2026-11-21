@@ -1,4 +1,4 @@
-"""models/fix_decision.py: 파이프라인이 정하는 표와 모델 답의 위반 집합 맞추기."""
+"""worker/fix/fix_decision_pure.py: 파이프라인이 정하는 표와 모델 답의 위반 집합 맞추기."""
 
 from dataclasses import replace
 from typing import Final

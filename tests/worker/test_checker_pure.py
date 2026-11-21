@@ -1,4 +1,4 @@
-"""app/models/checker.py: 실행 전 검사기 본문 확인."""
+"""worker/checker_pure.py: 실행 전 검사기 본문 확인."""
 
 from typing import Final
 

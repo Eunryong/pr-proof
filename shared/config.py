@@ -34,8 +34,8 @@ class SyncConfig(BaseModel):
 class SandboxConfig(BaseModel):
     # 대상 리포가 .pipeline.yaml의 sandbox.memory_gb로 올릴 수 있는 상한
     max_memory_gb: float = 4
-    # 이미지 태그와 작업 컨테이너 이름 접두어. 기본값은 app/sandbox/docker_cli.py와 같다
-    # (tests/test_config.py가 확인). 같은 Docker를 쓰는 다른 실행과 겹치지 않게 바꿀 수 있다
+    # 이미지 태그와 작업 컨테이너 이름 접두어. 기본값은 worker/sandbox/docker_cli.py와 같다
+    # (tests/shared/test_config.py가 확인). 같은 Docker를 쓰는 다른 실행과 겹치지 않게 바꿀 수 있다
     image: str = "pipeline-sandbox"
     container_prefix: str = "pr-proof-job"
 
@@ -53,8 +53,8 @@ class ModelConfig(BaseModel):
 
 
 class RagConfig(BaseModel):
-    """과거 기록 검색의 파이프라인 쪽 설정 (DESIGN.md 6.5, 10절). 모델은 `models/embed_models.py`의
-    `EMBED_MODELS`에 판과 해시를 고정한 것만 받는다."""
+    """과거 기록 검색의 파이프라인 쪽 설정 (DESIGN.md 6.5, 10절). 모델은
+    `shared/embed_models_pure.py`의 `EMBED_MODELS`에 판과 해시를 고정한 것만 받는다."""
 
     embed_model: str = E5_SMALL
 

@@ -1,8 +1,8 @@
 """동기화 한 번: 열린 PR의 head ↔ 처리 기록 비교 → 빠진 것만 PRJob → 큐 (docs/DESIGN.md F2).
 
-웹훅을 놓쳤을 때(로컬 서버가 꺼져 있던 동안 등) 보충한다. 다시 넣을지는 models.sync_rules가 정한다.
+웹훅을 놓쳤을 때(로컬 서버가 꺼져 있던 동안 등) 보충한다. 다시 넣을지는 sync_rules_pure가 정한다.
 놓친 명령은 현재 head 커밋 뒤에 달린 것 중 워커가 처리하지 않은 것만 넣는다. 권한 확인은
-웹훅과 같은 함수(models.comment.command_in_comment)로 한다.
+웹훅과 같은 함수(shared/comment_pure.command_in_comment)로 한다.
 """
 
 import logging

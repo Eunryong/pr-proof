@@ -90,7 +90,8 @@ class FixSettings(BaseModel):
 
 
 class CallSettings(BaseModel):
-    """모델 호출 수 상한 (docs/DESIGN.md 9.2, 10절 `model.calls`). 판단은 models/call_budget.py."""
+    """모델 호출 수 상한 (docs/DESIGN.md 9.2, 10절 `model.calls`). 판단은
+    worker/call_budget_pure.py."""
 
     model_config = ConfigDict(extra="ignore")
     pr_base: int = Field(default=20, ge=0)
@@ -131,7 +132,7 @@ class RagSettings(BaseModel):
     """과거 기록 검색 (DESIGN.md 6.4–6.6, 10절 `rag`). 기록 저장은 이 값과 관계없이 한다."""
 
     model_config = ConfigDict(extra="ignore")
-    # 검색 결과를 프롬프트에 넣을지. auto는 기록 수와 채택률로 정한다 (models/rag_switch.py)
+    # 검색 결과를 프롬프트에 넣을지. auto는 기록 수와 채택률로 정한다 (worker/rag_switch_pure.py)
     enabled: RagMode = DEFAULT_MODE
     top_k: int = Field(default=20, ge=1, le=200)  # 검색이 가져오는 후보 수
     # 이 유사도 미만의 기록은 넣지 않는다. recall@k와 관련 없는 짝의 분포로 정한 값 (6.7)

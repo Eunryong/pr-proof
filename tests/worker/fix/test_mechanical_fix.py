@@ -1,4 +1,5 @@
-"""worker/mechanical_fix.py: 도구의 편집 적용과 대상 고르기. 흐름 전체는 test_mechanical_flow.py."""
+"""worker/fix/mechanical_fix.py: 도구의 편집 적용과 대상 고르기. 흐름 전체는
+test_mechanical_flow.py."""
 
 from pathlib import Path
 

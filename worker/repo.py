@@ -290,7 +290,7 @@ def _commit_messages(worktree: Path, shas: Sequence[str], keep: int) -> dict[str
 
 
 # 사용자 전역 git 설정이 diff 형식(접두사, 경로 표기, 외부 diff 도구)을 바꾸지 않게 한다.
-# models.diff가 `+++ b/<경로>` 형식을 읽는다
+# diff_pure가 `+++ b/<경로>` 형식을 읽는다
 _DIFF: Final = (
     "-c", "diff.noprefix=false", "-c", "diff.mnemonicPrefix=false", "-c", "diff.relative=false",
     "-c", "core.quotePath=false", "diff", "--no-color", "--no-ext-diff",

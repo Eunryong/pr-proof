@@ -1,4 +1,5 @@
-"""worker/decide.py: 표로 먼저 정하고 남은 위반만 모델에 묻기, 저장한 답 다시 쓰기, 호출 상한."""
+"""worker/fix/decide.py: 표로 먼저 정하고 남은 위반만 모델에 묻기, 저장한 답 다시 쓰기, 호출
+상한."""
 
 import re
 from dataclasses import replace

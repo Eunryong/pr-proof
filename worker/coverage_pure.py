@@ -2,7 +2,7 @@
 
 `coverage.xml`은 샌드박스에서 PR 코드가 도는 동안 만들어지므로 믿을 수 없는 입력으로 다룬다.
 DTD·엔티티를 거부하는 파서(defusedxml)로 읽고 크기를 제한하며, 형식이 조금이라도 어긋나면
-"모름"(None)으로 돌려준다. 파일 읽기는 호출하는 쪽(`app/worker/coverage.py`)이 한다.
+"모름"(None)으로 돌려준다. 파일 읽기는 호출하는 쪽(`worker/coverage.py`)이 한다.
 """
 
 import ast

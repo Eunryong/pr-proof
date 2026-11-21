@@ -4,7 +4,7 @@
 hunk에는 다시 묻지 않는다. 호출은 PR 상한(9.2)에서 센다. 모델 호출이 실패하거나 상한에 걸리면 남은
 위반을 `skip`으로 두고 저장하지 않으므로 다음 검사가 다시 묻는다.
 
-이 단계는 정하기만 한다. `fix`·`model`로 정한 위반은 worker/model_fix.py가 고친다.
+이 단계는 정하기만 한다. `fix`·`model`로 정한 위반은 worker/fix/model_fix.py가 고친다.
 """
 
 import logging

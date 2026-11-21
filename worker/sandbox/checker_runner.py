@@ -54,8 +54,8 @@ for path in data["paths"]:
 json.dump(out, sys.stdout)
 """
 # PR 패턴 선언(4.5 끝)을 PR 사실에 맞추는 스크립트. 모델이 쓴 것은 선언뿐이고 이 코드는 고정이다
-# (models/pr_check.py의 ENGINE_VERSION). 표준 입력: {"decl": {...}, "cases": [{"values", "paths"}]}.
-# 사례마다 바뀐 파일 조건이 맞았는지(gated)와 조건을 어긴 값의 순번(bad)을 낸다
+# (worker/rules/pr_check_pure.py의 ENGINE_VERSION). 표준 입력: {"decl": {...}, "cases": [{"values",
+# "paths"}]}. 사례마다 바뀐 파일 조건이 맞았는지(gated)와 조건을 어긴 값의 순번(bad)을 낸다
 _PR_SCRIPT: Final = """\
 import json, re, sys
 data = json.load(sys.stdin)
@@ -242,7 +242,7 @@ def run_path_pattern(
 @dataclass(frozen=True)
 class PrRan:
     """PR 패턴의 고정 스크립트가 끝까지 돌았다. items는 사례마다의 날것 결과다(형식 확인은
-    models/pr_check.read_results)."""
+    worker/rules/pr_check_pure.read_results)."""
 
     items: object
 
@@ -255,8 +255,8 @@ def run_pr_pattern(
     image: str,
     timeout: int = PATH_PATTERN_TIMEOUT,
 ) -> PrRan | Failed:
-    """PR 패턴 선언(models/pr_check.PrPattern.script_input)을 사례들(예시, 또는 이 PR의 사실)에
-    맞춘다 (4.5 끝). 사례의 값(커밋 메시지, PR 본문)은 PR 작성자의 글이고 정규식은 모델이 쓴
+    """PR 패턴 선언(worker/rules/pr_check_pure.PrPattern.script_input)을 사례들(예시, 또는 이 PR의
+    사실)에 맞춘다 (4.5 끝). 사례의 값(커밋 메시지, PR 본문)은 PR 작성자의 글이고 정규식은 모델이 쓴
     것이다. 그래서 호스트가 아니라 네트워크 없고 시간·자원 제한이 있는 컨테이너에서 맞춘다. 저장소는
     마운트하지 않는다. 시간을 넘기면(끝없는 되짚기) Failed다."""
     with tempfile.TemporaryDirectory(prefix="pipeline-pr-pattern-") as tmp:

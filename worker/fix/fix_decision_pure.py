@@ -3,7 +3,7 @@
 
 위반마다 `fix` 또는 `skip` 하나로 끝난다. 표에 맞는 위반은 여기서 정하고, 맞지 않는 위반만
 모델에 넘긴다. 모델의 답은 넘긴 위반 집합에 맞춘다(`reconcile`). 모델 호출과 저장은
-worker/decide.py가 한다.
+worker/fix/decide.py가 한다.
 """
 
 import json

@@ -1,4 +1,5 @@
-"""worker/scope.py: 임시 git 리포의 실제 `git status` 출력으로 확인한다 (PR 코드는 실행 안 함)."""
+"""worker/fix/scope.py: 임시 git 리포의 실제 `git status` 출력으로 확인한다 (PR 코드는 실행 안
+함)."""
 
 import os
 import subprocess

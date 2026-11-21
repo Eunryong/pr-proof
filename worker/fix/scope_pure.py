@@ -1,6 +1,6 @@
 """수정안의 허용 변경 범위 판정 (docs/DESIGN.md F7 허용 변경 범위·범위 검사 방법·무시된 파일).
 
-`git status --porcelain=v1 -z` 출력을 읽어 판정만 한다. git 실행은 `app/worker/scope.py`가 한다.
+`git status --porcelain=v1 -z` 출력을 읽어 판정만 한다. git 실행은 `worker/fix/scope.py`가 한다.
 """
 
 from collections.abc import Iterable
@@ -9,7 +9,7 @@ from pathlib import PurePosixPath
 from typing import Final
 
 # 범위 검사에서 빼는 파이프라인 산출물. `.venv`는 샌드박스의 .venv 마운트 지점이다
-# (`app/sandbox/container.py`의 OUT_DIR, `app/worker/lang/python.py`의 VENV_IN_CONTAINER와 맞춘다)
+# (`worker/sandbox/container.py`의 OUT_DIR, `worker/lang/python.py`의 VENV_IN_CONTAINER와 맞춘다)
 PIPELINE_OUTPUTS: Final = (".pipeline-out/", ".venv/")
 _PIPELINE_OUTPUT_DIRS: Final = (".pipeline-out", ".venv")
 

@@ -1,6 +1,6 @@
 """macOS 알림 한 줄 띄우기 (DESIGN.md 13절 6단계, 완료 기준 6-4).
 
-웹(동기화)과 워커가 같이 쓴다. 사람이 해야 풀리는 환경 오류에만 부른다(`models.ops_alert`).
+웹(동기화)과 워커가 같이 쓴다. 사람이 해야 풀리는 환경 오류에만 부른다(`shared/ops_alert_pure`).
 `osascript`의 `display notification`을 셸 없이 인자 목록으로 부르고, 글은 AppleScript 소스가 아니라
 `on run argv`의 인자로 넘긴다. macOS가 아니거나 `osascript`가 없거나 실패하면 아무것도 하지 않는다.
 같은 종류는 `data_dir/alerts/<종류>`의 시각으로 30분에 한 번만 띄운다. 표시가 파일이라 프로세스를

@@ -1,10 +1,10 @@
 """규칙 경로 (docs/DESIGN.md 5.1): 규칙 읽기 → 검사 방법 정하기(도구, 검사기 작성) → 위반 찾기.
 
 규칙은 base의 문서(모델이 읽음)와 도구 설정(ruff 설정, 결정적으로 읽음)에서 나온다. 둘 다 없으면
-규칙 검사를 하지 않는다 (2.2). 찾기만 한다(수정은 worker/mechanical_fix.py, worker/model_fix.py).
-이 경로의 실패(모델 호출 실패, 호출 상한, 도구 준비 실패, 샌드박스 오류)는 작업을 실패시키지 않고
-`NotRun`이나 규칙별 "검사하지 못함"으로 남는다. 규칙 문서를 읽지 못해도 도구 설정의 규칙은 검사한다
-(4.3 "실패 시"). 테스트 결과는 그대로 나온다.
+규칙 검사를 하지 않는다 (2.2). 찾기만 한다(수정은 worker/fix/mechanical_fix.py,
+worker/fix/model_fix.py). 이 경로의 실패(모델 호출 실패, 호출 상한, 도구 준비 실패, 샌드박스 오류)는
+작업을 실패시키지 않고 `NotRun`이나 규칙별 "검사하지 못함"으로 남는다. 규칙 문서를 읽지 못해도 도구
+설정의 규칙은 검사한다 (4.3 "실패 시"). 테스트 결과는 그대로 나온다.
 """
 
 import logging
@@ -147,7 +147,7 @@ def author(
 def _outcome(check: RuleCheck, models: ModelSettings, ruff: RuffSetup | None) -> RuleOutcome:
     if isinstance(check, ToJudge):
         # 검사기를 채택하지 않은 내용 규칙은 모델이 hunk를 직접 본다 (4.4의 3번). 경로 규칙은 오지
-        # 않는다 (worker/checkers.py)
+        # 않는다 (worker/rules/checkers.py)
         return RuleJudged(check.rule, check.detail, check.route)
     if isinstance(check, Unchecked):
         return RuleUnchecked(check.rule, check.kind, check.detail)

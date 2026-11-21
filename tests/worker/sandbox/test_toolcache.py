@@ -1,4 +1,4 @@
-"""app/sandbox/toolcache.py 단위 테스트. 받기는 가짜로 바꾸고 Docker 없이 돈다."""
+"""worker/sandbox/toolcache.py 단위 테스트. 받기는 가짜로 바꾸고 Docker 없이 돈다."""
 
 import hashlib
 import io

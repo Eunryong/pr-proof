@@ -21,7 +21,7 @@ from worker.rule_pure import Example
 from worker.tools_pure import RUFF_CODE
 
 # path-pattern은 코드가 아니라 선언(JSON)이다: 경로에 거는 정규식 조건. 파이프라인이 쓴 고정
-# 스크립트가 샌드박스에서 맞춘다 (sandbox/checker_runner.py).
+# 스크립트가 샌드박스에서 맞춘다 (worker/sandbox/checker_runner.py).
 # ruff·ruff-format은 저장소의 도구다 (4.4 (a)). 본문은 선언(JSON)이다: ruff는 {"codes": [...]}(비면
 # base 설정의 규칙 전부), ruff-format은 {}. 모델이 쓴 검사기가 아니다
 CheckerKind = Literal["ast-grep", "python-ast", "path-pattern", "ruff", "ruff-format"]

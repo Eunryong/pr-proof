@@ -1,5 +1,6 @@
-"""worker/checkers.py의 도구 고르기 (docs/DESIGN.md 4.4 (a)): 문서 규칙에 저장소의 도구(ruff)를
-잇고, 도구 설정의 규칙 묶음은 모델 없이 ruff로 정한다. 가짜 모델과 가짜 샌드박스, 실제 SQLite."""
+"""worker/rules/checkers.py의 도구 고르기 (docs/DESIGN.md 4.4 (a)): 문서 규칙에 저장소의
+도구(ruff)를 잇고, 도구 설정의 규칙 묶음은 모델 없이 ruff로 정한다. 가짜 모델과 가짜 샌드박스, 실제
+SQLite."""
 
 import json
 from collections.abc import Sequence

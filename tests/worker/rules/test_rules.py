@@ -1,4 +1,5 @@
-"""worker/rules.py: base의 문서로 규칙 묶음을 만든다. 로컬 git, SQLite, 가짜 모델로 확인한다."""
+"""worker/rules/rules.py: base의 문서로 규칙 묶음을 만든다. 로컬 git, SQLite, 가짜 모델로
+확인한다."""
 
 import os
 import subprocess
@@ -25,7 +26,7 @@ from worker.rules.rules import (
 )
 from worker.state import Store
 
-README: Final = (Path(__file__).parent.parent / "fixtures" / "rules" / "README.md").read_text()
+README: Final = (Path(__file__).parents[2] / "fixtures" / "rules" / "README.md").read_text()
 PRINT_RULE: Final = (
     "`orders/` 아래 모듈은 `print`를 쓰지 않는다. 남길 것이 있으면 `logging`의 로거를 쓴다."
 )

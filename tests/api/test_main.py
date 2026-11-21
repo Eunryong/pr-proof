@@ -32,7 +32,9 @@ def client(tmp_path: Path, monkeypatch):
 
 def test_webhook_end_to_end(client: TestClient) -> None:
     payload = json.loads(
-        (Path(__file__).parent / "fixtures" / "webhooks" / "pull_request_opened.json").read_text()
+        (
+            Path(__file__).parents[1] / "fixtures" / "webhooks" / "pull_request_opened.json"
+        ).read_text()
     )
     body = json.dumps(payload).encode()
     headers = {

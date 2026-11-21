@@ -1,7 +1,5 @@
-"""수동 명령.
+"""워커 쪽 수동 명령. 웹 쪽 동기화(`sync`)는 `api/cli.py`에 있다.
 
-- `python -m worker.cli sync`: 동기화를 한 번 돌린다. api는 웹훅용 터널로 외부에 열려 있으므로 수동
-  동기화를 HTTP 엔드포인트로 만들지 않는다.
 - `python -m worker.cli reindex [--repo owner/name]`: SQLite의 기록(`records`)으로 벡터 저장소
   (`data_dir/chroma/`)를 다시 만든다 (DESIGN.md 6.5). 벡터 저장소가 지워졌거나 임베딩 모델을 바꿨을
   때 쓴다. 선택 의존성 `[rag]`가 필요하고, 처음이면 임베딩 모델을 받는다.
@@ -21,8 +19,6 @@ from typing import Final
 
 from redis import Redis
 
-from api import sync
-from api.history import History
 from shared import config
 
 REPO_ROOT: Final = Path(__file__).resolve().parent.parent
@@ -30,7 +26,7 @@ REPO_ROOT: Final = Path(__file__).resolve().parent.parent
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m worker.cli")
-    parser.add_argument("command", choices=["sync", "reindex", "eval"])
+    parser.add_argument("command", choices=["reindex", "eval"])
     parser.add_argument("--repo", action="append", help="reindex할 저장소 (여러 번 줄 수 있음)")
     parser.add_argument("--baseline", action="store_true", help="eval: 기준선으로 남긴다")
     parser.add_argument("--real-model", action="store_true", help="eval: 실제 claude를 부른다")
@@ -42,17 +38,7 @@ def main(argv: list[str] | None = None) -> int:
         db = args.db or config.load_config().db_path
         return evaluate(db, baseline=args.baseline, real_model=args.real_model, label=args.label,
                         out=args.out)  # fmt: skip
-    settings = config.load_config()
-    if args.command == "reindex":
-        return reindex(settings, args.repo)
-    result = sync.run_once(settings, Redis.from_url(settings.redis_url), History(settings.db_path))
-    for repo, number, reason in result.enqueued:
-        print(f"등록: {repo}#{number} ({reason})")
-    for repo in result.failed_repos:
-        print(f"조회 실패: {repo}", file=sys.stderr)
-    if not result.enqueued and not result.failed_repos:
-        print("등록할 작업 없음")
-    return 1 if result.failed_repos else 0
+    return reindex(config.load_config(), args.repo)
 
 
 def evaluate(db: Path, *, baseline: bool, real_model: bool, label: str, out: Path | None = None,

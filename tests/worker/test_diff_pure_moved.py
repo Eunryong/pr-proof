@@ -1,4 +1,5 @@
-"""수정이 자리만 옮긴 base의 줄을 PR이 바꾼 줄에서 빼기 (models/diff.py, BACKLOG의 I001 항목)."""
+"""수정이 자리만 옮긴 base의 줄을 PR이 바꾼 줄에서 빼기 (worker/diff_pure.py, BACKLOG의 I001
+항목)."""
 
 from typing import Final
 
