@@ -1,8 +1,11 @@
 """claude CLI 호출 (docs/DESIGN.md 8.4).
 
-호출 모양은 둘이다. 수정 작성은 worktree를 cwd로 파일 도구 다섯 개만 주고(`run_claude`), 나머지
-단계는 빈 임시 폴더를 cwd로 도구 없이 부르고 구조화 출력을 받는다(`run_structured`). 둘 다
+호출 모양은 셋이다. 수정 작성은 모델 폴더를 cwd로 파일 도구 다섯 개와 파이프라인 도구 둘(규칙 검사,
+테스트)을 주고(`fix_tools`), 파이프라인 도구가 없는 수정 작성은 파일 도구만 준다(`file_tools`).
+나머지 단계는 빈 임시 폴더를 cwd로 도구 없이 부르고 구조화 출력을 받는다(`run_structured`). 모두
 권한을 제한한 같은 옵션 위에 모양별 옵션을 더한다. 모델과 호출당 예산은 호출하는 쪽이 정한다.
+파이프라인 도구는 파이프라인이 띄우는 stdio MCP 서버 하나로만 준다(`--mcp-config`와
+`--strict-mcp-config`). 모델에게 명령 실행 도구는 주지 않는다.
 """
 
 import json
@@ -16,6 +19,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from typing import Final, Literal
+
+from worker.mcp_pure import TOOL_NAMES, ToolUsage
 
 # 호출 한 번의 시간 상한(초). 넘으면 프로세스를 죽이고 TIMEOUT으로 돌려준다
 DEFAULT_TIMEOUT_S: Final = 600.0
@@ -41,9 +46,13 @@ _COMMON_ARGS: Final = (
     "--verbose",
 )
 FILE_TOOLS: Final = "Read,Grep,Glob,Write,Edit"
-CallShape = Literal["file_tools", "no_tools"]
+PIPELINE_TOOLS: Final = ",".join(TOOL_NAMES)
+CallShape = Literal["file_tools", "fix_tools", "no_tools"]
+# --tools는 내장 도구만 고른다. MCP 도구는 --mcp-config의 서버에서 오고, dontAsk 모드에서는
+# --allowedTools에 이름이 있어야 부를 수 있다
 _SHAPE_ARGS: Final[Mapping[str, tuple[str, ...]]] = {
     "file_tools": ("--tools", FILE_TOOLS, "--allowedTools", FILE_TOOLS),
+    "fix_tools": ("--tools", FILE_TOOLS, "--allowedTools", f"{FILE_TOOLS},{PIPELINE_TOOLS}"),
     "no_tools": ("--tools", ""),
 }
 # --json-schema를 주면 CLI가 답을 받는 도구 하나를 스스로 더한다. 파일·웹·실행 도구가 아니다
@@ -51,8 +60,13 @@ STRUCTURED_OUTPUT_TOOL: Final = "StructuredOutput"
 # 모양마다 system/init의 도구 목록이 정확히 이것이어야 한다. 다르면 호출을 중단한다
 _SHAPE_TOOLS: Final[Mapping[str, frozenset[str]]] = {
     "file_tools": frozenset(FILE_TOOLS.split(",")),
+    "fix_tools": frozenset(FILE_TOOLS.split(",")) | frozenset(TOOL_NAMES),
     "no_tools": frozenset({STRUCTURED_OUTPUT_TOOL}),
 }
+# 파이프라인 도구가 든 호출의 시간 상한(초): 모델 600초 + 도구 시간 상한 900초 + 여유 300초
+FIX_TOOLS_TIMEOUT_S: Final = 1800.0
+# 테스트 도구 한 번은 샌드박스의 pytest 시간 상한(600초)까지 걸린다. CLI의 MCP 도구 대기 시간(ms)
+MCP_TOOL_TIMEOUT_MS: Final = "660000"
 
 # claude가 로컬 로그인을 찾는 데 필요한 변수만 넘긴다.
 # HOME: ~/.claude(설정·세션), Linux에서는 ~/.claude/.credentials.json
@@ -116,6 +130,8 @@ class ClaudeResult:
     output_tokens: int | None = None
     # 모델 폴더에서 worktree에 적용한 diff. `workdir.run_in_model_folder`만 채운다
     applied: bytes = b""
+    # 파이프라인 도구를 부른 횟수와 시간. 도구가 든 호출에서 `workdir.run_in_model_folder`가 채운다
+    tool_usage: ToolUsage = ToolUsage()
 
 
 class AIEnvironmentError(RuntimeError):
@@ -262,21 +278,30 @@ def run_claude(
     environ: Mapping[str, str] | None = None,
     settings: Path | None = None,
     system_prompt: str | None = None,
+    mcp_config: str | None = None,
 ) -> ClaudeResult:
-    """worktree를 cwd로 파일 도구만 준 claude를 한 번 실행한다. 셸을 거치지 않는다.
+    """worktree를 cwd로 파일 도구(와 파이프라인 도구)를 준 claude를 한 번 실행한다. 셸을 거치지
+    않는다.
 
     settings는 파이프라인이 쓴 설정 파일(경로 감시 훅)이다. `--restricted`는 사용자·저장소의 설정을
     읽지 않지만 `--settings`로 넘긴 파일은 읽는다 (2.1.328에서 확인).
     system_prompt는 파이프라인의 지시다(`--append-system-prompt`, 8.4). prompt에는 자료만 넣는다.
+    mcp_config가 있으면 파이프라인 도구 서버 하나를 붙인 `fix_tools` 모양이다.
     """
+    shape: CallShape = "file_tools" if mcp_config is None else "fix_tools"
     extra: tuple[str, ...] = () if settings is None else ("--settings", str(settings))
     if system_prompt is not None:
         _check_system_prompt(system_prompt)
         extra += ("--append-system-prompt", system_prompt)
-    args = build_args("file_tools", model, max_budget_usd, extra)
+    if mcp_config is not None:
+        extra += ("--mcp-config", mcp_config)
+    env = claude_env(environ)
+    if mcp_config is not None:
+        env["MCP_TOOL_TIMEOUT"] = MCP_TOOL_TIMEOUT_MS
+    args = build_args(shape, model, max_budget_usd, extra)
     try:
-        watch = _watch_for("file_tools")
-        proc = runner(args, prompt, worktree, claude_env(environ), timeout, watch)
+        watch = _watch_for(shape)
+        proc = runner(args, prompt, worktree, env, timeout, watch)
     except subprocess.TimeoutExpired:
         return _failure(AIErrorKind.TIMEOUT, f"{timeout:g}초 안에 끝나지 않음")
     except ToolListMismatch as e:
@@ -284,7 +309,7 @@ def run_claude(
         return _failure(AIErrorKind.TOOLS, str(e))
     except OSError as e:
         return _failure(AIErrorKind.LAUNCH, str(e))
-    result = parse_output(proc.stdout, proc.returncode, proc.stderr)
+    result = parse_output(proc.stdout, proc.returncode, proc.stderr, shape)
     if result.error == AIErrorKind.TOOLS:
         log.error("claude 수정 호출의 도구 목록 확인 실패: %s", result.detail)
     return result
@@ -347,12 +372,14 @@ def _check_system_prompt(system_prompt: str) -> None:
         raise ValueError("시스템 프롬프트가 비었거나 '-'로 시작한다")
 
 
-def parse_output(stdout: str, returncode: int, stderr: str = "") -> ClaudeResult:
+def parse_output(
+    stdout: str, returncode: int, stderr: str = "", shape: CallShape = "file_tools"
+) -> ClaudeResult:
     """stream-json 출력을 읽는다. 실패해도 결과 줄에 있는 비용과 거부 목록은 남긴다."""
     init, data = _events(stdout)
     if data is None:
         return _failure(AIErrorKind.BAD_JSON, _tail(stderr or stdout), returncode=returncode)
-    error, detail = _checked_status(init, "file_tools", data, returncode)
+    error, detail = _checked_status(init, shape, data, returncode)
     turns = data.get("num_turns")
     text = data.get("result")
     input_tokens, output_tokens = _usage(data.get("usage"))
@@ -364,8 +391,8 @@ def parse_output(stdout: str, returncode: int, stderr: str = "") -> ClaudeResult
         permission_denials=_denials(data.get("permission_denials")),
         text=text if isinstance(text, str) else "",
         detail=detail,
-        unexpected_tools=_unexpected_tools(stdout, "file_tools"),
-        tool_uses=_expected_tool_uses(stdout, "file_tools"),
+        unexpected_tools=_unexpected_tools(stdout, shape),
+        tool_uses=_expected_tool_uses(stdout, shape),
         model_id=_model_id(data.get("modelUsage")),
         input_tokens=input_tokens,
         output_tokens=output_tokens,

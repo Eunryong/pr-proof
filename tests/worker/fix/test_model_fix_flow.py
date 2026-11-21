@@ -74,7 +74,7 @@ class FakeFixer:
 
     def __call__(
         self, work: Path, prompt: str, *, model: str, max_budget_usd: float,
-        settings: Path | None = None, system_prompt: str | None = None,
+        settings: Path | None = None, system_prompt: str | None = None, **_: object,
     ) -> ClaudeResult:  # fmt: skip
         n = len(self.calls)
         self.calls.append({"prompt": prompt, "system_prompt": system_prompt, "model": model,
@@ -174,10 +174,11 @@ def test_fix_decided_violation_reaches_a_fix_pull_request(fix_env, tmp_path: Pat
     assert pull["title"] == "[pipeline] #1 문서 규칙 위반 1건 수정 (모델)"
     body = pull["body"]
     assert f"- `{RID}` `` {PRINT_RULE} `` · 출처: `README.md > 코드 규칙 > 출력`" in body
-    assert "  - `orders/a.py:2` · 테스트가 이 줄을 실행함" in body and "orders/a.py:3" not in body
+    assert "  - `orders/a.py` 줄 2" in body and "orders/a.py:3" not in body
+    assert "- 있던 테스트가 실행함 (1건): `orders/a.py` 줄 2" in body
     assert "파이프라인이 고치지 않은 위반 1건은 이 수정안에 넣지 않았습니다" in body
-    assert "테스트가 실행하지 않는 줄" not in body
-    assert "- 테스트: 수정 전후 테스트 9개가 같은 결과로 통과" in body
+    assert "실행하지 않음" not in body and "만든 테스트 " not in body
+    assert "- 테스트: 있던 테스트 9개가 수정 전후 같은 결과로 통과" in body
     assert "- 규칙 재검사: 대상 위반 1건 해소, 새 위반 없음 (도구·검사기 1개를 다시 돌림)" in body
     assert "**모델의 설명** (모델이 쓴 글입니다)" in body and "print를 로거 호출로 바꿈" in body
 
@@ -286,20 +287,19 @@ def test_change_outside_the_allowed_files_is_dropped_without_retry(fix_env, tmp_
 
 def test_line_no_test_runs_is_fixed_and_labelled(fix_env, tmp_path) -> None:
     """2026-11-21 (11.1), 4.9: 테스트가 실행하지 않는 줄의 위반도 고치고, 수정안 PR 본문과 결과
-    코멘트가 그 줄을 테스트가 실행하지 않는다고 적는다. 테스트로 확인했다고 읽히지 않는다."""
+    코멘트가 있던 테스트도 만든 테스트도 그 줄을 실행하지 않는다고 적는다. 2026-11-22에 "이 줄을
+    실행하는 테스트가 없음"을 지웠다(테스트 자체가 없다고 읽혔다)."""
     use_model(fix_env, FakeModel(rule_answer(print_rule()), decide=first_fix_then_skip))
     _covered_tests(fix_env, tmp_path, {"orders/a.py": [1]})
     fixer = use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation("orders/a.py")]))
     state = run(fix_env, tmp_path)
     assert state["model_fix"].ready and len(fixer.calls) == 1
     ((_, pull),) = fix_env["gh"].pulls.items()
-    assert "  - `orders/a.py:2` · 이 줄을 실행하는 테스트가 없음" in pull["body"]
-    assert ("- 테스트가 실행하지 않는 줄: 고친 위반 중 1건은 그 줄을 실행하는 테스트가 "
-            "없거나 알 수 없어, 테스트가 그 줄의 동작을 확인하지 않았습니다"
-            ) in pull["body"]  # fmt: skip
+    label = "- 있던 테스트도 만든 테스트도 이 줄을 실행하지 않음 (1건): `orders/a.py` 줄 2"
+    assert label in pull["body"]
+    assert "이 줄을 실행하는 테스트가 없음" not in pull["body"]
     comment = _comment(fix_env)
-    assert "· 수정안 #900 · 이 줄을 실행하는 테스트가 없음" in comment
-    assert "고친 위반 중 1건은 그 줄을 실행하는 테스트가 없거나 알 수 없어" in comment
+    assert "· 수정안 #900" in comment and label in comment
 
 
 def test_skipped_violation_never_reaches_the_fixer(fix_env, tmp_path) -> None:

@@ -9,8 +9,9 @@
 
 규칙은 base의 문서와 도구 설정(ruff 설정)에서 나온다. 규칙이 하나도 없으면 규칙 검사를 하지 않고
 테스트로 넘어간다. 테스트 뒤에 위반마다 수정 판단(fix/skip과 이유, 4.6)을 정해 코멘트에 보인다.
-`fix`로 정한 위반은 수정 방법별 묶음(`mechanical`: 도구의 수정, `model`: 모델, 3.1의 C7)으로 고치고
-결정적으로 검증한 뒤 묶음마다 수정안 PR로 올린다. 파이프라인이 정한 규칙의 검사와 수정은 없다 (2.2).
+`fix`로 정한 위반은 수정 방법별 묶음(`mechanical`: 도구의 수정, `model`: 모델이 검사기와 샌드박스
+테스트를 도구로 부르며 고침, 3.1의 C7)으로 고치고 출구 검사를 통과한 것만 묶음마다 수정안 PR로
+올린다. 파이프라인이 정한 규칙의 검사와 수정은 없다 (2.2).
 
 묶음마다 수정은 한 번이다. 수정마다 새 worktree에서 시작한다 (앞 수정의 변경이 섞이지 않게).
 `/fix`로 다시 돌리면 그 묶음은 수정 판단부터 다시 돈다. 모델 묶음은 호출 상한으로 남은 판단과
@@ -30,7 +31,7 @@ PR 단위 확인(4.5 끝)의 결과는 `pr_checks`에만 있고 알리기만 한
 import logging
 import sqlite3
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import ExitStack
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -44,7 +45,16 @@ from langgraph.types import Command, interrupt
 from shared.config import CallMaxima
 from shared.embed_models_pure import E5_SMALL, EMBED_MODELS
 from shared.job_pure import PRJob
-from worker import base_config, coverage, memory, records, repo, report
+from worker import (
+    base_config,
+    coverage,
+    generated_tests_pure,
+    mcp_pure,
+    memory,
+    records,
+    repo,
+    report,
+)
 from worker import doc_rules_pure as doc_rule_models
 from worker import rag_pure as rag_models
 from worker import rag_switch_pure as rag_switch_models
@@ -64,6 +74,7 @@ from worker.fix.fix_decision_pure import Decided, SafetyNet, open_targets
 from worker.fix.fix_pure import MECHANICAL_BUNDLE, MechanicalFix
 from worker.fix.model_fix_pure import ModelFix, Picked
 from worker.fix.proposal_pure import ProposalResult
+from worker.generated_tests_pure import Suite
 from worker.github import GitHub
 from worker.lang import python
 from worker.rag_pure import Retrieval
@@ -119,6 +130,8 @@ _STATE_TYPES: Final = (
     *doc_rule_models.STATE_TYPES,
     *fix_decision_models.STATE_TYPES,
     *model_fix_models.STATE_TYPES,
+    *generated_tests_pure.STATE_TYPES,
+    *mcp_pure.STATE_TYPES,
     *fix_models.STATE_TYPES,
     *rag_models.STATE_TYPES,
     *rag_switch_models.STATE_TYPES,
@@ -135,6 +148,7 @@ def run_pr_tests(
     tool_cache: Path = toolcache.TOOL_CACHE,
     memory_gb: float = docker_cli.MEMORY_LIMIT_GB,
     names: docker_cli.Names = docker_cli.DEFAULT_NAMES,
+    contexts: bool = False,
 ) -> PytestRun:
     """테스트 단계: 이미지 준비 → Python 런타임(도구 캐시) → .venv 준비 → 작업 컨테이너에서 pytest
     → 결과.
@@ -151,7 +165,7 @@ def run_pr_tests(
     with container.running(
         worktree, mounts, job_id=job_id, memory_gb=memory_gb, names=names
     ) as name:
-        return python.run_tests(name, worktree, is_stale=is_stale)
+        return python.run_tests(name, worktree, is_stale=is_stale, contexts=contexts)
 
 
 class FlowState(TypedDict, total=False):
@@ -254,16 +268,29 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
 
         return is_stale
 
-    def tests_for(job: PRJob) -> PytestRun:
+    def tests_for(job: PRJob, worktree: Path | None = None, *, contexts: bool = False) -> PytestRun:
+        kw = {"contexts": True} if contexts else {}
         return (ctx.run_tests or run_pr_tests)(
-            ctx.worktree,
+            worktree or ctx.worktree,
             job_id=f"{ctx.run_id}",
             is_stale=is_stale_for(job),
             venv_cache=ctx.data_dir / "venvs",
             tool_cache=ctx.data_dir / TOOL_DIR,
             memory_gb=ctx.base.memory_gb,
             names=ctx.sandbox_names,
+            **kw,
         )
+
+    def suite_for(job: PRJob, generated: Mapping[str, bytes] | None, files: Sequence[str]) -> Suite:
+        """수정 작성의 테스트 도구와 출구 검사의 테스트 (4.7, 4.8의 6번). generated가 있으면 PR
+        head의 따로 된 worktree에 그 테스트 파일만 얹어 고치기 전 코드로 돌린다."""
+        if generated is None:
+            return python.read_suite(tests_for(job, contexts=True), ctx.worktree, files)
+        with repo.side_worktree(ctx.worktree, job.head_sha) as side:
+            for rel, data in generated.items():
+                (side / rel).parent.mkdir(parents=True, exist_ok=True)
+                (side / rel).write_bytes(data)
+            return python.read_suite(tests_for(job, side, contexts=True), side, files)
 
     def checkout(state: FlowState) -> FlowState:
         enter_checkout(state["job"])
@@ -569,7 +596,7 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
         return {"proposals": {**state.get("proposals", {}), MECHANICAL: result}}
 
     def fix_model(state: FlowState) -> FlowState:
-        """fix·model로 정한 위반을 모델로 고치고 결정적으로 검증한다 (5.1 fix_model)."""
+        """fix·model로 정한 위반을 모델이 도구로 확인하며 고치고 출구 검사를 한다 (5.1)."""
         job, found = state["job"], state["doc_rules"]
         picked = targets(state, MODEL)
         fresh_worktree(job)
@@ -588,7 +615,7 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
                 disabled=rt.disabled,
             ),  # fmt: skip
             rules_rechecked=sum(1 for c in checks if isinstance(c, Checked)),
-            run_tests=lambda: tests_for(job),
+            run_suite=lambda generated, files: suite_for(job, generated, files),
             is_stale=lambda: ctx.store.is_stale(job),
             secrets=proposal.pipeline_secrets(),
         )

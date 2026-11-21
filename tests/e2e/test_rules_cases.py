@@ -10,6 +10,9 @@ lint 케이스와 같은 방식이다: 예제 리포의 로컬 git 원격, 실�
 수정안 PR의 생애를 보는 케이스는 `deliver_retry`(첫 push를 실패시키고 재시도),
 `recheck_without_calls`(같은 커밋의 `/recheck`), `rejected_next_commit`(수정안 PR을 닫고 새 커밋)을
 차례로 한다. `fix_command`는 결과 코멘트 뒤에 그 명령(`/fix` 등)을 달고 수정 결과를 다시 본다.
+`real_only: true`인 케이스는 가짜 답(`model`)이 없고 실제 모델로만 돈다(2026-11-22 저장소 주인:
+가짜 모델을 없애고 실제 모델로 확인한다). 기대는 결과로 적는다. `expect.generated_tests`는 수정안
+PR에 만든 테스트 파일(tests/test_pipeline_*.py)이 같이 올라가야 한다는 뜻이다.
 케이스에 `fix`가 있으면 수정 판단은 `model.skip`에 적은 위반만 skip하고 나머지를 fix로 답하며, 수정
 작성은 케이스의 `fix` 편집을 모델 폴더에 적용하는 가짜다(검증과 수정안 PR 푸시는 진짜). `fix`가 없는
 케이스는 모든 위반을 skip으로 답해 수정까지 가지 않는다. `model.skip`의 값은 이유 글이거나
@@ -259,6 +262,8 @@ def test_rules_case(case_path: Path, eval_repo: Path, deps_for, tmp_path: Path,
     real_model = os.environ.get(REAL_MODEL_ENV) == "1"
     if real_model and case.get("scripted_only"):
         pytest.skip("가짜 모델로만 확인하는 케이스")
+    if not real_model and case.get("real_only"):
+        pytest.skip(f"실제 모델로만 확인하는 케이스 ({REAL_MODEL_ENV}=1)")
     fixer = scripted_fixer(case) if "fix" in case else None
     if not real_model:
         monkeypatch.setattr(claude_cli, "run_structured", scripted_model(case))
@@ -283,7 +288,8 @@ def test_rules_case(case_path: Path, eval_repo: Path, deps_for, tmp_path: Path,
         assert "**규칙:** ⚠️ 위반" in section, section
     else:
         assert "**규칙:** ✅ 위반 없음" in section, section
-    assert "확인: 검사기 `" in section, "검사기가 예시를 통과해 채택되어야 한다"
+    if not case.get("real_only"):
+        assert "확인: 검사기 `" in section, "검사기가 예시를 통과해 채택되어야 한다"
     for text in expect.get("contains", ()):
         assert text in section, (text, section)
     for text in expect.get("absent", ()):
@@ -409,7 +415,11 @@ def _check_fix(expect: dict, section: str, gh: FakeGh, remote: dict, fixer, real
     pushed = _git(remote["path"], "rev-parse", BRANCH)
     assert _git(remote["path"], "rev-parse", f"{pushed}^") == remote["head"]
     changed = _git(remote["path"], "diff", "--name-only", remote["head"], pushed).split()
-    assert changed == [expect["fix_file"]]
+    if expect.get("generated_tests"):
+        tests = [f for f in changed if re.fullmatch(r"tests/test_pipeline_[a-z0-9_]+\.py", f)]
+        assert tests and sorted(changed) == sorted([expect["fix_file"], *tests]), changed
+    else:
+        assert changed == [expect["fix_file"]]
     text = _git(remote["path"], "show", f"{pushed}:{expect['fix_file']}")
     if expect.get("same_as_base") and not real_model:
         assert text == _git(remote["path"], "show", f"{remote['base']}:{expect['fix_file']}")
@@ -428,8 +438,9 @@ def _check_fix(expect: dict, section: str, gh: FakeGh, remote: dict, fixer, real
 def test_case_files_are_well_formed() -> None:
     for path in CASES:
         case = yaml.safe_load(path.read_text())
-        assert {"name", "description", "pr", "model", "expect"} <= case.keys(), path
-        for rule in case["model"]["rules"]:
+        assert {"name", "description", "pr", "expect"} <= case.keys(), path
+        assert "model" in case or case.get("real_only"), path
+        for rule in case.get("model", {}).get("rules", []):
             assert {"section", "quote", "checker"} <= rule.keys(), (path, rule)
         assert all(re.fullmatch(r"[\w/.-]+:\d+", v) for v in case["expect"]["violations"]), path
 
@@ -438,7 +449,7 @@ def test_flagged_reads_locations_from_section() -> None:
     section = (
         "**규칙:** ⚠️ 위반 2건 (규칙 1개)\n\n위반:\n"
         "- `R-readme-1` `` `x` `` · 2건\n  출처: `README.md > 코드 규칙`\n"
-        "  - `a/b.py:3` · 고칠 대상 (모델 수정) · 이 줄을 실행하는 테스트가 없음\n"
+        "  - `a/b.py:3` · 고칠 대상 (모델 수정) · 수정안 #900\n"
         "  직접 고쳐야 함 1건 (모델이 위반이 아니라고 봄 1건)\n\n"
         "<details><summary>직접 고쳐야 함 1건의 위치</summary>\n\n"
         "  - ``a`b.py:4`` · 모델이 위반이 아니라고 봄: `x`\n\n</details>\n\n모델 호출 1회"

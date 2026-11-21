@@ -42,9 +42,10 @@ def test_covered_violation_with_passing_tests_goes_to_the_model() -> None:
         (V, "model", SafetyNet("failed"), "tests_failed", "테스트가 실패함"),
         (V, "model", SafetyNet("timeout"), "tests_failed", "테스트가 시간 안에 끝나지 않음"),
         (V, "model", SafetyNet("unrunnable"), "tests_failed", "테스트를 돌리지 못함"),
-        (V, "model", SafetyNet("no_tests"), "no_safety_net", "안전망이 없음 (테스트가 없음)"),
+        (V, "model", SafetyNet("no_tests"), "no_safety_net",
+         "테스트로 확인할 수 없음 (테스트가 없음)"),
         (V, "model", SafetyNet("passed", flaky=True), "no_safety_net",
-         "안전망이 없음 (불안정한 테스트가 있음)"),
+         "테스트로 확인할 수 없음 (불안정한 테스트가 있음)"),
     ],
 )  # fmt: skip
 def test_table_skips_with_the_reason(violation, rule_fix, tests, reason, why) -> None:

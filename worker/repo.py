@@ -358,11 +358,11 @@ def list_files(worktree: Path) -> list[str]:
     return sorted({path for path in out.split("\0") if path})
 
 
-def apply_patch(worktree: Path, patch: bytes) -> None:
+def apply_patch(worktree: Path, patch: bytes, *, reverse: bool = False) -> None:
     """모델 폴더에서 뽑은 diff를 worktree의 파일에 적용한다. 인덱스는 건드리지 않는다.
 
     git은 심볼릭 링크 너머의 경로에 쓰지 않고("beyond a symbolic link"), 하나라도 맞지 않으면
-    아무것도 적용하지 않는다.
+    아무것도 적용하지 않는다. reverse면 diff를 거꾸로 적용해 되돌린다.
     """
     try:
         git_dir = _git_dir_record(worktree).read_text().strip()
@@ -372,7 +372,7 @@ def apply_patch(worktree: Path, patch: bytes) -> None:
     command = [
         "git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
         "-c", "core.autocrlf=false", f"--git-dir={git_dir}", f"--work-tree={worktree}",
-        "apply", "--binary", "--whitespace=nowarn", "-",
+        "apply", "--binary", "--whitespace=nowarn", *(["-R"] if reverse else []), "-",
     ]  # fmt: skip
     try:
         proc = subprocess.run(
@@ -389,6 +389,18 @@ def apply_patch(worktree: Path, patch: bytes) -> None:
 def commit_diff(worktree: Path, old: str, new: str, path: str) -> str:
     """두 커밋 사이의 파일 하나의 diff. 작성자가 자기 커밋으로 고친 기록(4.10)에 쓴다."""
     return _tree_git(worktree, *_DIFF, old, new, "--", path)
+
+
+def track_new(worktree: Path, paths: Sequence[str]) -> None:
+    """새 파일을 diff에 보이게 한다(`git add -N`). 내용은 인덱스에 넣지 않는다. 수정 작성이 만든
+    테스트 파일을 수정안 패치와 재검사의 바뀐 줄에 넣는 데 쓴다."""
+    if paths:
+        _tree_git(worktree, "add", "--intent-to-add", "--", *paths)
+
+
+def untrack(worktree: Path, path: str) -> None:
+    """`track_new`로 보이게 한 파일을 인덱스에서 뺀다. 파일을 지운 뒤 부른다."""
+    _tree_git(worktree, "rm", "--cached", "--quiet", "--ignore-unmatch", "--", path)
 
 
 def head_diff(worktree: Path) -> str:

@@ -83,7 +83,7 @@ FLAKY_SUMMARY: Final = ReportSummary(passed=8, failed=1, total=9, failed_tests=(
     ("run", "lint", "code"),
     [
         (PytestRun(exit_code=0, summary=SUMMARY), True, True),
-        (PytestRun(exit_code=5, summary=ReportSummary()), True, False),  # 안전망 없음
+        (PytestRun(exit_code=5, summary=ReportSummary()), True, False),  # 테스트로 확인할 수 없음
         (PytestRun(exit_code=1, summary=SUMMARY), False, False),
         (PytestRun(exit_code=124, summary=None, timed_out=True), False, False),
         (PytestRun(exit_code=4, summary=None), False, False),

@@ -92,7 +92,7 @@ class PytestRun:
         if self.exit_code == 0 and self.summary is not None:
             return "passed"
         if self.exit_code == PYTEST_TESTS_FAILED and self.passed_on_rerun:
-            return "passed"  # 불안정한 테스트가 있다 (flaky). 코드 수정의 안전망으로는 쓰지 않는다
+            return "passed"  # 불안정한 테스트가 있다 (flaky). 코드 수정을 확인하는 데는 쓰지 않는다
         if self.exit_code in PYTEST_FAILED and self.summary is not None:
             return "failed"
         if self.exit_code == PYTEST_NO_TESTS:

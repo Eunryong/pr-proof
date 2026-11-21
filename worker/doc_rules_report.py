@@ -14,7 +14,6 @@ from typing import Final, Literal
 from worker import pr_check_report
 from worker.checker_authoring_pure import JudgeRoute
 from worker.checker_pure import TOOL_KINDS, Checker
-from worker.coverage_pure import COVERAGE_LABEL
 from worker.doc_rules_pure import (
     CallUsage,
     DocRules,
@@ -37,6 +36,7 @@ from worker.rag_pure import KIND_LABEL, SITE_LABEL, Retrieval, merge_retrievals
 from worker.rag_switch_pure import RagSwitch, describe
 from worker.rule_pure import Rule
 from worker.rules.pr_check_pure import PrChecks
+from worker.test_lines import generated_lines, runs_without_new_tests, status_lines
 from worker.violation_pure import Violation
 
 TITLE: Final = "**규칙:**"
@@ -100,7 +100,7 @@ _LEFT_LABEL: Final[Mapping[str, str]] = {
     "rejected_before": "이전에 거절됨",
     "notify_only": "알리기만 하는 규칙",
     "tests_failed": "테스트가 실패함",
-    "no_safety_net": "안전망이 없음",
+    "no_safety_net": "테스트로 확인할 수 없음",
     "team_pattern": "팀이 닫은 수정과 비슷함",
     "needs_other_file": "다른 파일이나 공개 이름을 바꿔야 함",
     "changes_behavior": "고치면 동작이 바뀜",
@@ -221,7 +221,7 @@ def _found(
     blocks = [
         _judge_lines(found),
         _decision_summary(decisions),
-        *(_fix_lines(view, bundle, _untested(found, view)) for bundle, view in fixes.items()),
+        *(_fix_lines(view, bundle, _test_lines(found, view)) for bundle, view in fixes.items()),
         _violations(found, by_id, fixed_in(fixes)),
         pr_check_report.section(pr) if pr is not None else [],
         _not_checkable(found.outcomes),
@@ -353,26 +353,27 @@ def _decision_summary(decisions: Decided | None) -> list[str]:
     return lines
 
 
-def _untested(found: Found, view: FixView) -> int:
-    """그 묶음이 고친 위반 중 테스트가 실행하지 않거나 알 수 없는 줄의 수."""
+def _test_lines(found: Found, view: FixView) -> list[str]:
+    """그 묶음이 고친 위반을 어느 테스트가 실행했는지와 만든 테스트 (4.9). 상태와 파일마다 줄 번호를
+    모아 한 줄로 쓴다. 고친 것이 없으면 빈 목록."""
     match view.fix:
-        case ModelFix(targets=ids) | MechanicalFix(fixed=ids) if view.fix.ready:
-            wanted = set(ids)
+        case ModelFix() as fix if fix.ready:
+            ids, runs, tests = fix.targets, fix.line_runs, fix.generated
+        case MechanicalFix() as fix if fix.ready:
+            ids, runs, tests = fix.fixed, (), ()
         case _:
-            return 0
-    return sum(1 for v in found.violations if v.id in wanted and v.covered is not True)
-
-
-def _untested_line(count: int) -> list[str]:
-    if not count:
+            return []
+    wanted = set(ids)
+    violations = [v for v in found.violations if v.id in wanted]
+    if not violations:
         return []
-    return [f"고친 위반 중 {count}건은 그 줄을 실행하는 테스트가 없거나 알 수 없어, 테스트가 그 "
-            "줄의 동작을 확인하지 않았습니다."]  # fmt: skip
+    runs = runs or runs_without_new_tests(violations)
+    return ["테스트:", *status_lines(runs, violations), *generated_lines(tests)]
 
 
-def _fix_lines(view: FixView, bundle: str, untested: int = 0) -> list[str]:
+def _fix_lines(view: FixView, bundle: str, tests: Sequence[str] = ()) -> list[str]:
     """묶음 하나의 결과: 수정안 PR 번호, 만들지 못한 이유, 크기 상한 건수, 호출 수 (4.9, 9.4).
-    untested는 고친 위반 중 테스트가 실행하지 않는 줄의 수다."""
+    tests는 고친 위반의 테스트 표시(`_test_lines`)다."""
     label = _LABEL[bundle]
     ref = f" #{view.number}" if view.number is not None else ""
     match view.state:
@@ -391,15 +392,15 @@ def _fix_lines(view: FixView, bundle: str, untested: int = 0) -> list[str]:
             line = f"이 커밋의 {label} PR{ref}이 머지되지 않고 닫혀 다시 만들지 않습니다."
         case "done":
             if isinstance(view.fix, MechanicalFix):
-                return _mechanical_result(view, view.fix, untested)
-            return _fix_result(view, untested)
+                return _mechanical_result(view, view.fix, tests)
+            return _fix_result(view, tests)
     lines = ["", f"**{label}:** {line}"]
     if view.size_capped:
         lines.append(f"수정안 크기 상한으로 처리하지 못함: {view.size_capped}건")
     return lines
 
 
-def _mechanical_result(view: FixView, fix: MechanicalFix, untested: int = 0) -> list[str]:
+def _mechanical_result(view: FixView, fix: MechanicalFix, tests: Sequence[str] = ()) -> list[str]:
     """기계적 수정 묶음의 결과. 모델을 부르지 않았으므로 호출 수가 없다."""
     proposal = view.proposal
     if not fix.ready:
@@ -419,7 +420,7 @@ def _mechanical_result(view: FixView, fix: MechanicalFix, untested: int = 0) -> 
         line += f" 수정안 PR #{proposal.number}을 {verb}."
     elif proposal is not None:
         line += f" 수정안 PR을 만들지 않았습니다 ({proposal.reason})."
-    lines = ["", f"**{_LABEL[MECHANICAL_BUNDLE]}:** {line}", *_untested_line(untested)]
+    lines = ["", f"**{_LABEL[MECHANICAL_BUNDLE]}:** {line}", *tests]
     if fix.formatted_files:
         lines.append(f"`ruff format`을 고친 파일 {len(fix.formatted_files)}개에 적용했습니다.")
     elif fix.format_skipped:
@@ -444,7 +445,7 @@ def _patch_block(view: FixView, proposal: ProposalResult | None) -> list[str]:
             "</details>"]  # fmt: skip
 
 
-def _fix_result(view: FixView, untested: int = 0) -> list[str]:
+def _fix_result(view: FixView, tests: Sequence[str] = ()) -> list[str]:
     fix, proposal = view.fix, view.proposal
     if not isinstance(fix, ModelFix):
         return []
@@ -470,7 +471,7 @@ def _fix_result(view: FixView, untested: int = 0) -> list[str]:
             line += f" 수정안 PR #{proposal.number}을 {verb}."
         elif proposal is not None:
             line += f" 수정안 PR을 만들지 않았습니다 ({proposal.reason})."
-    lines = ["", f"**{_LABEL['model']}:** {line}", *_untested_line(untested)]
+    lines = ["", f"**{_LABEL['model']}:** {line}", *tests]
     if view.size_capped:
         lines.append(f"수정안 크기 상한으로 처리하지 못함: {view.size_capped}건")
     lines.append(_fix_usage(fix))
@@ -485,6 +486,14 @@ def _fix_usage(fix: ModelFix) -> str:
     line += f" · 저장된 결과 {fix.cache_hits}건 사용"
     if fix.calls:
         line += f" · 토큰 입력 {fix.input_tokens}, 출력 {fix.output_tokens}"
+    usage = fix.tool_usage
+    if usage.calls or usage.limited:
+        line += (
+            f" · 도구 호출 {usage.calls}회 (규칙 검사 {usage.check_rules}, 테스트 "
+            f"{usage.run_tests}), {usage.seconds:.0f}초"
+        )
+        if usage.limited:
+            line += " (상한에 닿음)"
     return line
 
 
@@ -494,13 +503,13 @@ def _left_label(d: FixDecision) -> str:
 
 
 def _fix_note(d: FixDecision, v: Violation, number: int | None) -> str:
-    """고칠 대상 줄 끝: 수정 방법, 수정안 PR 번호, 테스트가 그 줄을 실행하는지 (4.9).
-    모델이 쓴 이유는 코드 스팬 안에만 넣는다."""
+    """고칠 대상 줄 끝: 수정 방법, 수정안 PR 번호 (4.9). 테스트 표시는 수정 결과 아래에 상태와
+    파일마다 묶는다. 모델이 쓴 이유는 코드 스팬 안에만 넣는다."""
     how = "기계적 수정" if d.method == "mechanical" else "모델 수정"
     if d.decided_by == "model" and d.why:
         how += f": {inline_code(d.why, MAX_DETAIL_CHARS)}"
     pr = f" · 수정안 #{number}" if number is not None else ""
-    return f" · 고칠 대상 ({how}){pr} · {COVERAGE_LABEL[v.covered]}"
+    return f" · 고칠 대상 ({how}){pr}"
 
 
 def _left_note(d: FixDecision) -> str:

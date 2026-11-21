@@ -1,4 +1,5 @@
-"""위반 줄 커버리지 (docs/DESIGN.md 4.5, F8). 수정 판단은 보지 않고, 고친 위반의 표시(4.9)에 쓴다.
+"""위반 줄 커버리지 (docs/DESIGN.md 4.5, F8). 수정 판단은 보지 않고, 고친 위반의 표시(4.9)와 만든
+테스트의 판정(4.8의 6번)에 쓴다.
 
 `coverage.xml`은 샌드박스에서 PR 코드가 도는 동안 만들어지므로 믿을 수 없는 입력으로 다룬다.
 DTD·엔티티를 거부하는 파서(defusedxml)로 읽고 크기를 제한하며, 형식이 조금이라도 어긋나면
@@ -138,6 +139,11 @@ def _statements(source: str) -> list[_Stmt] | None:
     return result
 
 
+def statements(source: str) -> list[_Stmt] | None:
+    """`line_covered`에 넘기는 문장 범위. 파싱할 수 없으면 None."""
+    return _statements(source)
+
+
 def line_covered(file_cov: FileCoverage, line: int, statements: list[_Stmt] | None) -> bool:
     """줄 하나가 테스트로 실행됐는지.
 
@@ -194,12 +200,3 @@ def mark_covered(
             parsed[path] = _statements(source) if source is not None else None
         result.append(replace(f, covered=line_covered(file_cov, f.line, parsed[path])))
     return tuple(result)
-
-
-# 수정안 PR과 결과 코멘트가 고친 위반마다 붙이는 글 (4.9). 테스트가 그 줄을 실행했는지만 말한다.
-# 실행하지 않은 줄은 테스트가 고친 동작을 확인하지 않았다는 뜻이다
-COVERAGE_LABEL: Final[Mapping[bool | None, str]] = {
-    True: "테스트가 이 줄을 실행함",
-    False: "이 줄을 실행하는 테스트가 없음",
-    None: "테스트가 이 줄을 실행하는지 알 수 없음",
-}

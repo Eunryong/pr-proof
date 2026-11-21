@@ -17,7 +17,6 @@ from typing import Final
 from shared import config
 from shared.job_pure import PRJob
 from worker import records, repo
-from worker.coverage_pure import COVERAGE_LABEL
 from worker.doc_rules_pure import Found, outcomes_by_rule
 from worker.fix import proposal_pure as rules
 from worker.fix.fix_pure import MECHANICAL_BUNDLE, MechanicalFix
@@ -27,6 +26,7 @@ from worker.github import GitHub, GitHubError, ReviewComment
 from worker.markdown import inline_code
 from worker.report import code_fence
 from worker.state import Store
+from worker.test_lines import generated_lines, runs_without_new_tests, status_lines
 
 # v1의 lint 수정안 기록. 기계적 수정 묶음의 기록으로 본다 (머지로 생긴 커밋, 열린 수정안)
 LEGACY_SKILLS: Final[Mapping[str, str]] = {"lint": MECHANICAL_BUNDLE}
@@ -127,6 +127,9 @@ def explanation_text(explanation: Explanation | None) -> str:
         f"- {file} {rule}: {why} (줄 {_line_list(sorted(set(where)))})"
         for (file, rule, why), where in at.items()
     ]
+    if explanation.untested:
+        lines += ["", "테스트를 쓰지 못한 곳:"]
+        lines += [f"- {n.file} {n.rule}: {n.why}" for n in explanation.untested]
     return "\n".join(lines).strip()
 
 
@@ -137,17 +140,16 @@ def _line_list(lines: Sequence[int]) -> str:
 
 
 def fixed_lines(found: Found, ids: Sequence[str]) -> list[str]:
-    """수정안이 고친 위반을 규칙별로. 규칙마다 원문과 출처(문서와 절, 또는 도구 설정 파일), 위반마다
-    테스트가 그 줄을 실행하는지 (4.9)."""
+    """수정안이 고친 위반을 규칙별로. 규칙마다 원문과 출처(문서와 절, 또는 도구 설정 파일), 그 아래
+    파일마다 고친 줄 번호 (4.9). 테스트 표시는 따로 묶는다(`test_section`)."""
     by_rule = outcomes_by_rule(found)
     wanted = set(ids)
-    grouped: dict[str, list[str]] = {}
+    grouped: dict[str, dict[str, list[int]]] = {}
     for v in found.violations:
         if v.id in wanted:
-            where = f"{inline_code(f'{v.file}:{v.line}', 200)} · {COVERAGE_LABEL[v.covered]}"
-            grouped.setdefault(v.rule_id, []).append(where)
+            grouped.setdefault(v.rule_id, {}).setdefault(v.file, []).append(v.line)
     lines = []
-    for rule_id, where in grouped.items():
+    for rule_id, files in grouped.items():
         rule = by_rule[rule_id].rule
         source = rule.source.file
         if rule.source.section:
@@ -155,23 +157,27 @@ def fixed_lines(found: Found, ids: Sequence[str]) -> list[str]:
         lines.append(
             f"- `{rule_id}` {inline_code(rule.text, 500)} · 출처: {inline_code(source, 200)}"
         )
+        where = [
+            f"{inline_code(f, 200)} 줄 {_line_list(sorted(set(ns)))}" for f, ns in files.items()
+        ]
         lines += [f"  - {w}" for w in where[:MAX_LISTED_TARGETS]]
         if len(where) > MAX_LISTED_TARGETS:
-            lines.append(f"  - 외 {len(where) - MAX_LISTED_TARGETS}건")
+            lines.append(f"  - 외 파일 {len(where) - MAX_LISTED_TARGETS}개")
     return lines
 
 
-def untested_line(found: Found, ids: Sequence[str]) -> list[str]:
-    """고친 위반 중 테스트가 실행하지 않는(또는 알 수 없는) 줄. 테스트 결과가 같아도 그 줄의 동작은
-    테스트로 확인되지 않았다 (4.6, 4.9)."""
+def test_section(found: Found, ids: Sequence[str], fix: ModelFix | None = None) -> list[str]:
+    """고친 위반마다 그 줄을 어느 테스트가 실행했는지와 만든 테스트 (4.9). 모델 수정은 출구 검사가
+    정한 상태(`ModelFix.line_runs`), 기계적 수정은 있던 테스트의 실행 여부만 쓴다."""
     wanted = set(ids)
-    count = sum(1 for v in found.violations if v.id in wanted and v.covered is not True)
-    if not count:
-        return []
-    return [
-        f"- 테스트가 실행하지 않는 줄: 고친 위반 중 {count}건은 그 줄을 실행하는 테스트가 없거나 "
-        "알 수 없어, 테스트가 그 줄의 동작을 확인하지 않았습니다. 리뷰어가 확인해 주세요"
-    ]
+    violations = [v for v in found.violations if v.id in wanted]
+    runs = (
+        fix.line_runs if fix is not None and fix.line_runs else runs_without_new_tests(violations)
+    )
+    lines = ["", "**테스트** (파이프라인이 실행해 확인한 결과)", *status_lines(runs, violations)]
+    if fix is not None:
+        lines += generated_lines(fix.generated)
+    return lines
 
 
 def _unverified_line(count: int) -> list[str]:
@@ -202,22 +208,33 @@ def model_fix_body(job: PRJob, fix: ModelFix, found: Found, skipped: int) -> str
                   ]  # fmt: skip
     lines += ["", "**검증** (파이프라인이 확인한 결과)"]
     if check is not None:
-        files = ", ".join(inline_code(f, 200) for f in fix.changed_files)
+        kept = [t for t in fix.generated if t.accepted]
+        made = {t.file for t in kept}
+        files = ", ".join(inline_code(f, 200) for f in fix.changed_files if f not in made)
         recheck = f"도구·검사기 {check.rules_rechecked}개"
+        new_tests = (
+            f"만든 테스트 파일 {len(kept)}개는 테스트 폴더의 새 파일. "
+            if kept else ""
+        )  # fmt: skip
         lines += [
-            f"- 허용 범위: 위반이 있는 파일만 바뀜 ({files}). 테스트 파일, `.github/`, 새로 생긴 "
-            "무시된 파일 없음",
+            f"- 허용 범위: 위반이 있는 파일만 바뀜 ({files}). {new_tests}있던 테스트 파일, "
+            "`.github/`, 새로 생긴 무시된 파일 없음",
             f"- 규칙 재검사: 대상 위반 {check.resolved}건 해소, 새 위반 없음 "
             f"({recheck}를 다시 돌림)",
             *_unverified_line(check.unverified),
-            f"- 테스트: 수정 전후 테스트 {check.tests}개가 같은 결과로 통과",
-            *untested_line(found, fix.targets),
+            f"- 테스트: 있던 테스트 {check.tests}개가 수정 전후 같은 결과로 통과",
+            *(
+                [f"- 만든 테스트: {len(kept)}개가 고치기 전 코드와 고친 뒤 코드에서 모두 통과"]
+                if kept
+                else []
+            ),  # fmt: skip
             f"- 크기: 바뀐 파일 {check.files}개, 바뀐 줄 {check.lines}줄 "
-            f"(상한 {rules.MAX_FILES}개, {rules.MAX_CHANGED_LINES}줄)",
+            f"(상한 {rules.MAX_FILES}개, {rules.MAX_CHANGED_LINES}줄. 만든 테스트는 따로 셈)",
             "- 비밀값: 추가된 줄과 모델의 설명에서 찾지 못함",
             "- 설명 확인: 위반을 고친 곳마다 그 규칙의 설명이 있고, 바뀐 파일마다 설명이 있음. "
             "줄 리뷰 코멘트의 줄은 파이프라인이 diff에서 정함",
         ]
+        lines += test_section(found, fix.targets, fix)
     text = explanation_text(fix.explanation)
     if text:
         fence = code_fence(text)
@@ -380,8 +397,8 @@ def mechanical_fix_body(job: PRJob, fix: MechanicalFix, found: Found, tool: str)
         f"- 허용 범위: 고친 파일의 내용만 바뀜 ({files})",
         "- 규칙 재검사: 새 위반 없음 (도구·검사기로 확인하는 규칙을 모두 다시 돌림)",
         f"- 테스트: 고친 뒤 {fix.test_line} (수정 전과 같은 결과)",
-        *untested_line(found, fix.fixed),
         "- 비밀값: 추가된 줄에서 찾지 못함",
+        *test_section(found, fix.fixed),
         "",
         f"도구: {tool}. 도구의 안전한 수정만 썼고, 모델은 쓰지 않았습니다.",
         "",

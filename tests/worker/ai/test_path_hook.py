@@ -122,3 +122,18 @@ def test_script_blocks_when_it_cannot_decide(dirs, tmp_path: Path) -> None:
     assert broken.returncode == 2 and broken.stdout == ""
     unwritable = _run_hook(root, tmp_path / "no-such-dir" / "hook.log", "{}")
     assert unwritable.returncode == 2
+
+
+@pytest.mark.parametrize("tool", ["mcp__proof__check_rules", "mcp__proof__run_tests"])
+def test_pipeline_tools_are_allowed_without_a_path(dirs, tool: str) -> None:
+    root, _ = dirs
+    assert (
+        path_hook.problem(str(root), {"tool_name": tool, "tool_input": {"code": "before"}}) is None
+    )
+
+
+def test_hook_knows_the_pipeline_tool_names() -> None:
+    from worker.mcp_pure import TOOL_NAMES
+
+    assert set(TOOL_NAMES) <= set(path_hook._PATH_KEYS)
+    assert path_hook.problem("/x", {"tool_name": "mcp__other__x", "tool_input": {}}) is not None

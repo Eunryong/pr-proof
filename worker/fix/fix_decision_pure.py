@@ -54,7 +54,7 @@ class SafetyNet:
     """수정 판단이 보는 테스트 결과."""
 
     status: RunStatus
-    flaky: bool = False  # 불안정한 테스트가 있다. 모델 수정의 안전망으로 쓰지 않는다
+    flaky: bool = False  # 불안정한 테스트가 있다. 모델 수정을 확인하는 데 쓰지 않는다
 
 
 def _skip(v: Violation, reason: SkipReason, why: str) -> FixDecision:
@@ -84,7 +84,7 @@ def decide_by_table(
         return FixDecision(v.id, "fix", "pipeline", method="mechanical")
     if tests.status == "no_tests" or tests.flaky:
         why = "테스트가 없음" if tests.status == "no_tests" else "불안정한 테스트가 있음"
-        return _skip(v, "no_safety_net", f"안전망이 없음 ({why})")
+        return _skip(v, "no_safety_net", f"테스트로 확인할 수 없음 ({why})")
     return None
 
 
