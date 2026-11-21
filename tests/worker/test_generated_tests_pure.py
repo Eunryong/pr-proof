@@ -6,7 +6,7 @@ from typing import Final
 
 import pytest
 
-from worker.fix.generated_tests_pure import (
+from worker.generated_tests_pure import (
     LINE_LABEL,
     MAX_TEST_FILES,
     MAX_TEST_LINES,

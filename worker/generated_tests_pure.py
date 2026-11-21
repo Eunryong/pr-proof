@@ -101,8 +101,8 @@ class LineRun:
 
 
 STATE_TYPES: Final = (
-    ("worker.fix.generated_tests_pure", "GeneratedTest"),
-    ("worker.fix.generated_tests_pure", "LineRun"),
+    ("worker.generated_tests_pure", "GeneratedTest"),
+    ("worker.generated_tests_pure", "LineRun"),
 )
 
 

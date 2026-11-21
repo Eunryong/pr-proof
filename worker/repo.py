@@ -391,6 +391,18 @@ def commit_diff(worktree: Path, old: str, new: str, path: str) -> str:
     return _tree_git(worktree, *_DIFF, old, new, "--", path)
 
 
+def track_new(worktree: Path, paths: Sequence[str]) -> None:
+    """새 파일을 diff에 보이게 한다(`git add -N`). 내용은 인덱스에 넣지 않는다. 수정 작성이 만든
+    테스트 파일을 수정안 패치와 재검사의 바뀐 줄에 넣는 데 쓴다."""
+    if paths:
+        _tree_git(worktree, "add", "--intent-to-add", "--", *paths)
+
+
+def untrack(worktree: Path, path: str) -> None:
+    """`track_new`로 보이게 한 파일을 인덱스에서 뺀다. 파일을 지운 뒤 부른다."""
+    _tree_git(worktree, "rm", "--cached", "--quiet", "--ignore-unmatch", "--", path)
+
+
 def head_diff(worktree: Path) -> str:
     """체크아웃한 커밋과 worktree 사이의 diff. 수정안 자체다."""
     return _tree_git(worktree, *_DIFF, "HEAD")

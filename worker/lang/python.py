@@ -48,6 +48,7 @@ from worker.coverage_pure import (
     mark_covered,
     parse_coverage_xml,
 )
+from worker.generated_tests_pure import Suite, parse_contexts, parse_report
 from worker.lang.install_pure import InstallFailureKind
 from worker.sandbox import docker_cli, toolcache
 from worker.sandbox.checker_runner import (
@@ -368,6 +369,9 @@ RERUN_REPORT_FILE: Final = f"{OUT_DIR}/rerun.json"
 MAX_RERUN_TESTS: Final = 20
 MAX_REPORT_BYTES: Final = 50 * 1024 * 1024  # 큰 테스트 묶음의 report.json도 들어가게
 COVERAGE_XML: Final = f"{OUT_DIR}/coverage.xml"
+# 줄마다 실행한 테스트(문맥). 수정 작성의 도구와 출구 검사만 만든다 (contexts=True)
+COVERAGE_JSON: Final = f"{OUT_DIR}/coverage.json"
+MAX_COVERAGE_JSON_BYTES: Final = 50 * 1024 * 1024
 # coverage.xml 경로를 리포 기준 상대 경로로 남기는 파이프라인 쪽 설정 (docker/sandbox/coveragerc)
 COVERAGERC: Final = f"{PIPELINE_DIR}/coveragerc"
 MAX_OUTPUT_CHARS: Final = 4000
@@ -378,13 +382,16 @@ def pythonpath_for(worktree: Path) -> str:
     return "/work/src:/work" if (worktree / "src").is_dir() else "/work"
 
 
-def pytest_argv() -> list[str]:
+def pytest_argv(*, contexts: bool = False) -> list[str]:
+    """contexts면 줄마다 실행한 테스트를 coverage.json에 남긴다(`--cov-context=test`)."""
+    extra = ["--cov-context=test", f"--cov-report=json:{COVERAGE_JSON}"] if contexts else []
     return [
         ".venv/bin/pytest",
         "-p", "no:cacheprovider",
         "--json-report", f"--json-report-file={REPORT_FILE}",
         "--cov", f"--cov-config={COVERAGERC}",
         f"--cov-report=xml:{COVERAGE_XML}",
+        *extra,
     ]  # fmt: skip
 
 
@@ -429,16 +436,18 @@ def run_tests(
     timeout: int = DEFAULT_TIMEOUT,
     is_stale: Callable[[], bool] | None = None,
     poll_seconds: float = POLL_SECONDS,
+    contexts: bool = False,
 ) -> PytestRun:
     """컨테이너 안에서 pytest를 실행하고 결과를 PytestRun으로 돌려준다."""
     report = worktree / REPORT_FILE
     coverage_xml = worktree / COVERAGE_XML
-    for leftover in (report, coverage_xml, worktree / OUT_DIR / ".coverage"):
+    for leftover in (report, coverage_xml, worktree / COVERAGE_JSON,
+                     worktree / OUT_DIR / ".coverage"):  # fmt: skip
         leftover.unlink(missing_ok=True)
 
     result = run_in_sandbox(
         container,
-        pytest_argv(),
+        pytest_argv(contexts=contexts),
         env={"PYTHONPATH": pythonpath_for(worktree), "PYTHONDONTWRITEBYTECODE": "1"},
         timeout=timeout,
         is_stale=is_stale,
@@ -561,6 +570,20 @@ def read_sources(
         except UnicodeDecodeError:
             continue
     return sources
+
+
+def read_suite(run: PytestRun, worktree: Path, files: Iterable[str]) -> Suite:
+    """테스트 한 번의 결과에서 판단에 쓰는 것: 테스트 파일마다 결과와 수, files의 줄마다 실행한
+    테스트 파일 (`generated_tests_pure.Suite`). 결과 파일은 PR 코드가 바꿀 수 있어 일반 파일만
+    읽고, 없거나 깨졌으면 빈 값이다."""
+    try:
+        report = _read_json(run.report_path) if run.report_path is not None else None
+    except (ValueError, UnicodeDecodeError, RecursionError):
+        report = None
+    outcomes, counts = parse_report(report)
+    data = read_regular_file(worktree / COVERAGE_JSON, max_bytes=MAX_COVERAGE_JSON_BYTES)
+    lines = (parse_contexts(data, files) if data is not None else None) or {}
+    return Suite(run=run, outcomes=outcomes, counts=counts, lines=lines)
 
 
 def annotate_coverage(
