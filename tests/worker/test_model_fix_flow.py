@@ -37,7 +37,6 @@ from .test_doc_rules_flow import (  # noqa: F401
     BASE_FILES,
     PRINT_RULE,
     TWO_PRINTS,
-    FakeModel,
     _covered_tests,
     doc_env,
     make_remote,
@@ -46,6 +45,7 @@ from .test_doc_rules_flow import (  # noqa: F401
     use_config,
     use_model,
 )
+from .test_doc_rules_flow import FakeModel as DocFakeModel
 from .test_doc_rules_report import _outside_code
 from .test_github import is_reply
 
@@ -94,9 +94,21 @@ class FakeFixer:
 
 def first_fix_then_skip(ids: list[str]) -> list[dict]:
     """첫 위반은 fix, 나머지는 skip (2-9)."""
-    return [{"id": ids[0], "action": "fix", "why": "로거로 바꿀 수 있다"}] + [
-        {"id": i, "action": "skip", "why": "출력이 기능이다"} for i in ids[1:]
+    return [{"id": ids[0], "action": "fix", "reason": "", "why": "로거로 바꿀 수 있다"}] + [
+        {"id": i, "action": "skip", "reason": "changes_behavior", "why": "출력이 기능이다"}
+        for i in ids[1:]
     ]
+
+
+def fix_all(ids: list[str]) -> list[dict]:
+    return [{"id": i, "action": "fix", "reason": "", "why": "고칠 수 있다"} for i in ids]
+
+
+class FakeModel(DocFakeModel):
+    """이 파일의 수정 판단은 기본으로 모두 fix다 (수정 작성을 본다)."""
+
+    def __init__(self, rules, checker=None, decide=None, tool=None) -> None:
+        super().__init__(rules, checker, decide or fix_all, tool)
 
 
 @pytest.fixture
@@ -161,8 +173,9 @@ def test_fix_decided_violation_reaches_a_fix_pull_request(fix_env, tmp_path: Pat
     assert pull["title"] == "[pipeline] #1 문서 규칙 위반 1건 수정 (모델)"
     body = pull["body"]
     assert f"- `{RID}` `` {PRINT_RULE} `` · 출처: `README.md > 코드 규칙 > 출력`" in body
-    assert "  - `orders/a.py:2`" in body and "orders/a.py:3" not in body
-    assert "수정 판단이 skip한 위반 1건은 이 수정안에 넣지 않았습니다" in body
+    assert "  - `orders/a.py:2` · 테스트가 이 줄을 실행함" in body and "orders/a.py:3" not in body
+    assert "파이프라인이 고치지 않은 위반 1건은 이 수정안에 넣지 않았습니다" in body
+    assert "테스트가 실행하지 않는 줄" not in body
     assert "- 테스트: 수정 전후 테스트 9개가 같은 결과로 통과" in body
     assert "- 규칙 재검사: 대상 위반 1건 해소, 새 위반 없음 (도구·검사기 1개를 다시 돌림)" in body
     assert "**모델의 설명** (모델이 쓴 글입니다)" in body and "print를 로거 호출로 바꿈" in body
@@ -170,7 +183,11 @@ def test_fix_decided_violation_reaches_a_fix_pull_request(fix_env, tmp_path: Pat
     comment = _comment(fix_env)
     assert "**모델 수정안:** 위반 1건을 고쳤습니다." in comment
     assert f"수정안 PR #{number}을 열었습니다." in comment
-    assert f"  - `orders/a.py:3` · skip (모델: {inline_code('출력이 기능이다')})" in comment
+    assert "  직접 고쳐야 함 1건 (고치면 동작이 바뀜 1건)" in comment
+    assert f"  - `orders/a.py:3` · 고치면 동작이 바뀜: {inline_code('출력이 기능이다')}" in comment
+    fixed = "  - `orders/a.py:2` · 고칠 대상 (모델 수정: `로거로 바꿀 수 있다`) · 수정안 #900"
+    assert fixed in comment
+    assert "skip" not in comment
     assert "아직 만들지 않습니다" not in comment
     assert "수정 작성: 모델 호출 1회, 회차 1 · `claude-haiku-5-5`" in comment
     # 지시는 시스템 프롬프트로, 규칙 원문과 위반은 자료로. 모델 폴더에는 worktree의 파일이 있다
@@ -237,14 +254,35 @@ def test_change_outside_the_allowed_files_is_dropped_without_retry(fix_env, tmp_
     assert "**모델 수정안:** 수정안을 만들지 못함: 수정안을 버림" in _comment(fix_env)
 
 
-def test_skipped_and_uncovered_violations_never_reach_the_fixer(fix_env, tmp_path) -> None:
-    """2-7(흐름): 테스트가 지나가지 않는 위반은 표가 skip하고 모델 수정을 부르지 않는다."""
-    use_model(fix_env, FakeModel(rule_answer(print_rule())))
+def test_line_no_test_runs_is_fixed_and_labelled(fix_env, tmp_path) -> None:
+    """2026-11-21 (11.1), 4.9: 테스트가 실행하지 않는 줄의 위반도 고치고, 수정안 PR 본문과 결과
+    코멘트가 그 줄을 테스트가 실행하지 않는다고 적는다. 테스트로 확인했다고 읽히지 않는다."""
+    use_model(fix_env, FakeModel(rule_answer(print_rule()), decide=first_fix_then_skip))
     _covered_tests(fix_env, tmp_path, {"orders/a.py": [1]})
     fixer = use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation(("orders/a.py", 2))]))
     state = run(fix_env, tmp_path)
+    assert state["model_fix"].ready and len(fixer.calls) == 1
+    ((_, pull),) = fix_env["gh"].pulls.items()
+    assert "  - `orders/a.py:2` · 이 줄을 실행하는 테스트가 없음" in pull["body"]
+    assert ("- 테스트가 실행하지 않는 줄: 고친 위반 중 1건은 그 줄을 실행하는 테스트가 "
+            "없거나 알 수 없어, 테스트가 그 줄의 동작을 확인하지 않았습니다"
+            ) in pull["body"]  # fmt: skip
+    comment = _comment(fix_env)
+    assert "· 수정안 #900 · 이 줄을 실행하는 테스트가 없음" in comment
+    assert "고친 위반 중 1건은 그 줄을 실행하는 테스트가 없거나 알 수 없어" in comment
+
+
+def test_skipped_violation_never_reaches_the_fixer(fix_env, tmp_path) -> None:
+    """2-7(흐름): 모델이 고치지 않기로 한 위반은 수정 작성을 부르지 않는다."""
+    skip_all = lambda ids: [{"id": i, "action": "skip", "reason": "needs_other_file",  # noqa: E731
+                             "why": "orders/b.py의 이름을 바꿔야 한다"} for i in ids]  # fmt: skip
+    use_model(fix_env, FakeModel(rule_answer(print_rule()), decide=skip_all))
+    fixer = use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation(("orders/a.py", 2))]))
+    state = run(fix_env, tmp_path)
     assert "model_fix" not in state and fixer.calls == [] and fix_env["gh"].pulls == {}
-    assert "**모델 수정안:**" not in _comment(fix_env)
+    comment = _comment(fix_env)
+    assert "**모델 수정안:**" not in comment
+    assert "  직접 고쳐야 함 2건 (다른 파일이나 공개 이름을 바꿔야 함 2건)" in comment
 
 
 def test_fork_pull_request_gets_no_fix_pull_request(fix_env, tmp_path: Path) -> None:
@@ -377,7 +415,8 @@ def test_fix_reasks_decisions_left_by_the_call_cap(fix_env, tmp_path: Path) -> N
     assert [kind for kind, _ in model.prompts].count("decide") == 1 and len(fixer.calls) == 1
     assert tests["n"] == before + 1  # 수정 검증의 테스트만 돈다
     comment = _comment(fix_env)
-    assert "수정 판단: fix 1건, skip 1건" in comment and "수정안 PR #900을 열었습니다." in comment
+    assert "수정 판단: 고칠 대상 1건, 직접 고쳐야 함 1건" in comment
+    assert "수정안 PR #900을 열었습니다." in comment
 
 
 class RuffAndGrep:

@@ -36,6 +36,11 @@ REMOVED_KEYS: Final[Mapping[tuple[str, str], str]] = {
         "`model.budget_per_pr_usd`는 없어졌습니다. 호출 수 상한은 `model.calls`입니다"
     ),
 }
+# 2026-11-21에 없앤 키 (11.1). 옛 위치 `skills.fix` 아래에 있어도 알린다
+REQUIRE_COVERED_NOTE: Final = (
+    "`fix.require_covered`는 없어졌습니다. 테스트가 실행하지 않는 줄의 위반도 고치고, "
+    "수정안 PR에 그 사실을 적습니다"
+)
 MAX_RULE_DOCS: Final = 20
 # 유사도 기준값의 기본. 6.7의 측정으로 정했다 (multilingual-e5-small, 2026-11-20, 11.1)
 DEFAULT_MIN_SIMILARITY: Final = 0.91
@@ -80,8 +85,6 @@ class FixSettings(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
     require_approval: bool = False  # 검사 뒤 바로 수정안을 만든다. true면 /fix 승인 후 만든다
-    # 모델 수정은 테스트가 지나가는 위반 줄만 한다 (4.6)
-    require_covered: bool = True
     # 모델 수정의 작성 → 검증 회차 상한 (4.7)
     max_retries: int = Field(default=DEFAULT_MAX_RETRIES, ge=1)
 
@@ -209,6 +212,9 @@ def settings_notes(text: str | None) -> list[str]:
         part = data.get(section)
         if isinstance(part, dict) and key in part:
             notes.append(note)
+    fix_parts = [data.get("fix"), skills.get("fix") if isinstance(skills, dict) else None]
+    if any(isinstance(part, dict) and "require_covered" in part for part in fix_parts):
+        notes.append(REQUIRE_COVERED_NOTE)
     rag = data.get("rag")
     if isinstance(rag, dict) and "enabled" in rag and parse_mode(rag["enabled"]) is None:
         # 받은 값은 적지 않는다. 저장소의 글이 코멘트에 그대로 들어가지 않게

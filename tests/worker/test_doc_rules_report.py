@@ -253,31 +253,69 @@ def test_folded_list_is_capped_and_says_how_many_are_left_out() -> None:
     assert len(text) <= doc_rules_report.MAX_SECTION_CHARS
 
 
-def test_each_violation_shows_its_decision_and_the_counts() -> None:
-    a, b, c, d = (_violation(line=n) for n in (2, 3, 4, 5))
+def test_fixed_lines_are_listed_and_left_lines_are_summarised_by_reason() -> None:
+    """4.9: 고칠 대상은 위치마다 방법과 테스트 실행 여부가 보이고, 고치지 않은 위반은 규칙마다
+    "직접 고쳐야 함"의 이유별 건수 한 줄 아래에 위치가 접힌다. "skip"이라는 말은 나오지 않는다."""
+    a, b, c, d, e = (_violation(line=n) for n in (2, 3, 4, 5, 6))
+    a, d = replace(a, covered=False), replace(d, covered=True)
     decided = Decided((
         FixDecision(a.id, "fix", "model", method="model", why="로거로 바꾼다"),
-        FixDecision(b.id, "skip", "model", reason="risky", why="출력이 기능이다"),
-        FixDecision(c.id, "skip", "pipeline", reason="not_covered", why="테스트가 지나가지 않음"),
+        FixDecision(b.id, "skip", "model", reason="changes_behavior", why="출력이 기능이다"),
+        FixDecision(c.id, "skip", "pipeline", reason="tests_failed", why="테스트가 실패함"),
         FixDecision(d.id, "fix", "pipeline", method="mechanical"),
+        FixDecision(e.id, "skip", "model", reason="changes_behavior", why="반환값이 바뀐다"),
     ), calls=1, cached=2, input_tokens=900, output_tokens=70)  # fmt: skip
-    text = "\n".join(section(_found(RuleChecked(RULE, REF), violations=(a, b, c, d)), {}, decided))
-    assert "  - `orders/a.py:2` · fix (모델 수정: `로거로 바꾼다`)" in text
-    assert "  - `orders/a.py:3` · skip (모델: `출력이 기능이다`)" in text
-    assert "  - `orders/a.py:4` · skip (테스트가 지나가지 않음)" in text
-    assert "  - `orders/a.py:5` · fix (기계적 수정)" in text
-    assert ("수정 판단: fix 2건, skip 2건 (모델이 고치지 않기로 함 1건, 테스트가 지나가지 않음 1건)"
-            " · 모델 호출 1회 · 저장된 판단 2건 사용 · 토큰 입력 900, 출력 70") in text  # fmt: skip
+    found = _found(RuleChecked(RULE, REF), violations=(a, b, c, d, e))
+    text = "\n".join(section(found, {}, decided))
+    assert ("  - `orders/a.py:2` · 고칠 대상 (모델 수정: `로거로 바꾼다`) · "
+            "이 줄을 실행하는 테스트가 없음") in text  # fmt: skip
+    assert "  - `orders/a.py:5` · 고칠 대상 (기계적 수정) · 테스트가 이 줄을 실행함" in text
+    head, _, folded = text.partition("<details><summary>직접 고쳐야 함 3건의 위치</summary>")
+    assert "  직접 고쳐야 함 3건 (고치면 동작이 바뀜 2건, 테스트가 실패함 1건)" in head
+    assert "orders/a.py:3" not in head and "orders/a.py:4" not in head
+    assert "  - `orders/a.py:3` · 고치면 동작이 바뀜: `출력이 기능이다`" in folded
+    assert "  - `orders/a.py:4` · 테스트가 실패함" in folded
+    assert ("수정 판단: 고칠 대상 2건, 직접 고쳐야 함 3건 (고치면 동작이 바뀜 2건, "
+            "테스트가 실패함 1건) · 모델 호출 1회 · 저장된 판단 2건 사용 · "
+            "토큰 입력 900, 출력 70") in text  # fmt: skip
+    assert "skip" not in text
     assert "수정안:**" not in text  # 묶음의 상태는 따로 넘긴다
     assert "모델 호출 상한에 걸려" not in text
 
 
-def test_folded_violations_carry_their_decision_too() -> None:
+def test_fixed_line_shows_the_fix_pr_that_fixed_it() -> None:
+    a, b = _violation(line=2), _violation(line=3)
+    decided = Decided(tuple(FixDecision(v.id, "fix", "model", method="model") for v in (a, b)))
+    fix = ModelFix("ready", targets=(a.id,), size_capped=(b.id,))
+    view = FixView(targets=1, size_capped=1, state="done", fix=fix,
+                   proposal=ProposalResult(number=31))  # fmt: skip
+    text = "\n".join(section(_found(RuleChecked(RULE, REF), violations=(a, b)), {}, decided,
+                             {"model": view}))  # fmt: skip
+    assert "  - `orders/a.py:2` · 고칠 대상 (모델 수정) · 수정안 #31 · " in text
+    assert "  - `orders/a.py:3` · 고칠 대상 (모델 수정) · 테스트가 이 줄을 실행하는지" in text
+    assert "고친 위반 중 1건은 그 줄을 실행하는 테스트가 없거나 알 수 없어" in text
+
+
+def test_left_lines_are_folded_even_when_few_and_count_toward_the_fold_cap() -> None:
     violations = tuple(_violation(line=n) for n in range(1, 13))
-    decided = Decided(tuple(FixDecision(v.id, "skip", "model", reason="risky", why="w")
+    decided = Decided(tuple(FixDecision(v.id, "skip", "model", reason="not_a_violation", why="w")
                             for v in violations))  # fmt: skip
     text = "\n".join(section(_found(RuleChecked(RULE, REF), violations=violations), {}, decided))
-    assert "  - `orders/a.py:12` · skip (모델: `w`)" in text
+    assert "  직접 고쳐야 함 12건 (모델이 위반이 아니라고 봄 12건)" in text
+    assert "  - `orders/a.py:12` · 모델이 위반이 아니라고 봄: `w`" in text
+    many = tuple(_violation(line=n) for n in range(1, 512))
+    decided = Decided(tuple(FixDecision(v.id, "skip", "pipeline", reason="notify_only",
+                                        why="알리기만 하는 규칙") for v in many))  # fmt: skip
+    text = "\n".join(section(_found(RuleChecked(RULE, REF), violations=many), {}, decided))
+    assert "  - 외 211건" in text and len(text) <= doc_rules_report.MAX_SECTION_CHARS
+
+
+def test_unknown_reason_from_an_old_checkpoint_shows_the_pipeline_reason() -> None:
+    v = _violation()
+    decided = Decided((FixDecision(v.id, "skip", "pipeline", reason="not_covered",  # type: ignore[arg-type]
+                                   why="테스트가 지나가지 않음"),))  # fmt: skip
+    text = "\n".join(section(_found(RuleChecked(RULE, REF), violations=(v,)), {}, decided))
+    assert "  직접 고쳐야 함 1건 (테스트가 지나가지 않음 1건)" in text
 
 
 def test_model_reason_cannot_escape_code() -> None:

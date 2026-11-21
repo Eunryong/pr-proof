@@ -76,20 +76,23 @@ def _run(
     calls: CallSettings | None = None, per_call: int = 40,
 ) -> Decided:  # fmt: skip
     budget = CallBudget(store, "o/r", 1, HEAD, calls or CallSettings())
-    return decide(found, tests, DIFF, require_covered=True, store=store, budget=budget,
+    return decide(found, tests, DIFF, store=store, budget=budget,
                   model="sonnet", ask=model, per_call=per_call)  # fmt: skip
 
 
 def test_model_decides_what_the_table_leaves(store: Store) -> None:
-    uncovered = replace(V2, covered=False)
+    rejected = replace(V2, rejected_in=5)
+    uncovered = replace(V3, covered=False)
     model = FakeModel()
-    decided = _run(store, model, _found(V1, uncovered))
+    decided = _run(store, model, _found(V1, rejected, uncovered))
     assert decided.decisions == (
         FixDecision("v1", "fix", "model", method="model", why="고칠 수 있다"),
-        FixDecision("v2", "skip", "pipeline", reason="not_covered", why="테스트가 지나가지 않음"),
+        FixDecision("v2", "skip", "pipeline", reason="rejected_before", why="이전에 거절됨 (#5)"),
+        FixDecision("v3", "fix", "model", method="model", why="고칠 수 있다"),
     )
     (call,) = model.calls
-    assert call["ids"] == ["v1"]  # 표가 정한 위반은 모델에 넘기지 않는다
+    # 표가 정한 위반은 모델에 넘기지 않는다. 테스트가 실행하지 않는 줄은 모델에 넘긴다
+    assert call["ids"] == ["v1", "v3"]
     assert call["system_prompt"] == SYSTEM_PROMPT and call["schema"] is ANSWER_SCHEMA
     assert call["model"] == "sonnet"
     assert RULE.text in call["prompt"] and "+print(x)" in call["prompt"]
@@ -190,7 +193,7 @@ UNRELATED: Final = {"rule_text": "예외 클래스 이름은 Error로 끝난다.
 
 def _rag_run(store: Store, model: FakeModel, found: Found, retriever) -> Decided:
     budget = CallBudget(store, "o/r", 1, HEAD, CallSettings())
-    return decide(found, PASSED, DIFF, require_covered=True, store=store, budget=budget,
+    return decide(found, PASSED, DIFF, store=store, budget=budget,
                   model="sonnet", ask=model, retriever=retriever,
                   context_of=lambda v: CONTEXT)  # fmt: skip
 

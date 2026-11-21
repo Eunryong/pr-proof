@@ -4,6 +4,7 @@ from app.models.repo_config import (
     DEFAULT_MIN_SIMILARITY,
     MAX_RETRIES_CAP,
     MIN_MEMORY_GB,
+    REQUIRE_COVERED_NOTE,
     CallSettings,
     FixSettings,
     call_limits,
@@ -108,7 +109,7 @@ def test_removed_static_and_dollar_keys_are_ignored_with_a_note() -> None:
 def test_stage3_defaults() -> None:
     config, problem = parse_repo_config(None)
     assert problem is None
-    assert (config.fix.require_covered, config.fix.max_retries) == (True, 3)
+    assert config.fix.max_retries == 3
     assert config.fix.require_approval is False  # 기본: 검사 뒤 바로 수정안까지 간다
     assert (config.model.light, config.model.heavy) == ("haiku", "sonnet")
 
@@ -124,13 +125,35 @@ def test_decision_model_is_its_own_setting() -> None:
 
 def test_stage3_values_are_read() -> None:
     text = (
-        "fix: {require_covered: false, max_retries: 5, require_approval: true}\n"
+        "fix: {max_retries: 5, require_approval: true}\n"
         "model: {light: claude-haiku-5-5, heavy: opus}\n"
     )
     config, problem = parse_repo_config(text)
     assert problem is None and settings_notes(text) == []
-    assert config.fix == FixSettings(require_approval=True, require_covered=False, max_retries=5)
+    assert config.fix == FixSettings(require_approval=True, max_retries=5)
     assert (config.model.light, config.model.heavy) == ("claude-haiku-5-5", "opus")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "fix: {require_covered: true, max_retries: 2}\n",
+        "fix: {require_covered: false, max_retries: 2}\n",
+        "skills:\n  fix: {require_covered: true, max_retries: 2}\n",
+    ],
+    ids=["fix-true", "fix-false", "old-skills-fix"],
+)
+def test_removed_require_covered_is_ignored_and_noted(text: str) -> None:
+    """2026-11-21에 없앤 `fix.require_covered` (11.1). 값과 위치에 관계없이 오류 없이 무시하고, 같은
+    섹션의 다른 값은 그대로 읽으며, "설정:"에 한 번 알린다."""
+    config, problem = parse_repo_config(text)
+    assert problem is None and config.fix.max_retries == 2
+    assert not hasattr(config.fix, "require_covered")
+    assert [n for n in settings_notes(text) if "require_covered" in n] == [REQUIRE_COVERED_NOTE]
+
+
+def test_require_covered_note_needs_the_key_under_fix() -> None:
+    assert settings_notes("rag: {require_covered: true}\nfix: {max_retries: 2}\n") == []
 
 
 def test_old_skills_fix_key_is_read_and_noted_during_stage_2() -> None:

@@ -16,6 +16,7 @@ from typing import Final
 
 from app import config
 from app.models import proposal as rules
+from app.models.coverage import COVERAGE_LABEL
 from app.models.doc_rules import Found, outcomes_by_rule
 from app.models.fix import MECHANICAL_BUNDLE, MechanicalFix
 from app.models.job import PRJob
@@ -117,13 +118,15 @@ def explanation_text(explanation: Explanation | None) -> str:
 
 
 def fixed_lines(found: Found, ids: Sequence[str]) -> list[str]:
-    """수정안이 고친 위반을 규칙별로. 규칙마다 원문과 출처(문서와 절, 또는 도구 설정 파일)."""
+    """수정안이 고친 위반을 규칙별로. 규칙마다 원문과 출처(문서와 절, 또는 도구 설정 파일), 위반마다
+    테스트가 그 줄을 실행하는지 (4.9)."""
     by_rule = outcomes_by_rule(found)
     wanted = set(ids)
     grouped: dict[str, list[str]] = {}
     for v in found.violations:
         if v.id in wanted:
-            grouped.setdefault(v.rule_id, []).append(inline_code(f"{v.file}:{v.line}", 200))
+            where = f"{inline_code(f'{v.file}:{v.line}', 200)} · {COVERAGE_LABEL[v.covered]}"
+            grouped.setdefault(v.rule_id, []).append(where)
     lines = []
     for rule_id, where in grouped.items():
         rule = by_rule[rule_id].rule
@@ -137,6 +140,19 @@ def fixed_lines(found: Found, ids: Sequence[str]) -> list[str]:
         if len(where) > MAX_LISTED_TARGETS:
             lines.append(f"  - 외 {len(where) - MAX_LISTED_TARGETS}건")
     return lines
+
+
+def untested_line(found: Found, ids: Sequence[str]) -> list[str]:
+    """고친 위반 중 테스트가 실행하지 않는(또는 알 수 없는) 줄. 테스트 결과가 같아도 그 줄의 동작은
+    테스트로 확인되지 않았다 (4.6, 4.9)."""
+    wanted = set(ids)
+    count = sum(1 for v in found.violations if v.id in wanted and v.covered is not True)
+    if not count:
+        return []
+    return [
+        f"- 테스트가 실행하지 않는 줄: 고친 위반 중 {count}건은 그 줄을 실행하는 테스트가 없거나 "
+        "알 수 없어, 테스트가 그 줄의 동작을 확인하지 않았습니다. 리뷰어가 확인해 주세요"
+    ]
 
 
 def _unverified_line(count: int) -> list[str]:
@@ -162,8 +178,9 @@ def model_fix_body(job: PRJob, fix: ModelFix, found: Found, skipped: int) -> str
         *fixed_lines(found, fix.targets),
     ]
     if skipped:
-        lines += ["", f"수정 판단이 skip한 위반 {skipped}건은 이 수정안에 넣지 않았습니다. 이유는 "
-                  f"#{job.pr_number}의 결과 코멘트에 있습니다."]  # fmt: skip
+        lines += ["", f"파이프라인이 고치지 않은 위반 {skipped}건은 이 수정안에 넣지 않았습니다. "
+                  f"직접 고쳐야 하며, 이유는 #{job.pr_number}의 결과 코멘트에 있습니다."
+                  ]  # fmt: skip
     lines += ["", "**검증** (파이프라인이 확인한 결과)"]
     if check is not None:
         files = ", ".join(inline_code(f, 200) for f in fix.changed_files)
@@ -175,6 +192,7 @@ def model_fix_body(job: PRJob, fix: ModelFix, found: Found, skipped: int) -> str
             f"({recheck}를 다시 돌림)",
             *_unverified_line(check.unverified),
             f"- 테스트: 수정 전후 테스트 {check.tests}개가 같은 결과로 통과",
+            *untested_line(found, fix.targets),
             f"- 크기: 바뀐 파일 {check.files}개, 바뀐 줄 {check.lines}줄 "
             f"(상한 {rules.MAX_FILES}개, {rules.MAX_CHANGED_LINES}줄)",
             "- 비밀값: 추가된 줄과 모델의 설명에서 찾지 못함",
@@ -331,6 +349,7 @@ def mechanical_fix_body(job: PRJob, fix: MechanicalFix, found: Found, tool: str)
         f"- 허용 범위: 고친 파일의 내용만 바뀜 ({files})",
         "- 규칙 재검사: 새 위반 없음 (도구·검사기로 확인하는 규칙을 모두 다시 돌림)",
         f"- 테스트: 고친 뒤 {fix.test_line} (수정 전과 같은 결과)",
+        *untested_line(found, fix.fixed),
         "- 비밀값: 추가된 줄에서 찾지 못함",
         "",
         f"도구: {tool}. 도구의 안전한 수정만 썼고, 모델은 쓰지 않았습니다.",

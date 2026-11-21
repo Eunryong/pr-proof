@@ -170,8 +170,9 @@ def test_ruff_settings_become_a_rule_set_and_fixable_violations_go_to_a_fix_pr(m
     assert lines[top + 1] == "**규칙:** ⚠️ 위반 2건 (규칙 2개) · 수정안 #900", body
     assert "- `F401` `ruff.toml의 설정대로 ruff를 통과한다` · 1건" in body
     assert "출처: `ruff.toml` · 도구 `ruff` (`ruff.toml`의 설정)" in body
-    assert "`a.py:1` `` `sys` imported but unused `` · fix (기계적 수정)" in body
-    unfixable = "  - `a.py:3` `` Ambiguous variable name: `l` `` · skip (도구의 자동 수정이 없음)"
+    fixed = "`a.py:1` `` `sys` imported but unused `` · 고칠 대상 (기계적 수정) · 수정안 #900 · "
+    assert fixed in body
+    unfixable = "  - `a.py:3` `` Ambiguous variable name: `l` `` · 도구의 자동 수정이 없음"
     assert unfixable in body
     assert "**기계적 수정안:** 위반 1건을 고쳤습니다" in body
     assert "수정안 PR #900을 열었습니다." in body
@@ -289,7 +290,7 @@ def test_failing_tests_block_the_fix(mech_env) -> None:
     use_runner(mech_env, lambda *a, **k: failed)
     assert _update(mech_env) == "failed"
     body = _comment(mech_env)
-    assert "skip (테스트가 실패함)" in body and "**기계적 수정안:**" not in body
+    assert "  직접 고쳐야 함 1건 (테스트가 실패함 1건)" in body and "**기계적 수정안:**" not in body
     assert mech_env["pushes"] == []
 
 
@@ -416,11 +417,11 @@ def test_rejected_fix_pr_is_not_made_again_and_its_line_is_skipped_next_commit(m
     _update(mech_env)
     mech_env["gh"].pulls[900]["state"] = "closed"
     assert _command(mech_env, "/recheck", 80).startswith("recheck:")
-    assert "skip (이전에 거절됨 (#900))" in _comment(mech_env)
+    assert " · 이전에 거절됨 (#900)" in _comment(mech_env)
     assert mech_env["deps"].store.records("o/r", 1)[0].kind == "rejected"
     _push_commit(mech_env, {"a.py": "import sys\nx = 3\nl = 2\n"})
     _update(mech_env)
-    assert "skip (이전에 거절됨 (#900))" in _comment(mech_env)
+    assert " · 이전에 거절됨 (#900)" in _comment(mech_env)
     assert len(mech_env["gh"].pulls) == 1
 
 

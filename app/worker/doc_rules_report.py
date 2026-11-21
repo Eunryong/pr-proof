@@ -13,6 +13,7 @@ from typing import Final, Literal
 
 from app.models.checker import TOOL_KINDS, Checker
 from app.models.checker_authoring import JudgeRoute
+from app.models.coverage import COVERAGE_LABEL
 from app.models.doc_rules import (
     CallUsage,
     DocRules,
@@ -59,7 +60,7 @@ MAX_SHOWN_PER_RULE: Final = 10
 MAX_FOLDED_VIOLATIONS: Final = 300
 MANY_VIOLATIONS_NOTE: Final = (
     "위반이 많습니다. 규칙이 문서에 새로 추가돼 기존 코드의 위반이 한꺼번에 나온 것일 수 있습니다. "
-    "규칙마다 앞 10건만 보이고 나머지는 접었습니다."
+    "규칙마다 고칠 대상은 앞 10건만 보이고, 나머지와 직접 고쳐야 하는 위반의 위치는 접었습니다."
 )
 MAX_LISTED_RULES: Final = 60
 MAX_CHECKER_DETAILS: Final = 10
@@ -94,18 +95,21 @@ _JUDGE_ROUTE_TEXT: Final[Mapping[JudgeRoute, str]] = {
     "examples": "검사기가 예시 확인을 두 번 통과하지 못함",
     "attempts": "예시를 통과하는 검사기를 만들지 못함",
 }
-_SKIP_LABEL: Final[Mapping[str, str]] = {
+# 파이프라인이 고치지 않은 위반의 이유 (4.9). 사람이 직접 고쳐야 하는 까닭으로 읽힌다
+_LEFT_LABEL: Final[Mapping[str, str]] = {
     "rejected_before": "이전에 거절됨",
     "notify_only": "알리기만 하는 규칙",
     "tests_failed": "테스트가 실패함",
     "no_safety_net": "안전망이 없음",
-    "not_covered": "테스트가 지나가지 않음",
-    "coverage_unknown": "커버리지를 알 수 없음",
     "team_pattern": "팀이 닫은 수정과 비슷함",
+    "needs_other_file": "다른 파일이나 공개 이름을 바꿔야 함",
+    "changes_behavior": "고치면 동작이 바뀜",
+    "not_a_violation": "모델이 위반이 아니라고 봄",
     "risky": "모델이 고치지 않기로 함",
     "call_limit": "호출 상한",
     "undecided": "수정 판단을 하지 못함",
 }
+LEFT: Final = "직접 고쳐야 함"
 _FIX_FAILED: Final[Mapping[str, str]] = {
     "failed": "정해진 회차 안에 검증을 통과하지 못함",
     "dropped": "수정안을 버림",
@@ -217,8 +221,8 @@ def _found(
     blocks = [
         _judge_lines(found),
         _decision_summary(decisions),
-        *(_fix_lines(view, bundle) for bundle, view in fixes.items()),
-        _violations(found, by_id),
+        *(_fix_lines(view, bundle, _untested(found, view)) for bundle, view in fixes.items()),
+        _violations(found, by_id, fixed_in(fixes)),
         pr_check_report.section(pr) if pr is not None else [],
         _not_checkable(found.outcomes),
         _failed(found.outcomes),
@@ -331,15 +335,14 @@ def _judge_lines(found: Found) -> list[str]:
 
 
 def _decision_summary(decisions: Decided | None) -> list[str]:
-    """fix·skip 건수와 skip 이유별 건수, 수정 판단의 모델 호출 (4.9)."""
+    """고칠 대상과 직접 고쳐야 하는 위반의 건수, 이유별 건수, 수정 판단의 모델 호출 (4.9)."""
     if not decisions or not decisions.decisions:
         return []
     fixes = sum(1 for d in decisions.decisions if d.action == "fix")
-    skips = Counter(_SKIP_LABEL[d.reason or "undecided"] for d in decisions.decisions
-                    if d.action == "skip")  # fmt: skip
-    line = f"수정 판단: fix {fixes}건, skip {sum(skips.values())}건"
-    if skips:
-        line += f" ({', '.join(f'{label} {n}건' for label, n in skips.items())})"
+    left = Counter(_left_label(d) for d in decisions.decisions if d.action == "skip")
+    line = f"수정 판단: 고칠 대상 {fixes}건, {LEFT} {sum(left.values())}건"
+    if left:
+        line += f" ({', '.join(f'{label} {n}건' for label, n in left.items())})"
     line += f" · 모델 호출 {decisions.calls}회 · 저장된 판단 {decisions.cached}건 사용"
     if decisions.calls:
         line += f" · 토큰 입력 {decisions.input_tokens}, 출력 {decisions.output_tokens}"
@@ -350,8 +353,26 @@ def _decision_summary(decisions: Decided | None) -> list[str]:
     return lines
 
 
-def _fix_lines(view: FixView, bundle: str) -> list[str]:
-    """묶음 하나의 결과: 수정안 PR 번호, 만들지 못한 이유, 크기 상한 건수, 호출 수 (4.9, 9.4)."""
+def _untested(found: Found, view: FixView) -> int:
+    """그 묶음이 고친 위반 중 테스트가 실행하지 않거나 알 수 없는 줄의 수."""
+    match view.fix:
+        case ModelFix(targets=ids) | MechanicalFix(fixed=ids) if view.fix.ready:
+            wanted = set(ids)
+        case _:
+            return 0
+    return sum(1 for v in found.violations if v.id in wanted and v.covered is not True)
+
+
+def _untested_line(count: int) -> list[str]:
+    if not count:
+        return []
+    return [f"고친 위반 중 {count}건은 그 줄을 실행하는 테스트가 없거나 알 수 없어, 테스트가 그 "
+            "줄의 동작을 확인하지 않았습니다."]  # fmt: skip
+
+
+def _fix_lines(view: FixView, bundle: str, untested: int = 0) -> list[str]:
+    """묶음 하나의 결과: 수정안 PR 번호, 만들지 못한 이유, 크기 상한 건수, 호출 수 (4.9, 9.4).
+    untested는 고친 위반 중 테스트가 실행하지 않는 줄의 수다."""
     label = _LABEL[bundle]
     ref = f" #{view.number}" if view.number is not None else ""
     match view.state:
@@ -370,15 +391,15 @@ def _fix_lines(view: FixView, bundle: str) -> list[str]:
             line = f"이 커밋의 {label} PR{ref}이 머지되지 않고 닫혀 다시 만들지 않습니다."
         case "done":
             if isinstance(view.fix, MechanicalFix):
-                return _mechanical_result(view, view.fix)
-            return _fix_result(view)
+                return _mechanical_result(view, view.fix, untested)
+            return _fix_result(view, untested)
     lines = ["", f"**{label}:** {line}"]
     if view.size_capped:
         lines.append(f"수정안 크기 상한으로 처리하지 못함: {view.size_capped}건")
     return lines
 
 
-def _mechanical_result(view: FixView, fix: MechanicalFix) -> list[str]:
+def _mechanical_result(view: FixView, fix: MechanicalFix, untested: int = 0) -> list[str]:
     """기계적 수정 묶음의 결과. 모델을 부르지 않았으므로 호출 수가 없다."""
     proposal = view.proposal
     if not fix.ready:
@@ -398,7 +419,7 @@ def _mechanical_result(view: FixView, fix: MechanicalFix) -> list[str]:
         line += f" 수정안 PR #{proposal.number}을 {verb}."
     elif proposal is not None:
         line += f" 수정안 PR을 만들지 않았습니다 ({proposal.reason})."
-    lines = ["", f"**{_LABEL[MECHANICAL_BUNDLE]}:** {line}"]
+    lines = ["", f"**{_LABEL[MECHANICAL_BUNDLE]}:** {line}", *_untested_line(untested)]
     if fix.formatted_files:
         lines.append(f"`ruff format`을 고친 파일 {len(fix.formatted_files)}개에 적용했습니다.")
     elif fix.format_skipped:
@@ -423,7 +444,7 @@ def _patch_block(view: FixView, proposal: ProposalResult | None) -> list[str]:
             "</details>"]  # fmt: skip
 
 
-def _fix_result(view: FixView) -> list[str]:
+def _fix_result(view: FixView, untested: int = 0) -> list[str]:
     fix, proposal = view.fix, view.proposal
     if not isinstance(fix, ModelFix):
         return []
@@ -449,7 +470,7 @@ def _fix_result(view: FixView) -> list[str]:
             line += f" 수정안 PR #{proposal.number}을 {verb}."
         elif proposal is not None:
             line += f" 수정안 PR을 만들지 않았습니다 ({proposal.reason})."
-    lines = ["", f"**{_LABEL['model']}:** {line}"]
+    lines = ["", f"**{_LABEL['model']}:** {line}", *_untested_line(untested)]
     if view.size_capped:
         lines.append(f"수정안 크기 상한으로 처리하지 못함: {view.size_capped}건")
     lines.append(_fix_usage(fix))
@@ -467,23 +488,54 @@ def _fix_usage(fix: ModelFix) -> str:
     return line
 
 
-def _decision(d: FixDecision | None) -> str:
-    """위반 줄 끝에 붙는 수정 판단. 모델이 쓴 이유는 코드 스팬 안에만 넣는다."""
-    if d is None:
-        return ""
-    if d.action == "fix":
-        how = "기계적 수정" if d.method == "mechanical" else "모델 수정"
-        why = f": {inline_code(d.why, MAX_DETAIL_CHARS)}" if d.decided_by == "model" else ""
-        return f" · fix ({how}{why})"
-    if d.decided_by == "model":
-        return f" · skip (모델: {inline_code(d.why or '이유 없음', MAX_DETAIL_CHARS)})"
-    return f" · skip ({d.why})"
+def _left_label(d: FixDecision) -> str:
+    """고치지 않은 이유의 이름. 모르는 이유(이전 체크포인트 등)는 파이프라인이 쓴 이유를 쓴다."""
+    return _LEFT_LABEL.get(d.reason or "undecided") or d.why or _LEFT_LABEL["undecided"]
 
 
-def _violations(found: Found, decisions: Mapping[str, FixDecision]) -> list[str]:
-    """규칙별 건수와 규칙마다 앞 몇 건. 나머지는 접는다 (4.9, 11.2 D6).
+def _fix_note(d: FixDecision, v: Violation, number: int | None) -> str:
+    """고칠 대상 줄 끝: 수정 방법, 수정안 PR 번호, 테스트가 그 줄을 실행하는지 (4.9).
+    모델이 쓴 이유는 코드 스팬 안에만 넣는다."""
+    how = "기계적 수정" if d.method == "mechanical" else "모델 수정"
+    if d.decided_by == "model" and d.why:
+        how += f": {inline_code(d.why, MAX_DETAIL_CHARS)}"
+    pr = f" · 수정안 #{number}" if number is not None else ""
+    return f" · 고칠 대상 ({how}){pr} · {COVERAGE_LABEL[v.covered]}"
 
-    위반이 많아도 코멘트의 첫 화면에 모든 규칙이 보이게 한다. 접은 목록도 상한이 있다.
+
+def _left_note(d: FixDecision) -> str:
+    """직접 고쳐야 하는 줄 끝의 이유. 모델의 이유 글은 코드 스팬 안에만 넣는다."""
+    label = _left_label(d)
+    if d.decided_by == "model" and d.why:
+        return f" · {label}: {inline_code(d.why, MAX_DETAIL_CHARS)}"
+    if d.why and d.why != label:
+        return f" · {d.why}"
+    return f" · {label}"
+
+
+@dataclass
+class _Fold:
+    """접은 목록에 더 실을 수 있는 위반 수 (코멘트 전체에서 하나)."""
+
+    left: int = MAX_FOLDED_VIOLATIONS
+
+    def lines(self, summary: str, items: Sequence[str]) -> list[str]:
+        shown = list(items[: self.left])
+        self.left -= len(shown)
+        out = ["", f"<details><summary>{summary}</summary>", "", *shown]
+        if len(items) > len(shown):
+            out.append(f"  - 외 {len(items) - len(shown)}건")
+        return [*out, "", "</details>", ""]
+
+
+def _violations(
+    found: Found, decisions: Mapping[str, FixDecision], fixed_in: Mapping[str, int]
+) -> list[str]:
+    """규칙별 건수, 고칠 대상의 위치, 직접 고쳐야 하는 위반의 이유별 건수 (4.9, 11.2 D6).
+
+    고칠 대상은 규칙마다 앞 몇 건이 보이고 나머지는 접는다. 직접 고쳐야 하는 위반은 이유별 건수 한
+    줄 아래에 위치를 접는다. 수정 판단 전(테스트 전에 끝남)이면 위치만 앞 몇 건 보인다. fixed_in은
+    {위반 id: 그 위반을 고친 수정안 PR 번호}다. 접은 목록은 코멘트 전체에서 상한이 있다.
     """
     if not found.violations:
         return []
@@ -492,30 +544,50 @@ def _violations(found: Found, decisions: Mapping[str, FixDecision]) -> list[str]
     for v in found.violations:
         grouped.setdefault(v.rule_id, []).append(v)
     lines = ["", "위반:"]
+    fold = _Fold()
     if any(len(vs) > MAX_SHOWN_PER_RULE for vs in grouped.values()):
-        lines.insert(1, MANY_VIOLATIONS_NOTE)
-        lines.insert(1, "")
-    folded_left = MAX_FOLDED_VIOLATIONS
+        lines[1:1] = ["", MANY_VIOLATIONS_NOTE]
     for rule_id, violations in grouped.items():
         outcome = by_rule[rule_id]
         lines += [
             f"- `{rule_id}` {_quote(outcome.rule)} · {len(violations)}건",
             f"  출처: {_source(outcome.rule)} · {_how_checked(outcome)}",
         ]
-        lines += [f"  - {_where(v)}{_decision(decisions.get(v.id))}"
-                  for v in violations[:MAX_SHOWN_PER_RULE]]  # fmt: skip
-        rest = violations[MAX_SHOWN_PER_RULE:]
-        if not rest:
-            continue
-        shown = rest[:folded_left]
-        folded_left -= len(shown)
-        lines += ["", f"<details><summary><code>{rule_id}</code>의 나머지 {len(rest)}건</summary>",
-                  ""]  # fmt: skip
-        lines += [f"  - {_where(v)}{_decision(decisions.get(v.id))}" for v in shown]
-        if len(rest) > len(shown):
-            lines.append(f"  - 외 {len(rest) - len(shown)}건")
-        lines += ["", "</details>", ""]
+        shown: list[str] = []
+        left: list[tuple[Violation, FixDecision]] = []
+        for v in violations:
+            d = decisions.get(v.id)
+            if d is None:
+                shown.append(f"  - {_where(v)}")
+            elif d.action == "fix":
+                shown.append(f"  - {_where(v)}{_fix_note(d, v, fixed_in.get(v.id))}")
+            else:
+                left.append((v, d))
+        lines += shown[:MAX_SHOWN_PER_RULE]
+        if len(shown) > MAX_SHOWN_PER_RULE:
+            rest = shown[MAX_SHOWN_PER_RULE:]
+            lines += fold.lines(f"<code>{rule_id}</code>의 나머지 {len(rest)}건", rest)
+        if left:
+            reasons = Counter(_left_label(d) for _, d in left)
+            why = ", ".join(f"{label} {n}건" for label, n in reasons.items())
+            lines.append(f"  {LEFT} {len(left)}건 ({why})")
+            lines += fold.lines(f"{LEFT} {len(left)}건의 위치",
+                                [f"  - {_where(v)}{_left_note(d)}" for v, d in left])  # fmt: skip
     return lines
+
+
+def fixed_in(fixes: Mapping[str, FixView]) -> dict[str, int]:
+    """{위반 id: 그 위반을 고친 수정안 PR 번호}. 이번 검사가 열었거나 갱신한 수정안만 안다."""
+    out: dict[str, int] = {}
+    for view in fixes.values():
+        number = view.proposal.number if view.proposal is not None else None
+        if number is None:
+            continue
+        if isinstance(view.fix, ModelFix) and view.fix.ready:
+            out |= dict.fromkeys(view.fix.targets, number)
+        elif isinstance(view.fix, MechanicalFix) and view.fix.ready:
+            out |= dict.fromkeys(view.fix.fixed, number)
+    return out
 
 
 def _where(v: Violation) -> str:

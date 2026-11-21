@@ -24,7 +24,6 @@ from app.worker.ai.claude_cli import StructuredResult
 
 from .helpers import bodies
 from .test_doc_rules_flow import (  # noqa: F401
-    FakeModel,
     _covered_tests,
     _git,
     _ok,
@@ -36,7 +35,15 @@ from .test_doc_rules_flow import (  # noqa: F401
     use_config,
     use_model,
 )
-from .test_model_fix_flow import AUTO, BRANCH, FakeFixer, _command, fix_env, use_fixer  # noqa: F401
+from .test_model_fix_flow import (  # noqa: F401
+    AUTO,
+    BRANCH,
+    FakeFixer,
+    FakeModel,
+    _command,
+    fix_env,
+    use_fixer,
+)
 
 NAME_RULE: Final = "함수 이름은 하는 일을 동사로 시작한다."
 NAME_ID: Final = rule_id("README.md", NAME_RULE)
