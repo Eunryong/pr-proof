@@ -17,10 +17,8 @@ from app.models import state_keys
 from app.models.checker import CheckerKind, tool_codes
 from app.models.doc_rules import Found, NoRuleDocs, RuleChecked
 from app.models.job import PRJob
-from app.models.ops_alert import Alert
 from app.models.test_run import PytestRun, ReportSummary
 from app.models.text_edit import TextEdit
-from app.notify import slack
 from app.sandbox.checker_runner import CheckerRun, Match, Ran
 from app.worker import base_config, doc_rules, main, proposal, repo, retry
 from app.worker.ai import claude_cli
@@ -348,7 +346,7 @@ def test_fork_pr_gets_no_fix_pr_but_the_patch_is_shown(mech_env) -> None:
     assert "<summary>수정 내용</summary>" in body and "-import sys" in body
 
 
-def test_secret_on_a_fixed_line_drops_the_fix(mech_env) -> None:
+def test_secret_on_a_fixed_line_drops_the_fix(mech_env, notifications) -> None:
     token = "ghp_" + "a" * 36
     _open(mech_env, pr={"a.py": f"import sys; T = '{token}'\nx = 1\n"})
     real = mech_env["ruff"].on_files
@@ -362,12 +360,11 @@ def test_secret_on_a_fixed_line_drops_the_fix(mech_env) -> None:
         return Ran((Match("a.py", 1, 1, "unused", "F401", (edit,)),))
 
     mech_env["ruff"].on_files = secret_edit
-    sent: list[Alert] = []
-    mech_env["monkeypatch"].setattr(slack, "send", lambda a, r, **k: sent.append(a) or "sent")
     _update(mech_env)
     body = _comment(mech_env)
     assert mech_env["pushes"] == [] and "비밀값으로 보이는 내용이 있음" in body
-    assert sent == [Alert("secret_blocked", "o/r", 1)]  # 운영 알림 (위협 T21)
+    # 위협 T21: 결과 코멘트와 로그에 남는다. 사람이 할 환경 오류가 아니라 알림은 없다 (6-4)
+    assert notifications == []
     assert token not in body.split("**기계적 수정안:**")[1]
 
 

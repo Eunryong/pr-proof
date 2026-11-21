@@ -29,11 +29,22 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 
 @pytest.fixture(autouse=True)
 def isolated_config_dir(tmp_path_factory: pytest.TempPathFactory, monkeypatch) -> None:
-    """어느 테스트도 운영자의 ~/.config/pipeline(비밀값, Slack URL)을 읽지 않게 한다. 설정 폴더가
+    """어느 테스트도 운영자의 ~/.config/pipeline(비밀값)을 읽지 않게 한다. 설정 폴더가
     필요한 테스트는 이 위에 자기 폴더를 다시 정한다."""
     from app import config
 
     monkeypatch.setenv(config.CONFIG_DIR_ENV, str(tmp_path_factory.mktemp("no-config")))
+
+
+@pytest.fixture(autouse=True)
+def notifications(monkeypatch) -> list[str]:
+    """어느 테스트도 이 Mac에 실제 알림을 띄우지 않는다. 띄웠을 글을 모은다. 실제로 띄우는 것은
+    `PR_PROOF_REAL_NOTIFY=1`일 때의 tests/notify/test_macos_real.py뿐이다."""
+    from app.notify import macos
+
+    shown: list[str] = []
+    monkeypatch.setattr(macos, "show_notification", lambda text: shown.append(text) or True)
+    return shown
 
 
 @pytest.fixture(scope="session")

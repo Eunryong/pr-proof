@@ -5,10 +5,13 @@ import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 
 from redis import Redis
 from redis.exceptions import RedisError
 
+from app.models.ops_alert import Kind
+from app.notify import macos
 from app.sandbox.docker_cli import minimal_env
 from app.worker.ai.claude_cli import claude_env
 
@@ -18,6 +21,7 @@ class Check:
     name: str
     ok: bool
     hint: str
+    alert: Kind  # 실패하면 띄우는 운영 알림의 종류 (6-4)
 
 
 def _command_ok(args: list[str]) -> bool:
@@ -87,12 +91,19 @@ def run_checks(
 ) -> list[Check]:
     claude_ok = claude_login_ok(claude_status(), now or datetime.now(UTC))
     return [
-        Check("GitHub 로그인", command_ok(["gh", "auth", "status"]), "gh auth login"),
-        Check("Claude 로그인", claude_ok, "claude 실행 후 /login"),
-        Check("Docker", command_ok(["docker", "info"]), "Docker Desktop 실행"),
-        Check("Redis", _redis_ok(redis), "docker compose up -d"),
+        Check("GitHub 로그인", command_ok(["gh", "auth", "status"]), "gh auth login", "gh_login"),
+        Check("Claude 로그인", claude_ok, "claude 실행 후 /login", "claude_login"),
+        Check("Docker", command_ok(["docker", "info"]), "Docker Desktop 실행", "docker"),
+        Check("Redis", _redis_ok(redis), "docker compose up -d", "redis"),
     ]
 
 
 def failures(checks: list[Check]) -> list[str]:
     return [f"{c.name} 실패 → {c.hint}" for c in checks if not c.ok]
+
+
+def alert(checks: list[Check], data_dir: Path) -> None:
+    """실패한 확인마다 macOS 알림을 띄운다. 같은 종류는 30분에 한 번이다(표시는 data_dir의 파일)."""
+    for check in checks:
+        if not check.ok:
+            macos.send(check.alert, data_dir)
