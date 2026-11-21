@@ -2,10 +2,10 @@ from pathlib import Path
 
 import pytest
 
+from app.worker.graph import run_pr_tests
+from app.worker.sandbox import docker_cli
+from app.worker.sandbox.docker_cli import SandboxError
 from tests.sandbox_names import TEST_NAMES
-from worker.graph import run_pr_tests
-from worker.sandbox import docker_cli
-from worker.sandbox.docker_cli import SandboxError
 
 
 @pytest.mark.docker

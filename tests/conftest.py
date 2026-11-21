@@ -31,7 +31,7 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 def isolated_config_dir(tmp_path_factory: pytest.TempPathFactory, monkeypatch) -> None:
     """어느 테스트도 운영자의 ~/.config/pipeline(비밀값)을 읽지 않게 한다. 설정 폴더가
     필요한 테스트는 이 위에 자기 폴더를 다시 정한다."""
-    from shared import config
+    from app.shared import config
 
     monkeypatch.setenv(config.CONFIG_DIR_ENV, str(tmp_path_factory.mktemp("no-config")))
 
@@ -40,7 +40,7 @@ def isolated_config_dir(tmp_path_factory: pytest.TempPathFactory, monkeypatch) -
 def notifications(monkeypatch) -> list[str]:
     """어느 테스트도 이 Mac에 실제 알림을 띄우지 않는다. 띄웠을 글을 모은다. 실제로 띄우는 것은
     `PR_PROOF_REAL_NOTIFY=1`일 때의 tests/shared/test_notify_real.py뿐이다."""
-    from shared import notify as macos
+    from app.shared import notify as macos
 
     shown: list[str] = []
     monkeypatch.setattr(macos, "show_notification", lambda text: shown.append(text) or True)
@@ -87,8 +87,8 @@ def tool_cache(tmp_path_factory: pytest.TempPathFactory) -> Path:
 @pytest.fixture(scope="session")
 def sandbox_image() -> str:
     """테스트용 태그로 빌드한 샌드박스 이미지. 받기 컨테이너도 이 이미지의 curl을 쓴다."""
+    from app.worker.sandbox import docker_cli
     from tests.sandbox_names import TEST_NAMES
-    from worker.sandbox import docker_cli
 
     docker_cli.ensure_image(TEST_NAMES.image)
     return TEST_NAMES.image

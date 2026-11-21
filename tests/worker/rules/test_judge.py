@@ -1,4 +1,4 @@
-"""worker/rules/judge.py: 파일 단위로 묶어 묻기, (규칙, hunk) 쌍마다 저장하고 다시 쓰기(4-2), 줄
+"""app/worker/rules/judge.py: 파일 단위로 묶어 묻기, (규칙, hunk) 쌍마다 저장하고 다시 쓰기(4-2), 줄
 인용 확인(4-3), 호출 상한과 대상 위반 수(4-5), 모델 호출 실패."""
 
 import re
@@ -8,13 +8,13 @@ from typing import Final
 import fakeredis
 import pytest
 
-from worker.ai.claude_cli import AIErrorKind, StructuredResult
-from worker.budget import CallBudget
-from worker.repo_config_pure import CallSettings
-from worker.rule_pure import CheckMethod, Rule, RuleSource
-from worker.rules.judge import Judged, judge
-from worker.rules.judge_pure import ANSWER_SCHEMA, SYSTEM_PROMPT
-from worker.state import Store
+from app.worker.ai.claude_cli import AIErrorKind, StructuredResult
+from app.worker.budget import CallBudget
+from app.worker.repo_config_pure import CallSettings
+from app.worker.rule_pure import CheckMethod, Rule, RuleSource
+from app.worker.rules.judge import Judged, judge
+from app.worker.rules.judge_pure import ANSWER_SCHEMA, SYSTEM_PROMPT
+from app.worker.state import Store
 
 HEAD: Final = "a" * 40
 NAMES: Final = Rule(

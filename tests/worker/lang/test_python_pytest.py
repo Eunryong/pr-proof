@@ -1,4 +1,4 @@
-"""worker/lang/python.py의 pytest 실행과 결과 읽기 단위 테스트."""
+"""app/worker/lang/python.py의 pytest 실행과 결과 읽기 단위 테스트."""
 
 import json
 from pathlib import Path
@@ -6,11 +6,11 @@ from typing import Final
 
 import pytest
 
-from worker.lang import python
-from worker.sandbox import docker_cli
-from worker.sandbox.container import ExecResult
-from worker.sandbox.docker_cli import SandboxError
-from worker.test_run_pure import ReportSummary
+from app.worker.lang import python
+from app.worker.sandbox import docker_cli
+from app.worker.sandbox.container import ExecResult
+from app.worker.sandbox.docker_cli import SandboxError
+from app.worker.test_run_pure import ReportSummary
 
 
 def test_pythonpath_for_src_layout(tmp_path: Path) -> None:
@@ -191,7 +191,7 @@ def test_report_that_is_a_fifo_or_symlink_is_missing(tmp_path) -> None:
     """PR 코드가 결과 파일을 FIFO로 바꿔도 워커가 멈추지 않고, 링크를 따라가지 않는다."""
     import os
 
-    from worker.lang.python import passed_ids, read_summary
+    from app.worker.lang.python import passed_ids, read_summary
 
     fifo = tmp_path / "report.json"
     os.mkfifo(fifo)

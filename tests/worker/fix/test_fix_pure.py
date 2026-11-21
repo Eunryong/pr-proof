@@ -1,8 +1,8 @@
 import pytest
 
-from worker.fix.fix_pure import code_fix_tests_ok, out_of_scope, same_test_result
-from worker.fix.scope_pure import StatusEntry, parse_porcelain
-from worker.test_run_pure import PytestRun, ReportSummary
+from app.worker.fix.fix_pure import code_fix_tests_ok, out_of_scope, same_test_result
+from app.worker.fix.scope_pure import StatusEntry, parse_porcelain
+from app.worker.test_run_pure import PytestRun, ReportSummary
 
 
 def _run(code: int, passed: int = 9, total: int = 9) -> PytestRun:

@@ -1,4 +1,5 @@
-"""worker/main.py·update.py: update 작업이 체크아웃부터 코멘트까지 가는 흐름. Docker·GitHub 없이."""
+"""app/worker/main.py·update.py: update 작업이 체크아웃부터 코멘트까지 가는 흐름. Docker·GitHub
+없이."""
 
 from pathlib import Path
 
@@ -7,17 +8,16 @@ import pytest
 from rq.timeouts import JobTimeoutException
 from sqlmodel import Session, select
 
-from shared import config
-from shared import state_keys_pure as state_keys
-from shared.db_pure import Run
-from shared.job_pure import PRJob
-from shared.ops_alert_pure import TEXT
-from worker import main, preflight, retry, update
-from worker.doc_rules_pure import NoRuleDocs
-from worker.github import GitHubError
-from worker.lang.python import DependencyInstallError
-from worker.rules import doc_rules
-from worker.sandbox.docker_cli import SandboxError
+from app.shared import config, state_keys_pure
+from app.shared.db_pure import Run
+from app.shared.job_pure import PRJob
+from app.shared.ops_alert_pure import TEXT
+from app.worker import main, preflight, retry, update
+from app.worker.doc_rules_pure import NoRuleDocs
+from app.worker.github import GitHubError
+from app.worker.lang.python import DependencyInstallError
+from app.worker.rules import doc_rules
+from app.worker.sandbox.docker_cli import SandboxError
 
 from .helpers import BASE, HEAD, PASSED, bodies, use_runner
 
@@ -48,9 +48,9 @@ def test_passed_run_posts_progress_then_result(env) -> None:
 def test_job_key_is_released_after_success(env) -> None:
     use_runner(env, lambda *a, **k: PASSED)
     job = PRJob.model_validate_json(_payload())
-    env["redis"].set(state_keys.job(job.dedup_key), "1")
+    env["redis"].set(state_keys_pure.job(job.dedup_key), "1")
     main.handle(_payload(), env["deps"])
-    assert env["redis"].get(state_keys.job(job.dedup_key)) is None
+    assert env["redis"].get(state_keys_pure.job(job.dedup_key)) is None
 
 
 def _states(env) -> list[str]:
@@ -73,24 +73,24 @@ def test_closed_pr_is_not_checked(env) -> None:
     assert env["gh"].kinds() == []  # 코멘트도 제안 PR도 건드리지 않는다
     assert _states(env) == []
     # 닫힘 표시를 head로 덮지 않는다. 덮으면 돌고 있던 작업이 멈추지 않는다
-    assert env["redis"].get(state_keys.latest_head("o/r", 1)).decode() == update.CLOSED_HEAD
+    assert env["redis"].get(state_keys_pure.latest_head("o/r", 1)).decode() == update.CLOSED_HEAD
 
 
 def test_late_webhook_for_old_commit_restores_latest_head(env) -> None:
     """새 커밋 c의 웹훅 뒤에 옛 커밋 a의 웹훅이 늦게 와서 Redis가 a로 덮였다."""
     env["gh"].head = "c" * 40
-    env["redis"].set(state_keys.latest_head("o/r", 1), HEAD)
+    env["redis"].set(state_keys_pure.latest_head("o/r", 1), HEAD)
     use_runner(env, lambda *a, **k: pytest.fail("옛 커밋을 검사하면 안 된다"))
     assert main.handle(_payload(), env["deps"]) == "stale"
-    assert env["redis"].get(state_keys.latest_head("o/r", 1)).decode() == "c" * 40
+    assert env["redis"].get(state_keys_pure.latest_head("o/r", 1)).decode() == "c" * 40
 
 
 def test_current_commit_runs_even_if_redis_was_overwritten(env) -> None:
     """반대 순서: 새 커밋의 작업이 먼저 꺼내졌는데 Redis에는 늦게 온 옛 커밋이 적혀 있다."""
-    env["redis"].set(state_keys.latest_head("o/r", 1), "0" * 40)
+    env["redis"].set(state_keys_pure.latest_head("o/r", 1), "0" * 40)
     use_runner(env, lambda *a, **k: PASSED)
     assert main.handle(_payload(), env["deps"]) == "passed"
-    assert env["redis"].get(state_keys.latest_head("o/r", 1)).decode() == HEAD
+    assert env["redis"].get(state_keys_pure.latest_head("o/r", 1)).decode() == HEAD
 
 
 @pytest.mark.parametrize("final", [False, True])
@@ -98,11 +98,11 @@ def test_head_lookup_failure_is_environment_error(env, final: bool) -> None:
     env["gh"].head_error = "gh: 401"
     env["monkeypatch"].setattr(retry, "attempt", lambda: (4 if final else 1, final))
     job = PRJob.model_validate_json(_payload())
-    env["redis"].set(state_keys.job(job.dedup_key), "1")
+    env["redis"].set(state_keys_pure.job(job.dedup_key), "1")
     with pytest.raises(GitHubError):
         main.handle(_payload(), env["deps"])
     assert _states(env) == []
-    assert (env["redis"].get(state_keys.job(job.dedup_key)) is None) == final
+    assert (env["redis"].get(state_keys_pure.job(job.dedup_key)) is None) == final
 
 
 @pytest.mark.parametrize(
@@ -112,29 +112,29 @@ def test_unexpected_error_is_recorded_and_retried(env, error: Exception) -> None
     use_runner(env, lambda *a, **k: (_ for _ in ()).throw(error))
     env["monkeypatch"].setattr(retry, "attempt", lambda: (1, False))
     job = PRJob.model_validate_json(_payload())
-    env["redis"].set(state_keys.job(job.dedup_key), "1")
+    env["redis"].set(state_keys_pure.job(job.dedup_key), "1")
     with pytest.raises(type(error)):
         main.handle(_payload(), env["deps"])
     assert _states(env) == ["error"]  # running으로 남으면 동기화가 죽은 워커로 보고 계속 넣는다
     body = bodies(env["gh"])[-1]
     assert "파이프라인 오류로 대기 중" in body and "실패" not in body
-    assert env["redis"].get(state_keys.job(job.dedup_key)) is not None  # 재시도 동안 키 유지
+    assert env["redis"].get(state_keys_pure.job(job.dedup_key)) is not None  # 재시도 동안 키 유지
 
 
 def test_last_unexpected_error_releases_key(env) -> None:
     use_runner(env, lambda *a, **k: (_ for _ in ()).throw(RuntimeError("버그")))
     env["monkeypatch"].setattr(retry, "attempt", lambda: (4, True))
     job = PRJob.model_validate_json(_payload())
-    env["redis"].set(state_keys.job(job.dedup_key), "1")
+    env["redis"].set(state_keys_pure.job(job.dedup_key), "1")
     with pytest.raises(RuntimeError):
         main.handle(_payload(), env["deps"])
     assert "파이프라인 오류로 검사하지 못함" in bodies(env["gh"])[-1]
-    assert env["redis"].get(state_keys.job(job.dedup_key)) is None
+    assert env["redis"].get(state_keys_pure.job(job.dedup_key)) is None
 
 
 def test_commit_that_goes_stale_during_tests_leaves_no_result(env) -> None:
     def run_then_new_commit(*args, **kwargs):
-        env["redis"].set(state_keys.latest_head("o/r", 1), "c" * 40)
+        env["redis"].set(state_keys_pure.latest_head("o/r", 1), "c" * 40)
         return PASSED
 
     use_runner(env, run_then_new_commit)
@@ -149,24 +149,24 @@ def test_environment_error_shows_wait_and_raises_for_retry(env) -> None:
     use_runner(env, broken)
     env["monkeypatch"].setattr(retry, "attempt", lambda: (1, False))
     job = PRJob.model_validate_json(_payload())
-    env["redis"].set(state_keys.job(job.dedup_key), "1")
+    env["redis"].set(state_keys_pure.job(job.dedup_key), "1")
     with pytest.raises(SandboxError):
         main.handle(_payload(), env["deps"])
     body = bodies(env["gh"])[-1]
     assert "환경 문제로 대기 중" in body and "실패" not in body
-    assert env["redis"].get(state_keys.job(job.dedup_key)) is not None  # 재시도 동안 키 유지
+    assert env["redis"].get(state_keys_pure.job(job.dedup_key)) is not None  # 재시도 동안 키 유지
 
 
 def test_last_environment_retry_says_not_checked_and_releases_key(env) -> None:
     use_runner(env, lambda *a, **k: (_ for _ in ()).throw(SandboxError("x")))
     env["monkeypatch"].setattr(retry, "attempt", lambda: (4, True))
     job = PRJob.model_validate_json(_payload())
-    env["redis"].set(state_keys.job(job.dedup_key), "1")
+    env["redis"].set(state_keys_pure.job(job.dedup_key), "1")
     with pytest.raises(SandboxError):
         main.handle(_payload(), env["deps"])
     assert "환경 문제로 검사하지 못함" in bodies(env["gh"])[-1]
     # 동기화가 30분 뒤 같은 커밋을 다시 넣을 수 있어야 한다
-    assert env["redis"].get(state_keys.job(job.dedup_key)) is None
+    assert env["redis"].get(state_keys_pure.job(job.dedup_key)) is None
 
 
 def test_resolution_failure_is_unrunnable_at_once(env) -> None:
@@ -194,7 +194,7 @@ def test_tests_get_repo_memory_limit(env) -> None:
 
 def test_commit_that_goes_stale_during_rule_reading_stops(env) -> None:
     def newer_commit_arrives(*a, **k):
-        env["redis"].set(state_keys.latest_head("o/r", 1), "c" * 40)
+        env["redis"].set(state_keys_pure.latest_head("o/r", 1), "c" * 40)
         return NoRuleDocs()
 
     env["monkeypatch"].setattr(doc_rules, "read", newer_commit_arrives)

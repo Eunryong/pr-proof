@@ -1,5 +1,5 @@
-from api import cli
-from api.sync import SyncResult
+from app.api import cli
+from app.api.sync import SyncResult
 
 
 def _patch(monkeypatch, tmp_path, result: SyncResult) -> None:

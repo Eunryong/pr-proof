@@ -31,18 +31,16 @@ import pytest
 import yaml
 from sqlmodel import Session, select
 
-from shared import config
-from shared.db_pure import ModelCacheEntry
+from app.shared import config
+from app.shared.db_pure import ModelCacheEntry
+from app.worker import repo, rule_reading_pure
+from app.worker.ai import claude_cli
+from app.worker.deps import Deps
+from app.worker.fix import fix_decision_pure
+from app.worker.github import GitHub
+from app.worker.rules import judge_pure, pr_check_pure
+from app.worker.state import Store
 from tests.sandbox_names import TEST_NAMES
-from worker import repo
-from worker import rule_reading_pure as rule_reading
-from worker.ai import claude_cli
-from worker.deps import Deps
-from worker.fix import fix_decision_pure as fix_decision
-from worker.github import GitHub
-from worker.rules import judge_pure as judge
-from worker.rules import pr_check_pure as pr_check
-from worker.state import Store
 
 from ..worker.test_github import FakeGh
 from .test_lint_cases import _bodies, _git, shared_venvs  # noqa: F401
@@ -122,7 +120,7 @@ def pr_model(case: dict, commits: list[str], prompts: list[dict] | None = None):
     model = case["model"]
     code = scripted_model({**case, "model": {"rules": [], **model}})
     pr_rules = model.get("pr_rules", [])
-    reading = code("", schema=rule_reading.ANSWER_SCHEMA).data["rules"] + [
+    reading = code("", schema=rule_reading_pure.ANSWER_SCHEMA).data["rules"] + [
         {"file": "README.md", "section": r["section"], "quote": r["quote"], "target": "pr",
          "scope": [], "scope_exclude": [], "scope_reason": "", "examples": r.get("examples", []),
          "check": "none", "reason": "PR 규칙", "fix": "none"}
@@ -134,14 +132,14 @@ def pr_model(case: dict, commits: list[str], prompts: list[dict] | None = None):
         if prompts is not None:
             prompts.append({"schema": _stage(schema), "prompt": prompt,
                             "system": kw.get("system_prompt", "")})  # fmt: skip
-        if schema is rule_reading.ANSWER_SCHEMA:
+        if schema is rule_reading_pure.ANSWER_SCHEMA:
             return _answer({"rules": reading})
-        if schema is pr_check.PLAN_SCHEMA:
+        if schema is pr_check_pure.PLAN_SCHEMA:
             (rule,) = [r for r in pr_rules if r["quote"] in prompt]
             plans = rule["plan"] if isinstance(rule["plan"], list) else [rule["plan"]]
             n = plans_asked[rule["quote"]] = plans_asked.get(rule["quote"], 0) + 1
             return _answer(plans[min(n, len(plans)) - 1])
-        if schema is pr_check.JUDGE_SCHEMA:
+        if schema is pr_check_pure.JUDGE_SCHEMA:
             (rule,) = [r for r in pr_rules if r["quote"] in prompt]
             answers = [
                 {**a, "sha": commits[int(a["sha"].split(":")[1])] if a.get("sha") else ""}
@@ -154,9 +152,13 @@ def pr_model(case: dict, commits: list[str], prompts: list[dict] | None = None):
 
 
 def _stage(schema) -> str:
-    names = {id(rule_reading.ANSWER_SCHEMA): "rules", id(judge.ANSWER_SCHEMA): "judge",
-             id(fix_decision.ANSWER_SCHEMA): "decide", id(pr_check.PLAN_SCHEMA): "pr_plan",
-             id(pr_check.JUDGE_SCHEMA): "pr_judge"}  # fmt: skip
+    names = {
+        id(rule_reading_pure.ANSWER_SCHEMA): "rules",
+        id(judge_pure.ANSWER_SCHEMA): "judge",
+        id(fix_decision_pure.ANSWER_SCHEMA): "decide",
+        id(pr_check_pure.PLAN_SCHEMA): "pr_plan",
+        id(pr_check_pure.JUDGE_SCHEMA): "pr_judge",
+    }
     return names.get(id(schema), "checker")
 
 

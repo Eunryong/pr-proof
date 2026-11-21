@@ -1,4 +1,4 @@
-"""worker/lang/python.py의 .venv 설치 단위 테스트. Docker 없이 돈다."""
+"""app/worker/lang/python.py의 .venv 설치 단위 테스트. Docker 없이 돈다."""
 
 import json
 import subprocess
@@ -7,10 +7,10 @@ from typing import Final
 
 import pytest
 
-from worker.lang import python
-from worker.lang.python import DependencyInstallError
-from worker.sandbox import docker_cli
-from worker.sandbox.docker_cli import Image, SandboxError
+from app.worker.lang import python
+from app.worker.lang.python import DependencyInstallError
+from app.worker.sandbox import docker_cli
+from app.worker.sandbox.docker_cli import Image, SandboxError
 
 IMAGE: Final = Image(id="sha256:aaa")
 RUNTIME: Final = python.Runtime("3.11.18", Path("/cache/tools/python/3.11.18/linux-arm64-gnu"))

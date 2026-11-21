@@ -13,24 +13,24 @@ from typing import Final
 import pytest
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 
-from shared import state_keys_pure as state_keys
-from shared.db_pure import ModelCall
-from shared.job_pure import PRJob
-from worker import graph, main, repo, retry, update
-from worker.ai import claude_cli, workdir
-from worker.ai.claude_cli import AIErrorKind, ClaudeResult
-from worker.fix import model_fix_pure as model_fix_rules
-from worker.fix.proposal import FORK_NO_PR
-from worker.github import GitHubError
-from worker.markdown import inline_code
-from worker.repo_config_pure import (
+from app.shared import state_keys_pure
+from app.shared.db_pure import ModelCall
+from app.shared.job_pure import PRJob
+from app.worker import graph, main, repo, retry, update
+from app.worker.ai import claude_cli, workdir
+from app.worker.ai.claude_cli import AIErrorKind, ClaudeResult
+from app.worker.fix import model_fix_pure
+from app.worker.fix.proposal import FORK_NO_PR
+from app.worker.github import GitHubError
+from app.worker.markdown_pure import inline_code
+from app.worker.repo_config_pure import (
     CallSettings,
     FixSettings,
     ModelSettings,
     RepoConfig,
 )
-from worker.rule_pure import rule_id
-from worker.test_run_pure import ReportSummary
+from app.worker.rule_pure import rule_id
+from app.worker.test_run_pure import ReportSummary
 
 from ..helpers import PASSED, bodies, use_runner
 from ..rules.test_doc_rules_flow import (  # noqa: F401
@@ -138,7 +138,7 @@ def run(env, tmp_path: Path, pr: dict[str, str] = TWO_PRINTS, base: dict = BASE_
     remote = tmp_path / "remote"
     base_sha, head = make_remote(remote, base, pr)
     env["gh"].head, env["gh"].base = head, base_sha
-    env["redis"].set(state_keys.latest_head("o/r", 1), head)
+    env["redis"].set(state_keys_pure.latest_head("o/r", 1), head)
     job = PRJob(repo="o/r", pr_number=1, kind="update", head_sha=head, base_sha=base_sha,
                 source="webhook")  # fmt: skip
     deps = env["deps"]
@@ -159,7 +159,7 @@ def test_fix_decided_violation_reaches_a_fix_pull_request(fix_env, tmp_path: Pat
     fix = state["model_fix"]
     first, second = state["doc_rules"].violations
     assert fix.ready and fix.targets == (first.id,) and fix.attempts == 1
-    assert fix.verification == model_fix_rules.Verification(
+    assert fix.verification == model_fix_pure.Verification(
         tests=9, resolved=1, rules_rechecked=1, files=1, lines=2
     )
     ((push),) = fix_env["pushes"]
@@ -194,7 +194,7 @@ def test_fix_decided_violation_reaches_a_fix_pull_request(fix_env, tmp_path: Pat
     assert "수정 작성: 모델 호출 1회, 회차 1 · `claude-haiku-5-5`" in comment
     # 지시는 시스템 프롬프트로, 규칙 원문과 위반은 자료로. 모델 폴더에는 worktree의 파일이 있다
     (call,) = fixer.calls
-    assert call["system_prompt"] == model_fix_rules.SYSTEM_PROMPT and call["model"] == "haiku"
+    assert call["system_prompt"] == model_fix_pure.SYSTEM_PROMPT and call["model"] == "haiku"
     assert PRINT_RULE in call["prompt"] and "orders/a.py:2" in call["prompt"]
     assert "orders/a.py:3" not in call["prompt"] and "orders/a.py" in call["files"]
     (row,) = [c for c in fix_env["deps"].store.model_calls("o/r", 1) if c.stage == "fix"]
@@ -246,8 +246,8 @@ def test_old_answer_with_wrong_line_numbers_still_gets_the_diff_lines(fix_env, t
 
     fix = state["model_fix"]
     assert fix.status == "ready"
-    assert fix.explanation == model_fix_rules.Explanation(
-        "s", (model_fix_rules.Change("orders/a.py", 2, RID, "로거"),)
+    assert fix.explanation == model_fix_pure.Explanation(
+        "s", (model_fix_pure.Change("orders/a.py", 2, RID, "로거"),)
     )
 
 
@@ -477,9 +477,9 @@ class RuffAndGrep:
 def test_model_rerun_while_mechanical_waits_keeps_its_approval(fix_env, tmp_path: Path) -> None:
     """기계적 수정 묶음이 승인을 기다리는 동안에도 상한에 걸린 모델 묶음은 `/fix model`로 다시 돌고,
     끝나면 기계적 수정 묶음은 다시 승인을 기다린다."""
-    from worker import base_config
-    from worker.rules import doc_rules
-    from worker.tools_pure import RuffConfig, RuffSetup
+    from app.worker import base_config
+    from app.worker.rules import doc_rules
+    from app.worker.tools_pure import RuffConfig, RuffSetup
 
     from ..helpers import BASE
 
@@ -594,7 +594,7 @@ def test_model_folder_git_failure_is_an_environment_error(fix_env, tmp_path: Pat
     deps = fix_env["deps"]
     base_sha, head = make_remote(tmp_path / "remote", BASE_FILES, TWO_PRINTS)
     fix_env["gh"].head, fix_env["gh"].base = head, base_sha
-    fix_env["redis"].set(state_keys.latest_head("o/r", 1), head)
+    fix_env["redis"].set(state_keys_pure.latest_head("o/r", 1), head)
     job = PRJob(repo="o/r", pr_number=1, kind="update", head_sha=head, base_sha=base_sha,
                 source="webhook")  # fmt: skip
     with pytest.raises(workdir.WorkdirError):
@@ -607,14 +607,14 @@ def test_model_folder_git_failure_is_an_environment_error(fix_env, tmp_path: Pat
 
 
 def test_model_fix_state_survives_checkpoint() -> None:
-    fix = model_fix_rules.ModelFix(
+    fix = model_fix_pure.ModelFix(
         status="ready", targets=("v1",),
-        explanation=model_fix_rules.Explanation(
-            "s", (model_fix_rules.Change("a.py", 2, "R", "w"),)
+        explanation=model_fix_pure.Explanation(
+            "s", (model_fix_pure.Change("a.py", 2, "R", "w"),)
         ),
-        verification=model_fix_rules.Verification(9, 1, 1, False, 1, 2), attempt_id=3,
+        verification=model_fix_pure.Verification(9, 1, 1, False, 1, 2), attempt_id=3,
     )  # fmt: skip
     serde = JsonPlusSerializer(allowed_msgpack_modules=list(graph._STATE_TYPES))
     restored = serde.loads_typed(serde.dumps_typed({"f": fix}))["f"]
-    assert isinstance(restored.explanation.changes[0], model_fix_rules.Change)
-    assert isinstance(restored.verification, model_fix_rules.Verification)
+    assert isinstance(restored.explanation.changes[0], model_fix_pure.Change)
+    assert isinstance(restored.verification, model_fix_pure.Verification)

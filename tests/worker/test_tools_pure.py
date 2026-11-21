@@ -1,9 +1,9 @@
-"""worker/tools_pure.py: 도구 목록, ruff 설정과 버전 고정 읽기, 도구 설정의 규칙 묶음."""
+"""app/worker/tools_pure.py: 도구 목록, ruff 설정과 버전 고정 읽기, 도구 설정의 규칙 묶음."""
 
 import pytest
 
-from worker import tools_pure as tools
-from worker.tools_pure import RuffConfig, RuffSetup, config_rule, pinned_version, valid_codes
+from app.worker import tools_pure
+from app.worker.tools_pure import RuffConfig, RuffSetup, config_rule, pinned_version, valid_codes
 
 
 @pytest.mark.parametrize(
@@ -25,10 +25,13 @@ def test_pinned_version(files: dict[str, str], expected) -> None:
 
 
 def test_pyproject_is_a_ruff_setting_only_with_a_ruff_table() -> None:
-    assert tools.ruff_config_name({"pyproject.toml": "[tool.ruff]\n"}) == ("pyproject.toml", None)
-    assert tools.ruff_config_name({"pyproject.toml": "[tool.black]\n"}) == (None, None)
-    assert tools.ruff_config_name({".ruff.toml": "", "ruff.toml": ""}) == (".ruff.toml", None)
-    name, problem = tools.ruff_config_name({"pyproject.toml": "[tool"})
+    assert tools_pure.ruff_config_name({"pyproject.toml": "[tool.ruff]\n"}) == (
+        "pyproject.toml",
+        None,
+    )
+    assert tools_pure.ruff_config_name({"pyproject.toml": "[tool.black]\n"}) == (None, None)
+    assert tools_pure.ruff_config_name({".ruff.toml": "", "ruff.toml": ""}) == (".ruff.toml", None)
+    name, problem = tools_pure.ruff_config_name({"pyproject.toml": "[tool"})
     assert name is None and "pyproject.toml" in problem
 
 

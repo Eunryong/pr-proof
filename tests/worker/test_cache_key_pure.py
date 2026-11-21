@@ -1,6 +1,6 @@
 import pytest
 
-from worker.cache_key_pure import model_cache_key
+from app.worker.cache_key_pure import model_cache_key
 
 
 def _key(**parts: object) -> str:

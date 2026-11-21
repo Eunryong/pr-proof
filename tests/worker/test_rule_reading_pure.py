@@ -4,8 +4,8 @@ from typing import Final
 
 import pytest
 
-from worker.rule_pure import RuleSource, applies_to, rule_id
-from worker.rule_reading_pure import (
+from app.worker.rule_pure import RuleSource, applies_to, rule_id
+from app.worker.rule_reading_pure import (
     ANSWER_SCHEMA,
     SYSTEM_PROMPT,
     Answer,

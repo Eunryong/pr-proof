@@ -23,14 +23,13 @@ import fakeredis
 import pytest
 import yaml
 
-from shared import config
-from shared import state_keys_pure as state_keys
-from shared.job_pure import PRJob
+from app.shared import config, state_keys_pure
+from app.shared.job_pure import PRJob
+from app.worker import main, repo
+from app.worker.deps import Deps
+from app.worker.github import GitHub
+from app.worker.state import Store
 from tests.sandbox_names import TEST_NAMES
-from worker import main, repo
-from worker.deps import Deps
-from worker.github import GitHub
-from worker.state import Store
 
 from ..worker.test_github import FakeGh
 
@@ -139,7 +138,7 @@ def test_lint_case(case_path: Path, eval_repo: Path, shared_venvs: Path, tmp_pat
         repo=REPO, pr_number=1, kind="update", head_sha=remote["head"], base_sha=remote["base"],
         source="webhook",
     )  # fmt: skip
-    redis.set(state_keys.latest_head(REPO, 1), remote["head"])
+    redis.set(state_keys_pure.latest_head(REPO, 1), remote["head"])
 
     status = main.handle(update.model_dump_json(), deps)
     body = [b for b in _bodies(gh) if "### pr-proof" in b][-1]

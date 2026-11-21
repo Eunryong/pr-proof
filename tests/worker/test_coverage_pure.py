@@ -2,13 +2,13 @@ from typing import Final
 
 import pytest
 
-from worker.coverage_pure import (
+from app.worker.coverage_pure import (
     CoverageData,
     FileCoverage,
     mark_covered,
     parse_coverage_xml,
 )
-from worker.violation_pure import Violation
+from app.worker.violation_pure import Violation
 
 
 def _xml(classes: str) -> bytes:

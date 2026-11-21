@@ -3,9 +3,9 @@ from typing import Final
 
 import pytest
 
-from shared.db_pure import Record
-from shared.embed_models_pure import E5_SMALL, EMBED_MODELS
-from worker.rag_pure import (
+from app.shared.db_pure import Record
+from app.shared.embed_models_pure import E5_SMALL, EMBED_MODELS
+from app.worker.rag_pure import (
     RECORDS_HEAD,
     Hit,
     Retrieval,

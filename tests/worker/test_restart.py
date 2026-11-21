@@ -14,13 +14,13 @@ from rq.job import JobStatus
 from rq.registry import StartedJobRegistry
 from sqlmodel import Session, select
 
-from api import queue, sync
-from api.github import OpenPR
-from api.history import History
-from shared import state_keys_pure as state_keys
-from shared.db_pure import Run
-from shared.job_pure import PRJob
-from worker import main
+from app.api import queue, sync
+from app.api.github import OpenPR
+from app.api.history import History
+from app.shared import state_keys_pure
+from app.shared.db_pure import Run
+from app.shared.job_pure import PRJob
+from app.worker import main
 
 from .helpers import HEAD, PASSED, use_runner
 
@@ -44,7 +44,7 @@ def _sync(env, now: datetime) -> list[tuple[str, int, str]]:
 
 
 def _rq_queue(env) -> Queue:
-    return Queue(state_keys.QUEUE_NAME, connection=env["redis"])
+    return Queue(state_keys_pure.QUEUE_NAME, connection=env["redis"])
 
 
 def _cut_off_by_restart(env) -> tuple[datetime, object]:
@@ -68,7 +68,7 @@ def _runs(env) -> list[Run]:
 def test_job_cut_off_by_a_restart_runs_again_at_the_first_sync_after_the_timeout(env) -> None:
     use_runner(env, lambda *a, **k: PASSED)
     started, rq_job = _cut_off_by_restart(env)
-    job_key = state_keys.job(_webhook_job().dedup_key)
+    job_key = state_keys_pure.job(_webhook_job().dedup_key)
     assert env["redis"].get(job_key) is not None
     assert rq_job.get_status() == JobStatus.STARTED
     assert _rq_queue(env).jobs == []
@@ -126,5 +126,5 @@ def test_run_marked_cancelled_by_hand_is_not_requeued_while_the_job_key_lives(en
     assert _sync(env, started + timedelta(hours=5)) == []
     assert _rq_queue(env).jobs == []
 
-    env["redis"].delete(state_keys.job(_webhook_job().dedup_key))  # TTL 6시간이 지난 자리
+    env["redis"].delete(state_keys_pure.job(_webhook_job().dedup_key))  # TTL 6시간이 지난 자리
     assert _sync(env, started + timedelta(hours=6)) == [("o/r", 1, "cancelled")]

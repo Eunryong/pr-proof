@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from worker.diff_pure import added_lines
-from worker.rules.checkers import Sandbox
-from worker.rules.detect import detect
+from app.worker.diff_pure import added_lines
+from app.worker.rules.checkers import Sandbox
+from app.worker.rules.detect import detect
 
 from .test_checkers_docker import PRINT_RULE, PRINT_SCRIPT
 from .test_detect import CHECKED, CHECKER, _diff

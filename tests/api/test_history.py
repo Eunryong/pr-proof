@@ -2,9 +2,9 @@ from pathlib import Path
 
 import fakeredis
 
-from api.history import History
-from shared.job_pure import PRJob
-from worker.state import Store
+from app.api.history import History
+from app.shared.job_pure import PRJob
+from app.worker.state import Store
 
 
 def test_reads_runs_written_by_worker_in_order(tmp_path: Path) -> None:

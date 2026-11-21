@@ -1,11 +1,11 @@
-"""worker/fix/scope_pure.py: porcelain 출력 읽기와 허용 범위 판정."""
+"""app/worker/fix/scope_pure.py: porcelain 출력 읽기와 허용 범위 판정."""
 
 from dataclasses import replace
 from typing import Final
 
 import pytest
 
-from worker.fix.scope_pure import (
+from app.worker.fix.scope_pure import (
     AI_POLICY,
     MECHANICAL_POLICY,
     PIPELINE_OUTPUTS,
@@ -17,8 +17,8 @@ from worker.fix.scope_pure import (
     parse_ignored,
     parse_porcelain,
 )
-from worker.lang.python import VENV_IN_CONTAINER
-from worker.sandbox.container import OUT_DIR, WORKDIR
+from app.worker.lang.python import VENV_IN_CONTAINER
+from app.worker.sandbox.container import OUT_DIR, WORKDIR
 
 
 def test_pipeline_outputs_match_sandbox_paths() -> None:

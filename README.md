@@ -119,11 +119,11 @@ access:
 수동 명령:
 
 ```
-python -m api.cli sync                       # 동기화를 한 번 돌린다
-python -m worker.cli reindex                 # 과거 기록 검색의 벡터 저장소를 다시 만든다 ([rag] 필요)
-python -m worker.cli eval --baseline         # 평가 세트 전부를 돌려 기준선으로 남긴다
-python -m worker.cli eval                    # 다시 돌려 기준선과 비교한다 (도구를 끈 평가 포함)
-python -m worker.cli eval --real-model       # 케이스의 가짜 모델 대신 claude를 부른다 (비용이 든다. real_only 케이스는 이때만 돈다)
+python -m app.api.cli sync                   # 동기화를 한 번 돌린다
+python -m app.worker.cli reindex             # 과거 기록 검색의 벡터 저장소를 다시 만든다 ([rag] 필요)
+python -m app.worker.cli eval --baseline     # 평가 세트 전부를 돌려 기준선으로 남긴다
+python -m app.worker.cli eval                # 다시 돌려 기준선과 비교한다 (도구를 끈 평가 포함)
+python -m app.worker.cli eval --real-model   # 케이스의 가짜 모델 대신 claude를 부른다 (비용이 든다. real_only 케이스는 이때만 돈다)
 ```
 
 평가 결과는 SQLite의 `eval_runs`에 남는다. 프롬프트나 모델을 바꾼 뒤 `eval`을 돌리면 새로 실패한 케이스, 도구를 끈 평가의 재현율·정밀도 변화, 바뀐 프롬프트 판과 모델이 함께 나온다. 평가 케이스와 형식은 [eval/README.md](eval/README.md)에 있다.

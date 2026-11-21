@@ -16,20 +16,20 @@ import pytest
 from rq import Queue
 from sqlmodel import Session, select
 
-from api import cli, signature, sync, webhook
-from api.github import OpenPR
-from api.history import History
-from shared import state_keys_pure as state_keys
-from shared.comment_pure import COMMENT_MARKER
-from shared.db_pure import Approval, Run
-from shared.job_pure import PRJob
-from worker import base_config, graph, guard, main, repo, retry
-from worker.access_pure import AccessSettings
-from worker.ai import claude_cli
-from worker.github import GitHubError
-from worker.repo import GitError
-from worker.sandbox import docker_cli
-from worker.sandbox.docker_cli import SandboxError
+from app.api import cli, signature, sync, webhook
+from app.api.github import OpenPR
+from app.api.history import History
+from app.shared import state_keys_pure
+from app.shared.comment_pure import COMMENT_MARKER
+from app.shared.db_pure import Approval, Run
+from app.shared.job_pure import PRJob
+from app.worker import base_config, graph, guard, main, repo, retry
+from app.worker.access_pure import AccessSettings
+from app.worker.ai import claude_cli
+from app.worker.github import GitHubError
+from app.worker.repo import GitError
+from app.worker.sandbox import docker_cli
+from app.worker.sandbox.docker_cli import SandboxError
 
 from .helpers import HEAD, PASSED, use_runner
 from .test_github import is_reply
@@ -105,7 +105,7 @@ def _approvals(env) -> list[Approval]:
 
 
 def _queued_payloads(env) -> list[str]:
-    return [j.args[0] for j in Queue(state_keys.QUEUE_NAME, connection=env["redis"]).jobs]
+    return [j.args[0] for j in Queue(state_keys_pure.QUEUE_NAME, connection=env["redis"]).jobs]
 
 
 def _history(env) -> History:

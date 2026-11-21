@@ -1,13 +1,13 @@
-"""worker/command.py: PR 코멘트 명령. Docker·GitHub 없이."""
+"""app/worker/command.py: PR 코멘트 명령. Docker·GitHub 없이."""
 
 import json
 
 import pytest
 
-from shared.job_pure import PRJob
-from worker import command, retry
-from worker.command_pure import parse_command
-from worker.github import GitHubError
+from app.shared.job_pure import PRJob
+from app.worker import command, retry
+from app.worker.command_pure import parse_command
+from app.worker.github import GitHubError
 
 from .helpers import PASSED, bodies, use_runner
 from .test_github import is_reply
@@ -44,7 +44,7 @@ def test_parse_command(text: str, name: str, arg: str) -> None:
 
 
 def test_recheck_runs_current_head(env) -> None:
-    from worker import main
+    from app.worker import main
 
     use_runner(env, lambda *a, **k: PASSED)
     assert main.handle(_command("/recheck"), env["deps"]) == "recheck:passed"
@@ -53,7 +53,7 @@ def test_recheck_runs_current_head(env) -> None:
 
 
 def test_same_comment_is_handled_once(env) -> None:
-    from worker import main
+    from app.worker import main
 
     use_runner(env, lambda *a, **k: PASSED)
     main.handle(_command("/recheck"), env["deps"])
@@ -63,7 +63,7 @@ def test_same_comment_is_handled_once(env) -> None:
 
 
 def test_recheck_on_closed_pr_does_nothing(env) -> None:
-    from worker import main
+    from app.worker import main
 
     env["gh"].state = "closed"
     use_runner(env, lambda *a, **k: pytest.fail("닫힌 PR은 검사하지 않는다"))
@@ -73,7 +73,7 @@ def test_recheck_on_closed_pr_does_nothing(env) -> None:
 @pytest.mark.parametrize("text", ["/cc @someone", "/mutate", "/generate-tests"])
 def test_unknown_command_gets_no_reply(env, text: str) -> None:
     """확장 명령(v1 F13)은 범위에서 뺐다. 다른 모르는 명령처럼 답하지 않고 GitHub도 보지 않는다."""
-    from worker import main
+    from app.worker import main
 
     assert main.handle(_command(text), env["deps"]) == "unknown_command"
     assert env["gh"].calls == []
@@ -82,18 +82,18 @@ def test_unknown_command_gets_no_reply(env, text: str) -> None:
 
 @pytest.mark.parametrize("final", [False, True])
 def test_github_failure_retries_and_releases_on_last(env, final: bool) -> None:
-    from shared import state_keys_pure as state_keys
-    from worker import main
+    from app.shared import state_keys_pure
+    from app.worker import main
 
     env["gh"].head_error = "gh: 502"
     env["monkeypatch"].setattr(retry, "attempt", lambda: (4 if final else 1, final))
     job = PRJob.model_validate_json(_command("/fix model"))
-    env["redis"].set(state_keys.job(job.dedup_key), "1")
+    env["redis"].set(state_keys_pure.job(job.dedup_key), "1")
     with pytest.raises(GitHubError):
         main.handle(_command("/fix model"), env["deps"])
     # 마지막 시도면 실패로 적는다. 적지 않으면 동기화가 주기마다 다시 넣는다
     assert env["deps"].store.command_handled(9) == final
-    assert (env["redis"].get(state_keys.job(job.dedup_key)) is None) == final
+    assert (env["redis"].get(state_keys_pure.job(job.dedup_key)) is None) == final
 
 
 def test_messages_quote_the_command() -> None:

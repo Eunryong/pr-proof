@@ -1,4 +1,4 @@
-"""worker/rules/checkers.py의 도구 고르기 (docs/DESIGN.md 4.4 (a)): 문서 규칙에 저장소의
+"""app/worker/rules/checkers.py의 도구 고르기 (docs/DESIGN.md 4.4 (a)): 문서 규칙에 저장소의
 도구(ruff)를 잇고, 도구 설정의 규칙 묶음은 모델 없이 ruff로 정한다. 가짜 모델과 가짜 샌드박스, 실제
 SQLite."""
 
@@ -11,18 +11,18 @@ from typing import Final
 import fakeredis
 import pytest
 
-from worker.ai.claude_cli import StructuredResult
-from worker.budget import CallBudget
-from worker.checker_authoring_pure import Checked, Unchecked
-from worker.checker_pure import CheckerKind, tool_codes
-from worker.repo_config_pure import CallSettings, ModelSettings
-from worker.rule_pure import CheckMethod, Rule, RuleSource
-from worker.rules import tool_choice_pure as tool_choice
-from worker.rules.checkers import plan_and_author
-from worker.sandbox import checker_runner, toolcache
-from worker.sandbox.checker_runner import CheckerRun, Match, Ran
-from worker.state import Store
-from worker.tools_pure import RuffConfig, RuffSetup, config_rule
+from app.worker.ai.claude_cli import StructuredResult
+from app.worker.budget import CallBudget
+from app.worker.checker_authoring_pure import Checked, Unchecked
+from app.worker.checker_pure import CheckerKind, tool_codes
+from app.worker.repo_config_pure import CallSettings, ModelSettings
+from app.worker.rule_pure import CheckMethod, Rule, RuleSource
+from app.worker.rules import tool_choice_pure
+from app.worker.rules.checkers import plan_and_author
+from app.worker.sandbox import checker_runner, toolcache
+from app.worker.sandbox.checker_runner import CheckerRun, Match, Ran
+from app.worker.state import Store
+from app.worker.tools_pure import RuffConfig, RuffSetup, config_rule
 
 NOW: Final = datetime(2026, 11, 20, 12, tzinfo=UTC)
 RUFF: Final = RuffSetup("0.17.5")
@@ -81,7 +81,7 @@ class FakeModel:
         self.asked: list[str] = []
 
     def __call__(self, prompt: str, *, schema, **kw) -> StructuredResult:
-        if schema is tool_choice.ANSWER_SCHEMA:
+        if schema is tool_choice_pure.ANSWER_SCHEMA:
             self.asked.append("tool")
             return self.tool
         self.asked.append("checker")
@@ -137,7 +137,7 @@ def test_unfit_tool_choice_falls_through_to_checker_authoring(
     model = FakeModel(answer, checker)
     (check,) = _plan(store, model)
     assert model.asked == ["tool", "checker"] and isinstance(check, Unchecked)
-    saved = store.saved_checker(tool_choice.choice_key(UNUSED, "sonnet", "0.17.5"))
+    saved = store.saved_checker(tool_choice_pure.choice_key(UNUSED, "sonnet", "0.17.5"))
     assert saved is not None and not saved.accepted and why in saved.detail
     model = FakeModel(answer, checker)
     _plan(store, model)
@@ -154,7 +154,7 @@ def test_tool_list_is_not_offered_when_the_pinned_ruff_cannot_be_fetched(store: 
 
 
 def test_ruff_version_is_part_of_the_choice(store: Store) -> None:
-    assert tool_choice.choice_key(UNUSED, "sonnet", "0.17.5") != tool_choice.choice_key(
+    assert tool_choice_pure.choice_key(UNUSED, "sonnet", "0.17.5") != tool_choice_pure.choice_key(
         UNUSED, "sonnet", "0.17.4"
     )
 
@@ -177,13 +177,13 @@ def test_tool_that_cannot_be_fetched_leaves_the_rule_for_the_next_check(store: S
 
     (check,) = _plan(store, FakeModel(_answer()), sandbox=Unavailable())
     assert isinstance(check, Unchecked) and check.kind == "tool_unavailable"
-    assert store.saved_checker(tool_choice.choice_key(UNUSED, "sonnet", "0.17.5")) is None
+    assert store.saved_checker(tool_choice_pure.choice_key(UNUSED, "sonnet", "0.17.5")) is None
 
 
 def test_prompt_lists_the_tools_and_keeps_the_rule_as_data() -> None:
-    prompt = tool_choice.build_prompt(UNUSED, tool_choice.Shortfall(2, 2))
+    prompt = tool_choice_pure.build_prompt(UNUSED, tool_choice_pure.Shortfall(2, 2))
     assert "- ruff: " in prompt and "- ruff-format: " in prompt
     assert "<<<RULE id=" in prompt and "안 쓰는 import를 남기지 않는다." in prompt
-    assert json.dumps(tool_choice.ANSWER_SCHEMA["properties"]["tool"]) == json.dumps(
+    assert json.dumps(tool_choice_pure.ANSWER_SCHEMA["properties"]["tool"]) == json.dumps(
         {"enum": ["ruff", "ruff-format", "none"]}
     )

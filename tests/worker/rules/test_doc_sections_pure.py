@@ -1,9 +1,9 @@
 from datetime import UTC, datetime
 from typing import Final
 
-from worker.rule_pure import CheckMethod, Rule, RuleSet, RuleSource
-from worker.rule_reading_pure import Document, sections
-from worker.rules.doc_sections_pure import (
+from app.worker.rule_pure import CheckMethod, Rule, RuleSet, RuleSource
+from app.worker.rule_reading_pure import Document, sections
+from app.worker.rules.doc_sections_pure import (
     always_read,
     chunk_of,
     chunks,

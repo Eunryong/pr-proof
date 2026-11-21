@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from shared import config
+from app.shared import config
 
 
 def test_load_config(tmp_path: Path) -> None:
@@ -55,7 +55,7 @@ def test_missing_secret(tmp_path: Path) -> None:
 
 
 def test_sandbox_name_defaults_match_docker_cli() -> None:
-    from worker.sandbox import docker_cli
+    from app.worker.sandbox import docker_cli
 
     sandbox = config.SandboxConfig()
     assert (sandbox.image, sandbox.container_prefix) == (
@@ -65,8 +65,8 @@ def test_sandbox_name_defaults_match_docker_cli() -> None:
 
 
 def test_test_names_differ_from_production() -> None:
+    from app.worker.sandbox import docker_cli
     from tests.sandbox_names import TEST_NAMES
-    from worker.sandbox import docker_cli
 
     assert TEST_NAMES.image != docker_cli.IMAGE
     assert not TEST_NAMES.container_prefix.startswith(docker_cli.CONTAINER_PREFIX)
@@ -83,7 +83,7 @@ def test_call_maxima_default_and_override(tmp_path: Path) -> None:
 def test_rag_embed_model_must_be_a_pinned_model() -> None:
     from pydantic import ValidationError
 
-    from shared.embed_models_pure import E5_SMALL
+    from app.shared.embed_models_pure import E5_SMALL
 
     assert config.PipelineConfig(repos=[]).rag.embed_model == E5_SMALL
     with pytest.raises(ValidationError):

@@ -6,14 +6,13 @@ import fakeredis
 import pytest
 from rq import Queue
 
-from api import sync
-from api.github import GitHubReadError, OpenPR, PRComment
-from api.history import History
-from shared import config
-from shared import state_keys_pure as state_keys
-from shared.job_pure import PRJob
-from shared.ops_alert_pure import TEXT
-from worker.state import Store
+from app.api import sync
+from app.api.github import GitHubReadError, OpenPR, PRComment
+from app.api.history import History
+from app.shared import config, state_keys_pure
+from app.shared.job_pure import PRJob
+from app.shared.ops_alert_pure import TEXT
+from app.worker.state import Store
 
 HEAD: Final = "h" * 40
 
@@ -59,7 +58,7 @@ def _sync(env, prs, now=None, comments=()):
 def _queued(env) -> list[PRJob]:
     return [
         PRJob.model_validate_json(j.args[0])
-        for j in Queue(state_keys.QUEUE_NAME, connection=env["redis"]).jobs
+        for j in Queue(state_keys_pure.QUEUE_NAME, connection=env["redis"]).jobs
     ]
 
 
@@ -68,7 +67,7 @@ def test_unseen_head_is_queued_as_sync_job(env) -> None:
     assert result.enqueued == [("o/r", 1, "no_record")]
     (job,) = _queued(env)
     assert (job.source, job.head_sha, job.delivery_id) == ("sync", HEAD, None)
-    assert env["redis"].get(state_keys.latest_head("o/r", 1)) == HEAD.encode()
+    assert env["redis"].get(state_keys_pure.latest_head("o/r", 1)) == HEAD.encode()
 
 
 def test_author_values_are_carried_for_the_record(env) -> None:
@@ -109,7 +108,7 @@ def test_env_error_waits_for_backoff(env) -> None:
 
 def test_dead_worker_job_key_is_cleared_and_requeued(env, notifications) -> None:
     env["store"].start_run(_job())  # running으로 남음
-    env["redis"].set(state_keys.job(_job().dedup_key), "1")  # 죽은 워커가 남긴 키
+    env["redis"].set(state_keys_pure.job(_job().dedup_key), "1")  # 죽은 워커가 남긴 키
     later = datetime.now(UTC) + timedelta(minutes=21)
     assert _sync(env, [_pr()], now=later).enqueued == [("o/r", 1, "dead_worker")]
     assert notifications == []  # 다시 넣기는 사람이 할 일이 아니라 알리지 않는다
@@ -226,11 +225,11 @@ def test_comment_lookup_failure_still_syncs_heads(env) -> None:
 
 def test_webhook_and_sync_share_the_filter() -> None:
     """권한 확인이 한쪽에만 있으면 그쪽이 구멍이 된다. 같은 함수를 쓰는지 본다."""
-    from api import webhook
-    from shared import comment_pure as comment
+    from app.api import webhook
+    from app.shared import comment_pure
 
-    assert webhook.command_in_comment is comment.command_in_comment
-    assert sync.command_in_comment is comment.command_in_comment
+    assert webhook.command_in_comment is comment_pure.command_in_comment
+    assert sync.command_in_comment is comment_pure.command_in_comment
 
 
 def test_closed_pr_with_open_proposal_gets_close_job(env) -> None:

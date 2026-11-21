@@ -7,10 +7,10 @@ import fakeredis
 import pytest
 from rq import Queue
 
-from api import signature, webhook
-from api.webhook import Ignored, parse_event
-from shared import state_keys_pure as state_keys
-from shared.comment_pure import COMMENT_MARKER
+from app.api import signature, webhook
+from app.api.webhook import Ignored, parse_event
+from app.shared import state_keys_pure
+from app.shared.comment_pure import COMMENT_MARKER
 
 FIXTURES: Final = Path(__file__).resolve().parent.parent / "fixtures" / "webhooks"
 ALLOWED: Final = frozenset({"Eunryong/eval"})
@@ -146,7 +146,7 @@ def _handle(redis, payload: dict, *, event: str = "pull_request", delivery: str 
 def test_valid_webhook_is_queued(redis, pr_opened: dict) -> None:
     response = _handle(redis, pr_opened)
     assert response.status_code == 202 and response.body["status"] == "queued"
-    assert len(Queue(state_keys.QUEUE_NAME, connection=redis)) == 1
+    assert len(Queue(state_keys_pure.QUEUE_NAME, connection=redis)) == 1
 
 
 def test_bad_signature_is_401_and_not_recorded(redis, pr_opened: dict) -> None:
@@ -157,7 +157,7 @@ def test_bad_signature_is_401_and_not_recorded(redis, pr_opened: dict) -> None:
 def test_redelivered_webhook_is_skipped(redis, pr_opened: dict) -> None:
     _handle(redis, pr_opened)
     assert _handle(redis, pr_opened).body["status"] == "duplicate_delivery"
-    assert len(Queue(state_keys.QUEUE_NAME, connection=redis)) == 1
+    assert len(Queue(state_keys_pure.QUEUE_NAME, connection=redis)) == 1
 
 
 def test_ignored_event_is_202(redis, pr_opened: dict) -> None:

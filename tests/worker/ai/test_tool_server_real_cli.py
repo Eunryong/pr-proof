@@ -14,8 +14,8 @@ from typing import Final
 
 import pytest
 
-from worker import mcp_pure, repo
-from worker.ai import claude_cli, workdir
+from app.worker import mcp_pure, repo
+from app.worker.ai import claude_cli, workdir
 
 REAL_AI_ENV: Final = "PR_PROOF_REAL_AI"
 MARK: Final = "PROOF-TOOL-RESULT-71c2"

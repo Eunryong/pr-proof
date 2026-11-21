@@ -1,4 +1,4 @@
-"""worker/rules/rules.py: base의 문서로 규칙 묶음을 만든다. 로컬 git, SQLite, 가짜 모델로
+"""app/worker/rules/rules.py: base의 문서로 규칙 묶음을 만든다. 로컬 git, SQLite, 가짜 모델로
 확인한다."""
 
 import os
@@ -10,13 +10,13 @@ from typing import Final
 import fakeredis
 import pytest
 
-from worker import repo
-from worker.ai.claude_cli import AIErrorKind, StructuredResult
-from worker.budget import CallBudget
-from worker.call_budget_pure import Denied
-from worker.repo_config_pure import CallSettings, RulesSettings
-from worker.rule_reading_pure import ANSWER_SCHEMA, SYSTEM_PROMPT
-from worker.rules.rules import (
+from app.worker import repo
+from app.worker.ai.claude_cli import AIErrorKind, StructuredResult
+from app.worker.budget import CallBudget
+from app.worker.call_budget_pure import Denied
+from app.worker.repo_config_pure import CallSettings, RulesSettings
+from app.worker.rule_reading_pure import ANSWER_SCHEMA, SYSTEM_PROMPT
+from app.worker.rules.rules import (
     CapReached,
     ModelFailed,
     NoRuleDocuments,
@@ -24,7 +24,7 @@ from worker.rules.rules import (
     RulesFound,
     load_rules,
 )
-from worker.state import Store
+from app.worker.state import Store
 
 README: Final = (Path(__file__).parents[2] / "fixtures" / "rules" / "README.md").read_text()
 PRINT_RULE: Final = (

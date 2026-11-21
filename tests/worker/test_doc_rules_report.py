@@ -1,13 +1,13 @@
-"""worker/doc_rules_report.py: 결과 코멘트의 "규칙:" 줄과 규칙 절. 믿지 않는 글의 처리와 길이
+"""app/worker/doc_rules_report.py: 결과 코멘트의 "규칙:" 줄과 규칙 절. 믿지 않는 글의 처리와 길이
 상한."""
 
 import re
 from dataclasses import replace
 from typing import Final
 
-from worker import doc_rules_report, report
-from worker.checker_pure import Checker
-from worker.doc_rules_pure import (
+from app.worker import doc_rules_report, report
+from app.worker.checker_pure import Checker
+from app.worker.doc_rules_pure import (
     CallUsage,
     CheckerRef,
     Found,
@@ -18,15 +18,15 @@ from worker.doc_rules_pure import (
     RuleJudged,
     RuleUnchecked,
 )
-from worker.doc_rules_report import HOW_TO_CORRECT, NO_RULES, FixView, section, title
-from worker.fix.fix_decision_pure import Decided, FixDecision
-from worker.fix.fix_pure import MechanicalFix
-from worker.fix.model_fix_pure import ModelFix, Verification
-from worker.fix.proposal_pure import ProposalResult
-from worker.markdown import inline_code
-from worker.rule_pure import CheckMethod, Example, Rule, RuleSource, UnreadDoc
-from worker.test_run_pure import PytestRun
-from worker.violation_pure import Violation
+from app.worker.doc_rules_report import HOW_TO_CORRECT, NO_RULES, FixView, section, title
+from app.worker.fix.fix_decision_pure import Decided, FixDecision
+from app.worker.fix.fix_pure import MechanicalFix
+from app.worker.fix.model_fix_pure import ModelFix, Verification
+from app.worker.fix.proposal_pure import ProposalResult
+from app.worker.markdown_pure import inline_code
+from app.worker.rule_pure import CheckMethod, Example, Rule, RuleSource, UnreadDoc
+from app.worker.test_run_pure import PytestRun
+from app.worker.violation_pure import Violation
 
 USAGE: Final = CallUsage(calls=3, limit=14, cache_hits=1, models=("claude-haiku-5-5",),
                          input_tokens=3000, output_tokens=300)  # fmt: skip

@@ -1,4 +1,4 @@
-"""worker/fix/decide.py: 표로 먼저 정하고 남은 위반만 모델에 묻기, 저장한 답 다시 쓰기, 호출
+"""app/worker/fix/decide.py: 표로 먼저 정하고 남은 위반만 모델에 묻기, 저장한 답 다시 쓰기, 호출
 상한."""
 
 import re
@@ -9,21 +9,21 @@ from typing import Final
 import fakeredis
 import pytest
 
-from worker.ai.claude_cli import AIErrorKind, StructuredResult
-from worker.budget import CallBudget
-from worker.doc_rules_pure import CallUsage, CheckerRef, Found, RuleChecked
-from worker.fix.decide import CALL_FAILED, decide
-from worker.fix.fix_decision_pure import (
+from app.worker.ai.claude_cli import AIErrorKind, StructuredResult
+from app.worker.budget import CallBudget
+from app.worker.doc_rules_pure import CallUsage, CheckerRef, Found, RuleChecked
+from app.worker.fix.decide import CALL_FAILED, decide
+from app.worker.fix.fix_decision_pure import (
     ANSWER_SCHEMA,
     SYSTEM_PROMPT,
     Decided,
     FixDecision,
     SafetyNet,
 )
-from worker.repo_config_pure import CallSettings
-from worker.rule_pure import CheckMethod, Rule, RuleSource
-from worker.state import Store
-from worker.violation_pure import Violation
+from app.worker.repo_config_pure import CallSettings
+from app.worker.rule_pure import CheckMethod, Rule, RuleSource
+from app.worker.state import Store
+from app.worker.violation_pure import Violation
 
 HEAD: Final = "a" * 40
 RULE: Final = Rule(
@@ -207,7 +207,7 @@ def _rag_run(store: Store, model: FakeModel, found: Found, retriever) -> Decided
 
 def _settings():
     pytest.importorskip("chromadb")
-    from worker.repo_config_pure import RagSettings
+    from app.worker.repo_config_pure import RagSettings
 
     return RagSettings(enabled=True, min_similarity=0.9, max_records=3)
 
@@ -215,7 +215,7 @@ def _settings():
 def test_similar_records_go_into_the_prompt_as_data_and_into_the_key(
     store: Store, tmp_path: Path
 ) -> None:
-    from worker.fix.fix_decision_pure import RECORDS_NOTE
+    from app.worker.fix.fix_decision_pure import RECORDS_NOTE
 
     from ..rag_helpers import record, seeded
 

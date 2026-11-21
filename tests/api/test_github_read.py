@@ -1,6 +1,6 @@
 import json
 
-from api import github
+from app.api import github
 
 
 def test_list_open_prs_parses_fields() -> None:
@@ -42,7 +42,7 @@ def test_no_open_prs() -> None:
 
 
 def test_list_comments_since_keeps_multiline_bodies_and_drops_older() -> None:
-    from api.github import list_comments_since
+    from app.api.github import list_comments_since
 
     lines = [
         json.dumps({"id": 1, "author_association": "MEMBER", "created_at": "2026-11-17T10:01:00Z",

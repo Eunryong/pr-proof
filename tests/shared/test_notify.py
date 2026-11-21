@@ -6,8 +6,8 @@ from typing import Final
 
 import pytest
 
-from shared import notify as macos
-from shared.ops_alert_pure import MARKER_DIR, TEXT, WINDOW_SECONDS, due
+from app.shared import notify as macos
+from app.shared.ops_alert_pure import MARKER_DIR, TEXT, WINDOW_SECONDS, due
 
 # conftest가 테스트마다 macos.show_notification을 가짜로 바꾸기 전, import할 때의 진짜 함수
 REAL_SHOW: Final = macos.show_notification

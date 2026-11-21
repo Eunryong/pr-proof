@@ -4,13 +4,13 @@ import fakeredis
 import pytest
 from sqlalchemy import create_engine, inspect, text
 
-from shared import state_keys_pure as state_keys
-from shared.db_pure import FixAttempt, SeenViolation
-from shared.job_pure import PRJob
-from worker.access_pure import Author
-from worker.rag_switch_pure import Evidence, Outcomes
-from worker.records_pure import NewRecord
-from worker.state import Store
+from app.shared import state_keys_pure
+from app.shared.db_pure import FixAttempt, SeenViolation
+from app.shared.job_pure import PRJob
+from app.worker.access_pure import Author
+from app.worker.rag_switch_pure import Evidence, Outcomes
+from app.worker.records_pure import NewRecord
+from app.worker.state import Store
 
 from .rag_helpers import fix_outcome, record
 
@@ -28,17 +28,17 @@ def _job(head: str = "abc") -> PRJob:
 
 def test_is_stale_compares_latest_head(store: Store) -> None:
     assert not store.is_stale(_job())  # 기록 없음
-    store.redis.set(state_keys.latest_head("o/r", 1), "abc")
+    store.redis.set(state_keys_pure.latest_head("o/r", 1), "abc")
     assert not store.is_stale(_job("abc"))
-    store.redis.set(state_keys.latest_head("o/r", 1), "def")
+    store.redis.set(state_keys_pure.latest_head("o/r", 1), "def")
     assert store.is_stale(_job("abc"))
 
 
 def test_release_removes_job_key(store: Store) -> None:
     job = _job()
-    store.redis.set(state_keys.job(job.dedup_key), "1")
+    store.redis.set(state_keys_pure.job(job.dedup_key), "1")
     store.release(job)
-    assert store.redis.get(state_keys.job(job.dedup_key)) is None
+    assert store.redis.get(state_keys_pure.job(job.dedup_key)) is None
 
 
 def test_run_lifecycle_and_last_comment(store: Store) -> None:

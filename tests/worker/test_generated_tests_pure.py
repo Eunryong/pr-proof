@@ -6,7 +6,7 @@ from typing import Final
 
 import pytest
 
-from worker.generated_tests_pure import (
+from app.worker.generated_tests_pure import (
     LINE_LABEL,
     MAX_TEST_FILES,
     MAX_TEST_LINES,
@@ -26,9 +26,9 @@ from worker.generated_tests_pure import (
     render_before,
     render_check,
 )
-from worker.mcp_pure import ToolUsage
-from worker.test_run_pure import PytestRun, ReportSummary
-from worker.violation_pure import Violation
+from app.worker.mcp_pure import ToolUsage
+from app.worker.test_run_pure import PytestRun, ReportSummary
+from app.worker.violation_pure import Violation
 
 SRC: Final = "pkg/m.py"
 SOURCE: Final = (

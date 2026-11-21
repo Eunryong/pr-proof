@@ -7,11 +7,11 @@ import pytest
 from fastapi.testclient import TestClient
 from redis import exceptions as redis_errors
 
-from api import main as api
-from api import signature
-from api.sync import SyncResult
-from shared import config
-from shared.ops_alert_pure import TEXT
+from app.api import main as api
+from app.api import signature
+from app.api.sync import SyncResult
+from app.shared import config
+from app.shared.ops_alert_pure import TEXT
 
 
 @pytest.fixture

@@ -9,12 +9,12 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Final
 
-from shared.db_pure import FixAttempt
-from shared.embed_models_pure import EmbedModel, ModelFile
-from worker.memory import Retriever, VectorStore
-from worker.records_pure import NewRecord
-from worker.repo_config_pure import RagSettings
-from worker.state import Store
+from app.shared.db_pure import FixAttempt
+from app.shared.embed_models_pure import EmbedModel, ModelFile
+from app.worker.memory import Retriever, VectorStore
+from app.worker.records_pure import NewRecord
+from app.worker.repo_config_pure import RagSettings
+from app.worker.state import Store
 
 FAKE_DIM: Final = 256
 PRINT_RULE: Final = "`orders/` 아래 모듈은 `print`를 쓰지 않는다."

@@ -1,8 +1,8 @@
-"""worker/rules/pr_check.py: PR 단위 확인의 계획(저장, 회차, 모델 판단으로 보내기), PR 패턴, 바뀐
-파일 조건, 모델 판단(저장, 상한, 실패), 사실을 읽지 못함 (4.5 끝, 4-11, 4-12).
+"""app/worker/rules/pr_check.py: PR 단위 확인의 계획(저장, 회차, 모델 판단으로 보내기), PR 패턴,
+바뀐 파일 조건, 모델 판단(저장, 상한, 실패), 사실을 읽지 못함 (4.5 끝, 4-11, 4-12).
 
-샌드박스는 고정 스크립트(worker/sandbox/checker_runner.py의 PR 패턴)를 이 프로세스에서 그대로 돌리는
-대역이다. 실제 컨테이너는 tests/worker/sandbox의 docker 테스트가 본다.
+샌드박스는 고정 스크립트(app/worker/sandbox/checker_runner.py의 PR 패턴)를 이 프로세스에서 그대로
+돌리는 대역이다. 실제 컨테이너는 tests/worker/sandbox의 docker 테스트가 본다.
 """
 
 import contextlib
@@ -15,18 +15,17 @@ from unittest import mock
 import fakeredis
 import pytest
 
-from worker.ai.claude_cli import AIErrorKind, StructuredResult
-from worker.budget import CallBudget
-from worker.call_budget_pure import RulesetScope
-from worker.repo_config_pure import CallSettings
-from worker.rule_pure import CheckMethod, Example, Rule, RuleSource
-from worker.rules import pr_check
-from worker.rules import pr_check_pure as m
-from worker.rules.pr_check_pure import Commit, PrFacts
-from worker.sandbox import checker_runner
-from worker.sandbox.checker_runner import Failed, PrRan
-from worker.sandbox.toolcache import ToolUnavailable
-from worker.state import Store
+from app.worker.ai.claude_cli import AIErrorKind, StructuredResult
+from app.worker.budget import CallBudget
+from app.worker.call_budget_pure import RulesetScope
+from app.worker.repo_config_pure import CallSettings
+from app.worker.rule_pure import CheckMethod, Example, Rule, RuleSource
+from app.worker.rules import pr_check, pr_check_pure
+from app.worker.rules.pr_check_pure import Commit, PrFacts
+from app.worker.sandbox import checker_runner
+from app.worker.sandbox.checker_runner import Failed, PrRan
+from app.worker.sandbox.toolcache import ToolUnavailable
+from app.worker.state import Store
 
 HEAD: Final = "f" * 40
 SHA_A: Final = "a" * 40
@@ -90,7 +89,7 @@ class Model:
         self.calls: list[dict] = []
 
     def __call__(self, prompt: str, *, schema, **kw) -> StructuredResult:
-        stage = "plan" if schema is m.PLAN_SCHEMA else "judge"
+        stage = "plan" if schema is pr_check_pure.PLAN_SCHEMA else "judge"
         self.calls.append({"stage": stage, "prompt": prompt, "schema": schema, **kw})
         if self.fail == stage:
             return StructuredResult(ok=False, error=AIErrorKind.TIMEOUT, data=None, model_id="",
@@ -184,7 +183,7 @@ def test_plan_prompt_never_contains_pr_text(store) -> None:
     pr_check.check([COMMITS], facts, _tools(store, model))
     (call,) = model.calls
     assert not any(s in call["prompt"] for s in ("본문의-지시문", "제목의-지시문", "커밋의-지시문"))
-    assert call["system_prompt"] == m.PLAN_SYSTEM_PROMPT
+    assert call["system_prompt"] == pr_check_pure.PLAN_SYSTEM_PROMPT
 
 
 @pytest.mark.parametrize(
@@ -290,7 +289,7 @@ def test_judged_rule_answers_are_verified_and_stored(store) -> None:
     assert result.usage.dropped == 2 and result.usage.judge_calls == 1
     judge_call = model.calls[-1]
     assert (
-        judge_call["system_prompt"] == m.JUDGE_SYSTEM_PROMPT
+        judge_call["system_prompt"] == pr_check_pure.JUDGE_SYSTEM_PROMPT
         and "고쳤습니다" in judge_call["prompt"]
     )
     assert SHA_A not in judge_call["prompt"]  # 본문 규칙에는 커밋을 넣지 않는다
@@ -309,7 +308,7 @@ def test_judgment_cap_leaves_the_rule_for_fix(store) -> None:
     model = Model({TESTING.id: [TESTING_PLAN]}, judge=[])
     result = pr_check.check([TESTING], _facts(), _tools(store, model, calls=calls), known=0)
     (r,) = result.results
-    assert (r.status, r.kind) == ("left", "cap") and m.judge_left(result)
+    assert (r.status, r.kind) == ("left", "cap") and pr_check_pure.judge_left(result)
     assert model.stages() == ["plan"]
     resumed = pr_check.check([TESTING], _facts(), _tools(store, model, calls=calls), known=1)
     assert resumed.results[0].status == "checked" and model.stages() == ["plan", "judge"]
@@ -320,7 +319,9 @@ def test_judgment_failure_leaves_the_rule_and_is_not_stored(store) -> None:
     store_key_count = len(store.model_calls("o/r", 1))
     failing = Model({}, fail="judge")
     (r,) = pr_check.check([TESTING], _facts(body="새 본문"), _tools(store, failing)).results
-    assert (r.status, r.kind) == ("left", "model_failed") and not m.judge_left(m.PrChecks((r,), ()))
+    assert (r.status, r.kind) == ("left", "model_failed") and not pr_check_pure.judge_left(
+        pr_check_pure.PrChecks((r,), ())
+    )
     assert len(store.model_calls("o/r", 1)) > store_key_count
 
 
@@ -369,7 +370,7 @@ def test_document_examples_reach_the_plan_prompt(store) -> None:
 
 
 def test_pr_rules_come_only_from_unchecked_pr_outcomes() -> None:
-    from worker.doc_rules_pure import CallUsage, Found, RuleUnchecked
+    from app.worker.doc_rules_pure import CallUsage, Found, RuleUnchecked
 
     usage = CallUsage(0, 0, 0, (), 0, 0)
     human = _rule("R-h", "리뷰어 승인을 받는다.")

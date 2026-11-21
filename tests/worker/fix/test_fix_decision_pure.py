@@ -1,11 +1,11 @@
-"""worker/fix/fix_decision_pure.py: 파이프라인이 정하는 표와 모델 답의 위반 집합 맞추기."""
+"""app/worker/fix/fix_decision_pure.py: 파이프라인이 정하는 표와 모델 답의 위반 집합 맞추기."""
 
 from dataclasses import replace
 from typing import Final
 
 import pytest
 
-from worker.fix.fix_decision_pure import (
+from app.worker.fix.fix_decision_pure import (
     SYSTEM_PROMPT,
     FixDecision,
     Question,
@@ -19,8 +19,8 @@ from worker.fix.fix_decision_pure import (
     plan,
     reconcile,
 )
-from worker.rule_pure import CheckMethod, Rule, RuleSource
-from worker.violation_pure import Violation
+from app.worker.rule_pure import CheckMethod, Rule, RuleSource
+from app.worker.violation_pure import Violation
 
 V: Final = Violation(
     id="v1", rule_id="R-1", file="orders/a.py", line=3, message="m", found_by="checker",
@@ -148,7 +148,7 @@ def test_fix_ignores_a_skip_reason() -> None:
 
 def test_prompt_makes_fix_the_default_and_names_the_skip_reasons() -> None:
     """수정 판단의 지시 (4.6): 기본은 fix, skip은 세 이유뿐, 방법이 여럿이면 가장 작은 변경."""
-    from worker.fix.fix_decision_pure import ANSWER_SCHEMA, MODEL_SKIP_REASONS
+    from app.worker.fix.fix_decision_pure import ANSWER_SCHEMA, MODEL_SKIP_REASONS
 
     assert "가장 작은 변경" in " ".join(SYSTEM_PROMPT.split())
     assert "확실하지 않으면" not in SYSTEM_PROMPT
@@ -213,7 +213,7 @@ def test_saved_decision_round_trips(decision: FixDecision) -> None:
 def test_tool_settings_violation_without_a_tool_fix_is_notify_only() -> None:
     """도구 설정의 규칙 묶음은 수정 방법이 기계적 수정이다. 도구의 수정이 없는 위반은 고칠 방법이
     없으니 알리기만 한다 (모델에 넘기지 않는다)."""
-    from worker.fix.fix_decision_pure import SafetyNet, decide_by_table
+    from app.worker.fix.fix_decision_pure import SafetyNet, decide_by_table
 
     v = Violation(id="v", rule_id="E741", file="a.py", line=1, message="m", found_by="tool",
                   code="E741")  # fmt: skip

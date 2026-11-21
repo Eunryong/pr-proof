@@ -1,11 +1,11 @@
-"""worker/sandbox/container.py 단위 테스트. docker exec 대신 로컬 프로세스로 대기·취소를
+"""app/worker/sandbox/container.py 단위 테스트. docker exec 대신 로컬 프로세스로 대기·취소를
 확인한다."""
 
 import subprocess
 
 import pytest
 
-from worker.sandbox import container, docker_cli
+from app.worker.sandbox import container, docker_cli
 
 
 @pytest.fixture

@@ -6,9 +6,9 @@ from typing import Final
 import fakeredis
 import pytest
 
-from worker.checker_authoring_pure import Checked
-from worker.rules.checkers import Sandbox
-from worker.state import Store
+from app.worker.checker_authoring_pure import Checked
+from app.worker.rules.checkers import Sandbox
+from app.worker.state import Store
 
 from .test_checkers import FakeModel, _author, _reply
 

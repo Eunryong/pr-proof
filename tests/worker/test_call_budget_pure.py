@@ -2,7 +2,7 @@ from typing import Final
 
 import pytest
 
-from worker.call_budget_pure import (
+from app.worker.call_budget_pure import (
     Allowed,
     CallLimits,
     Denied,
@@ -12,7 +12,7 @@ from worker.call_budget_pure import (
     decide,
     limits_for,
 )
-from worker.repo_config_pure import CallSettings
+from app.worker.repo_config_pure import CallSettings
 
 DEFAULTS: Final = CallSettings()
 

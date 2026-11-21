@@ -1,4 +1,4 @@
-"""worker/sandbox/checker_runner.py: 출력 읽기와 실행 전 거절. Docker 없이 돈다."""
+"""app/worker/sandbox/checker_runner.py: 출력 읽기와 실행 전 거절. Docker 없이 돈다."""
 
 import json
 from pathlib import Path
@@ -6,9 +6,9 @@ from typing import Final
 
 import pytest
 
-from worker.sandbox import checker_runner
-from worker.sandbox.checker_runner import Failed, Invalid, Match, Ran, RawRun
-from worker.sandbox.docker_cli import SandboxError
+from app.worker.sandbox import checker_runner
+from app.worker.sandbox.checker_runner import Failed, Invalid, Match, Ran, RawRun
+from app.worker.sandbox.docker_cli import SandboxError
 
 FILES: Final = frozenset({"orders/a.py", "orders/b.py"})
 

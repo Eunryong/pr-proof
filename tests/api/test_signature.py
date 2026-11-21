@@ -1,4 +1,4 @@
-from api import signature
+from app.api import signature
 
 
 def test_valid_signature() -> None:
