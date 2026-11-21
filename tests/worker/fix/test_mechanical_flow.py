@@ -170,7 +170,7 @@ def test_ruff_settings_become_a_rule_set_and_fixable_violations_go_to_a_fix_pr(m
     assert lines[top + 1] == "**규칙:** ⚠️ 위반 2건 (규칙 2개) · 수정안 #900", body
     assert "- `F401` `ruff.toml의 설정대로 ruff를 통과한다` · 1건" in body
     assert "출처: `ruff.toml` · 도구 `ruff` (`ruff.toml`의 설정)" in body
-    fixed = "`a.py:1` `` `sys` imported but unused `` · 고칠 대상 (기계적 수정) · 수정안 #900 · "
+    fixed = "`a.py:1` `` `sys` imported but unused `` · 고칠 대상 (기계적 수정) · 수정안 #900\n"
     assert fixed in body
     unfixable = "  - `a.py:3` `` Ambiguous variable name: `l` `` · 도구의 자동 수정이 없음"
     assert unfixable in body
