@@ -13,8 +13,8 @@ lint 케이스와 같은 방식이다: 예제 리포의 로컬 git 원격, 실�
 케이스에 `fix`가 있으면 수정 판단은 `model.skip`에 적은 위반만 skip하고 나머지를 fix로 답하며, 수정
 작성은 케이스의 `fix` 편집을 모델 폴더에 적용하는 가짜다(검증과 수정안 PR 푸시는 진짜). `fix`가 없는
 케이스는 모든 위반을 skip으로 답해 수정까지 가지 않는다. `model.skip`의 값은 이유 글이거나
-{why, reason}이다(reason은 수정 판단 답의 skip 이유 이름). `expect.body_contains`는 결과 코멘트 전체에서
-찾는다.
+{why, reason}이다(reason은 수정 판단 답의 skip 이유 이름). `expect.body_contains`는 결과
+코멘트 전체에서 찾는다.
 """
 
 import json
