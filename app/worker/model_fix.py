@@ -228,7 +228,6 @@ def fix_violations(
     by_rule = {rule_id: o.rule for rule_id, o in outcomes_by_rule(found).items()}
     targets = picked.targets
     allowed = sorted({v.file for v in targets})
-    target_rules = frozenset(v.rule_id for v in targets)
     tally = _Tally()
     passed: list[tuple[Explanation, tuple[str, ...], Verification]] = []  # 통과한 회차의 결과
     found_for: dict[str, Selection] = {}  # 쓰는 곳(fix, fix_retry) → 고른 기록. 한 번만 찾는다
@@ -351,12 +350,13 @@ def fix_violations(
             return Verdict("drop", f"{SECRET_BLOCKED} ({kind})")
 
         try:
-            explanation = rules.parse_explanation(written.text)
+            answer = rules.parse_answer(written.text)
         except ValueError as e:
             return Verdict("retry", f"설명 JSON을 읽지 못함: {e}")
-        problems = rules.explanation_problems(explanation, change_blocks(patch), target_rules)
-        if problems:
-            return Verdict("retry", f"설명이 수정과 맞지 않음: {problems[0]}", tuple(problems))
+        explanation = rules.explain(answer, change_blocks(patch), targets)
+        if isinstance(explanation, rules.Mismatch):
+            detail = f"설명이 수정과 맞지 않음: {explanation.detail}"
+            return Verdict("retry", detail, (detail, *explanation.feedback))
 
         diff = repo.working_diff(worktree, merge_base)
         changed = added_lines(diff)

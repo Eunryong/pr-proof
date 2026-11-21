@@ -250,18 +250,32 @@ def test_change_blocks_split_at_unchanged_lines(tmp_path: Path, context: tuple[s
     after.insert(3, "new\n")  # L3 뒤에 더함
     diff = _git_diff(tmp_path, PR_PRICING, "".join(after), *context)
     assert change_blocks(diff) == (
-        ChangeBlock("a.py", frozenset({1})),
-        ChangeBlock("a.py", frozenset({4})),
-        ChangeBlock("a.py", frozenset({6, 7})),  # L6을 지운 자리: 앞줄 L5(6), 뒷줄 L7(7)
-        ChangeBlock("a.py", frozenset({9, 10})),  # L10을 지운 자리
+        ChangeBlock("a.py", frozenset({1}), frozenset({1})),
+        ChangeBlock("a.py", frozenset({4}), frozenset()),  # 더하기만 함
+        ChangeBlock("a.py", frozenset({6, 7}), frozenset({6})),  # L6을 지운 자리: L5(6), L7(7)
+        ChangeBlock("a.py", frozenset({9, 10}), frozenset({10})),  # L10을 지운 자리
     )
+
+
+def test_change_block_keeps_the_old_side_lines_it_replaced(tmp_path: Path) -> None:
+    """수정 diff의 앞쪽은 PR head라, 덩어리가 바꾼 위반의 줄을 old_lines로 맞춰 본다."""
+    after = "L1\nnew\nL4\nL5\nL6\nextra\nL7\n"  # L2–L3을 한 줄로, L6 뒤에 한 줄 더함
+    diff = _git_diff(tmp_path, "L1\nL2\nL3\nL4\nL5\nL6\nL7\n", after, "-U1")
+    blocks = change_blocks(diff)
+    assert blocks == (
+        ChangeBlock("a.py", frozenset({2}), frozenset({2, 3})),
+        ChangeBlock("a.py", frozenset({6}), frozenset()),
+    )
+    assert [b.review_line for b in blocks] == [2, 6]
 
 
 def test_change_block_deleting_the_first_or_last_line(tmp_path: Path) -> None:
     first = _git_diff(tmp_path, "a\nb\nc\n", "b\nc\n", "-U0")
-    assert change_blocks(first) == (ChangeBlock("a.py", frozenset({1})),)
+    assert change_blocks(first) == (ChangeBlock("a.py", frozenset({1}), frozenset({1})),)
     last = _git_diff(tmp_path, "a\nb\nc\n", "a\nb\n")
-    assert change_blocks(last) == (ChangeBlock("a.py", frozenset({2, 3})),)
+    (block,) = change_blocks(last)
+    assert block == ChangeBlock("a.py", frozenset({2, 3}), frozenset({3}))
+    assert block.review_line == 2  # 지운 자리의 앞줄. 고친 파일에 있는 줄이다
 
 
 def test_change_blocks_skip_deleted_files() -> None:

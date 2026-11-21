@@ -196,8 +196,8 @@ def model_fix_body(job: PRJob, fix: ModelFix, found: Found, skipped: int) -> str
             f"- 크기: 바뀐 파일 {check.files}개, 바뀐 줄 {check.lines}줄 "
             f"(상한 {rules.MAX_FILES}개, {rules.MAX_CHANGED_LINES}줄)",
             "- 비밀값: 추가된 줄과 모델의 설명에서 찾지 못함",
-            "- 설명 확인: 모델의 설명이 가리키는 줄이 모두 이 수정에서 바뀐 줄이고, 바뀐 곳마다 "
-            "설명이 있음",
+            "- 설명 확인: 위반을 고친 곳마다 그 규칙의 설명이 있고, 바뀐 파일마다 설명이 있음. "
+            "줄 리뷰 코멘트의 줄은 파이프라인이 diff에서 정함",
         ]
     text = explanation_text(fix.explanation)
     if text:
@@ -215,9 +215,10 @@ def model_fix_body(job: PRJob, fix: ModelFix, found: Found, skipped: int) -> str
 
 
 def review_comments(fix: ModelFix, found: Found) -> list[ReviewComment]:
-    """설명 JSON의 changes마다 그 줄에 다는 "규칙, 이유" (4.9). 모델의 글은 코드 스팬 안에만 둔다.
+    """설명의 changes마다 그 줄에 다는 "규칙, 이유" (4.9). 모델의 글은 코드 스팬 안에만 둔다.
 
-    (file, line)은 검증(4.8의 4번)이 이 수정의 바뀐 줄을 가리키는지 확인한 값이다.
+    (file, line)은 검증(4.8의 4번)이 대상 위반의 줄을 바꾼 덩어리에서 채운 값이라 이 수정의 diff에
+    있다.
     """
     if fix.explanation is None:
         return []

@@ -56,10 +56,11 @@ AUTO: Final = RepoConfig()
 FIX_LINE_2: Final = {"orders/a.py": [("print(x)\n", "log(x)\n")]}
 
 
-def _explanation(*changes: tuple[str, int], rule: str = RID) -> str:
+def _explanation(*files: str, rule: str = RID) -> str:
+    """수정 작성의 마지막 답: 파일마다 (파일, 규칙) 항목 하나. 줄 번호는 파이프라인이 채운다."""
     return json.dumps({
         "summary": "print를 로거 호출로 바꿈",
-        "changes": [{"file": f, "line": n, "rule": rule, "why": "로거를 쓴다"} for f, n in changes],
+        "changes": [{"file": f, "rule": rule, "why": "로거를 쓴다"} for f in files],
     }, ensure_ascii=False)  # fmt: skip
 
 
@@ -152,7 +153,7 @@ def test_fix_decided_violation_reaches_a_fix_pull_request(fix_env, tmp_path: Pat
     """2-1(흐름), 2-9: fix로 정한 위반만 고쳐 수정안 PR로 올리고, skip한 위반은 이유와 함께 코멘트에
     남고 수정안에 들어가지 않는다."""
     use_model(fix_env, FakeModel(rule_answer(print_rule()), decide=first_fix_then_skip))
-    fixer = use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation(("orders/a.py", 2))]))
+    fixer = use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation("orders/a.py")]))
     state = run(fix_env, tmp_path)
 
     fix = state["model_fix"]
@@ -201,18 +202,18 @@ def test_fix_decided_violation_reaches_a_fix_pull_request(fix_env, tmp_path: Pat
     )  # fmt: skip
 
 
-def test_explanation_pointing_at_an_unchanged_line_is_dropped(fix_env, tmp_path: Path) -> None:
-    """2-5: 설명 JSON이 diff에 없는 줄을 가리키면 그 회차는 검증에 떨어지고 이유가 다음 회차에
-    간다. 회차를 다 쓰면 수정안 PR이 없다."""
+def test_explanation_pointing_at_an_unchanged_file_is_dropped(fix_env, tmp_path: Path) -> None:
+    """2-5(설명의 새 모양): 설명이 바뀌지 않은 파일을 가리키면 그 회차는 검증에 떨어지고 이유가 다음
+    회차에 간다. 회차를 다 쓰면 수정안 PR이 없다."""
     use_model(fix_env, FakeModel(rule_answer(print_rule()), decide=first_fix_then_skip))
-    fake = _explanation(("orders/a.py", 2), ("orders/a.py", 1))
+    fake = _explanation("orders/a.py", "orders/b.py")
     fixer = use_fixer(fix_env, FakeFixer([FIX_LINE_2], [fake]))
     state = run(fix_env, tmp_path)
 
     fix = state["model_fix"]
     assert fix.status == "failed" and fix.attempts == 3 and len(fixer.calls) == 3
-    assert "설명이 바뀌지 않은 줄을 가리킴: orders/a.py:1" in fix.detail
-    assert "설명이 바뀌지 않은 줄을 가리킴: orders/a.py:1" in fixer.calls[1]["prompt"]
+    assert "설명이 수정과 맞지 않음: 바뀌지 않은 파일을 가리킨 항목 1건" in fix.detail
+    assert "설명이 바뀌지 않은 파일을 가리킴: orders/b.py" in fixer.calls[1]["prompt"]
     assert fix_env["gh"].pulls == {} and fix_env["pushes"] == []
     assert (
         "**모델 수정안:** 수정안을 만들지 못함: 정해진 회차 안에 검증을 통과하지 못함"
@@ -220,10 +221,39 @@ def test_explanation_pointing_at_an_unchanged_line_is_dropped(fix_env, tmp_path:
     )
 
 
+def test_fix_without_a_note_for_its_rule_is_retried(fix_env, tmp_path: Path) -> None:
+    """대상 위반의 줄을 바꾼 덩어리에 그 규칙의 설명이 없으면 다음 회차에 파일, 규칙, 줄이 간다."""
+    use_model(fix_env, FakeModel(rule_answer(print_rule()), decide=first_fix_then_skip))
+    fixer = use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation("orders/a.py", rule="R-x")]))
+    state = run(fix_env, tmp_path)
+
+    assert state["model_fix"].status == "failed"
+    prompt = fixer.calls[1]["prompt"]
+    assert f"설명이 없는 변경: orders/a.py 규칙 {RID} (고친 뒤 줄 2)" in prompt
+    assert "설명의 규칙 id가 고칠 규칙이 아님: orders/a.py 규칙 R-x" in prompt
+    assert "설명이 없는 파일: orders/a.py" in prompt
+
+
+def test_old_answer_with_wrong_line_numbers_still_gets_the_diff_lines(fix_env, tmp_path) -> None:
+    """옛 모양의 답(덩어리마다 line)도 받는다. 모델이 센 줄은 쓰지 않고 diff의 줄에 리뷰를 단다."""
+    use_model(fix_env, FakeModel(rule_answer(print_rule()), decide=first_fix_then_skip))
+    old = json.dumps({"summary": "s", "changes": [
+        {"file": "orders/a.py", "line": 7, "rule": RID, "why": "로거"},
+        {"file": "orders/a.py", "line": 1, "rule": RID, "why": "두 번째 항목"}]})  # fmt: skip
+    use_fixer(fix_env, FakeFixer([FIX_LINE_2], [old]))
+    state = run(fix_env, tmp_path)
+
+    fix = state["model_fix"]
+    assert fix.status == "ready"
+    assert fix.explanation == model_fix_rules.Explanation(
+        "s", (model_fix_rules.Change("orders/a.py", 2, RID, "로거"),)
+    )
+
+
 def test_fix_that_breaks_tests_is_retried_then_dropped(fix_env, tmp_path: Path) -> None:
     """2-7(흐름): 고친 뒤 테스트가 실패하면 실패한 테스트를 다음 회차에 넘기고, 끝내 PR이 없다."""
     use_model(fix_env, FakeModel(rule_answer(print_rule()), decide=first_fix_then_skip))
-    fixer = use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation(("orders/a.py", 2))]))
+    fixer = use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation("orders/a.py")]))
     calls = {"n": 0}
     failing = replace(PASSED, exit_code=1,
                       summary=ReportSummary(passed=8, failed=1, total=9,
@@ -246,7 +276,7 @@ def test_change_outside_the_allowed_files_is_dropped_without_retry(fix_env, tmp_
     use_model(fix_env, FakeModel(rule_answer(print_rule())))
     base = {**BASE_FILES, "tests/test_a.py": "def test_a():\n    assert True\n"}
     edits = {**FIX_LINE_2, "tests/test_a.py": [("assert True", "assert 1")]}
-    fixer = use_fixer(fix_env, FakeFixer([edits], [_explanation(("orders/a.py", 2))]))
+    fixer = use_fixer(fix_env, FakeFixer([edits], [_explanation("orders/a.py")]))
     state = run(fix_env, tmp_path, base=base)
     fix = state["model_fix"]
     assert fix.status == "dropped" and len(fixer.calls) == 1
@@ -259,7 +289,7 @@ def test_line_no_test_runs_is_fixed_and_labelled(fix_env, tmp_path) -> None:
     코멘트가 그 줄을 테스트가 실행하지 않는다고 적는다. 테스트로 확인했다고 읽히지 않는다."""
     use_model(fix_env, FakeModel(rule_answer(print_rule()), decide=first_fix_then_skip))
     _covered_tests(fix_env, tmp_path, {"orders/a.py": [1]})
-    fixer = use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation(("orders/a.py", 2))]))
+    fixer = use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation("orders/a.py")]))
     state = run(fix_env, tmp_path)
     assert state["model_fix"].ready and len(fixer.calls) == 1
     ((_, pull),) = fix_env["gh"].pulls.items()
@@ -277,7 +307,7 @@ def test_skipped_violation_never_reaches_the_fixer(fix_env, tmp_path) -> None:
     skip_all = lambda ids: [{"id": i, "action": "skip", "reason": "needs_other_file",  # noqa: E731
                              "why": "orders/b.py의 이름을 바꿔야 한다"} for i in ids]  # fmt: skip
     use_model(fix_env, FakeModel(rule_answer(print_rule()), decide=skip_all))
-    fixer = use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation(("orders/a.py", 2))]))
+    fixer = use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation("orders/a.py")]))
     state = run(fix_env, tmp_path)
     assert "model_fix" not in state and fixer.calls == [] and fix_env["gh"].pulls == {}
     comment = _comment(fix_env)
@@ -287,7 +317,7 @@ def test_skipped_violation_never_reaches_the_fixer(fix_env, tmp_path) -> None:
 
 def test_fork_pull_request_gets_no_fix_pull_request(fix_env, tmp_path: Path) -> None:
     use_model(fix_env, FakeModel(rule_answer(print_rule()), decide=first_fix_then_skip))
-    use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation(("orders/a.py", 2))]))
+    use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation("orders/a.py")]))
     fix_env["gh"].head_repo = "someone/r"
     state = run(fix_env, tmp_path)
     assert state["model_fix"].ready and state["proposals"]["model"].reason == FORK_NO_PR
@@ -303,7 +333,7 @@ def test_fix_call_cap_leaves_the_fix_unprocessed(fix_env, tmp_path: Path) -> Non
     use_model(fix_env, FakeModel(rule_answer(print_rule()), decide=first_fix_then_skip))
     use_config(fix_env, AUTO.model_copy(update={"model": ModelSettings(
         calls=CallSettings(pr_max=1))}))  # fmt: skip
-    fixer = use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation(("orders/a.py", 2))]))
+    fixer = use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation("orders/a.py")]))
     state = run(fix_env, tmp_path)
     assert state["model_fix"].status == "budget" and fixer.calls == []
     assert "모델 호출 상한에 걸려 처리하지 못함: 수정 1건" in _comment(fix_env)
@@ -337,7 +367,7 @@ def test_require_approval_waits_and_fix_model_resumes(fix_env, tmp_path: Path) -
     이어 수정안 PR까지 간다 (5.2). `/fix mechanical`은 이 묶음을 승인하지 않는다."""
     use_model(fix_env, FakeModel(rule_answer(print_rule()), decide=first_fix_then_skip))
     use_config(fix_env, AUTO.model_copy(update={"fix": FixSettings(require_approval=True)}))
-    fixer = use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation(("orders/a.py", 2))]))
+    fixer = use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation("orders/a.py")]))
     state = run(fix_env, tmp_path)
     assert "model_fix" not in state and fixer.calls == [] and fix_env["gh"].pulls == {}
     assert "아직 만들지 않았습니다. `/fix model`을 달면 만듭니다." in _comment(fix_env)
@@ -362,7 +392,7 @@ def test_capped_fix_is_shown_and_fix_processes_the_rest(fix_env, tmp_path: Path)
     use_model(fix_env, FakeModel(rule_answer(print_rule()), decide=first_fix_then_skip))
     use_config(fix_env, AUTO.model_copy(update={"model": ModelSettings(
         calls=CallSettings(pr_max=3))}))  # fmt: skip
-    answer = _explanation(("orders/a.py", 2))
+    answer = _explanation("orders/a.py")
     fixer = use_fixer(fix_env, FakeFixer([{}, {}, FIX_LINE_2], [answer]))
     state = run(fix_env, tmp_path)
     assert state["model_fix"].status == "budget" and len(fixer.calls) == 2
@@ -397,7 +427,7 @@ def test_fix_reasks_decisions_left_by_the_call_cap(fix_env, tmp_path: Path) -> N
         repo="o/r", pr_number=1, head_sha="0" * 40, stage="decide", model="sonnet", tier="light",
         counted=2, ok=True, created_at=datetime.now(UTC),
     ))  # fmt: skip
-    fixer = use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation(("orders/a.py", 2))]))
+    fixer = use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation("orders/a.py")]))
     tests = {"n": 0}
 
     def runner(*a, **k):
@@ -462,7 +492,7 @@ def test_model_rerun_while_mechanical_waits_keeps_its_approval(fix_env, tmp_path
     fix_env["monkeypatch"].setattr(
         base_config, "load", lambda *a, **k: replace(BASE, repo=config, ruff=ruff)
     )
-    fixer = use_fixer(fix_env, FakeFixer([{}, {}, FIX_LINE_2], [_explanation(("orders/a.py", 3))]))
+    fixer = use_fixer(fix_env, FakeFixer([{}, {}, FIX_LINE_2], [_explanation("orders/a.py")]))
     pr = {**TWO_PRINTS, "orders/a.py": "import os\n" + TWO_PRINTS["orders/a.py"]}
     state = run(fix_env, tmp_path, pr=pr)
     assert "model_fix" not in state and "mechanical_fix" not in state
@@ -487,7 +517,7 @@ def test_fix_pull_request_gets_line_review_comments_once(fix_env, tmp_path: Path
     않는다 (5.6)."""
     use_model(fix_env, FakeModel(rule_answer(print_rule()), decide=first_fix_then_skip))
     why = "x` @team <b>로거</b> ``` [y](http://e)"
-    change = {"file": "orders/a.py", "line": 2, "rule": RID, "why": why}
+    change = {"file": "orders/a.py", "rule": RID, "why": why}
     answer = json.dumps({"summary": "s", "changes": [change]}, ensure_ascii=False)
     use_fixer(fix_env, FakeFixer([FIX_LINE_2], [answer]))
     gh = fix_env["gh"]
@@ -525,7 +555,7 @@ def test_fix_pull_request_gets_line_review_comments_once(fix_env, tmp_path: Path
 def test_review_refused_by_github_keeps_the_fix_pull_request(fix_env, tmp_path: Path) -> None:
     """GitHub이 리뷰의 줄을 받지 않으면(422) 수정안 PR은 그대로 두고 리뷰만 빠진다."""
     use_model(fix_env, FakeModel(rule_answer(print_rule()), decide=first_fix_then_skip))
-    use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation(("orders/a.py", 2))]))
+    use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation("orders/a.py")]))
     fix_env["gh"].review_error = "gh api 실패: HTTP 422 Unprocessable Entity"
     state = run(fix_env, tmp_path)
     assert state["proposals"]["model"].number == 900 and fix_env["gh"].reviews == {}
@@ -548,7 +578,7 @@ def test_model_folder_git_failure_is_an_environment_error(fix_env, tmp_path: Pat
     """모델 전용 폴더를 만드는 호스트의 git이 실패하면 PR 탓이 아니므로 환경 오류로 남기고 RQ가
     다시 시도한다. 다음 시도에서 git이 돌면 수정안 PR까지 간다."""
     use_model(fix_env, FakeModel(rule_answer(print_rule()), decide=first_fix_then_skip))
-    use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation(("orders/a.py", 2))]))
+    use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation("orders/a.py")]))
     real = workdir._snapshot_git
     broken = {"left": 1}
 

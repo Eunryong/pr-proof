@@ -55,7 +55,7 @@ FLAG: Final = {"rule_id": NAME_ID, "file": "orders/a.py", "line": 2, "quote": "d
 RENAME: Final = {"orders/a.py": [("def total(", "def compute_total(")]}
 EXPLANATION: Final = json.dumps({
     "summary": "함수 이름을 동사로 시작하게 바꿈",
-    "changes": [{"file": "orders/a.py", "line": 2, "rule": NAME_ID, "why": "동사로 시작한다"}],
+    "changes": [{"file": "orders/a.py", "rule": NAME_ID, "why": "동사로 시작한다"}],
 }, ensure_ascii=False)  # fmt: skip
 
 
@@ -146,8 +146,7 @@ def test_fix_that_leaves_the_judged_line_unchanged_is_retried(fix_env, tmp_path:
     """4.8의 5번: 모델이 찾은 위반은 그 줄이 바뀌었는지만 본다. 바뀌지 않으면 남은 위반이다."""
     use_model(fix_env, _model())
     other = {"orders/a.py": [("x = 1\n", "x = 2\n")]}
-    explanation = EXPLANATION.replace('"line": 2', '"line": 1')
-    fixer = use_fixer(fix_env, FakeFixer([other], [explanation]))
+    fixer = use_fixer(fix_env, FakeFixer([other], [EXPLANATION]))
     state = _run(fix_env, tmp_path)
     assert state["model_fix"].status == "failed" and len(fixer.calls) == 3
     assert f"아직 남은 위반: orders/a.py:2 {NAME_ID}" in fixer.calls[1]["prompt"]
