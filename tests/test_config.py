@@ -83,7 +83,7 @@ def test_call_maxima_default_and_override(tmp_path: Path) -> None:
 def test_rag_embed_model_must_be_a_pinned_model() -> None:
     from pydantic import ValidationError
 
-    from app.models.rag import E5_SMALL
+    from app.models.embed_models import E5_SMALL
 
     assert config.PipelineConfig(repos=[]).rag.embed_model == E5_SMALL
     with pytest.raises(ValidationError):

@@ -27,7 +27,7 @@ import pytest
 
 from app.models.checker_authoring import checker_key
 from app.models.doc_rules import Found, RuleChecked, RulesRead
-from app.models.rag import E5_SMALL, EMBED_MODELS
+from app.models.embed_models import E5_SMALL, EMBED_MODELS
 from app.models.records import NewRecord
 from app.models.repo_config import ModelSettings, RagSettings, RulesSettings
 from app.worker import checkers, doc_rules, memory

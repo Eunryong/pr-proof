@@ -13,7 +13,7 @@ from typing import Final
 import yaml
 from pydantic import BaseModel, field_validator
 
-from app.models.rag import E5_SMALL, EMBED_MODELS
+from app.models.embed_models import E5_SMALL, EMBED_MODELS
 
 DEFAULT_CONFIG_DIR: Final = Path.home() / ".config" / "pipeline"
 CONFIG_DIR_ENV: Final = "PIPELINE_CONFIG_DIR"
@@ -53,7 +53,7 @@ class ModelConfig(BaseModel):
 
 
 class RagConfig(BaseModel):
-    """과거 기록 검색의 파이프라인 쪽 설정 (DESIGN.md 6.5, 10절). 모델은 `models/rag.py`의
+    """과거 기록 검색의 파이프라인 쪽 설정 (DESIGN.md 6.5, 10절). 모델은 `models/embed_models.py`의
     `EMBED_MODELS`에 판과 해시를 고정한 것만 받는다."""
 
     embed_model: str = E5_SMALL

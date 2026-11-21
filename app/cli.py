@@ -83,7 +83,7 @@ def evaluate(db: Path, *, baseline: bool, real_model: bool, label: str, out: Pat
 def reindex(settings: config.PipelineConfig, repos: list[str] | None, encoder=None) -> int:  # noqa: ANN001
     """encoder(`memory.Encoder`)를 주지 않으면 설정의 임베딩 모델을 받아 쓴다. 테스트는 가짜를
     넘긴다."""
-    from app.models.rag import EMBED_MODELS
+    from app.models.embed_models import EMBED_MODELS
     from app.worker import memory
     from app.worker.state import Store
 

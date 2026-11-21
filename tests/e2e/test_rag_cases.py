@@ -32,8 +32,9 @@ import yaml
 
 from app.cli import reindex
 from app.models import fix_decision
+from app.models.embed_models import E5_SMALL, EMBED_MODELS
 from app.models.job import PRJob
-from app.models.rag import E5_SMALL, EMBED_MODELS, collection_name
+from app.models.rag import collection_name
 from app.models.records import NewRecord
 from app.models.rule import rule_id
 from app.worker import main, memory

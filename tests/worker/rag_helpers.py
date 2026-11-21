@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Final
 
 from app.models.db import FixAttempt
-from app.models.rag import EmbedModel, ModelFile
+from app.models.embed_models import EmbedModel, ModelFile
 from app.models.records import NewRecord
 from app.models.repo_config import RagSettings
 from app.worker.memory import Retriever, VectorStore

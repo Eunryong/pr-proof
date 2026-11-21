@@ -22,7 +22,8 @@ import fakeredis
 import pytest
 import yaml
 
-from app.models.rag import E5_SMALL, EMBED_MODELS, EmbedModel, record_text
+from app.models.embed_models import E5_SMALL, EMBED_MODELS, EmbedModel
+from app.models.rag import record_text
 from app.models.records import NewRecord
 from app.models.repo_config import DEFAULT_MIN_SIMILARITY, RagSettings
 from app.worker import memory

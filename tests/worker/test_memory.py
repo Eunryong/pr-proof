@@ -15,7 +15,8 @@ from typing import Final
 import fakeredis
 import pytest
 
-from app.models.rag import ModelFile, query_text
+from app.models.embed_models import ModelFile
+from app.models.rag import query_text
 from app.models.records import NewRecord
 from app.models.repo_config import RagSettings
 from app.worker import memory

@@ -52,13 +52,14 @@ from app.models import rag_switch as rag_switch_models
 from app.models.call_budget import RulesetScope
 from app.models.checker_authoring import Checked
 from app.models.doc_rules import DocRules, Found, RuleOutcome, RulesRead
+from app.models.embed_models import E5_SMALL, EMBED_MODELS
 from app.models.fix import MECHANICAL_BUNDLE, MechanicalFix
 from app.models.fix_decision import Decided, SafetyNet, open_targets
 from app.models.job import PRJob
 from app.models.model_fix import ModelFix, Picked
 from app.models.pr_check import PrChecks
 from app.models.proposal import ProposalResult
-from app.models.rag import E5_SMALL, EMBED_MODELS, Retrieval
+from app.models.rag import Retrieval
 from app.models.rag_switch import RagSwitch
 from app.models.repo_config import call_limits
 from app.models.test_run import PytestRun

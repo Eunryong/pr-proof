@@ -4,9 +4,8 @@ from typing import Final
 import pytest
 
 from app.models.db import Record
+from app.models.embed_models import E5_SMALL, EMBED_MODELS
 from app.models.rag import (
-    E5_SMALL,
-    EMBED_MODELS,
     RECORDS_HEAD,
     Hit,
     Retrieval,
