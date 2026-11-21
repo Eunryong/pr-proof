@@ -41,3 +41,26 @@ def test_other_lines_are_cut_at_the_limit() -> None:
 
 def test_no_explanation_means_no_comments() -> None:
     assert proposal.review_comments(SimpleNamespace(explanation=None), NO_RULES) == []
+
+
+def test_explanation_text_groups_repeated_reasons_and_keeps_every_reason() -> None:
+    """본문의 "모델의 설명"은 같은 (파일, 규칙, 이유)를 한 줄로 묶는다. 다른 이유는 남는다."""
+    text = proposal.explanation_text(
+        Explanation(
+            "요약",
+            (
+                Change("a.py", 30, "R1", "상수로 바꿈"),
+                Change("a.py", 7, "R1", "상수로 바꿈"),
+                Change("a.py", 9, "R1", "옛 답의 다른 이유"),
+                Change("b.py", 3, "R1", "상수로 바꿈"),
+            ),
+        )
+    )
+    assert text.splitlines() == [
+        "요약",
+        "",
+        "- a.py R1: 상수로 바꿈 (줄 7, 30)",
+        "- a.py R1: 옛 답의 다른 이유 (줄 9)",
+        "- b.py R1: 상수로 바꿈 (줄 3)",
+    ]
+    assert proposal.explanation_text(None) == ""

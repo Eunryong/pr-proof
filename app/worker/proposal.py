@@ -112,12 +112,28 @@ def pipeline_secrets() -> list[str]:
 
 
 def explanation_text(explanation: Explanation | None) -> str:
-    """모델의 설명을 글 한 덩어리로. 비밀값 검사와 수정안 PR 본문의 코드 울타리에 쓴다."""
+    """모델의 설명을 글 한 덩어리로. 비밀값 검사와 수정안 PR 본문의 코드 울타리에 쓴다.
+
+    같은 (파일, 규칙, 이유)는 한 줄로 묶고 고친 줄 번호를 뒤에 적는다. 이유가 다르면 줄을 나눠
+    모델이 쓴 글이 하나도 빠지지 않게 한다(비밀값 검사가 이 글을 본다).
+    """
     if explanation is None:
         return ""
+    at: dict[tuple[str, str, str], list[int]] = {}
+    for c in explanation.changes:
+        at.setdefault((c.file, c.rule, c.why), []).append(c.line)
     lines = [explanation.summary, ""]
-    lines += [f"- {c.file}:{c.line} {c.rule}: {c.why}" for c in explanation.changes]
+    lines += [
+        f"- {file} {rule}: {why} (줄 {_line_list(sorted(set(where)))})"
+        for (file, rule, why), where in at.items()
+    ]
     return "\n".join(lines).strip()
+
+
+def _line_list(lines: Sequence[int]) -> str:
+    shown = ", ".join(map(str, lines[:MAX_REVIEW_OTHER_LINES]))
+    more = len(lines) - MAX_REVIEW_OTHER_LINES
+    return f"{shown} 외 {more}곳" if more > 0 else shown
 
 
 def fixed_lines(found: Found, ids: Sequence[str]) -> list[str]:
@@ -242,10 +258,7 @@ def review_comments(fix: ModelFix, found: Found) -> list[ReviewComment]:
             f"이유 (모델의 설명): {inline_code(why[(file, rule)] or '이유 없음', 300)}"
         )
         if rest:
-            shown = ", ".join(map(str, rest[:MAX_REVIEW_OTHER_LINES]))
-            more = len(rest) - MAX_REVIEW_OTHER_LINES
-            body += f"\n\n이 파일에서 같은 규칙으로 고친 다른 줄: {shown}"
-            body += f" 외 {more}곳" if more > 0 else ""
+            body += f"\n\n이 파일에서 같은 규칙으로 고친 다른 줄: {_line_list(rest)}"
         comments.append(ReviewComment(file, first, body))
     return comments
 
