@@ -8,10 +8,10 @@
 - 모델의 결과는 입력 해시별로 저장하고 다시 쓴다. 재현성은 모델을 금지해서가 아니라 저장해서 보장한다.
 - 규칙은 대상 리포의 문서와 도구 설정에서만 나온다. 파이프라인은 내장 규칙도 내장 검사기도 갖지 않는다. 특정 구조(MVC 등)를 강제하지 않는다.
 - 도구는 미리 깔지 않고 규칙 계획에 필요할 때만 받아 캐시한다(DESIGN 2.3).
-- 웹(api)과 worker는 메모리를 공유하지 않는다. 넘길 값은 `app/models/job.py`의 `PRJob`으로만, 상태는 Redis(임시)·SQLite(영구)에 둔다.
+- 웹(api)과 worker는 메모리를 공유하지 않는다. 넘길 값은 `shared/job_pure.py`의 `PRJob`으로만, 상태는 Redis(임시)·SQLite(영구)에 둔다.
 - PR에서 온 코드와 모델이 쓴 코드(수정안, 검사기)는 Docker 샌드박스에서만 실행한다. 호스트에서 대상 리포의 pytest를 돌리지 않는다.
 - 대상 리포의 설정과 규칙은 PR head가 아니라 base 브랜치에서 읽는다.
-- 비밀값은 코드·환경변수에 넣지 않는다. `app/config.py`의 파일 읽기 함수로만 접근한다.
+- 비밀값은 코드·환경변수에 넣지 않는다. `shared/config.py`의 파일 읽기 함수로만 접근한다.
 - subprocess에는 최소 환경만 넘긴다.
 - 기능은 `docs/DESIGN.md`의 단계 순서대로 만들고, 각 단계는 동작하는 상태로 끝낸다. 다음 단계의 구조(플러그인 로더, Chroma, 체크포인터 등)를 미리 만들지 않는다.
 
@@ -81,6 +81,8 @@ BACKLOG.md 형식:
 - 2단계의 완료 기준은 모두 채워졌었다(2026-11-20에 의미 규칙의 기준을 넣은 뒤 2-1의 체크를 거뒀다, 위). 2026-11-20에 저장소 주인이 2-1을 "01은 수정안 PR까지 가고, 02는 잡히고 이유와 함께 `skip`된다"로 고쳤고 아래 닫기 작업의 끝까지 3회 기록으로 채웠다. 단계 마무리 점검(이 문서의 네 항목)은 하지 않아 2단계를 끝났다고 표시하지 않았다. 고치기 전의 사정: 완료 기준 중 2-1(옛 static 02가 실제 모델로 수정안 PR까지 감)만 남았었다. 2026-11-20의 닫기 작업으로 검사기가 `_seen_orders.append(order)`를 잡고(검사기 작성만 6/6, 끝까지 3/3. 모델이 ast-grep으로 가릴 수 없다고 답하면 Python AST로 바꾼다) 규칙 읽기가 그 규칙을 고칠 규칙(`model`)으로 읽는다(3/3). 남은 곳은 수정 판단 모델이 그 위반을 `skip`하는 것이다(끝까지 3/3, "고치는 방법이 여럿이라 사람이 골라야 한다"). 4.6이 모델에 맡긴 판단이라 파이프라인 쪽에서는 멈췄다. 남은 선택지는 저장소 주인이 정한다(BACKLOG의 2-1 항목, `docs/JOURNAL.md`).
 - 2026-11-21에 수정을 기본으로 바꿨다(`fix/fix-by-default`, DESIGN 2.2, 4.6, 11.1). 첫 운영 검사(MathLLM#5)가 위반 160건 중 0건을 고친 뒤 저장소 주인이 정했다: "리드미 기반의 규칙을 어기는 위반이 있으면 llm에 넣어서 고치는 방향". `fix.require_covered`와 표의 "테스트가 지나가지 않음" 줄을 없앴고 옛 키는 무시하고 "설정:"에 알린다. 수정 판단은 기본이 `fix`이고 `skip`은 `needs_other_file`·`changes_behavior`·`not_a_violation` 셋뿐이며, 방법이 여럿이면 가장 작은 변경을 고른다. 수정안 PR 본문과 결과 코멘트는 고친 위반마다 그 줄을 테스트가 실행하는지 적는다. 결과 코멘트는 고치지 않은 위반을 규칙마다 "직접 고쳐야 함"의 이유별 건수로 묶는다. 테스트가 실패한 PR, 거절된 위반, PR 단위·알리기만 하는 규칙, 허용 범위, 크기·호출 상한, 검증은 그대로다. `no_tests`·불안정한 테스트 저장소는 그대로 고치지 않고 사람에게 물었다. 수정 루프의 테스트 생성은 정했고 코드에 없다(12.2). 새 위협 T35의 시점은 사람에게 물었다. `eval/rules/31`을 더해 `rules` 케이스는 31개다. MathLLM#5와 같은 변경으로 잰 결과(`docs/JOURNAL.md`): 고칠 대상이 0건에서 147건(148건 중)이 되었지만, 147건을 한 묶음으로 넘긴 수정 작성이 세 회차 모두 설명 확인에서 떨어져 검증을 통과한 수정은 0건이다(BACKLOG, 저장소 주인에게 물음).
 - 2026-11-21에 설명 JSON의 줄 번호를 파이프라인이 채우게 바꿨다(`fix/explanation-by-program`, DESIGN 4.7, 4.8의 4번, 7.5, 11.1). 저장소 주인의 결정: 모델은 줄 번호를 세지 않는다. 모델의 답은 (파일, 규칙) 쌍마다 `{file, rule, why}`이고 옛 답의 `line`은 읽지 않는다. `models/model_fix.explain`이 수정 diff의 덩어리 중 PR head에서 대상 위반의 줄을 지우거나 바꾼 것마다 그 규칙의 `Change(file, line, rule, why)`를 만든다(`ChangeBlock.old_lines`). 확인은 규칙·파일이 맞는지, 위반을 고친 덩어리마다 그 (파일, 규칙)의 항목이 있는지, 바뀐 파일마다 항목이 있는지이고, 실패 이유는 종류별 건수다. 수정 작성의 프롬프트 버전이 바뀌었다. MathLLM#5와 같은 변경의 저장된 세 회차 답은 새 확인을 모두 통과한다(`docs/JOURNAL.md`). 그 뒤의 재검사와 테스트는 다시 재지 않았다. 2-5의 글이 옛 모양을 전제해 저장소 주인에게 물었다(DESIGN 11.3).
+- 2026-11-21에 `app/` 하나를 `api/`(웹)·`worker/`(워커)·`shared/`(웹과 워커가 같이 쓰는 것)로 나눴다(`refactor/split-app`, DESIGN 11.1, 12.5). 동작은 그대로이고 구조만 바꿨다. 저장소 주인의 글: 「worker랑 api랑 모델을 따로 둬야할거같아 너무 보기 힘드네」, 「쪼개는게 맞다고 생각해 위모양대로가자」, 「app/model부분이 너무 한군데 모여있어 api랑 worker 분리작업도 진행하고」. 주인이 받아들인 모양은 `api/`(controllers·services·views를 합침), `worker/rules/`, `worker/fix/`, `worker/sandbox/`, `shared/`다. 조정자의 지시로 담당이 정한 것: 판단 규칙(옛 `app/models/`)의 이름 끝에 `_pure`를 붙이고 `tests/test_layers.py`가 그 이름으로 판단 규칙을 찾아 외부 호출이 없는지 본다. 판단 규칙은 import하는 단계 폴더 코드의 가장 가까운 공통 폴더에 둔다. 규칙 경로(`doc_rules`)와 수정 검증의 허용 범위(`scope`)도 단계 폴더에 넣었다. `shared/`는 import 그래프를 다시 재서 정했다(웹과 워커가 둘 다 직접 import하는 `job`, `db`, `comment`, `state_keys`, `ops_alert`, `config`, `notify`, 그리고 설정이 읽는 임베딩 모델 목록. 설정이 `models/rag.py`를 import해 웹이 검색 모듈 전체를 쓰는 것으로 재어져 목록만 `embed_models`로 떼어 냈다). 수동 명령은 `python -m api.cli sync`와 `python -m worker.cli reindex|eval`로 나뉘었다. 큐에 남은 작업과 체크포인트가 옛 모듈 경로를 문자열로 가지고 있어 운영 서버에 반영할 때 순서가 필요하다(DESIGN 12.5).
+- 이 절의 날짜가 붙은 항목, DESIGN 13절의 이력, `docs/JOURNAL.md`에 나오는 `app/...`, `models/...`, `worker/...`, `sandbox/...` 경로는 2026-11-21에 폴더를 나누기 전의 이름이다. `docs/DESIGN.md` 12.5의 대응표로 읽는다.
 - 문서와 코드가 다른 곳은 `docs/DESIGN.md` 12.2절에 있다. 코드 주석의 "DESIGN.md F7" 같은 번호는 v1의 절이고, 12.3절의 대응표로 읽는다.
 - 작업은 기능 단위 브랜치와 PR로 진행한다.
 - 첫 대상 리포는 별도 예제 리포 `Eunryong/eval`이다. 이 리포(`pr-proof`)는 자기 PR을 검사하지 않는다.
@@ -99,8 +101,8 @@ scripts/install-launchd.sh # 사용자 LaunchAgent로 등록 (죽으면 다시 �
 pytest                # 파이프라인 자체 테스트 (Docker 없이)
 pytest -m docker      # 실제 Docker·예제 리포가 필요한 통합 테스트 (이미지 빌드와 Python 런타임·ast-grep·ruff 받기에 네트워크가 필요하다)
 pip install -e '.[rag]'   # 과거 기록 검색을 쓸 때만(rag.enabled: on, 또는 auto가 켤 때). chromadb·onnxruntime·tokenizers·numpy
-python -m app.cli reindex # 벡터 저장소(data_dir/chroma/)를 SQLite의 기록으로 다시 만든다
-python -m app.cli eval --baseline --db <경로>  # 평가 세트 전부를 돌려 eval_runs에 기준선으로 남긴다. --baseline 없이 돌리면 기준선과 비교 (--real-model은 claude를 부른다. --out <폴더>는 junit·호출 기록을 남기고 그 폴더의 memo.jsonl을 다시 쓴다)
+python -m worker.cli reindex # 벡터 저장소(data_dir/chroma/)를 SQLite의 기록으로 다시 만든다
+python -m worker.cli eval --baseline --db <경로>  # 평가 세트 전부를 돌려 eval_runs에 기준선으로 남긴다. --baseline 없이 돌리면 기준선과 비교 (--real-model은 claude를 부른다. --out <폴더>는 junit·호출 기록을 남기고 그 폴더의 memo.jsonl을 다시 쓴다)
 PR_PROOF_REAL_EMBED=1 PR_PROOF_EMBED_DIR=<모델 폴더> pytest tests/worker/test_real_embed.py  # 실제 임베딩 모델의 recall@k
 ```
 
@@ -108,18 +110,22 @@ PR_PROOF_REAL_EMBED=1 PR_PROOF_EMBED_DIR=<모델 폴더> pytest tests/worker/tes
 
 ## 코드 구조
 
+- 최상위 패키지는 셋이다: `api/`(웹), `worker/`(워커), `shared/`(웹과 워커가 둘 다 import하는 것만). 2026-11-21에 `app/` 하나를 이렇게 나눴다. 그 전의 경로는 `docs/DESIGN.md` 12.5의 대응표로 읽는다
 - 웹(api)은 GitHub 변화를 감지해 `PRJob`을 큐에 넣기만 한다. 감지 방법은 웹훅과 동기화(api 안의 주기 루프) 두 가지다
 - 워커는 큐에서 작업을 꺼내 처리하고 결과(코멘트, 제안 PR)를 GitHub에 남긴다
-- 둘 사이에는 큐와 Redis·SQLite 상태만 오간다. 키 형식과 테이블 정의는 `models/`, 읽기·쓰기 코드는 각자 자기 쪽에 둔다
-- `app/models/`: 웹·워커 공용 데이터. 외부 호출 없음
-- `app/controllers/`, `app/services/`, `app/views/`: 웹 쪽 MVC (webhook, sync). GitHub은 조회만 한다
-- `app/worker/`: 워커 진입점, 작업 흐름(LangGraph), PR 코멘트, 처리 기록 쓰기, GitHub 쓰기
-- `app/sandbox/`: 워커가 쓰는 언어와 무관한 docker 도구 (`docker_cli`, `container`, `toolcache`, `checker_runner`, `safe_read`)
-- `app/worker/lang/python.py`: Python 언어 프로필 (런타임 준비, `.venv` 설치, pytest 실행과 결과 읽기, 위반 줄의 커버리지 읽기, ruff). 판단 규칙(테스트 파일의 정의, coverage.xml 파싱, ruff 설정 읽기, 도구 목록)은 `models/`에 있다. 두 번째 언어와 프로필 인터페이스는 만들지 않는다
-- 규칙 경로: `worker/rules.py`(규칙 문서 읽기) · `worker/base_config.py`(base 설정, ruff 설정과 버전) → `worker/checkers.py`(검사 방법 정하기: 도구 설정의 규칙 묶음, 문서 규칙의 도구 선택, 검사기 작성) → `worker/detect.py`(위반 찾기) · `worker/judge.py`(모델의 직접 판단) · `worker/pr_check.py`(PR 단위 확인, 알리기만) → `worker/decide.py`(수정 판단) → `worker/mechanical_fix.py`(기계적 수정) · `worker/model_fix.py`(모델 수정, 모델 전용 폴더는 `worker/ai/workdir.py`) → `worker/proposal.py`(수정안 PR) · `worker/records.py`(기록) · `worker/memory.py`(검색: 임베딩, Chroma 저장과 top-k, 밀린 기록 임베딩, reindex, 큰 규칙 문서의 조각 검색). 판단 규칙은 같은 이름의 `models/` 모듈에 있다. 도구 목록과 ruff 설정·버전 읽기는 `models/tools.py`, 도구 선택은 `models/tool_choice.py`. 검색의 기록 텍스트·고르기·프롬프트 주입과 임베딩 모델 목록은 `models/rag.py`, 큰 규칙 문서의 조각은 `models/doc_sections.py`
-- 도구(ast-grep, ruff)와 Python 런타임은 `sandbox/toolcache.py`가 고정한 버전과 SHA256으로 받아 캐시한다. 샌드박스 이미지에는 언어가 없다 (`debian:bookworm-slim`에 curl과 인증서)
-- 웹 쪽은 `worker/`·`sandbox/`를, 워커는 웹 쪽을 import하지 않는다. `tests/test_layers.py`가 검사한다
-- 테스트는 `tests/` 아래 같은 이름의 폴더에 둔다
+- 둘 사이에는 큐와 Redis·SQLite 상태만 오간다. 키 형식과 테이블 정의는 `shared/`(`state_keys_pure.py`, `db_pure.py`), 읽기·쓰기 코드는 각자 자기 쪽에 둔다
+- `api/`: FastAPI 앱(`main.py`), 웹훅(`webhook.py`), 동기화(`sync.py`, 다시 넣을지 정하는 `sync_rules_pure.py`), GitHub 조회(`github.py`), 큐 등록(`queue.py`), 처리 기록 읽기(`history.py`), 서명 확인(`signature.py`), 응답(`responses.py`), 수동 동기화(`cli.py`). GitHub은 조회만 한다
+- `shared/`: 작업 계약(`job_pure.py`), Redis 키와 큐 이름(`state_keys_pure.py`), SQLite 테이블(`db_pure.py`), 코멘트 표시(`comment_pure.py`), 운영 알림의 종류와 글(`ops_alert_pure.py`), 임베딩 모델 목록(`embed_models_pure.py`), 설정과 비밀값 읽기(`config.py`), macOS 알림(`notify.py`)
+- `worker/` 맨 위: 진입점(`main.py`), 작업 흐름(`graph.py`, LangGraph), 작업 종류(`update.py`, `command.py`), 가드레일(`guard.py`), 체크아웃(`repo.py`), base 설정(`base_config.py`: `.pipeline.yaml`, ruff 설정과 버전), 상태와 처리 기록 쓰기(`state.py`), GitHub 쓰기(`github.py`), 결과 코멘트(`report.py`, `doc_rules_report.py`, `pr_check_report.py`, `markdown.py`), 공용 서브그래프 틀(`loop.py`), 호출 상한(`budget.py`), 기록(`records.py`), 검색(`memory.py`: 임베딩, Chroma 저장과 top-k, 밀린 기록 임베딩, reindex, 큰 규칙 문서의 조각 검색), 평가(`evaluation.py`), 수동 명령(`cli.py`: reindex, eval). 여러 단계가 같이 쓰는 판단 규칙(`violation_pure.py`, `rule_pure.py`, `diff_pure.py`, `rag_pure.py` 등)도 여기 있다
+- `worker/rules/`: 규칙 경로(`doc_rules.py`) → 규칙 읽기(`rules.py`) → 검사 방법 정하기(`checkers.py`: 도구 설정의 규칙 묶음, 문서 규칙의 도구 선택, 검사기 작성) → 위반 찾기(`detect.py`) · 모델의 직접 판단(`judge.py`) · PR 단위 확인(`pr_check.py`, 알리기만)
+- `worker/fix/`: 수정 판단(`decide.py`) → 기계적 수정(`mechanical_fix.py`) · 모델 수정(`model_fix.py`, 모델 전용 폴더는 `worker/ai/workdir.py`) · 허용 범위(`scope.py`) → 수정안 PR(`proposal.py`)
+- `worker/sandbox/`: 언어와 무관한 docker 도구 (`docker_cli`, `container`, `toolcache`, `checker_runner`, `safe_read`)
+- `worker/ai/`: claude CLI 호출, 모델 전용 폴더, 경로 감시 훅
+- `worker/lang/python.py`: Python 언어 프로필 (런타임 준비, `.venv` 설치, pytest 실행과 결과 읽기, 위반 줄의 커버리지 읽기, ruff). 판단 규칙(테스트 파일의 정의 `worker/fix/scope_pure.py`, coverage.xml 파싱 `worker/coverage_pure.py`, ruff 설정 읽기와 도구 목록 `worker/tools_pure.py`)은 `_pure` 모듈에 있다. 두 번째 언어와 프로필 인터페이스는 만들지 않는다
+- 판단 규칙은 외부 호출이 없다. 이름이 `_pure.py`로 끝나고, 다른 `_pure` 모듈만 import한다. 같은 폴더의 실행 코드 `x.py`가 판단 규칙 `x_pure.py`를 부르고 저장한다. 판단 규칙은 그것을 import하는 코드 중 `worker/` 맨 위가 아닌 것들의 가장 가까운 공통 폴더에 둔다: 한 단계만 쓰면 그 단계 폴더(`worker/fix/fix_decision_pure.py`), 여러 폴더가 쓰면 `worker/` 맨 위(`worker/violation_pure.py`), 웹과 워커가 같이 쓰면 `shared/`, 웹만 쓰면 `api/`. 도구 선택은 `worker/rules/tool_choice_pure.py`, 검색의 기록 텍스트·고르기·프롬프트 주입은 `worker/rag_pure.py`, 검색을 켤지는 `worker/rag_switch_pure.py`, 큰 규칙 문서의 조각은 `worker/rules/doc_sections_pure.py`
+- 도구(ast-grep, ruff)와 Python 런타임은 `worker/sandbox/toolcache.py`가 고정한 버전과 SHA256으로 받아 캐시한다. 샌드박스 이미지에는 언어가 없다 (`debian:bookworm-slim`에 curl과 인증서)
+- `api/`는 `worker/`를, `worker/`는 `api/`를 import하지 않고, `shared/`는 둘 다 import하지 않는다. `worker/sandbox/`는 sandbox와 판단 규칙만 import한다. `tests/test_layers.py`가 검사한다
+- 테스트는 `tests/` 아래 같은 이름의 폴더에 둔다. 판단 규칙 `x_pure.py`의 테스트는 `test_x_pure.py`다
 
 ## 코드 스타일
 
