@@ -64,7 +64,7 @@ fix:
   answer:
     summary: 주석을 아래 코드가 하는 일에 맞게 고침
     changes:
-      - {file: orders/services/pricing.py, line: 9, rule: 0, why: 코드는 단가와 수량을 곱한다}
+      - {file: orders/services/pricing.py, rule: 0, why: 코드는 단가와 수량을 곱한다}
 expect:
   code_flagged: ["orders/services/pricing.py:9"]
   pr_flagged: ["commit:0"]

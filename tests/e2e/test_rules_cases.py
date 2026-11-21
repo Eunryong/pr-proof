@@ -416,7 +416,7 @@ def _check_fix(expect: dict, section: str, gh: FakeGh, remote: dict, fixer, real
     for needle in expect.get("pr_absent", ()):
         assert needle not in pull["body"], (needle, pull["body"])
     assert "**검증** (파이프라인이 확인한 결과)" in pull["body"]
-    # 설명 JSON의 changes가 그 수정안 PR의 줄 리뷰 코멘트가 된다. 전달을 다시 해도 리뷰는 하나다
+    # 위반의 줄을 고친 곳마다 (파일, 규칙)의 설명이 줄 리뷰 코멘트가 된다. 다시 전달해도 리뷰는 하나
     (review,) = gh.reviews[number]
     assert review["comments"] and {c["path"] for c in review["comments"]} == {expect["fix_file"]}
 

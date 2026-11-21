@@ -65,7 +65,7 @@ fix:
   answer:
     summary: 할인 계산을 정수 연산으로 바꾸고 round와 같은 짝수 쪽 반올림을 지킴
     changes:
-      - {file: orders/services/pricing.py, line: 15, rule: 0, why: 금액을 float 없이 // 로 계산한다}
+      - {file: orders/services/pricing.py, rule: 0, why: 금액을 float 없이 // 로 계산한다}
 expect:
   violations: ["orders/services/pricing.py:15"]
   fix: ready

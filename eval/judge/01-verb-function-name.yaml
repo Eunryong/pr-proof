@@ -57,8 +57,7 @@ fix:
   answer:
     summary: 줄 금액 함수의 이름을 동사로 시작하게 바꿈
     changes:
-      - {file: orders/services/pricing.py, line: 8, rule: 0, why: 함수 이름을 동사로 시작한다}
-      - {file: orders/services/pricing.py, line: 13, rule: 0, why: 바뀐 이름으로 부른다}
+      - {file: orders/services/pricing.py, rule: 0, why: 함수 이름을 동사로 시작하게 바꾸고 부르는 곳도 바꾼다}
 expect:
   violations: ["orders/services/pricing.py:8"]
   contains:

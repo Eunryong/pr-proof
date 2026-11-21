@@ -64,7 +64,7 @@ def test_search_off_touches_nothing(fix_env, tmp_path: Path) -> None:  # noqa: F
     for r in (record("adopted", 1, context=CONTEXT),):
         fix_env["deps"].store.add_record(r)
     use_model(fix_env, FakeModel(rule_answer(print_rule()), decide=first_fix_then_skip))
-    use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation(("orders/a.py", 2))]))
+    use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation("orders/a.py")]))
     opened = _fake_retriever(fix_env)
     state = run(fix_env, tmp_path)
 
@@ -91,7 +91,7 @@ def test_auto_turns_search_on_at_twenty_records(fix_env, tmp_path: Path) -> None
     store = fix_env["deps"].store
     _twenty_records(store)
     use_model(fix_env, FakeModel(rule_answer(print_rule()), decide=first_fix_then_skip))
-    use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation(("orders/a.py", 2))]))
+    use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation("orders/a.py")]))
     opened = _fake_retriever(fix_env)
     run(fix_env, tmp_path)
 
@@ -109,7 +109,7 @@ def test_auto_without_the_extras_keeps_checking_without_search(fix_env, tmp_path
         fix_env["monkeypatch"].setitem(sys.modules, name, None)
     _twenty_records(fix_env["deps"].store)
     use_model(fix_env, FakeModel(rule_answer(print_rule()), decide=first_fix_then_skip))
-    use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation(("orders/a.py", 2))]))
+    use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation("orders/a.py")]))
     opened = _fake_retriever(fix_env)
     state = run(fix_env, tmp_path)
 
@@ -132,7 +132,7 @@ def test_auto_turns_search_off_when_search_lowers_adoption(fix_env, tmp_path: Pa
     nxt = fix_outcomes(store, 100, 30, adopted=9, references="[1]")
     fix_outcomes(store, nxt, 30, adopted=10, references=None)
     use_model(fix_env, FakeModel(rule_answer(print_rule()), decide=first_fix_then_skip))
-    use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation(("orders/a.py", 2))]))
+    use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation("orders/a.py")]))
     opened = _fake_retriever(fix_env)
     state = run(fix_env, tmp_path)
 
@@ -147,7 +147,7 @@ def test_resumed_fix_uses_the_search_state_of_its_check(fix_env, tmp_path: Path)
     되어도 `/fix model`로 이은 수정(새 프로세스)은 그 검사의 상태(꺼짐)를 쓰고 코멘트도 같다."""
     use_config(fix_env, RepoConfig(fix=FixSettings(require_approval=True)))
     use_model(fix_env, FakeModel(rule_answer(print_rule()), decide=first_fix_then_skip))
-    use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation(("orders/a.py", 2))]))
+    use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation("orders/a.py")]))
     opened = _fake_retriever(fix_env)
     run(fix_env, tmp_path)
     assert "검색: 꺼짐 (자동, 채택·거절 기록 0/20건)" in _comment(fix_env)
@@ -164,7 +164,7 @@ def test_off_ignores_enough_records(fix_env, tmp_path: Path) -> None:  # noqa: F
     _twenty_records(fix_env["deps"].store)
     use_config(fix_env, RepoConfig(rag=RagSettings(enabled="off")))
     use_model(fix_env, FakeModel(rule_answer(print_rule()), decide=first_fix_then_skip))
-    use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation(("orders/a.py", 2))]))
+    use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation("orders/a.py")]))
     opened = _fake_retriever(fix_env)
     run(fix_env, tmp_path)
 
@@ -205,7 +205,7 @@ def test_adopted_records_in_prompt(fix_env, tmp_path: Path) -> None:  # noqa: F8
                             context="class Boom(Exception):", rule_id="R-other"))  # fmt: skip
     use_config(fix_env, ON)
     use_model(fix_env, FakeModel(rule_answer(print_rule()), decide=first_fix_then_skip))
-    fixer = use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation(("orders/a.py", 2))]))
+    fixer = use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation("orders/a.py")]))
     _fake_retriever(fix_env)
     state = run(fix_env, tmp_path)
 
@@ -239,7 +239,7 @@ def test_planted_instruction_dropped(fix_env, tmp_path: Path) -> None:  # noqa: 
     use_config(fix_env, ON)
     use_model(fix_env, FakeModel(rule_answer(print_rule()), decide=first_fix_then_skip))
     obeys = {**FIX_LINE_2, "scripts/b.py": [("y = 1\n", "y = 2\n")]}
-    fixer = use_fixer(fix_env, FakeFixer([obeys], [_explanation(("orders/a.py", 2))]))
+    fixer = use_fixer(fix_env, FakeFixer([obeys], [_explanation("orders/a.py")]))
     _fake_retriever(fix_env)
     base = {"README.md": "# demo\n\n## 코드 규칙\n\n### 출력\n\n- " + print_rule()["quote"] + "\n",
             "orders/a.py": "x = 1\n", "scripts/b.py": "y = 1\n"}  # fmt: skip

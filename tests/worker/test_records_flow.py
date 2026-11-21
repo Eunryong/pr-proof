@@ -86,7 +86,7 @@ def test_failed_push_is_retried_with_the_stored_patch(fix_env, tmp_path: Path) -
     패치가 그대로 올라간다. 끝난 node(규칙 읽기, 수정 판단, 수정 작성, 테스트)는 다시 돌지
     않는다."""
     model = use_model(fix_env, FakeModel(rule_answer(print_rule())))
-    fixer = use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation(("orders/a.py", 2))]))
+    fixer = use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation("orders/a.py")]))
     _fail_once(fix_env, repo, "commit_and_push", repo.GitError("push 실패"))
     deps, job = fix_env["deps"], _start(fix_env, tmp_path)
 
@@ -114,7 +114,7 @@ def test_repeated_delivery_opens_the_pull_request_once(fix_env, tmp_path: Path) 
     """수정안 PR을 연 뒤 기록하다 실패해도, 재시도는 같은 브랜치에 같은 내용을 다시 올리고 열린 PR을
     고칠 뿐 새로 만들지 않는다 (5.6)."""
     use_model(fix_env, FakeModel(rule_answer(print_rule())))
-    use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation(("orders/a.py", 2))]))
+    use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation("orders/a.py")]))
     deps, job = fix_env["deps"], _start(fix_env, tmp_path)
     _fail_once(fix_env, deps.store, "record_proposal", GitHubError("gh 실패"))
 
@@ -130,7 +130,7 @@ def test_repeated_delivery_opens_the_pull_request_once(fix_env, tmp_path: Path) 
 def test_redelivery_refuses_a_patch_whose_files_no_longer_match(fix_env, tmp_path: Path) -> None:  # noqa: F811
     """다시 적용한 결과의 파일 해시가 저장한 값과 다르면 올리지 않는다 (4.8 끝)."""
     use_model(fix_env, FakeModel(rule_answer(print_rule())))
-    use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation(("orders/a.py", 2))]))
+    use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation("orders/a.py")]))
     _fail_once(fix_env, repo, "commit_and_push", repo.GitError("push 실패"))
     deps, job = fix_env["deps"], _start(fix_env, tmp_path)
     with pytest.raises(repo.GitError):
@@ -154,7 +154,7 @@ def test_recheck_on_the_same_commit_makes_no_model_calls(fix_env, tmp_path: Path
     """2-4, 2-10: 같은 커밋에 `/recheck`를 달면 규칙 읽기, 검사기 작성, 수정 판단, 수정 작성의 모델
     호출이 0이다. 저장된 결과로 같은 결과가 나오고, 열린 수정안 PR을 다시 만들지 않는다."""
     model = use_model(fix_env, FakeModel(rule_answer(print_rule())))
-    fixer = use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation(("orders/a.py", 2))]))
+    fixer = use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation("orders/a.py")]))
     deps, job = fix_env["deps"], _start(fix_env, tmp_path)
     assert update.process_update(job, deps) == "passed"
     calls, prompts = _made_calls(fix_env), len(model.prompts)
@@ -176,7 +176,7 @@ def test_closed_fix_pr_is_rejected_and_next_commit_skips_it(fix_env, tmp_path: P
     """2-6: 사람이 수정안 PR을 닫으면 거절 기록이 하나 남고, 다음 커밋에서 같은 줄은
     `skip`(이전에 거절됨)이다. 수정 작성을 다시 부르지 않는다."""
     use_model(fix_env, FakeModel(rule_answer(print_rule())))
-    fixer = use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation(("orders/a.py", 2))]))
+    fixer = use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation("orders/a.py")]))
     deps, job = fix_env["deps"], _start(fix_env, tmp_path)
     update.process_update(job, deps)
     fix_env["gh"].pulls[900]["state"] = "closed"
@@ -200,7 +200,7 @@ def test_merged_fix_is_adopted_and_not_credited_to_the_author(fix_env, tmp_path:
     """수정안 PR이 머지되면 채택 기록이 남는다. 그 머지 커밋에서 사라진 위반은 작성자가 고친 것이
     아니다 (4.10)."""
     use_model(fix_env, FakeModel(rule_answer(print_rule())))
-    use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation(("orders/a.py", 2))]))
+    use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation("orders/a.py")]))
     deps, job = fix_env["deps"], _start(fix_env, tmp_path)
     update.process_update(job, deps)
     merged = _next_commit(fix_env, tmp_path, job, {"orders/a.py": "x = 1\nlog(x)\n"})
@@ -238,7 +238,7 @@ def test_author_fixing_the_line_in_a_new_commit_is_adopted(fix_env, tmp_path: Pa
 
 def test_fix_that_fails_verification_is_a_failure_record(fix_env, tmp_path: Path) -> None:  # noqa: F811
     use_model(fix_env, FakeModel(rule_answer(print_rule())))
-    bad = _explanation(("orders/a.py", 2), ("orders/a.py", 1))
+    bad = _explanation("orders/a.py", "orders/b.py")
     use_fixer(fix_env, FakeFixer([FIX_LINE_2], [bad]))
     deps, job = fix_env["deps"], _start(fix_env, tmp_path)
     update.process_update(job, deps)
@@ -250,14 +250,14 @@ def test_fix_that_fails_verification_is_a_failure_record(fix_env, tmp_path: Path
     assert (record.kind, record.origin, record.source_id) == (
         "failed", "verification", f"attempt:1:{target.violation_id}",
     )  # fmt: skip
-    assert "설명이 바뀌지 않은 줄을 가리킴" in record.detail and "+log(x)" in record.diff
+    assert "바뀌지 않은 파일을 가리킨 항목 1건" in record.detail and "+log(x)" in record.diff
 
 
 def test_record_with_a_secret_is_not_stored(fix_env, tmp_path: Path) -> None:  # noqa: F811
     """저장 전에 비밀값 검사를 한다 (6.5). 걸린 기록은 저장하지 않는다."""
     use_model(fix_env, FakeModel(rule_answer(print_rule())))
     leak = {"orders/a.py": [("print(x)\n", f'log("{SECRET}")\n')]}
-    use_fixer(fix_env, FakeFixer([leak], [_explanation(("orders/a.py", 2))]))
+    use_fixer(fix_env, FakeFixer([leak], [_explanation("orders/a.py")]))
     deps, job = fix_env["deps"], _start(fix_env, tmp_path)
     update.process_update(job, deps)
     assert deps.store.fix_attempt(1).status == "dropped"

@@ -10,7 +10,7 @@ from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from typing import Final
 
-_HUNK: Final = re.compile(r"^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
+_HUNK: Final = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 _NEW_FILE_HEADER: Final = "+++ "
 _DELETED: Final = "+++ /dev/null"
 
@@ -116,7 +116,7 @@ def _content_lines(diff: str) -> Iterator[tuple[str, str, int, str]]:
         elif raw.startswith(_NEW_FILE_HEADER):
             current = _new_path(raw)
         elif match := _HUNK.match(raw):
-            old_count, new_start, new_count = match.groups()
+            _, old_count, new_start, new_count = match.groups()
             old_left = int(old_count) if old_count is not None else 1
             new_left = int(new_count) if new_count is not None else 1
             line_no = int(new_start)
@@ -157,7 +157,7 @@ def new_files(diff: str) -> frozenset[str]:
             if is_new and path is not None:
                 result.add(path)
         elif match := _HUNK.match(raw):
-            old_count, _, new_count = match.groups()
+            _, old_count, _, new_count = match.groups()
             old_left = int(old_count) if old_count is not None else 1
             new_left = int(new_count) if new_count is not None else 1
     return frozenset(result)
@@ -212,7 +212,7 @@ def hunk_around(diff: str, file: str, line: int, radius: int) -> str:
         elif raw.startswith(_NEW_FILE_HEADER):
             current = _new_path(raw)
         elif match := _HUNK.match(raw):
-            old_count, new_start, new_count = match.groups()
+            _, old_count, new_start, new_count = match.groups()
             old_left = int(old_count) if old_count is not None else 1
             new_left = int(new_count) if new_count is not None else 1
             line_no = int(new_start)
@@ -222,30 +222,41 @@ def hunk_around(diff: str, file: str, line: int, radius: int) -> str:
 
 @dataclass(frozen=True)
 class ChangeBlock:
-    """연속으로 바뀐 줄 한 덩어리 (`-U0`의 hunk 하나와 같다). lines는 이 덩어리를 가리킨다고 보는
-    head 쪽 줄 번호다: 더한 줄, 지우기만 했으면 지운 자리의 앞뒤 줄."""
+    """연속으로 바뀐 줄 한 덩어리 (`-U0`의 hunk 하나와 같다).
+
+    lines는 이 덩어리를 가리킨다고 보는 diff 뒤쪽의 줄 번호다: 더한 줄, 지우기만 했으면 지운 자리의
+    앞뒤 줄. old_lines는 diff 앞쪽에서 지우거나 바꾼 줄 번호이고, 더하기만 했으면 비어 있다. 수정
+    diff(PR head → 고친 파일)에서는 old_lines가 PR head의 줄 번호라 위반의 줄과 맞춰 볼 수 있다.
+    """
 
     file: str
     lines: frozenset[int]
+    old_lines: frozenset[int]
+
+    @property
+    def review_line(self) -> int:
+        """이 덩어리에 줄 리뷰 코멘트를 다는 줄. GitHub이 받는 diff 뒤쪽의 줄이다."""
+        return min(self.lines)
 
 
 def change_blocks(diff: str) -> tuple[ChangeBlock, ...]:
     """diff의 바뀐 덩어리들. 문맥 줄이 있는 diff도 문맥 줄에서 덩어리를 나눈다. 지운 파일은 뺀다.
 
-    수정의 설명(DESIGN.md 7.5)이 바뀐 줄을 가리키는지 확인하는 데 쓴다.
+    수정의 설명(DESIGN.md 7.5)에 줄을 채우고 확인하는 데 쓴다.
     """
     blocks: list[ChangeBlock] = []
     current: str | None = None
     old_left = new_left = 0
-    line_no = 0
+    line_no = old_no = 0
     added: set[int] | None = None  # 지금 덩어리에서 더한 줄. 덩어리 밖이면 None
+    removed: set[int] = set()
 
     def close() -> None:
-        nonlocal added
+        nonlocal added, removed
         if added is not None and current is not None:
             lines = added or {n for n in (line_no - 1, line_no) if n >= 1}
-            blocks.append(ChangeBlock(current, frozenset(lines)))
-        added = None
+            blocks.append(ChangeBlock(current, frozenset(lines), frozenset(removed)))
+        added, removed = None, set()
 
     for raw in diff.splitlines():
         if old_left > 0 or new_left > 0:
@@ -257,10 +268,13 @@ def change_blocks(diff: str) -> tuple[ChangeBlock, ...]:
                 new_left -= 1
             elif tag == "-":
                 added = set() if added is None else added
+                removed.add(old_no)
+                old_no += 1
                 old_left -= 1
             elif tag != "\\":
                 close()
                 line_no += 1
+                old_no += 1
                 old_left -= 1
                 new_left -= 1
             if old_left <= 0 and new_left <= 0:
@@ -271,9 +285,10 @@ def change_blocks(diff: str) -> tuple[ChangeBlock, ...]:
         elif raw.startswith(_NEW_FILE_HEADER):
             current = _new_path(raw)
         elif match := _HUNK.match(raw):
-            old_count, new_start, new_count = match.groups()
+            old_start, old_count, new_start, new_count = match.groups()
             old_left = int(old_count) if old_count is not None else 1
             new_left = int(new_count) if new_count is not None else 1
+            old_no = int(old_start)
             # 지우기만 한 hunk의 시작 줄은 지운 자리의 앞줄이다
             line_no = int(new_start) + (1 if new_left == 0 else 0)
     return tuple(blocks)
@@ -313,7 +328,7 @@ def hunk_removing(diff: str, file: str, line_text: str, max_lines: int) -> str:
         elif raw.startswith(_NEW_FILE_HEADER):
             current = _new_path(raw)
         elif match := _HUNK.match(raw):
-            old_count, _, new_count = match.groups()
+            _, old_count, _, new_count = match.groups()
             old_left = int(old_count) if old_count is not None else 1
             new_left = int(new_count) if new_count is not None else 1
             hunk, hit = [raw], False

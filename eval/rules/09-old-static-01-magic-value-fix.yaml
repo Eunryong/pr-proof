@@ -50,8 +50,7 @@ fix:  # 가짜 수정 모델: 회차마다 edits의 다음 편집을 모델 폴�
   answer:
     summary: 비교의 기준값 두 개를 같은 파일에 이미 있는 상수로 되돌림
     changes:
-      - {file: orders/services/pricing.py, line: 13, rule: 0, why: 비교의 기준값을 상수로 쓴다}
-      - {file: orders/services/pricing.py, line: 21, rule: 0, why: 같은 값의 상수가 이미 있다}
+      - {file: orders/services/pricing.py, rule: 0, why: 비교의 기준값을 같은 값의 기존 상수로 쓴다}
 expect:
   violations: ["orders/services/pricing.py:13", "orders/services/pricing.py:21"]
   contains:
