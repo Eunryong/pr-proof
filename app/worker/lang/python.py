@@ -3,11 +3,10 @@
 언어마다 다른 것 중 Python의 것을 여기에 모은다: 의존성 설치와 캐시(.venv), 테스트 실행과 결과
 읽기(pytest, report.json), 커버리지 읽기(coverage.xml), 도구(ruff, ruff-format).
 3단계에서는 흩어져 있던 코드를 옮기기만 했다. 두 번째 언어를 붙일 때 그 차이를 보고 인터페이스를
-정한다. 판단 규칙(coverage.xml과 문장 범위 읽기, 테스트 파일의 정의, ruff 설정과 버전 읽기, 도구
-목록)은 외부 호출이 없는 `_pure` 모듈(`app/worker/coverage_pure.py`,
-`app/worker/fix/scope_pure.py`의 `is_test_file`, `app/worker/tools_pure.py`)에 남는다. 그 규칙을
-쓰는 판정(허용 범위, 도구 선택)도 `_pure` 모듈이고, `_pure` 모듈은 실행 코드인 이 모듈을 import하지
-않기 때문이다.
+정한다. coverage.xml과 문장 범위 읽기, 테스트 파일의 정의, ruff 설정과 버전 읽기, 도구 목록은
+외부 호출이 없는 순수 모듈(`app/worker/coverage_pure.py`, `app/worker/fix/scope_pure.py`의
+`is_test_file`, `app/worker/tools_pure.py`)에 남는다. 그것을 쓰는 판정(허용 범위, 도구 선택)도 순수
+모듈이고, 순수 모듈은 실행 코드인 이 모듈을 import하지 않기 때문이다.
 
 .venv (4.5, 8.1): 의존성만 설치하고 대상 리포 자체는 설치하지 않는다. 설치는 네트워크가 열린
 별도 컨테이너에서 wheel만 받고(`--only-binary :all:`, 소스 배포본은 PR이 고를 수 있는 빌드 코드를

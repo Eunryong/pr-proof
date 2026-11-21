@@ -248,6 +248,6 @@ def test_routed_rule_becomes_judged_with_its_route_and_path_rules_stay_unchecked
                      scope=(), check=CheckMethod("path"), fix="none")  # fmt: skip
     left = doc_rules._outcome(Unchecked(path_rule, "no_checker", "3회 실패"), models, None)
     assert left == RuleUnchecked(path_rule, "no_checker", "3회 실패")
-    # 수정 뒤 재검사(4.8의 5번)는 모델 판단 규칙을 도구·검사기로 다시 돌리지 않는다
+    # 수정 뒤 재검사(4.8의 5번)는 모델 판단으로 가는 규칙을 도구·검사기로 다시 돌리지 않는다
     found = Found((judged,), (), 0, CallUsage(0, 10, 0, (), 0, 0))
     assert doc_rules.saved_checks(found, store=None) == [ToJudge(rule, "part", "뜻을 읽어야 한다")]
