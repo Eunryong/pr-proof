@@ -12,20 +12,11 @@ from typing import Final
 
 import pytest
 
-from app.models import model_fix as model_fix_rules
-from app.models.repo_config import FixSettings, RagSettings, RepoConfig
-from app.worker import main, memory
+from worker import main, memory
+from worker.fix import model_fix_pure as model_fix_rules
+from worker.repo_config_pure import FixSettings, RagSettings, RepoConfig
 
-from .rag_helpers import FAKE_SPEC, FakeEncoder, fix_outcomes, record
-from .test_doc_rules_flow import (  # noqa: F401
-    FakeModel,
-    doc_env,
-    print_rule,
-    rule_answer,
-    use_config,
-    use_model,
-)
-from .test_model_fix_flow import (  # noqa: F401
+from .fix.test_model_fix_flow import (  # noqa: F401
     FIX_LINE_2,
     RID,
     FakeFixer,
@@ -36,6 +27,15 @@ from .test_model_fix_flow import (  # noqa: F401
     fix_env,
     run,
     use_fixer,
+)
+from .rag_helpers import FAKE_SPEC, FakeEncoder, fix_outcomes, record
+from .rules.test_doc_rules_flow import (  # noqa: F401
+    FakeModel,
+    doc_env,
+    print_rule,
+    rule_answer,
+    use_config,
+    use_model,
 )
 
 ON: Final = RepoConfig(rag=RagSettings(enabled="on", min_similarity=0.9, max_records=3))

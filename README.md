@@ -61,7 +61,7 @@ scripts/start.sh                 # api(웹훅 + 동기화 루프)와 worker. 어
 
 `scripts/start.sh`는 이 체크아웃의 `.venv/bin`을 PATH 맨 앞에 두고 gh·claude·docker를 `~/.local/bin`, `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`, `/bin`에서 찾아 `honcho start`를 실행한다. venv나 도구가 없으면 무엇이 없는지 적고 끝난다. 서버에는 `HOME`, `USER`, `TMPDIR`, `LANG`, `PIPELINE_CONFIG_DIR`과 정한 PATH만 넘기고, 비밀값은 읽지 않는다. venv를 켠 셸이면 `honcho start`도 같다.
 
-워커는 시작할 때 DB 스키마를 맞추고(배포가 더한 테이블과 열), gh·claude 로그인, Docker, Redis를 확인하고(preflight) 하나라도 안 되면 macOS 알림을 띄우고 멈춘다. 스키마를 맞추지 못하면 로그만 남기고 알림 없이 멈춘다. 알림이 이 Mac에 뜨는지는 `PR_PROOF_REAL_NOTIFY=1 pytest tests/notify/test_macos_real.py`로 한 번 볼 수 있다. 샌드박스 이미지는 처음 빌드하고, 언어 런타임과 도구(Python, ruff, ast-grep)는 규칙이 쓸 때 고정한 버전과 해시로 받아 `~/.cache/pipeline/tools`에 둔다.
+워커는 시작할 때 DB 스키마를 맞추고(배포가 더한 테이블과 열), gh·claude 로그인, Docker, Redis를 확인하고(preflight) 하나라도 안 되면 macOS 알림을 띄우고 멈춘다. 스키마를 맞추지 못하면 로그만 남기고 알림 없이 멈춘다. 알림이 이 Mac에 뜨는지는 `PR_PROOF_REAL_NOTIFY=1 pytest tests/shared/test_notify_real.py`로 한 번 볼 수 있다. 샌드박스 이미지는 처음 빌드하고, 언어 런타임과 도구(Python, ruff, ast-grep)는 규칙이 쓸 때 고정한 버전과 해시로 받아 `~/.cache/pipeline/tools`에 둔다.
 
 ### launchd로 띄워 두기 (macOS)
 
@@ -116,11 +116,11 @@ access:
 수동 명령:
 
 ```
-python -m app.cli sync                       # 동기화를 한 번 돌린다
-python -m app.cli reindex                    # 과거 기록 검색의 벡터 저장소를 다시 만든다 ([rag] 필요)
-python -m app.cli eval --baseline            # 평가 세트 전부를 돌려 기준선으로 남긴다
-python -m app.cli eval                       # 다시 돌려 기준선과 비교한다 (도구를 끈 평가 포함)
-python -m app.cli eval --real-model          # 케이스의 가짜 모델 대신 claude를 부른다 (비용이 든다)
+python -m api.cli sync                       # 동기화를 한 번 돌린다
+python -m worker.cli reindex                 # 과거 기록 검색의 벡터 저장소를 다시 만든다 ([rag] 필요)
+python -m worker.cli eval --baseline         # 평가 세트 전부를 돌려 기준선으로 남긴다
+python -m worker.cli eval                    # 다시 돌려 기준선과 비교한다 (도구를 끈 평가 포함)
+python -m worker.cli eval --real-model       # 케이스의 가짜 모델 대신 claude를 부른다 (비용이 든다)
 ```
 
 평가 결과는 SQLite의 `eval_runs`에 남는다. 프롬프트나 모델을 바꾼 뒤 `eval`을 돌리면 새로 실패한 케이스, 도구를 끈 평가의 재현율·정밀도 변화, 바뀐 프롬프트 판과 모델이 함께 나온다. 평가 케이스와 형식은 [eval/README.md](eval/README.md)에 있다.

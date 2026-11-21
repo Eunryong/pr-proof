@@ -7,11 +7,11 @@ from pathlib import Path
 
 import pytest
 
-from app.sandbox import container, docker_cli
-from app.sandbox.docker_cli import Image, SandboxError
-from app.worker.lang import python
-from app.worker.lang.python import DependencyInstallError
 from tests.sandbox_names import TEST_NAMES
+from worker.lang import python
+from worker.lang.python import DependencyInstallError
+from worker.sandbox import container, docker_cli
+from worker.sandbox.docker_cli import Image, SandboxError
 
 pytestmark = pytest.mark.docker
 

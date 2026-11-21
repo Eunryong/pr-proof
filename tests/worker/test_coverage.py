@@ -6,10 +6,10 @@ from typing import Final
 
 import pytest
 
-from app.models.violation import Violation
-from app.sandbox.safe_read import read_regular_file
-from app.worker.coverage import DiffCoverage, diff_coverage
-from app.worker.lang.python import annotate_coverage, read_coverage, read_sources
+from worker.coverage import DiffCoverage, diff_coverage
+from worker.lang.python import annotate_coverage, read_coverage, read_sources
+from worker.sandbox.safe_read import read_regular_file
+from worker.violation_pure import Violation
 
 COVERAGE_XML: Final = b"""<?xml version="1.0" ?>
 <coverage version="7.6">

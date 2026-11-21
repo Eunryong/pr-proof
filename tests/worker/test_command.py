@@ -4,10 +4,10 @@ import json
 
 import pytest
 
-from app.models.command import parse_command
-from app.models.job import PRJob
-from app.worker import command, retry
-from app.worker.github import GitHubError
+from shared.job_pure import PRJob
+from worker import command, retry
+from worker.command_pure import parse_command
+from worker.github import GitHubError
 
 from .helpers import PASSED, bodies, use_runner
 from .test_github import is_reply
@@ -44,7 +44,7 @@ def test_parse_command(text: str, name: str, arg: str) -> None:
 
 
 def test_recheck_runs_current_head(env) -> None:
-    from app.worker import main
+    from worker import main
 
     use_runner(env, lambda *a, **k: PASSED)
     assert main.handle(_command("/recheck"), env["deps"]) == "recheck:passed"
@@ -53,7 +53,7 @@ def test_recheck_runs_current_head(env) -> None:
 
 
 def test_same_comment_is_handled_once(env) -> None:
-    from app.worker import main
+    from worker import main
 
     use_runner(env, lambda *a, **k: PASSED)
     main.handle(_command("/recheck"), env["deps"])
@@ -63,7 +63,7 @@ def test_same_comment_is_handled_once(env) -> None:
 
 
 def test_recheck_on_closed_pr_does_nothing(env) -> None:
-    from app.worker import main
+    from worker import main
 
     env["gh"].state = "closed"
     use_runner(env, lambda *a, **k: pytest.fail("닫힌 PR은 검사하지 않는다"))
@@ -73,7 +73,7 @@ def test_recheck_on_closed_pr_does_nothing(env) -> None:
 @pytest.mark.parametrize("text", ["/cc @someone", "/mutate", "/generate-tests"])
 def test_unknown_command_gets_no_reply(env, text: str) -> None:
     """확장 명령(v1 F13)은 범위에서 뺐다. 다른 모르는 명령처럼 답하지 않고 GitHub도 보지 않는다."""
-    from app.worker import main
+    from worker import main
 
     assert main.handle(_command(text), env["deps"]) == "unknown_command"
     assert env["gh"].calls == []
@@ -82,8 +82,8 @@ def test_unknown_command_gets_no_reply(env, text: str) -> None:
 
 @pytest.mark.parametrize("final", [False, True])
 def test_github_failure_retries_and_releases_on_last(env, final: bool) -> None:
-    from app.models import state_keys
-    from app.worker import main
+    from shared import state_keys_pure as state_keys
+    from worker import main
 
     env["gh"].head_error = "gh: 502"
     env["monkeypatch"].setattr(retry, "attempt", lambda: (4 if final else 1, final))

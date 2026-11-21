@@ -19,7 +19,7 @@ if launchctl print "$domain/$label" >/dev/null 2>&1; then
   echo "install-launchd.sh: $label 이 이미 등록되어 있다. scripts/uninstall-launchd.sh 로 먼저 지운다" >&2
   exit 1
 fi
-if pgrep -f 'app\.worker\.main|app\.api:app' >/dev/null; then
+if pgrep -f 'worker\.main|api\.main:app' >/dev/null; then
   echo "install-launchd.sh: launchd 밖에서 pr-proof 서버가 돌고 있다. 같은 큐에 워커가 둘이 되지 않게 먼저 멈춘다" >&2
   exit 1
 fi

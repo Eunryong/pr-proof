@@ -7,16 +7,17 @@ import pytest
 from rq.timeouts import JobTimeoutException
 from sqlmodel import Session, select
 
-from app import config
-from app.models import state_keys
-from app.models.db import Run
-from app.models.doc_rules import NoRuleDocs
-from app.models.job import PRJob
-from app.models.ops_alert import TEXT
-from app.sandbox.docker_cli import SandboxError
-from app.worker import doc_rules, main, preflight, retry, update
-from app.worker.github import GitHubError
-from app.worker.lang.python import DependencyInstallError
+from shared import config
+from shared import state_keys_pure as state_keys
+from shared.db_pure import Run
+from shared.job_pure import PRJob
+from shared.ops_alert_pure import TEXT
+from worker import main, preflight, retry, update
+from worker.doc_rules_pure import NoRuleDocs
+from worker.github import GitHubError
+from worker.lang.python import DependencyInstallError
+from worker.rules import doc_rules
+from worker.sandbox.docker_cli import SandboxError
 
 from .helpers import BASE, HEAD, PASSED, bodies, use_runner
 

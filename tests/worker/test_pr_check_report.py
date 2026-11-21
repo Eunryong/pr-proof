@@ -2,10 +2,10 @@
 
 from typing import Final
 
-from app.models.doc_rules import CallUsage, Found, RuleUnchecked
-from app.models.pr_check import PrChecks, PrPattern, PrRuleResult, PrUsage, PrViolation
-from app.models.rule import CheckMethod, Rule, RuleSource
-from app.worker import doc_rules_report, pr_check_report
+from worker import doc_rules_report, pr_check_report
+from worker.doc_rules_pure import CallUsage, Found, RuleUnchecked
+from worker.rule_pure import CheckMethod, Rule, RuleSource
+from worker.rules.pr_check_pure import PrChecks, PrPattern, PrRuleResult, PrUsage, PrViolation
 
 SHA: Final = "a" * 40
 

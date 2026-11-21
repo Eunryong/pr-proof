@@ -18,15 +18,13 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Final, Literal
 
-from app.models import (
-    checker_authoring,
-    fix_decision,
-    judge,
-    pr_check,
-    rule_reading,
-    tool_choice,
-)
-from app.worker.ai.claude_cli import AIErrorKind, ClaudeResult, StructuredResult
+from worker import checker_authoring_pure as checker_authoring
+from worker import rule_reading_pure as rule_reading
+from worker.ai.claude_cli import AIErrorKind, ClaudeResult, StructuredResult
+from worker.fix import fix_decision_pure as fix_decision
+from worker.rules import judge_pure as judge
+from worker.rules import pr_check_pure as pr_check
+from worker.rules import tool_choice_pure as tool_choice
 
 Kind = Literal["call", "hit", "fix"]
 

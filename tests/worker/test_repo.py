@@ -6,8 +6,8 @@ from typing import Final
 
 import pytest
 
-from app.worker import repo
-from app.worker.repo import GitError
+from worker import repo
+from worker.repo import GitError
 
 
 def _git(cwd: Path, *args: str) -> str:
@@ -118,7 +118,7 @@ def test_base_ahead_counts_only_pr_lines(tmp_path: Path, main_change: dict[str, 
     base의 지금 커밋과 바로 비교하면 main에서 바뀐 줄(other.py, app.py 5번째 줄)이
     PR의 변경으로 잡혀, 그 줄의 위반까지 PR 작성자의 것으로 보이고 자동 수정 대상이 된다.
     """
-    from app.models.diff import added_lines
+    from worker.diff_pure import added_lines
 
     remote = _advanced_remote(tmp_path, main_change)
     data = tmp_path / "data"

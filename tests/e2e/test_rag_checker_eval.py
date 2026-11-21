@@ -25,16 +25,17 @@ from typing import Final
 import fakeredis
 import pytest
 
-from app.models.checker_authoring import checker_key
-from app.models.doc_rules import Found, RuleChecked, RulesRead
-from app.models.rag import E5_SMALL, EMBED_MODELS
-from app.models.records import NewRecord
-from app.models.repo_config import ModelSettings, RagSettings, RulesSettings
-from app.worker import checkers, doc_rules, memory
-from app.worker.ai import claude_cli
-from app.worker.budget import CallBudget
-from app.worker.state import Store
+from shared.embed_models_pure import E5_SMALL, EMBED_MODELS
 from tests.sandbox_names import TEST_NAMES
+from worker import memory
+from worker.ai import claude_cli
+from worker.budget import CallBudget
+from worker.checker_authoring_pure import checker_key
+from worker.doc_rules_pure import Found, RuleChecked, RulesRead
+from worker.records_pure import NewRecord
+from worker.repo_config_pure import ModelSettings, RagSettings, RulesSettings
+from worker.rules import checkers, doc_rules
+from worker.state import Store
 
 from ..worker.rag_helpers import FAKE_SPEC, FakeEncoder
 from .test_rag_cases import EMBED_DIR_ENV, real_embed

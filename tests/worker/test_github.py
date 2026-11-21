@@ -3,8 +3,8 @@ import re
 
 import pytest
 
-from app.models.comment import COMMENT_MARKER, REPLY_MARKER
-from app.worker.github import GitHub, GitHubError, ReviewComment
+from shared.comment_pure import COMMENT_MARKER, REPLY_MARKER
+from worker.github import GitHub, GitHubError, ReviewComment
 
 
 class FakeGh:
@@ -226,7 +226,7 @@ def test_other_patch_errors_propagate() -> None:
 
 def test_review_is_posted_once_per_patch_and_ignores_lookalikes() -> None:
     """같은 패치의 리뷰는 한 번만 단다. 다른 사람이 표시를 흉내 낸 리뷰는 우리 것이 아니다."""
-    from app.worker import proposal
+    from worker.fix import proposal
 
     gh = FakeGh()
     github = GitHub(gh)
@@ -245,7 +245,7 @@ def test_review_is_posted_once_per_patch_and_ignores_lookalikes() -> None:
 
 
 def test_review_with_a_secret_or_no_lines_is_not_posted() -> None:
-    from app.worker import proposal
+    from worker.fix import proposal
 
     gh = FakeGh()
     secret = [ReviewComment("a.py", 2, "ghp_" + "A" * 36)]
@@ -256,7 +256,7 @@ def test_review_with_a_secret_or_no_lines_is_not_posted() -> None:
 
 def test_review_blocked_by_the_secondary_rate_limit_is_skipped() -> None:
     """GitHub이 2차 한도로 막으면 리뷰만 빠지고 전달은 이어 간다 (MathLLM#6, 2026-11-21)."""
-    from app.worker import proposal
+    from worker.fix import proposal
 
     gh = FakeGh()
     gh.review_error = (
@@ -268,7 +268,7 @@ def test_review_blocked_by_the_secondary_rate_limit_is_skipped() -> None:
 
 
 def test_review_errors_other_than_422_propagate() -> None:
-    from app.worker import proposal
+    from worker.fix import proposal
 
     gh = FakeGh()
     gh.review_error = "gh api 실패: HTTP 502"

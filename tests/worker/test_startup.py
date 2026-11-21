@@ -14,11 +14,12 @@ import pytest
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.exc import OperationalError
 
-from app import api, config
-from app.controllers import sync
-from app.services.github import OpenPR
-from app.services.history import History
-from app.worker import main, preflight
+from api import main as api
+from api import sync
+from api.github import OpenPR
+from api.history import History
+from shared import config
+from worker import main, preflight
 
 HEAD: Final = "h" * 40
 NEW_HEAD: Final = "n" * 40

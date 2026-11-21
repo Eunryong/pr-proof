@@ -11,14 +11,23 @@ from typing import Final
 import pytest
 from sqlmodel import Session
 
-from app.models.db import FixAttempt
-from app.models.job import PRJob
-from app.models.records import targets_from_json
-from app.worker import command, repo, retry, update
-from app.worker.github import GitHubError
+from shared.db_pure import FixAttempt
+from shared.job_pure import PRJob
+from worker import command, repo, retry, update
+from worker.github import GitHubError
+from worker.records_pure import targets_from_json
 
+from .fix.test_model_fix_flow import (  # noqa: F401
+    FIX_LINE_2,
+    RID,
+    FakeFixer,
+    FakeModel,
+    _explanation,
+    fix_env,
+    use_fixer,
+)
 from .helpers import bodies
-from .test_doc_rules_flow import (  # noqa: F401
+from .rules.test_doc_rules_flow import (  # noqa: F401
     BASE_FILES,
     _commit,
     _git,
@@ -27,15 +36,6 @@ from .test_doc_rules_flow import (  # noqa: F401
     print_rule,
     rule_answer,
     use_model,
-)
-from .test_model_fix_flow import (  # noqa: F401
-    FIX_LINE_2,
-    RID,
-    FakeFixer,
-    FakeModel,
-    _explanation,
-    fix_env,
-    use_fixer,
 )
 
 ONE_PRINT: Final = {"orders/a.py": "x = 1\nprint(x)\n"}

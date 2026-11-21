@@ -11,8 +11,8 @@ from typing import Final
 
 import pytest
 
-from app.worker import repo
-from app.worker.ai import claude_cli, workdir
+from worker import repo
+from worker.ai import claude_cli, workdir
 
 REAL_AI_ENV: Final = "PR_PROOF_REAL_AI"
 CANARY: Final = "CANARY-5d0c2e7b-outside-the-worktree"

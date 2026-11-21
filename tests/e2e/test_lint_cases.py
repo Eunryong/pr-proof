@@ -23,14 +23,14 @@ import fakeredis
 import pytest
 import yaml
 
-from app import config
-from app.models import state_keys
-from app.models.job import PRJob
-from app.worker import main, repo
-from app.worker.deps import Deps
-from app.worker.github import GitHub
-from app.worker.state import Store
+from shared import config
+from shared import state_keys_pure as state_keys
+from shared.job_pure import PRJob
 from tests.sandbox_names import TEST_NAMES
+from worker import main, repo
+from worker.deps import Deps
+from worker.github import GitHub
+from worker.state import Store
 
 from ..worker.test_github import FakeGh
 

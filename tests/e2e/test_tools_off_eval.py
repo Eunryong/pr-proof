@@ -2,8 +2,8 @@
 
 eval/tools_off.yaml의 표본을 같은 규칙 읽기 결과로 세 조건에서 돌린다.
 
-- 모델 판단만(`judge`): 개념 규칙 모두를 검사기 없이 모델 판단(`worker/judge.py`)으로 본다. 규칙이
-  스스로 모델 판단까지 내려가지 않아도 그 확인 방법 하나의 점수를 같은 표본에서 낸다 (4-8).
+- 모델 판단만(`judge`): 개념 규칙 모두를 검사기 없이 모델 판단(`worker/rules/judge.py`)으로 본다.
+  규칙이 스스로 모델 판단까지 내려가지 않아도 그 확인 방법 하나의 점수를 같은 표본에서 낸다 (4-8).
 - 도구 끔(`off`): 도구 목록을 내밀지 않는다. 검사기를 작성하고, 끝내 안 된 규칙은 운영과 같이 모델
   판단으로 내려간다(`doc_rules.author` → `find` → `judge`).
 - 도구 켬(`on`): base 설정의 ruff를 넘긴다. 3단계 이후 운영 그대로다(도구 선택 → 검사기 → 모델
@@ -41,21 +41,23 @@ import fakeredis
 import pytest
 import yaml
 
-from app.models import judge as judge_model
-from app.models import rule_reading, tool_choice
-from app.models.checker import TOOL_KINDS
-from app.models.diff import ChangedLines, added_lines
-from app.models.doc_rules import Found, RuleChecked, RuleJudged, RuleOutcome, RulesRead
-from app.models.repo_config import CallSettings, ModelSettings, RulesSettings
-from app.models.rule import Rule, in_scope
-from app.sandbox import checker_runner
-from app.worker import base_config, checkers, doc_rules, repo
-from app.worker import judge as model_judge
-from app.worker.ai import claude_cli
-from app.worker.ai.claude_cli import StructuredResult
-from app.worker.budget import CallBudget
-from app.worker.state import Store
 from tests.sandbox_names import TEST_NAMES
+from worker import base_config, repo
+from worker import rule_reading_pure as rule_reading
+from worker.ai import claude_cli
+from worker.ai.claude_cli import StructuredResult
+from worker.budget import CallBudget
+from worker.checker_pure import TOOL_KINDS
+from worker.diff_pure import ChangedLines, added_lines
+from worker.doc_rules_pure import Found, RuleChecked, RuleJudged, RuleOutcome, RulesRead
+from worker.repo_config_pure import CallSettings, ModelSettings, RulesSettings
+from worker.rule_pure import Rule, in_scope
+from worker.rules import checkers, doc_rules
+from worker.rules import judge as model_judge
+from worker.rules import judge_pure as judge_model
+from worker.rules import tool_choice_pure as tool_choice
+from worker.sandbox import checker_runner
+from worker.state import Store
 
 from .test_lint_cases import _apply as apply_lint_edits
 from .test_lint_cases import _git
