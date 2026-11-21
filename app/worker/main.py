@@ -10,12 +10,14 @@ from collections.abc import Callable
 
 from redis import Redis
 from rq import Queue, SimpleWorker
+from sqlalchemy.exc import SQLAlchemyError
 
 from app import config
 from app.models import state_keys
 from app.models.job import PRJob
 from app.worker import command, preflight, retry, update
 from app.worker.deps import Deps
+from app.worker.state import open_engine
 
 log = logging.getLogger(__name__)
 
@@ -47,6 +49,12 @@ def handle(
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     settings = config.load_config()
+    # 웹 쪽 동기화는 읽기만 한다. 배포가 더한 테이블과 열을 작업이 오기 전에 만들어 둔다
+    try:
+        open_engine(settings.db_path).dispose()
+    except (OSError, SQLAlchemyError, RuntimeError):
+        log.exception("DB 스키마를 맞추지 못해 워커를 시작하지 않는다: %s", settings.db_path)
+        return 1
     redis = Redis.from_url(settings.redis_url)
     checks = preflight.run_checks(redis)
     problems = preflight.failures(checks)

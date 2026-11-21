@@ -676,3 +676,22 @@ T7, T8, T18, T21, T23, T24, T25다. T21의 알림과 T25의 기반 이미지·�
 
 **배운 점.** "같은 오류는 30분에 한 번"의 표시를 어디에 두느냐는 무엇이 꺼질 수 있느냐로 정해진다. 알리려는 대상(Redis, 프로세스)에 표시를 두면 그 오류를 셀 수 없다.
 
+## 2026-11-20 배포 직후 동기화가 옛 DB를 읽다 실패함 · 재시작으로 끊긴 작업 · 시작 스크립트와 launchd (`fix/schema-upgrade-at-startup`)
+
+**상황.** 2–6단계를 머지해 배포한 뒤 api의 동기화 루프가 `동기화 실패`와 `sqlite3.OperationalError: no such column: run.author_association`을 주기마다 남겼다. 운영자 기계에서는 `open_engine`을 손으로 한 번 불러 넘겼다. 같은 재시작에서 venv를 켜지 않은 셸로 `honcho start`를 불러 `python`·`uvicorn`을 찾지 못해 서버가 25초쯤 내려갔다. 11-18에는 재시작으로 끊긴 run 24(Eunryong/MathLLM#1)가 16분 동안 다시 등록되지 않았다고 저장소 주인이 알렸다.
+
+**원인.** 웹 쪽 `services/history.py`는 읽기만 하고 `Run`의 모든 열을 고른다. 새 테이블과 NULL 허용 열은 `worker/state.py`의 `open_engine`(`create_all`과 `add_missing_columns`)이 만드는데, 워커는 이것을 첫 작업의 `Store`에서야 불렀다. 그래서 열을 더한 배포 뒤에는 웹훅이 작업을 가져올 때까지 동기화가 매번 실패했다. 동기화는 놓친 웹훅을 줍는 장치라, 꼭 필요할 때 멈춰 있었다. 재현은 `tests/worker/test_startup.py`의 `test_sync_reads_the_old_db_after_the_worker_has_started`(고치기 전 커밋에서 운영 로그와 같은 오류로 실패).
+
+**해결.** 워커 `main()`이 설정을 읽은 직후, preflight 전에 `open_engine`을 한 번 부른다. preflight는 gh·claude·docker를 하위 프로세스로 부르므로 그 앞에 두면 api의 첫 동기화가 옛 DB를 읽는 틈이 줄어든다. 맞추지 못하면(쓸 수 없는 경로, 더할 수 없는 NULL 불가 열) 로그 한 줄을 남기고 1로 끝난다. honcho는 api와 워커를 같이 띄우므로 api가 먼저 읽을 수 있다. 그 주기는 실패로 남고 루프는 살아서 다음 주기에 같은 `History`로 읽는다(`test_sync_started_before_the_worker_recovers_on_the_next_cycle`). 웹 쪽이 스키마를 쓰게 하지는 않았다. `History.runs_for`가 오류를 빈 목록으로 삼키게 하지도 않았다. 빈 목록은 "기록 없음"이라 열린 PR을 모두 다시 넣는다.
+
+**재시작으로 끊긴 작업.** honcho는 멈출 때 SIGTERM 뒤 5초에 SIGKILL을 보내므로 도는 작업이 끊긴다. 남는 것은 `running`인 run(생존 확인은 샌드박스 실행 중에만 갱신되어 그 전에 끊기면 started_at 그대로), 작업 키(6시간), 최신 head 키, RQ started 목록의 작업이다. `tests/worker/test_restart.py`가 이 상태를 만들어 본 결과다.
+- 생존 확인 20분 전의 동기화는 넣지 않고, 20분이 된 첫 동기화가 작업 키를 지우고 넣으며, 워커가 그 작업을 done까지 돌린다. 동기화 쪽 결함은 없었다.
+- RQ도 job_timeout+60초(31분) 뒤 정비 때 같은 작업을 재시도로 다시 넣어(출처 `webhook`) 같은 head를 한 번 더 검사한다(BACKLOG).
+- 손으로 `cancelled`로 바꾼 run은 동기화가 바로 넣으려 하지만, 죽은 워커의 작업 키가 사는 동안(6시간) 중복으로 보고 넣지 않는다. 작업 키를 지우는 것은 `running`이 20분 끊긴 경로뿐이다.
+- run 24는 started 10:56:08에 생존 확인이 그대로였으니, `running`으로 두었다면 11:16:08 뒤 첫 동기화(늦어도 11:21)에 다시 들어갈 차례였다. 16분은 그 전이다. 기록에는 `cancelled`와 마이크로초가 0인 finished_at(10:58:00.000000)이 남아 있다. 워커의 `finish_run`은 마이크로초까지 적으므로 손으로 바꾼 값으로 보인다. 언제 바꿨는지, 그때 작업 키를 지웠는지, 10:58–12:32 사이 워커가 돌았는지, run 25(12:32, 출처 webhook)가 새 웹훅인지 RQ 재시도인지는 기록만으로 알 수 없다.
+
+**시작 스크립트와 launchd.** `scripts/start.sh`가 체크아웃 위치에서 루트를 찾고 그 `.venv/bin`과 gh·claude·docker가 있는 곳을 PATH로 정해 `honcho start`를 실행한다. 저장소 주인의 결정(DESIGN 11.1)으로 사용자 LaunchAgent 틀(`ops/launchd/com.pr-proof.server.plist`)과 등록·제거 스크립트를 더했다. 이것이 유일한 복구 장치다.
+
+**확인.** `pytest tests/worker/test_startup.py tests/worker/test_restart.py tests/test_scripts.py`. 스크립트 테스트는 임시 HOME과 가짜 launchctl·pgrep으로 돌고 이 기계의 launchd와 `~/Library`에는 손대지 않는다.
+
+**배운 점.** 읽기만 하는 쪽이 있는 공유 저장소에서는, 스키마를 쓰는 쪽이 "처음 쓸 때"가 아니라 "뜰 때" 맞춰야 한다. 읽는 쪽이 쓰는 쪽보다 먼저 돌 수 있는 순서도 테스트로 남긴다.
