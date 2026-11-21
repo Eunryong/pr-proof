@@ -441,8 +441,7 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
         progress(job, "수정 판단")
         rt, run = doc_runtime(state), state["test_run"]
         decided = decide.decide(
-            found, SafetyNet(run.status, flaky=bool(run.flaky)), ctx.changes_diff,
-            require_covered=ctx.base.repo.fix.require_covered, store=rt.store,
+            found, SafetyNet(run.status, flaky=bool(run.flaky)), ctx.changes_diff, store=rt.store,
             budget=rt.budget, model=rt.models.decide, ask=rt.ask, retriever=rt.retriever,
             context_of=records.context_of(ctx.worktree),
         )  # fmt: skip

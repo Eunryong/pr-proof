@@ -124,7 +124,9 @@ class FakeModel:
     ) -> None:  # fmt: skip
         self.rules, self.checker = rules, checker or checker_answer()
         self.tool = tool or _ok(NO_TOOL)
-        self.decide = decide or (lambda ids: [{"id": i, "action": "fix", "why": "고칠 수 있다"}
+        # 기본은 고치지 않는 답이다. 수정 작성은 이 파일에서 보지 않는다 (test_model_fix_flow.py)
+        self.decide = decide or (lambda ids: [{"id": i, "action": "skip",
+                                               "reason": "not_a_violation", "why": "케이스"}
                                               for i in ids])  # fmt: skip
         self.prompts: list[tuple[str, str]] = []
 
@@ -244,7 +246,7 @@ def test_finds_violation_on_changed_line_inside_scope(doc_env, tmp_path: Path) -
     assert [(v.file, v.line) for v in found.violations] == [("orders/a.py", 2)]
     assert doc_env["sandbox"].files == [["orders/a.py"]]  # 범위 밖 scripts/는 돌리지 않는다
     # 규칙 읽기, 도구 선택(맞는 도구 없음), 검사기 작성 (4.4의 순서)
-    assert [kind for kind, _ in model.prompts] == ["rules", "tool", "checker"]
+    assert [kind for kind, _ in model.prompts] == ["rules", "tool", "checker", "decide"]
     assert found.usage == CallUsage(calls=3, limit=14, cache_hits=0,
                                     models=("claude-haiku-5-5",), input_tokens=3000,
                                     output_tokens=300)  # fmt: skip
@@ -256,7 +258,7 @@ def test_second_pr_reuses_rules_and_checker_without_calls(doc_env, tmp_path: Pat
     check(doc_env, tmp_path, BASE_FILES, PR_FILES)
     state = check(doc_env, tmp_path, BASE_FILES, PR_FILES, pr_number=2)
     found = state["doc_rules"]
-    assert len(model.prompts) == 3  # 첫 PR의 규칙 읽기, 도구 선택, 검사기 작성뿐
+    assert len(model.prompts) == 4  # 첫 PR의 규칙 읽기, 도구 선택, 검사기 작성, 수정 판단뿐
     assert found.usage.calls == 0 and found.usage.cache_hits == 3
     assert [v.file for v in found.violations] == ["orders/a.py"]
 
@@ -419,7 +421,8 @@ def test_ruleset_cap_stops_authoring_and_next_check_continues(doc_env, tmp_path:
         "doc_rules"
     ]
     assert [o.kind for o in found.outcomes if isinstance(o, RuleUnchecked)] == ["cap"]
-    assert [kind for kind, _ in model.prompts] == ["rules", "tool", "checker", "tool", "checker"]
+    ruleset_calls = [kind for kind, _ in model.prompts if kind != "decide"]
+    assert ruleset_calls == ["rules", "tool", "checker", "tool", "checker"]
 
     # 24시간이 지나면 상한을 올리지 않아도 남은 규칙만 작성한다 (작성한 둘은 저장된 것을 쓴다)
     _age_model_calls(doc_env, hours=25)
@@ -427,7 +430,7 @@ def test_ruleset_cap_stops_authoring_and_next_check_continues(doc_env, tmp_path:
         "doc_rules"
     ]
     assert all(isinstance(o, RuleChecked) for o in found.outcomes)
-    assert [kind for kind, _ in model.prompts] == [
+    assert [kind for kind, _ in model.prompts if kind != "decide"] == [
         "rules", "tool", "checker", "tool", "checker", "tool", "checker",
     ]  # fmt: skip
     assert found.usage.calls == 2 and found.usage.cache_hits == 5
@@ -485,10 +488,10 @@ def test_changed_sentence_on_base_reauthors_only_that_rule(doc_env, tmp_path: Pa
     found = check(doc_env, tmp_path, {**BASE_FILES, "README.md": readme}, PR_FILES, pr_number=2)[
         "doc_rules"
     ]
-    assert [kind for kind, _ in model.prompts] == [
+    assert [kind for kind, _ in model.prompts if kind != "decide"] == [
         "rules", "tool", "checker", "tool", "checker", "rules", "tool", "checker",
     ]  # fmt: skip
-    (checker_prompt,) = [p for kind, p in model.prompts[5:] if kind == "checker"]
+    (checker_prompt,) = [p for kind, p in model.prompts if kind == "checker"][2:]
     assert edited in checker_prompt
     assert [o.checker.cached for o in found.outcomes] == [True, False]
 
@@ -585,10 +588,12 @@ def test_decisions_follow_tests_and_show_in_the_comment(doc_env, tmp_path: Path)
     ), calls=1, input_tokens=1000, output_tokens=100)  # fmt: skip
     assert [kind for kind, _ in model.prompts] == ["rules", "tool", "checker", "decide"]
     body = _last_comment(doc_env)
-    assert f"  - `orders/a.py:2` · skip (모델: {inline_code(why)})" in body
-    assert "  - `orders/a.py:3` · skip (모델이 답하지 않음)" in body
-    assert ("수정 판단: fix 0건, skip 2건 (모델이 고치지 않기로 함 1건, 수정 판단을 하지 못함 1건)"
-            " · 모델 호출 1회 · 저장된 판단 0건 사용 · 토큰 입력 1000, 출력 100"
+    assert f"  - `orders/a.py:2` · 모델이 고치지 않기로 함: {inline_code(why)}" in body
+    assert "  - `orders/a.py:3` · 모델이 답하지 않음" in body
+    assert "  직접 고쳐야 함 2건 (모델이 고치지 않기로 함 1건, 수정 판단을 하지 못함 1건)" in body
+    assert ("수정 판단: 고칠 대상 0건, 직접 고쳐야 함 2건 (모델이 고치지 않기로 함 1건, "
+            "수정 판단을 하지 못함 1건) · 모델 호출 1회 · 저장된 판단 0건 사용 · "
+            "토큰 입력 1000, 출력 100"
             ) in body  # fmt: skip
     # 모델이 모두 skip했으므로 모델 수정은 돌지 않는다
     assert "**모델 수정안:**" not in body and "model_fix" not in state
@@ -604,17 +609,19 @@ def test_recheck_of_the_same_commit_makes_no_decision_call(doc_env, tmp_path: Pa
     assert [kind for kind, _ in model.prompts] == ["rules", "tool", "checker", "decide"]
     assert again["fix_decisions"].decisions == first["fix_decisions"].decisions
     assert again["fix_decisions"].calls == 0 and again["fix_decisions"].cached == 2
-    assert {d.action for d in again["fix_decisions"].decisions} == {"fix"}
+    assert {d.reason for d in again["fix_decisions"].decisions} == {"not_a_violation"}
     assert "저장된 판단 2건 사용" in _last_comment(doc_env)
 
 
-def test_uncovered_violation_is_skipped_without_asking(doc_env, tmp_path: Path) -> None:
+def test_violation_on_a_line_no_test_runs_goes_to_the_decision(doc_env, tmp_path: Path) -> None:
+    """2026-11-21 (11.1): 테스트가 실행하지 않는 줄도 표가 막지 않고 모델이 정한다."""
     model = use_model(doc_env, FakeModel(rule_answer(print_rule())))
-    _covered_tests(doc_env, tmp_path, {"orders/a.py": [1]})
+    _covered_tests(doc_env, tmp_path, {"orders/a.py": [1, 2]})
     state = check(doc_env, tmp_path, BASE_FILES, TWO_PRINTS)
-    assert {d.reason for d in state["fix_decisions"].decisions} == {"not_covered"}
-    assert "decide" not in [kind for kind, _ in model.prompts]
-    assert "  - `orders/a.py:2` · skip (테스트가 지나가지 않음)" in _last_comment(doc_env)
+    assert [v.covered for v in state["doc_rules"].violations] == [True, False]
+    (prompt,) = [p for kind, p in model.prompts if kind == "decide"]
+    assert prompt.count("<<<VIOLATION id=") == 2
+    assert {d.decided_by for d in state["fix_decisions"].decisions} == {"model"}
 
 
 def test_decision_cap_is_shown_in_the_comment(doc_env, tmp_path: Path) -> None:

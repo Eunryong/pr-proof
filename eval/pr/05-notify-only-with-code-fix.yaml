@@ -5,9 +5,6 @@ description: >-
   수정안 PR까지 가지만, 수정안은 코드 위반 1건만 고치고 PR 단위 위반은 수정 판단의 자료에도 수정안
   PR 본문에도 없다. PR 단위 위반은 결과 코멘트의 따로 된 부분에만 보인다.
 scripted_only: true
-pipeline:
-  fix:
-    require_covered: false
 base:
   - file: README.md
     create: |

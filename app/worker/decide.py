@@ -62,7 +62,6 @@ def decide(
     tests: SafetyNet,
     changes_diff: bytes,
     *,
-    require_covered: bool,
     store: Store,
     budget: CallBudget,
     model: str,
@@ -78,10 +77,7 @@ def decide(
     같은 위반끼리 묶어 묻는다. context_of(위반)는 위반 줄과 앞뒤 5줄이다(질의 글, 6.6의 4번).
     """
     rules = {rule_id: o.rule for rule_id, o in outcomes_by_rule(found).items()}
-    planned = plan(
-        found.violations, {rid: r.fix for rid, r in rules.items()}, tests,
-        require_covered=require_covered,
-    )  # fmt: skip
+    planned = plan(found.violations, {rid: r.fix for rid, r in rules.items()}, tests)
     decided = {d.violation_id: d for d in planned.decided}
     budget = budget.with_targets(open_targets(planned.decided) + len(planned.for_model))
     diff = changes_diff.decode("utf-8", errors="replace")

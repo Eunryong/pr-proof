@@ -20,7 +20,6 @@ from app.worker.github import GitHubError
 from .helpers import bodies
 from .test_doc_rules_flow import (  # noqa: F401
     BASE_FILES,
-    FakeModel,
     _commit,
     _git,
     doc_env,
@@ -33,6 +32,7 @@ from .test_model_fix_flow import (  # noqa: F401
     FIX_LINE_2,
     RID,
     FakeFixer,
+    FakeModel,
     _explanation,
     fix_env,
     use_fixer,
@@ -167,7 +167,8 @@ def test_recheck_on_the_same_commit_makes_no_model_calls(fix_env, tmp_path: Path
     assert len(fixer.calls) == 1 and len(fix_env["pushes"]) == 1
     comment = bodies(fix_env["gh"])[-1]
     assert "모델 호출 0회 / 상한 14회 (규칙 읽기와 검사기 작성) · 저장된 결과 3건 사용" in comment
-    assert "수정 판단: fix 1건, skip 0건 · 모델 호출 0회 · 저장된 판단 1건 사용" in comment
+    decided = "수정 판단: 고칠 대상 1건, 직접 고쳐야 함 0건 · 모델 호출 0회 · 저장된 판단 1건 사용"
+    assert decided in comment
     assert "이 커밋의 모델 수정안 PR #900이 열려 있습니다." in comment
 
 
@@ -189,7 +190,7 @@ def test_closed_fix_pr_is_rejected_and_next_commit_skips_it(fix_env, tmp_path: P
     assert record.commit_sha == job.head_sha and "-print(x)" in record.diff
     assert "print(x)" in record.context and record.embedded_at is None
     assert len(fixer.calls) == state_before and list(fix_env["gh"].pulls) == [900]
-    assert "  - `orders/a.py:2` · skip (이전에 거절됨 (#900))" in bodies(fix_env["gh"])[-1]
+    assert "  - `orders/a.py:2` · 이전에 거절됨 (#900)" in bodies(fix_env["gh"])[-1]
 
     update.process_update(nxt, deps)  # 같은 일을 다시 확인해도 기록은 하나다
     assert len(deps.store.records("o/r", 1)) == 1

@@ -1,10 +1,11 @@
 name: old-static-01-magic-value-fix
 description: >-
   옛 static 01(매직 값)을 README 규칙 케이스로 옮긴 것 (완료 기준 2-1, 2-9). README의 "비교에 쓰는
-  기준값은 숫자를 직접 쓰지 않는다" 규칙의 검사기가 PR의 `> 50`과 `>= 50_000`을 잡는다. 수정 판단은
-  `> 50`을 fix, `>= 50_000`을 skip으로 정한다. 가짜 모델이 `> 50`을 원래 상수로 되돌린 수정안이
-  재검사와 테스트를 통과해 수정안 PR로 올라가고, skip한 줄은 코멘트에 이유와 함께 남고 수정안에는
-  들어가지 않는다.
+  기준값은 숫자를 직접 쓰지 않는다" 규칙의 검사기가 PR의 `> 50`과 `>= 50_000`을 잡는다. 둘 다 고치는
+  방법이 여럿이다(새 상수, 같은 파일에 이미 있는 상수). 2026-11-21 전에는 `>= 50_000`을 "이름을 사람이
+  확인해야 한다"로 skip했지만, 지금 수정 판단은 방법이 여럿이라는 것만으로 skip하지 않고 가장 작은
+  변경(이미 있는 상수로 되돌리기)을 고른다(4.6). 가짜 모델이 두 줄을 원래 상수로 되돌린 수정안이
+  재검사와 테스트를 통과해 수정안 PR로 올라가고, 결과는 base와 같다.
 pr:
   - file: orders/services/pricing.py
     find: "order.coupon_percent > MAX_COUPON_PERCENT"
@@ -38,26 +39,30 @@ model:
           - {code: "ok = total >= 50_000\n", violates: true, lines: [1]}
           - {code: "if n > 0:\n    pass\n", violates: false, lines: []}
           - {code: "full = percent == 100\n", violates: false, lines: []}
-  skip:  # 수정 판단이 skip으로 답할 위반 (나머지는 fix)
-    orders/services/pricing.py:21: 같은 값의 상수가 이미 있지만 이름을 사람이 확인해야 한다
 fix:  # 가짜 수정 모델: 회차마다 edits의 다음 편집을 모델 폴더에 적용하고 answer를 마지막 답으로 낸다
   edits:
     - - file: orders/services/pricing.py
         find: "order.coupon_percent > 50"
         replace: "order.coupon_percent > MAX_COUPON_PERCENT"
+      - file: orders/services/pricing.py
+        find: "discount(order) >= 50_000"
+        replace: "discount(order) >= FREE_SHIPPING_MIN"
   answer:
-    summary: 쿠폰 비율의 상한 50을 원래 있던 MAX_COUPON_PERCENT로 되돌림
+    summary: 비교의 기준값 두 개를 같은 파일에 이미 있는 상수로 되돌림
     changes:
       - {file: orders/services/pricing.py, line: 13, rule: 0, why: 비교의 기준값을 상수로 쓴다}
+      - {file: orders/services/pricing.py, line: 21, rule: 0, why: 같은 값의 상수가 이미 있다}
 expect:
   violations: ["orders/services/pricing.py:13", "orders/services/pricing.py:21"]
   contains:
-    - "· skip (모델: `같은 값의 상수가 이미 있지만 이름을 사람이 확인해야 한다`)"
+    - "수정 판단: 고칠 대상 2건, 직접 고쳐야 함 0건"
+  absent: ["직접 고쳐야 함 1건"]
   fix: ready
   fix_file: orders/services/pricing.py
-  pushed_contains: ["order.coupon_percent > MAX_COUPON_PERCENT", "discount(order) >= 50_000"]
+  same_as_base: true
+  pushed_contains: ["order.coupon_percent > MAX_COUPON_PERCENT", "discount(order) >= FREE_SHIPPING_MIN"]
   pr_contains:
-    - "  - `orders/services/pricing.py:13`"
-    - 수정 판단이 skip한 위반 1건은 이 수정안에 넣지 않았습니다
-    - "- 규칙 재검사: 대상 위반 1건 해소, 새 위반 없음"
-  pr_absent: ["orders/services/pricing.py:21"]
+    - "  - `orders/services/pricing.py:13` · "
+    - "  - `orders/services/pricing.py:21` · "
+    - "- 규칙 재검사: 대상 위반 2건 해소, 새 위반 없음"
+  pr_absent: ["파이프라인이 고치지 않은 위반"]

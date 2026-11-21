@@ -30,7 +30,7 @@ expect:
   contains:
     - "`안 쓰는 import를 남기지 않는다.` · 1건"
     - "출처: `README.md > 코드 규칙 > import` · 도구 `ruff` `F401`"
-    - "`orders/services/pricing.py:1` · fix (기계적 수정)"
+    - "`orders/services/pricing.py:1` · 고칠 대상 (기계적 수정) · 수정안 #900"
   fetched: [ruff/0.17.5]
   branch: pipeline/pr-1-fix-mechanical
   fix_file: orders/services/pricing.py

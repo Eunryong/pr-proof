@@ -45,8 +45,6 @@ def test_covered_violation_with_passing_tests_goes_to_the_model() -> None:
         (V, "model", SafetyNet("no_tests"), "no_safety_net", "안전망이 없음 (테스트가 없음)"),
         (V, "model", SafetyNet("passed", flaky=True), "no_safety_net",
          "안전망이 없음 (불안정한 테스트가 있음)"),
-        (replace(V, covered=False), "model", PASSED, "not_covered", "테스트가 지나가지 않음"),
-        (replace(V, covered=None), "model", PASSED, "coverage_unknown", "커버리지를 알 수 없음"),
     ],
 )  # fmt: skip
 def test_table_skips_with_the_reason(violation, rule_fix, tests, reason, why) -> None:
@@ -70,10 +68,15 @@ def test_mechanical_fix_does_not_need_a_safety_net(tests: SafetyNet) -> None:
     )
 
 
-def test_coverage_is_ignored_when_the_repo_does_not_require_it() -> None:
-    assert (
-        decide_by_table(replace(V, covered=False), "model", PASSED, require_covered=False) is None
-    )
+@pytest.mark.parametrize("covered", [False, None])
+def test_line_no_test_runs_still_goes_to_the_model(covered: bool | None) -> None:
+    """테스트가 실행하지 않는 줄(또는 알 수 없는 줄)도 표가 막지 않는다 (2026-11-21, 11.1)."""
+    assert decide_by_table(replace(V, covered=covered), "model", PASSED) is None
+
+
+def test_failing_tests_still_block_a_line_no_test_runs() -> None:
+    v = replace(V, covered=False)
+    assert decide_by_table(v, "model", SafetyNet("failed")).reason == "tests_failed"
 
 
 def test_plan_splits_decided_and_model_and_unknown_rule_is_notify_only() -> None:
@@ -114,13 +117,44 @@ Q: Final = Question(V, RULE, HUNK)
 
 def test_answer_becomes_model_decisions() -> None:
     answers = parse_answer({"decisions": [
-        {"id": "v1", "action": "fix", "why": "로거로 바꾸면 된다"},
-        {"id": "v2", "action": "skip", "why": "  여러 줄에\n걸친   이유  "},
+        {"id": "v1", "action": "fix", "reason": "", "why": "로거로 바꾸면 된다"},
+        {"id": "v2", "action": "skip", "reason": "needs_other_file",
+         "why": "  여러 줄에\n걸친   이유  "},
+        {"id": "v3", "action": "skip", "reason": "changes_behavior", "why": "반환값이 바뀐다"},
+        {"id": "v4", "action": "skip", "reason": "not_a_violation", "why": "상수다"},
     ]})  # fmt: skip
     assert answers == (
         FixDecision("v1", "fix", "model", method="model", why="로거로 바꾸면 된다"),
-        FixDecision("v2", "skip", "model", reason="risky", why="여러 줄에 걸친 이유"),
+        FixDecision("v2", "skip", "model", reason="needs_other_file", why="여러 줄에 걸친 이유"),
+        FixDecision("v3", "skip", "model", reason="changes_behavior", why="반환값이 바뀐다"),
+        FixDecision("v4", "skip", "model", reason="not_a_violation", why="상수다"),
     )
+
+
+@pytest.mark.parametrize("reason", ["", "several_ways", "rejected_before"])
+def test_skip_without_one_of_the_three_reasons_is_unclassified(reason: str) -> None:
+    """모델은 세 이름 밖의 이유(파이프라인의 표가 쓰는 이유 포함)를 붙일 수 없다."""
+    (d,) = parse_answer({"decisions": [{"id": "v1", "action": "skip", "reason": reason,
+                                        "why": "w"}]})  # fmt: skip
+    assert (d.action, d.reason) == ("skip", "risky")
+
+
+def test_fix_ignores_a_skip_reason() -> None:
+    (d,) = parse_answer({"decisions": [{"id": "v1", "action": "fix",
+                                        "reason": "changes_behavior", "why": "w"}]})  # fmt: skip
+    assert (d.action, d.reason, d.method) == ("fix", None, "model")
+
+
+def test_prompt_makes_fix_the_default_and_names_the_skip_reasons() -> None:
+    """수정 판단의 지시 (4.6): 기본은 fix, skip은 세 이유뿐, 방법이 여럿이면 가장 작은 변경."""
+    from app.models.fix_decision import ANSWER_SCHEMA, MODEL_SKIP_REASONS
+
+    assert "가장 작은 변경" in " ".join(SYSTEM_PROMPT.split())
+    assert "확실하지 않으면" not in SYSTEM_PROMPT
+    assert all(f"- {r}:" in SYSTEM_PROMPT for r in MODEL_SKIP_REASONS)
+    item = ANSWER_SCHEMA["properties"]["decisions"]["items"]  # type: ignore[index]
+    assert item["properties"]["reason"]["enum"] == ["", *MODEL_SKIP_REASONS]
+    assert "reason" in item["required"]
 
 
 @pytest.mark.parametrize(
