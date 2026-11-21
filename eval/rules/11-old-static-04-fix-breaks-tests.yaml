@@ -42,7 +42,7 @@ fix:  # 편집이 회차보다 적으면 마지막 것을 다시 쓴다 (이미 
   answer:
     summary: 상한을 상수로 바꿈
     changes:
-      - {file: orders/services/pricing.py, line: 13, rule: 0, why: 비교의 기준값을 상수로 쓴다}
+      - {file: orders/services/pricing.py, rule: 0, why: 비교의 기준값을 상수로 쓴다}
 expect:
   violations: ["orders/services/pricing.py:13"]
   fix: failed

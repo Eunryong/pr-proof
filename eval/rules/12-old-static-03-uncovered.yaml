@@ -49,8 +49,7 @@ fix:
   answer:
     summary: 대량 주문의 기준 10을 모듈 상수로 옮김
     changes:
-      - {file: orders/services/pricing.py, line: 30, rule: 0, why: 비교의 기준값을 둘 상수}
-      - {file: orders/services/pricing.py, line: 34, rule: 0, why: 비교의 기준값을 상수로 쓴다}
+      - {file: orders/services/pricing.py, rule: 0, why: 비교의 기준값을 모듈 상수로 두고 쓴다}
 expect:
   violations: ["orders/services/pricing.py:31"]
   contains:

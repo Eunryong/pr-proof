@@ -72,7 +72,7 @@ fix:
   answer:
     summary: 쿠폰 비율의 상한 50을 원래 있던 MAX_COUPON_PERCENT로 되돌림
     changes:
-      - {file: orders/services/pricing.py, line: 13, rule: 0, why: 비교의 기준값을 상수로 쓴다}
+      - {file: orders/services/pricing.py, rule: 0, why: 비교의 기준값을 상수로 쓴다}
 expect:
   violations: ["orders/services/pricing.py:13"]
   fix: ready

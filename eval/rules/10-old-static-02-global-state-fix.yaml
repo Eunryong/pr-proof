@@ -3,7 +3,7 @@ description: >-
   옛 static 02(모듈 수준 상태)를 README 규칙 케이스로 옮긴 것 (완료 기준 2-1). README의 "함수는 모듈
   수준 변수를 바꾸지 않는다" 규칙의 검사기가 함수 안의 `_seen_orders.append(order)`를 잡고, 가짜
   모델이 상태를 없앤 수정안(줄을 지우기만 함)이 재검사와 테스트를 통과해 수정안 PR로 올라간다. 지우기만
-  한 곳의 설명은 지운 자리의 앞뒤 줄을 가리킨다.
+  한 곳의 줄 리뷰 코멘트는 파이프라인이 지운 자리의 앞줄에 단다.
 pr:
   - file: orders/services/pricing.py
     find: "MAX_COUPON_PERCENT = 50\n"
@@ -53,8 +53,7 @@ fix:
   answer:
     summary: subtotal이 바꾸던 모듈 수준 리스트를 없앰
     changes:
-      - {file: orders/services/pricing.py, line: 6, rule: 0, why: 쓰이지 않는 모듈 수준 상태를 지움}
-      - {file: orders/services/pricing.py, line: 9, rule: 0, why: 함수가 모듈 수준 리스트를 바꾸지 않게 함}
+      - {file: orders/services/pricing.py, rule: 0, why: 함수가 바꾸던 모듈 수준 리스트를 지움}
 expect:
   violations: ["orders/services/pricing.py:10"]
   fix: ready
