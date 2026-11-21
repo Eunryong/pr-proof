@@ -254,6 +254,19 @@ def test_review_with_a_secret_or_no_lines_is_not_posted() -> None:
     assert gh.reviews == {}
 
 
+def test_review_blocked_by_the_secondary_rate_limit_is_skipped() -> None:
+    """GitHub이 2차 한도로 막으면 리뷰만 빠지고 전달은 이어 간다 (MathLLM#6, 2026-11-21)."""
+    from app.worker import proposal
+
+    gh = FakeGh()
+    gh.review_error = (
+        "gh api -X 실패: gh: You have exceeded a secondary rate limit and have been temporarily "
+        "blocked from content creation."
+    )
+    proposal.post_review(GitHub(gh), "o/r", 900, [ReviewComment("a.py", 1, "b")], "p", ())
+    assert gh.reviews.get(900, []) == []
+
+
 def test_review_errors_other_than_422_propagate() -> None:
     from app.worker import proposal
 

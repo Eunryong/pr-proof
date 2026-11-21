@@ -32,6 +32,9 @@ from app.worker.state import Store
 LEGACY_SKILLS: Final[Mapping[str, str]] = {"lint": MECHANICAL_BUNDLE}
 MAX_LISTED_TARGETS: Final = 30
 MAX_REVIEW_RULE_CHARS: Final = 300
+MAX_REVIEW_OTHER_LINES: Final = 30
+# gh가 전하는 GitHub의 2차 한도(짧은 시간에 너무 많이 만듦) 오류 글
+SECONDARY_RATE_LIMIT: Final = "secondary rate limit"
 REVIEW_BODY: Final = (
     "모델이 바꾼 줄마다 규칙과 이유를 남겼습니다. 이유는 모델이 쓴 글이니 diff와 같이 확인해 "
     "주세요."
@@ -109,12 +112,28 @@ def pipeline_secrets() -> list[str]:
 
 
 def explanation_text(explanation: Explanation | None) -> str:
-    """모델의 설명을 글 한 덩어리로. 비밀값 검사와 수정안 PR 본문의 코드 울타리에 쓴다."""
+    """모델의 설명을 글 한 덩어리로. 비밀값 검사와 수정안 PR 본문의 코드 울타리에 쓴다.
+
+    같은 (파일, 규칙, 이유)는 한 줄로 묶고 고친 줄 번호를 뒤에 적는다. 이유가 다르면 줄을 나눠
+    모델이 쓴 글이 하나도 빠지지 않게 한다(비밀값 검사가 이 글을 본다).
+    """
     if explanation is None:
         return ""
+    at: dict[tuple[str, str, str], list[int]] = {}
+    for c in explanation.changes:
+        at.setdefault((c.file, c.rule, c.why), []).append(c.line)
     lines = [explanation.summary, ""]
-    lines += [f"- {c.file}:{c.line} {c.rule}: {c.why}" for c in explanation.changes]
+    lines += [
+        f"- {file} {rule}: {why} (줄 {_line_list(sorted(set(where)))})"
+        for (file, rule, why), where in at.items()
+    ]
     return "\n".join(lines).strip()
+
+
+def _line_list(lines: Sequence[int]) -> str:
+    shown = ", ".join(map(str, lines[:MAX_REVIEW_OTHER_LINES]))
+    more = len(lines) - MAX_REVIEW_OTHER_LINES
+    return f"{shown} 외 {more}곳" if more > 0 else shown
 
 
 def fixed_lines(found: Found, ids: Sequence[str]) -> list[str]:
@@ -215,23 +234,33 @@ def model_fix_body(job: PRJob, fix: ModelFix, found: Found, skipped: int) -> str
 
 
 def review_comments(fix: ModelFix, found: Found) -> list[ReviewComment]:
-    """설명의 changes마다 그 줄에 다는 "규칙, 이유" (4.9). 모델의 글은 코드 스팬 안에만 둔다.
+    """(파일, 규칙)마다 그 규칙으로 고친 첫 줄에 다는 "규칙, 이유" (4.9). 모델의 글은 코드 스팬
+    안에만 둔다.
 
-    (file, line)은 검증(4.8의 4번)이 대상 위반의 줄을 바꾼 덩어리에서 채운 값이라 이 수정의 diff에
-    있다.
+    이유는 (파일, 규칙)에 하나라 고친 곳마다 달면 같은 글이 되풀이되고, 큰 수정안에서는 리뷰 하나가
+    GitHub의 2차 한도에 걸린다. 그래서 첫 줄에만 달고 나머지 줄은 그 코멘트에 적는다. (file, line)은
+    검증(4.8의 4번)이 대상 위반의 줄을 바꾼 덩어리에서 채운 값이라 이 수정의 diff에 있다.
     """
     if fix.explanation is None:
         return []
     texts = {rule_id: o.rule.text for rule_id, o in outcomes_by_rule(found).items()}
-    return [
-        ReviewComment(
-            c.file, c.line,
-            f"규칙 {inline_code(c.rule, 100)} "
-            f"{inline_code(texts.get(c.rule, ''), MAX_REVIEW_RULE_CHARS)}\n\n"
-            f"이유 (모델의 설명): {inline_code(c.why or '이유 없음', 300)}",
+    lines: dict[tuple[str, str], list[int]] = {}
+    why: dict[tuple[str, str], str] = {}
+    for c in fix.explanation.changes:
+        lines.setdefault((c.file, c.rule), []).append(c.line)
+        why.setdefault((c.file, c.rule), c.why)
+    comments = []
+    for (file, rule), at in lines.items():
+        first, rest = min(at), sorted(set(at) - {min(at)})
+        body = (
+            f"규칙 {inline_code(rule, 100)} "
+            f"{inline_code(texts.get(rule, ''), MAX_REVIEW_RULE_CHARS)}\n\n"
+            f"이유 (모델의 설명): {inline_code(why[(file, rule)] or '이유 없음', 300)}"
         )
-        for c in fix.explanation.changes
-    ]  # fmt: skip
+        if rest:
+            body += f"\n\n이 파일에서 같은 규칙으로 고친 다른 줄: {_line_list(rest)}"
+        comments.append(ReviewComment(file, first, body))
+    return comments
 
 
 def post_review(
@@ -240,8 +269,9 @@ def post_review(
 ) -> None:  # fmt: skip
     """줄 리뷰 코멘트를 리뷰 하나로 단다. 같은 패치의 리뷰가 이미 있으면 달지 않는다 (5.6).
 
-    전달을 다시 시도해도 두 번 달리지 않는다. GitHub이 줄을 받지 않으면(422) 수정안 PR은 그대로 두고
-    리뷰만 빠진다.
+    전달을 다시 시도해도 두 번 달리지 않는다. GitHub이 줄을 받지 않거나(422) 2차 한도로 막으면
+    수정안 PR은 그대로 두고 리뷰만 빠진다. 리뷰는 수정안 PR에 덧붙이는 것이라, 리뷰 때문에 결과
+    코멘트와 기록까지 멈추지 않게 한다.
     """
     if not comments:
         return
@@ -254,7 +284,7 @@ def post_review(
     try:
         github.create_review(repo_name, number, f"{marker}\n{REVIEW_BODY}", comments)
     except GitHubError as e:
-        if "422" not in str(e):
+        if "422" not in str(e) and SECONDARY_RATE_LIMIT not in str(e):
             raise
         log.warning("줄 리뷰 코멘트를 GitHub이 받지 않음 %s#%s: %s", repo_name, number, e)
 
