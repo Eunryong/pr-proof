@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from app.models.access import AccessSettings
-from app.worker import base_config, repo
+from worker import base_config, repo
+from worker.access_pure import AccessSettings
 
 
 def _git(cwd: Path, *args: str) -> str:

@@ -5,8 +5,8 @@ from typing import Final
 import fakeredis
 import pytest
 
-from app.models.ops_alert import TEXT
-from app.worker import preflight
+from shared.ops_alert_pure import TEXT
+from worker import preflight
 
 NOW: Final = datetime(2026, 11, 18, 12, 0, tzinfo=UTC)
 

@@ -11,9 +11,9 @@ from typing import Final
 import fakeredis
 import pytest
 
-from app.models.rag_switch import Evidence, Outcomes
-from app.worker import memory
-from app.worker.state import Store
+from worker import memory
+from worker.rag_switch_pure import Evidence, Outcomes
+from worker.state import Store
 
 from .rag_helpers import fix_outcomes, record
 

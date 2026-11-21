@@ -9,7 +9,7 @@ import pytest
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, START, StateGraph
 
-from app.worker.loop import (
+from worker.loop import (
     LoopPolicy,
     LoopState,
     Tier,

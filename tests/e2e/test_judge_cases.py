@@ -26,11 +26,11 @@ from typing import Final
 import pytest
 import yaml
 
-from app.models import checker_authoring
-from app.models.job import PRJob
-from app.worker import main
-from app.worker.ai import claude_cli
-from app.worker.deps import Deps
+from shared.job_pure import PRJob
+from worker import checker_authoring_pure as checker_authoring
+from worker import main
+from worker.ai import claude_cli
+from worker.deps import Deps
 
 from .test_lint_cases import _bodies, _git, shared_venvs  # noqa: F401
 from .test_rules_cases import (

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from app.worker.ai import path_hook
+from worker.ai import path_hook
 
 
 @pytest.fixture

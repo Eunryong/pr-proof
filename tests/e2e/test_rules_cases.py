@@ -28,17 +28,21 @@ import fakeredis
 import pytest
 import yaml
 
-from app import config
-from app.models import fix_decision, judge, rule_reading, state_keys, tool_choice
-from app.models.job import PRJob
-from app.models.rule import rule_id
-from app.worker import main, repo, retry
-from app.worker.ai import claude_cli
-from app.worker.ai.claude_cli import ClaudeResult, StructuredResult
-from app.worker.deps import Deps
-from app.worker.github import GitHub
-from app.worker.state import Store
+from shared import config
+from shared import state_keys_pure as state_keys
+from shared.job_pure import PRJob
 from tests.sandbox_names import TEST_NAMES
+from worker import main, repo, retry
+from worker import rule_reading_pure as rule_reading
+from worker.ai import claude_cli
+from worker.ai.claude_cli import ClaudeResult, StructuredResult
+from worker.deps import Deps
+from worker.fix import fix_decision_pure as fix_decision
+from worker.github import GitHub
+from worker.rule_pure import rule_id
+from worker.rules import judge_pure as judge
+from worker.rules import tool_choice_pure as tool_choice
+from worker.state import Store
 
 from ..worker.test_github import FakeGh
 from .test_lint_cases import _bodies, _git, shared_venvs  # noqa: F401

@@ -4,13 +4,13 @@ import fakeredis
 import pytest
 from sqlalchemy import create_engine, inspect, text
 
-from app.models import state_keys
-from app.models.access import Author
-from app.models.db import FixAttempt, SeenViolation
-from app.models.job import PRJob
-from app.models.rag_switch import Evidence, Outcomes
-from app.models.records import NewRecord
-from app.worker.state import Store
+from shared import state_keys_pure as state_keys
+from shared.db_pure import FixAttempt, SeenViolation
+from shared.job_pure import PRJob
+from worker.access_pure import Author
+from worker.rag_switch_pure import Evidence, Outcomes
+from worker.records_pure import NewRecord
+from worker.state import Store
 
 from .rag_helpers import fix_outcome, record
 

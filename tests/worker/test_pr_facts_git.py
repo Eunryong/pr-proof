@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from app.worker import repo
-from app.worker.repo import GitError
+from worker import repo
+from worker.repo import GitError
 
 
 def _git(cwd: Path, *args: str) -> str:

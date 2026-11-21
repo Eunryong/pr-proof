@@ -7,11 +7,11 @@ from typing import Final
 import fakeredis
 import pytest
 
-from app.models.call_budget import Allowed, Denied, PrScope, RulesetScope
-from app.models.repo_config import CallSettings
-from app.worker.budget import CallBudget
-from app.worker.loop import LoopPolicy, choose_tier
-from app.worker.state import Store
+from worker.budget import CallBudget
+from worker.call_budget_pure import Allowed, Denied, PrScope, RulesetScope
+from worker.loop import LoopPolicy, choose_tier
+from worker.repo_config_pure import CallSettings
+from worker.state import Store
 
 T0: Final = datetime(2026, 11, 18, 12, 0, tzinfo=UTC)
 
@@ -152,7 +152,7 @@ def test_denied_tool_calls_are_recorded_without_a_notification(store: Store, not
     사람이 할 환경 오류가 아니라 운영 알림은 띄우지 않는다 (6-4, 저장소 주인 2026-11-20)."""
     from sqlmodel import Session
 
-    from app.models.db import ModelCall
+    from shared.db_pure import ModelCall
 
     budget = _budget(store, pr=7)
     denied = budget.begin(PrScope(), stage="fix", tier="light", model="haiku")

@@ -7,10 +7,10 @@ from typing import Final
 
 import pytest
 
-from app.sandbox import docker_cli
-from app.sandbox.docker_cli import Image, SandboxError
-from app.worker.lang import python
-from app.worker.lang.python import DependencyInstallError
+from worker.lang import python
+from worker.lang.python import DependencyInstallError
+from worker.sandbox import docker_cli
+from worker.sandbox.docker_cli import Image, SandboxError
 
 IMAGE: Final = Image(id="sha256:aaa")
 RUNTIME: Final = python.Runtime("3.11.18", Path("/cache/tools/python/3.11.18/linux-arm64-gnu"))

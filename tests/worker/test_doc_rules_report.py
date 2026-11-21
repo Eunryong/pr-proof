@@ -5,8 +5,9 @@ import re
 from dataclasses import replace
 from typing import Final
 
-from app.models.checker import Checker
-from app.models.doc_rules import (
+from worker import doc_rules_report, report
+from worker.checker_pure import Checker
+from worker.doc_rules_pure import (
     CallUsage,
     CheckerRef,
     Found,
@@ -17,16 +18,15 @@ from app.models.doc_rules import (
     RuleJudged,
     RuleUnchecked,
 )
-from app.models.fix import MechanicalFix
-from app.models.fix_decision import Decided, FixDecision
-from app.models.model_fix import ModelFix, Verification
-from app.models.proposal import ProposalResult
-from app.models.rule import CheckMethod, Example, Rule, RuleSource, UnreadDoc
-from app.models.test_run import PytestRun
-from app.models.violation import Violation
-from app.worker import doc_rules_report, report
-from app.worker.doc_rules_report import HOW_TO_CORRECT, NO_RULES, FixView, section, title
-from app.worker.markdown import inline_code
+from worker.doc_rules_report import HOW_TO_CORRECT, NO_RULES, FixView, section, title
+from worker.fix.fix_decision_pure import Decided, FixDecision
+from worker.fix.fix_pure import MechanicalFix
+from worker.fix.model_fix_pure import ModelFix, Verification
+from worker.fix.proposal_pure import ProposalResult
+from worker.markdown import inline_code
+from worker.rule_pure import CheckMethod, Example, Rule, RuleSource, UnreadDoc
+from worker.test_run_pure import PytestRun
+from worker.violation_pure import Violation
 
 USAGE: Final = CallUsage(calls=3, limit=14, cache_hits=1, models=("claude-haiku-5-5",),
                          input_tokens=3000, output_tokens=300)  # fmt: skip

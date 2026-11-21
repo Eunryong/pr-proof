@@ -3,11 +3,11 @@
 import json
 from typing import Final
 
-from app.models.repo_config import FixSettings, RepoConfig
-from app.models.test_run import PytestRun, ReportSummary
-from app.models.tools import RuffSetup
-from app.worker import graph
-from app.worker.base_config import BaseConfig
+from worker import graph
+from worker.base_config import BaseConfig
+from worker.repo_config_pure import FixSettings, RepoConfig
+from worker.test_run_pure import PytestRun, ReportSummary
+from worker.tools_pure import RuffSetup
 
 from .test_github import FakeGh
 

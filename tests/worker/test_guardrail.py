@@ -16,22 +16,20 @@ import pytest
 from rq import Queue
 from sqlmodel import Session, select
 
-from app import cli
-from app.controllers import sync, webhook
-from app.models import state_keys
-from app.models.access import AccessSettings
-from app.models.comment import COMMENT_MARKER
-from app.models.db import Approval, Run
-from app.models.job import PRJob
-from app.sandbox import docker_cli
-from app.sandbox.docker_cli import SandboxError
-from app.services import signature
-from app.services.github import OpenPR
-from app.services.history import History
-from app.worker import base_config, graph, guard, main, repo, retry
-from app.worker.ai import claude_cli
-from app.worker.github import GitHubError
-from app.worker.repo import GitError
+from api import signature, sync, webhook
+from api.github import OpenPR
+from api.history import History
+from shared import state_keys_pure as state_keys
+from shared.comment_pure import COMMENT_MARKER
+from shared.db_pure import Approval, Run
+from shared.job_pure import PRJob
+from worker import base_config, cli, graph, guard, main, repo, retry
+from worker.access_pure import AccessSettings
+from worker.ai import claude_cli
+from worker.github import GitHubError
+from worker.repo import GitError
+from worker.sandbox import docker_cli
+from worker.sandbox.docker_cli import SandboxError
 
 from .helpers import HEAD, PASSED, use_runner
 from .test_github import is_reply

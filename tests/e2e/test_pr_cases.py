@@ -31,15 +31,18 @@ import pytest
 import yaml
 from sqlmodel import Session, select
 
-from app import config
-from app.models import fix_decision, judge, pr_check, rule_reading
-from app.models.db import ModelCacheEntry
-from app.worker import repo
-from app.worker.ai import claude_cli
-from app.worker.deps import Deps
-from app.worker.github import GitHub
-from app.worker.state import Store
+from shared import config
+from shared.db_pure import ModelCacheEntry
 from tests.sandbox_names import TEST_NAMES
+from worker import repo
+from worker import rule_reading_pure as rule_reading
+from worker.ai import claude_cli
+from worker.deps import Deps
+from worker.fix import fix_decision_pure as fix_decision
+from worker.github import GitHub
+from worker.rules import judge_pure as judge
+from worker.rules import pr_check_pure as pr_check
+from worker.state import Store
 
 from ..worker.test_github import FakeGh
 from .test_lint_cases import _bodies, _git, shared_venvs  # noqa: F401
