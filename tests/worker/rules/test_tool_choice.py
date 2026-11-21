@@ -1,4 +1,4 @@
-"""worker/rules/checkers.py의 도구 고르기 (docs/DESIGN.md 4.4 (a)): 문서 규칙에 저장소의
+"""app/worker/rules/checkers.py의 도구 고르기 (docs/DESIGN.md 4.4 (a)): 문서 규칙에 저장소의
 도구(ruff)를 잇고, 도구 설정의 규칙 묶음은 모델 없이 ruff로 정한다. 가짜 모델과 가짜 샌드박스, 실제
 SQLite."""
 
@@ -11,18 +11,18 @@ from typing import Final
 import fakeredis
 import pytest
 
-from worker.ai.claude_cli import StructuredResult
-from worker.budget import CallBudget
-from worker.checker_authoring_pure import Checked, Unchecked
-from worker.checker_pure import CheckerKind, tool_codes
-from worker.repo_config_pure import CallSettings, ModelSettings
-from worker.rule_pure import CheckMethod, Rule, RuleSource
-from worker.rules import tool_choice_pure as tool_choice
-from worker.rules.checkers import plan_and_author
-from worker.sandbox import checker_runner, toolcache
-from worker.sandbox.checker_runner import CheckerRun, Match, Ran
-from worker.state import Store
-from worker.tools_pure import RuffConfig, RuffSetup, config_rule
+from app.worker.ai.claude_cli import StructuredResult
+from app.worker.budget import CallBudget
+from app.worker.checker_authoring_pure import Checked, Unchecked
+from app.worker.checker_pure import CheckerKind, tool_codes
+from app.worker.repo_config_pure import CallSettings, ModelSettings
+from app.worker.rule_pure import CheckMethod, Rule, RuleSource
+from app.worker.rules import tool_choice_pure as tool_choice
+from app.worker.rules.checkers import plan_and_author
+from app.worker.sandbox import checker_runner, toolcache
+from app.worker.sandbox.checker_runner import CheckerRun, Match, Ran
+from app.worker.state import Store
+from app.worker.tools_pure import RuffConfig, RuffSetup, config_rule
 
 NOW: Final = datetime(2026, 11, 20, 12, tzinfo=UTC)
 RUFF: Final = RuffSetup("0.17.5")

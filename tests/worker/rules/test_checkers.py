@@ -1,4 +1,5 @@
-"""worker/rules/checkers.py: 검사기 작성 루프. 가짜 모델과 가짜 샌드박스, 실제 SQLite로 확인한다."""
+"""app/worker/rules/checkers.py: 검사기 작성 루프. 가짜 모델과 가짜 샌드박스, 실제 SQLite로
+확인한다."""
 
 from collections.abc import Sequence
 from dataclasses import replace
@@ -9,16 +10,22 @@ from typing import Final
 import fakeredis
 import pytest
 
-from worker.ai.claude_cli import AIErrorKind, StructuredResult
-from worker.budget import CallBudget
-from worker.checker_authoring_pure import SYSTEM_PROMPT, Checked, ToJudge, Unchecked, checker_key
-from worker.checker_pure import CheckerKind
-from worker.repo_config_pure import CallSettings, ModelSettings
-from worker.rule_pure import CheckMethod, Example, Rule, RuleSource
-from worker.rules.checkers import plan_and_author
-from worker.sandbox import checker_runner, toolcache
-from worker.sandbox.checker_runner import CheckerRun, Invalid, Match, Ran
-from worker.state import Store
+from app.worker.ai.claude_cli import AIErrorKind, StructuredResult
+from app.worker.budget import CallBudget
+from app.worker.checker_authoring_pure import (
+    SYSTEM_PROMPT,
+    Checked,
+    ToJudge,
+    Unchecked,
+    checker_key,
+)
+from app.worker.checker_pure import CheckerKind
+from app.worker.repo_config_pure import CallSettings, ModelSettings
+from app.worker.rule_pure import CheckMethod, Example, Rule, RuleSource
+from app.worker.rules.checkers import plan_and_author
+from app.worker.sandbox import checker_runner, toolcache
+from app.worker.sandbox.checker_runner import CheckerRun, Invalid, Match, Ran
+from app.worker.state import Store
 
 RULESET: Final = "ruleset-key"
 MODELS: Final = ModelSettings(checker="sonnet", heavy="opus")
@@ -376,9 +383,9 @@ class _Found:
 
 
 def test_similar_checker_records_go_into_every_attempt_and_the_draft_key(store: Store) -> None:
-    from shared.db_pure import Record
-    from worker.checker_authoring_pure import RECORDS_NOTE
-    from worker.rag_pure import Chosen, Retrieval, Selection
+    from app.shared.db_pure import Record
+    from app.worker.checker_authoring_pure import RECORDS_NOTE
+    from app.worker.rag_pure import Chosen, Retrieval, Selection
 
     old = Record(id=7, repo="o/r", kind="checker", origin="ruleset", source_id="c", rule_id="R-x",
                  rule_text="서비스는 logging만 쓴다", file="", line_text="", context="",

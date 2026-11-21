@@ -1,8 +1,8 @@
-"""worker/rules/pr_check.py: PR 단위 확인의 계획(저장, 회차, 모델 판단으로 보내기), PR 패턴, 바뀐
-파일 조건, 모델 판단(저장, 상한, 실패), 사실을 읽지 못함 (4.5 끝, 4-11, 4-12).
+"""app/worker/rules/pr_check.py: PR 단위 확인의 계획(저장, 회차, 모델 판단으로 보내기), PR 패턴,
+바뀐 파일 조건, 모델 판단(저장, 상한, 실패), 사실을 읽지 못함 (4.5 끝, 4-11, 4-12).
 
-샌드박스는 고정 스크립트(worker/sandbox/checker_runner.py의 PR 패턴)를 이 프로세스에서 그대로 돌리는
-대역이다. 실제 컨테이너는 tests/worker/sandbox의 docker 테스트가 본다.
+샌드박스는 고정 스크립트(app/worker/sandbox/checker_runner.py의 PR 패턴)를 이 프로세스에서 그대로
+돌리는 대역이다. 실제 컨테이너는 tests/worker/sandbox의 docker 테스트가 본다.
 """
 
 import contextlib
@@ -15,18 +15,18 @@ from unittest import mock
 import fakeredis
 import pytest
 
-from worker.ai.claude_cli import AIErrorKind, StructuredResult
-from worker.budget import CallBudget
-from worker.call_budget_pure import RulesetScope
-from worker.repo_config_pure import CallSettings
-from worker.rule_pure import CheckMethod, Example, Rule, RuleSource
-from worker.rules import pr_check
-from worker.rules import pr_check_pure as m
-from worker.rules.pr_check_pure import Commit, PrFacts
-from worker.sandbox import checker_runner
-from worker.sandbox.checker_runner import Failed, PrRan
-from worker.sandbox.toolcache import ToolUnavailable
-from worker.state import Store
+from app.worker.ai.claude_cli import AIErrorKind, StructuredResult
+from app.worker.budget import CallBudget
+from app.worker.call_budget_pure import RulesetScope
+from app.worker.repo_config_pure import CallSettings
+from app.worker.rule_pure import CheckMethod, Example, Rule, RuleSource
+from app.worker.rules import pr_check
+from app.worker.rules import pr_check_pure as m
+from app.worker.rules.pr_check_pure import Commit, PrFacts
+from app.worker.sandbox import checker_runner
+from app.worker.sandbox.checker_runner import Failed, PrRan
+from app.worker.sandbox.toolcache import ToolUnavailable
+from app.worker.state import Store
 
 HEAD: Final = "f" * 40
 SHA_A: Final = "a" * 40
@@ -369,7 +369,7 @@ def test_document_examples_reach_the_plan_prompt(store) -> None:
 
 
 def test_pr_rules_come_only_from_unchecked_pr_outcomes() -> None:
-    from worker.doc_rules_pure import CallUsage, Found, RuleUnchecked
+    from app.worker.doc_rules_pure import CallUsage, Found, RuleUnchecked
 
     usage = CallUsage(0, 0, 0, (), 0, 0)
     human = _rule("R-h", "리뷰어 승인을 받는다.")

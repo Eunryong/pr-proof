@@ -22,12 +22,12 @@ import fakeredis
 import pytest
 import yaml
 
-from shared.embed_models_pure import E5_SMALL, EMBED_MODELS, EmbedModel
-from worker import memory
-from worker.rag_pure import record_text
-from worker.records_pure import NewRecord
-from worker.repo_config_pure import DEFAULT_MIN_SIMILARITY, RagSettings
-from worker.state import Store
+from app.shared.embed_models_pure import E5_SMALL, EMBED_MODELS, EmbedModel
+from app.worker import memory
+from app.worker.rag_pure import record_text
+from app.worker.records_pure import NewRecord
+from app.worker.repo_config_pure import DEFAULT_MIN_SIMILARITY, RagSettings
+from app.worker.state import Store
 
 SPEC_FILE: Final = Path(__file__).resolve().parents[2] / "eval" / "rag_recall.yaml"
 REAL_EMBED_ENV: Final = "PR_PROOF_REAL_EMBED"

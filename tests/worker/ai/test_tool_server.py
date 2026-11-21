@@ -6,8 +6,8 @@ import subprocess
 import sys
 import time
 
-from worker.ai import tool_server
-from worker.mcp_pure import LIMIT_REACHED, ToolLimits
+from app.worker.ai import tool_server
+from app.worker.mcp_pure import LIMIT_REACHED, ToolLimits
 
 
 def _talk(server, *messages: dict) -> list[dict]:

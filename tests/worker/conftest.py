@@ -6,14 +6,14 @@ from pathlib import Path
 import fakeredis
 import pytest
 
-from shared import config
-from shared import state_keys_pure as state_keys
-from worker import base_config, repo
-from worker.access_pure import AccessSettings
-from worker.deps import Deps
-from worker.github import GitHub
-from worker.repo import Checkout
-from worker.state import Store
+from app.shared import config
+from app.shared import state_keys_pure as state_keys
+from app.worker import base_config, repo
+from app.worker.access_pure import AccessSettings
+from app.worker.deps import Deps
+from app.worker.github import GitHub
+from app.worker.repo import Checkout
+from app.worker.state import Store
 
 from .helpers import BASE, HEAD
 from .test_github import FakeGh

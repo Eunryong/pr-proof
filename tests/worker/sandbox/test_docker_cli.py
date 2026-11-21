@@ -1,6 +1,6 @@
-"""worker/sandbox/docker_cli.py 단위 테스트."""
+"""app/worker/sandbox/docker_cli.py 단위 테스트."""
 
-from worker.sandbox import docker_cli
+from app.worker.sandbox import docker_cli
 
 
 def test_minimal_env_drops_secrets(monkeypatch) -> None:

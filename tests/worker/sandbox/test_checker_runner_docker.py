@@ -5,9 +5,9 @@ from typing import Final
 
 import pytest
 
+from app.worker.sandbox import checker_runner, toolcache
+from app.worker.sandbox.checker_runner import Failed, Invalid, Match, Ran
 from tests.sandbox_names import TEST_NAMES
-from worker.sandbox import checker_runner, toolcache
-from worker.sandbox.checker_runner import Failed, Invalid, Match, Ran
 
 pytestmark = pytest.mark.docker
 

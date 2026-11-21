@@ -1,11 +1,11 @@
-"""worker/pr_check_report.py: 결과 코멘트의 PR 단위 확인 부분 (4.5 끝, 4.9, T10)."""
+"""app/worker/pr_check_report.py: 결과 코멘트의 PR 단위 확인 부분 (4.5 끝, 4.9, T10)."""
 
 from typing import Final
 
-from worker import doc_rules_report, pr_check_report
-from worker.doc_rules_pure import CallUsage, Found, RuleUnchecked
-from worker.rule_pure import CheckMethod, Rule, RuleSource
-from worker.rules.pr_check_pure import PrChecks, PrPattern, PrRuleResult, PrUsage, PrViolation
+from app.worker import doc_rules_report, pr_check_report
+from app.worker.doc_rules_pure import CallUsage, Found, RuleUnchecked
+from app.worker.rule_pure import CheckMethod, Rule, RuleSource
+from app.worker.rules.pr_check_pure import PrChecks, PrPattern, PrRuleResult, PrUsage, PrViolation
 
 SHA: Final = "a" * 40
 

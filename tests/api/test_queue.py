@@ -2,9 +2,9 @@ import fakeredis
 import pytest
 from rq import Queue
 
-from api import queue
-from shared import state_keys_pure as state_keys
-from shared.job_pure import PRJob
+from app.api import queue
+from app.shared import state_keys_pure as state_keys
+from app.shared.job_pure import PRJob
 
 
 @pytest.fixture

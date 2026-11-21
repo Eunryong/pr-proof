@@ -2,14 +2,14 @@ from typing import Final
 
 import pytest
 
-from worker import report
-from worker.base_config import BaseConfig
-from worker.doc_rules_pure import CallUsage, CheckerRef, Found, RuleChecked
-from worker.repo_config_pure import RepoConfig
-from worker.report import format_test_line, render_result
-from worker.test_run_pure import PytestRun, ReportSummary
-from worker.tools_pure import RuffConfig, RuffSetup, config_rule
-from worker.violation_pure import Violation, violation_id
+from app.worker import report
+from app.worker.base_config import BaseConfig
+from app.worker.doc_rules_pure import CallUsage, CheckerRef, Found, RuleChecked
+from app.worker.repo_config_pure import RepoConfig
+from app.worker.report import format_test_line, render_result
+from app.worker.test_run_pure import PytestRun, ReportSummary
+from app.worker.tools_pure import RuffConfig, RuffSetup, config_rule
+from app.worker.violation_pure import Violation, violation_id
 
 SYMBOLS: Final = ("⚠️", "✅", "❌")
 HEAD: Final = "a" * 40
@@ -186,7 +186,7 @@ def test_code_fence_outgrows_backticks_in_text() -> None:
 
 
 def test_diff_coverage_line() -> None:
-    from worker.coverage import DiffCoverage
+    from app.worker.coverage import DiffCoverage
 
     assert report.diff_coverage_line(None) == []
     assert report.diff_coverage_line(DiffCoverage(66.67, 3, 1)) == [

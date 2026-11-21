@@ -13,24 +13,24 @@ from typing import Final
 import pytest
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 
-from shared import state_keys_pure as state_keys
-from shared.db_pure import ModelCall
-from shared.job_pure import PRJob
-from worker import graph, main, repo, retry, update
-from worker.ai import claude_cli, workdir
-from worker.ai.claude_cli import AIErrorKind, ClaudeResult
-from worker.fix import model_fix_pure as model_fix_rules
-from worker.fix.proposal import FORK_NO_PR
-from worker.github import GitHubError
-from worker.markdown import inline_code
-from worker.repo_config_pure import (
+from app.shared import state_keys_pure as state_keys
+from app.shared.db_pure import ModelCall
+from app.shared.job_pure import PRJob
+from app.worker import graph, main, repo, retry, update
+from app.worker.ai import claude_cli, workdir
+from app.worker.ai.claude_cli import AIErrorKind, ClaudeResult
+from app.worker.fix import model_fix_pure as model_fix_rules
+from app.worker.fix.proposal import FORK_NO_PR
+from app.worker.github import GitHubError
+from app.worker.markdown import inline_code
+from app.worker.repo_config_pure import (
     CallSettings,
     FixSettings,
     ModelSettings,
     RepoConfig,
 )
-from worker.rule_pure import rule_id
-from worker.test_run_pure import ReportSummary
+from app.worker.rule_pure import rule_id
+from app.worker.test_run_pure import ReportSummary
 
 from ..helpers import PASSED, bodies, use_runner
 from ..rules.test_doc_rules_flow import (  # noqa: F401
@@ -477,9 +477,9 @@ class RuffAndGrep:
 def test_model_rerun_while_mechanical_waits_keeps_its_approval(fix_env, tmp_path: Path) -> None:
     """기계적 수정 묶음이 승인을 기다리는 동안에도 상한에 걸린 모델 묶음은 `/fix model`로 다시 돌고,
     끝나면 기계적 수정 묶음은 다시 승인을 기다린다."""
-    from worker import base_config
-    from worker.rules import doc_rules
-    from worker.tools_pure import RuffConfig, RuffSetup
+    from app.worker import base_config
+    from app.worker.rules import doc_rules
+    from app.worker.tools_pure import RuffConfig, RuffSetup
 
     from ..helpers import BASE
 

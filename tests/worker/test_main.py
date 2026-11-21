@@ -1,4 +1,5 @@
-"""worker/main.py·update.py: update 작업이 체크아웃부터 코멘트까지 가는 흐름. Docker·GitHub 없이."""
+"""app/worker/main.py·update.py: update 작업이 체크아웃부터 코멘트까지 가는 흐름. Docker·GitHub
+없이."""
 
 from pathlib import Path
 
@@ -7,17 +8,17 @@ import pytest
 from rq.timeouts import JobTimeoutException
 from sqlmodel import Session, select
 
-from shared import config
-from shared import state_keys_pure as state_keys
-from shared.db_pure import Run
-from shared.job_pure import PRJob
-from shared.ops_alert_pure import TEXT
-from worker import main, preflight, retry, update
-from worker.doc_rules_pure import NoRuleDocs
-from worker.github import GitHubError
-from worker.lang.python import DependencyInstallError
-from worker.rules import doc_rules
-from worker.sandbox.docker_cli import SandboxError
+from app.shared import config
+from app.shared import state_keys_pure as state_keys
+from app.shared.db_pure import Run
+from app.shared.job_pure import PRJob
+from app.shared.ops_alert_pure import TEXT
+from app.worker import main, preflight, retry, update
+from app.worker.doc_rules_pure import NoRuleDocs
+from app.worker.github import GitHubError
+from app.worker.lang.python import DependencyInstallError
+from app.worker.rules import doc_rules
+from app.worker.sandbox.docker_cli import SandboxError
 
 from .helpers import BASE, HEAD, PASSED, bodies, use_runner
 

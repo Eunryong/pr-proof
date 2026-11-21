@@ -14,13 +14,13 @@ from rq.job import JobStatus
 from rq.registry import StartedJobRegistry
 from sqlmodel import Session, select
 
-from api import queue, sync
-from api.github import OpenPR
-from api.history import History
-from shared import state_keys_pure as state_keys
-from shared.db_pure import Run
-from shared.job_pure import PRJob
-from worker import main
+from app.api import queue, sync
+from app.api.github import OpenPR
+from app.api.history import History
+from app.shared import state_keys_pure as state_keys
+from app.shared.db_pure import Run
+from app.shared.job_pure import PRJob
+from app.worker import main
 
 from .helpers import HEAD, PASSED, use_runner
 

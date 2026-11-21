@@ -10,15 +10,15 @@ from typing import Final
 
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 
-from shared import state_keys_pure as state_keys
-from shared.job_pure import PRJob
-from worker import graph, main, repo, update
-from worker.ai.claude_cli import StructuredResult
-from worker.repo_config_pure import CallSettings, ModelSettings
-from worker.rule_pure import CheckMethod, Rule, RuleSource
-from worker.rules import pr_check
-from worker.rules import pr_check_pure as pr_models
-from worker.rules.pr_check_pure import PrChecks, PrPattern, PrRuleResult, PrUsage, PrViolation
+from app.shared import state_keys_pure as state_keys
+from app.shared.job_pure import PRJob
+from app.worker import graph, main, repo, update
+from app.worker.ai.claude_cli import StructuredResult
+from app.worker.repo_config_pure import CallSettings, ModelSettings
+from app.worker.rule_pure import CheckMethod, Rule, RuleSource
+from app.worker.rules import pr_check
+from app.worker.rules import pr_check_pure as pr_models
+from app.worker.rules.pr_check_pure import PrChecks, PrPattern, PrRuleResult, PrUsage, PrViolation
 
 from ..fix.test_model_fix_flow import AUTO, _command
 from ..helpers import bodies

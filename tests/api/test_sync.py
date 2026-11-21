@@ -6,14 +6,14 @@ import fakeredis
 import pytest
 from rq import Queue
 
-from api import sync
-from api.github import GitHubReadError, OpenPR, PRComment
-from api.history import History
-from shared import config
-from shared import state_keys_pure as state_keys
-from shared.job_pure import PRJob
-from shared.ops_alert_pure import TEXT
-from worker.state import Store
+from app.api import sync
+from app.api.github import GitHubReadError, OpenPR, PRComment
+from app.api.history import History
+from app.shared import config
+from app.shared import state_keys_pure as state_keys
+from app.shared.job_pure import PRJob
+from app.shared.ops_alert_pure import TEXT
+from app.worker.state import Store
 
 HEAD: Final = "h" * 40
 
@@ -226,8 +226,8 @@ def test_comment_lookup_failure_still_syncs_heads(env) -> None:
 
 def test_webhook_and_sync_share_the_filter() -> None:
     """권한 확인이 한쪽에만 있으면 그쪽이 구멍이 된다. 같은 함수를 쓰는지 본다."""
-    from api import webhook
-    from shared import comment_pure as comment
+    from app.api import webhook
+    from app.shared import comment_pure as comment
 
     assert webhook.command_in_comment is comment.command_in_comment
     assert sync.command_in_comment is comment.command_in_comment

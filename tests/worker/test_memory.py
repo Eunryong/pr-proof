@@ -15,12 +15,12 @@ from typing import Final
 import fakeredis
 import pytest
 
-from shared.embed_models_pure import ModelFile
-from worker import memory
-from worker.rag_pure import query_text
-from worker.records_pure import NewRecord
-from worker.repo_config_pure import RagSettings
-from worker.state import Store
+from app.shared.embed_models_pure import ModelFile
+from app.worker import memory
+from app.worker.rag_pure import query_text
+from app.worker.records_pure import NewRecord
+from app.worker.repo_config_pure import RagSettings
+from app.worker.state import Store
 
 from .rag_helpers import FAKE_SPEC, FakeEncoder
 
@@ -275,11 +275,11 @@ def test_open_retriever_without_the_model_keeps_checking_without_search(tmp_path
 
 def test_importing_the_worker_does_not_import_the_search_libraries() -> None:
     """검색을 켜지 않은 워커는 chromadb·onnxruntime·tokenizers·numpy를 import하지 않는다 (5-8).
-    이 모듈들은 worker/memory.py의 함수 안에서만 import한다."""
+    이 모듈들은 app/worker/memory.py의 함수 안에서만 import한다."""
     code = (
         "import sys\n"
-        "import worker.main, worker.graph, worker.update, worker.command\n"
-        "import worker.memory, worker.cli\n"
+        "import app.worker.main, app.worker.graph, app.worker.update, app.worker.command\n"
+        "import app.worker.memory, app.worker.cli\n"
         "heavy = ('chromadb', 'onnxruntime', 'tokenizers', 'numpy')\n"
         "bad = [m for m in heavy if m in sys.modules]\n"
         "print(','.join(bad))\n"

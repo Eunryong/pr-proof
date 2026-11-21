@@ -30,14 +30,14 @@ import fakeredis
 import pytest
 import yaml
 
-from shared import config
+from app.shared import config
+from app.worker import repo
+from app.worker.ai import claude_cli
+from app.worker.deps import Deps
+from app.worker.fix import fix_decision_pure as fix_decision
+from app.worker.github import GitHub
+from app.worker.state import Store
 from tests.sandbox_names import TEST_NAMES
-from worker import repo
-from worker.ai import claude_cli
-from worker.deps import Deps
-from worker.fix import fix_decision_pure as fix_decision
-from worker.github import GitHub
-from worker.state import Store
 
 from ..worker.test_github import FakeGh
 from .test_lint_cases import _git, shared_venvs  # noqa: F401

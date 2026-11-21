@@ -1,4 +1,4 @@
-"""worker/rules/judge_pure.py: hunk 만들기, 프롬프트의 경계, 답의 결정적 확인(4-3), 저장한 답
+"""app/worker/rules/judge_pure.py: hunk 만들기, 프롬프트의 경계, 답의 결정적 확인(4-3), 저장한 답
 되살리기."""
 
 import re
@@ -6,8 +6,8 @@ from typing import Final
 
 import pytest
 
-from worker.rule_pure import CheckMethod, Rule, RuleSource
-from worker.rules.judge_pure import (
+from app.worker.rule_pure import CheckMethod, Rule, RuleSource
+from app.worker.rules.judge_pure import (
     ANSWER_SCHEMA,
     PROMPT_VERSION,
     Asked,

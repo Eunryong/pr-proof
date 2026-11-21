@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from worker.sandbox import toolcache
+from app.worker.sandbox import toolcache
 
 pytestmark = pytest.mark.docker
 

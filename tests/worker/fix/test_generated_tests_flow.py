@@ -9,10 +9,10 @@ import json
 from pathlib import Path
 from typing import Final
 
-from worker.fix import model_fix_pure as model_fix_rules
-from worker.fix.model_fix_pure import Written
-from worker.repo_config_pure import FixSettings, RepoConfig
-from worker.test_run_pure import PytestRun, ReportSummary
+from app.worker.fix import model_fix_pure as model_fix_rules
+from app.worker.fix.model_fix_pure import Written
+from app.worker.repo_config_pure import FixSettings, RepoConfig
+from app.worker.test_run_pure import PytestRun, ReportSummary
 
 from ..helpers import use_runner
 from ..rules.test_doc_rules_flow import (  # noqa: F401

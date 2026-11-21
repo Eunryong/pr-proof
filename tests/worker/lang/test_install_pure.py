@@ -1,6 +1,6 @@
 import pytest
 
-from worker.lang.install_pure import UNKNOWN_FAILURE_LIMIT, install_failure_outcome
+from app.worker.lang.install_pure import UNKNOWN_FAILURE_LIMIT, install_failure_outcome
 
 
 @pytest.mark.parametrize(

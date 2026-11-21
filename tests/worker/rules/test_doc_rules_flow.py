@@ -15,15 +15,15 @@ import pytest
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from sqlmodel import Session, select
 
-from shared import state_keys_pure as state_keys
-from shared.db_pure import ModelCall
-from shared.job_pure import PRJob
-from worker import base_config, graph, repo, update
-from worker import rule_reading_pure as rule_reading
-from worker.ai import claude_cli
-from worker.ai.claude_cli import AIErrorKind, ClaudeResult, StructuredResult
-from worker.checker_pure import CheckerKind
-from worker.doc_rules_pure import (
+from app.shared import state_keys_pure as state_keys
+from app.shared.db_pure import ModelCall
+from app.shared.job_pure import PRJob
+from app.worker import base_config, graph, repo, update
+from app.worker import rule_reading_pure as rule_reading
+from app.worker.ai import claude_cli
+from app.worker.ai.claude_cli import AIErrorKind, ClaudeResult, StructuredResult
+from app.worker.checker_pure import CheckerKind
+from app.worker.doc_rules_pure import (
     CallUsage,
     Found,
     NoRuleDocs,
@@ -31,23 +31,23 @@ from worker.doc_rules_pure import (
     RuleChecked,
     RuleUnchecked,
 )
-from worker.fix import fix_decision_pure as fix_decision
-from worker.fix.fix_decision_pure import Decided, FixDecision
-from worker.lang.python import DependencyInstallError
-from worker.markdown import inline_code
-from worker.repo_config_pure import (
+from app.worker.fix import fix_decision_pure as fix_decision
+from app.worker.fix.fix_decision_pure import Decided, FixDecision
+from app.worker.lang.python import DependencyInstallError
+from app.worker.markdown import inline_code
+from app.worker.repo_config_pure import (
     CallSettings,
     FixSettings,
     ModelSettings,
     RepoConfig,
     RulesSettings,
 )
-from worker.rule_pure import CheckMethod, Rule, RuleSource, rule_id
-from worker.rules import doc_rules
-from worker.rules import tool_choice_pure as tool_choice
-from worker.sandbox import checker_runner, toolcache
-from worker.sandbox.checker_runner import CheckerRun, Match, Ran
-from worker.sandbox.docker_cli import SandboxError
+from app.worker.rule_pure import CheckMethod, Rule, RuleSource, rule_id
+from app.worker.rules import doc_rules
+from app.worker.rules import tool_choice_pure as tool_choice
+from app.worker.sandbox import checker_runner, toolcache
+from app.worker.sandbox.checker_runner import CheckerRun, Match, Ran
+from app.worker.sandbox.docker_cli import SandboxError
 
 from ..helpers import BASE, PASSED, bodies, use_runner
 

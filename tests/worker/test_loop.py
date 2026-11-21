@@ -1,4 +1,4 @@
-"""worker/loop.py: 가짜 write·verify로 틀의 분기만 확인한다 (모델·Docker 없음)."""
+"""app/worker/loop.py: 가짜 write·verify로 틀의 분기만 확인한다 (모델·Docker 없음)."""
 
 import json
 import sqlite3
@@ -9,7 +9,7 @@ import pytest
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, START, StateGraph
 
-from worker.loop import (
+from app.worker.loop import (
     LoopPolicy,
     LoopState,
     Tier,

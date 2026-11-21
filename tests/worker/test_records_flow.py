@@ -11,11 +11,11 @@ from typing import Final
 import pytest
 from sqlmodel import Session
 
-from shared.db_pure import FixAttempt
-from shared.job_pure import PRJob
-from worker import command, repo, retry, update
-from worker.github import GitHubError
-from worker.records_pure import targets_from_json
+from app.shared.db_pure import FixAttempt
+from app.shared.job_pure import PRJob
+from app.worker import command, repo, retry, update
+from app.worker.github import GitHubError
+from app.worker.records_pure import targets_from_json
 
 from .fix.test_model_fix_flow import (  # noqa: F401
     FIX_LINE_2,

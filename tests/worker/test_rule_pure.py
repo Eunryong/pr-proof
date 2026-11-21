@@ -4,8 +4,8 @@ from typing import Final
 
 import pytest
 
-from worker.checker_pure import Checker, checker_id
-from worker.rule_pure import (
+from app.worker.checker_pure import Checker, checker_id
+from app.worker.rule_pure import (
     CheckMethod,
     DroppedRule,
     Example,
@@ -17,7 +17,7 @@ from worker.rule_pure import (
     in_scope,
     rule_id,
 )
-from worker.violation_pure import violation_id
+from app.worker.violation_pure import violation_id
 
 
 def _ruleset() -> RuleSet:

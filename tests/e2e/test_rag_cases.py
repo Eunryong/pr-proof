@@ -30,15 +30,15 @@ from typing import Final
 import pytest
 import yaml
 
-from shared.embed_models_pure import E5_SMALL, EMBED_MODELS
-from shared.job_pure import PRJob
-from worker import main, memory
-from worker.ai import claude_cli
-from worker.cli import reindex
-from worker.fix import fix_decision_pure as fix_decision
-from worker.rag_pure import collection_name
-from worker.records_pure import NewRecord
-from worker.rule_pure import rule_id
+from app.shared.embed_models_pure import E5_SMALL, EMBED_MODELS
+from app.shared.job_pure import PRJob
+from app.worker import main, memory
+from app.worker.ai import claude_cli
+from app.worker.cli import reindex
+from app.worker.fix import fix_decision_pure as fix_decision
+from app.worker.rag_pure import collection_name
+from app.worker.records_pure import NewRecord
+from app.worker.rule_pure import rule_id
 
 from ..worker.rag_helpers import FAKE_SPEC, FakeEncoder
 from .test_lint_cases import _bodies, _git, shared_venvs  # noqa: F401

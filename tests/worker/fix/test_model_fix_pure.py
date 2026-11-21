@@ -1,4 +1,4 @@
-"""worker/fix/model_fix_pure.py: 수정 대상 고르기, 프롬프트, 설명 JSON 확인, 재검사 비교, 저장
+"""app/worker/fix/model_fix_pure.py: 수정 대상 고르기, 프롬프트, 설명 JSON 확인, 재검사 비교, 저장
 키."""
 
 import json
@@ -6,12 +6,12 @@ from typing import Final
 
 import pytest
 
-from worker.diff_pure import ChangeBlock
-from worker.fix import model_fix_pure as rules
-from worker.fix.fix_decision_pure import FixDecision
-from worker.fix.model_fix_pure import Answer, Change, Explanation, Note, Target
-from worker.rule_pure import CheckMethod, Rule, RuleSource
-from worker.violation_pure import Violation
+from app.worker.diff_pure import ChangeBlock
+from app.worker.fix import model_fix_pure as rules
+from app.worker.fix.fix_decision_pure import FixDecision
+from app.worker.fix.model_fix_pure import Answer, Change, Explanation, Note, Target
+from app.worker.rule_pure import CheckMethod, Rule, RuleSource
+from app.worker.violation_pure import Violation
 
 RULE: Final = Rule(
     id="R-readme-1", text="비교에 쓰는 기준값은 숫자를 직접 쓰지 않는다.",

@@ -3,7 +3,7 @@ from typing import Final
 
 import pytest
 
-from api.sync_rules_pure import RunSnapshot, enqueue_reason
+from app.api.sync_rules_pure import RunSnapshot, enqueue_reason
 
 NOW: Final = datetime(2026, 11, 17, 12, 0, tzinfo=UTC)
 BACKOFF: Final = timedelta(minutes=30)

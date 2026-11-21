@@ -1,4 +1,4 @@
-"""worker/fix/scope.py: 임시 git 리포의 실제 `git status` 출력으로 확인한다 (PR 코드는 실행 안
+"""app/worker/fix/scope.py: 임시 git 리포의 실제 `git status` 출력으로 확인한다 (PR 코드는 실행 안
 함)."""
 
 import os
@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from worker import repo
-from worker.fix.scope import check_scope, snapshot_ignored
-from worker.fix.scope_pure import AI_POLICY, MECHANICAL_POLICY
+from app.worker import repo
+from app.worker.fix.scope import check_scope, snapshot_ignored
+from app.worker.fix.scope_pure import AI_POLICY, MECHANICAL_POLICY
 
 
 def _git(cwd: Path, *args: str) -> str:

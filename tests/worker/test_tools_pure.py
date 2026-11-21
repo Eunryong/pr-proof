@@ -1,9 +1,9 @@
-"""worker/tools_pure.py: 도구 목록, ruff 설정과 버전 고정 읽기, 도구 설정의 규칙 묶음."""
+"""app/worker/tools_pure.py: 도구 목록, ruff 설정과 버전 고정 읽기, 도구 설정의 규칙 묶음."""
 
 import pytest
 
-from worker import tools_pure as tools
-from worker.tools_pure import RuffConfig, RuffSetup, config_rule, pinned_version, valid_codes
+from app.worker import tools_pure as tools
+from app.worker.tools_pure import RuffConfig, RuffSetup, config_rule, pinned_version, valid_codes
 
 
 @pytest.mark.parametrize(

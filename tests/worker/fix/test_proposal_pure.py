@@ -1,6 +1,6 @@
 import pytest
 
-from worker.fix import proposal_pure as proposal
+from app.worker.fix import proposal_pure as proposal
 
 
 def _patch(added: list[str], removed: int = 0) -> str:

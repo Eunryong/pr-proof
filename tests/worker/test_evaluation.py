@@ -8,9 +8,9 @@ import fakeredis
 import pytest
 from sqlalchemy import create_engine, inspect, text
 
-from worker import cli, evaluation, state
-from worker.eval_run_pure import RunSummary
-from worker.state import Store
+from app.worker import cli, evaluation, state
+from app.worker.eval_run_pure import RunSummary
+from app.worker.state import Store
 
 JUNIT_OK: Final = (
     '<testsuite><testcase classname="tests.e2e.test_rules_cases" '

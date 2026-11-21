@@ -10,7 +10,7 @@ from typing import Final
 
 import pytest
 
-from shared import notify as macos
+from app.shared import notify as macos
 
 REAL_SHOW: Final = macos.show_notification
 TEST_TEXT: Final = "pr-proof: 알림 시험입니다. 할 일은 없습니다."

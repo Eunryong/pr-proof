@@ -11,17 +11,17 @@ from typing import Final
 
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 
-from shared import state_keys_pure as state_keys
-from shared.job_pure import PRJob
-from worker import graph, main, update
-from worker.ai.claude_cli import StructuredResult
-from worker.checker_authoring_pure import ToJudge, Unchecked
-from worker.doc_rules_pure import CallUsage, Found, RuleJudged, RuleUnchecked
-from worker.repo_config_pure import CallSettings, ModelSettings
-from worker.rule_pure import CheckMethod, Rule, RuleSource, rule_id
-from worker.rules import doc_rules
-from worker.rules import judge_pure as judge_rules
-from worker.rules.judge_pure import JudgeUsage
+from app.shared import state_keys_pure as state_keys
+from app.shared.job_pure import PRJob
+from app.worker import graph, main, update
+from app.worker.ai.claude_cli import StructuredResult
+from app.worker.checker_authoring_pure import ToJudge, Unchecked
+from app.worker.doc_rules_pure import CallUsage, Found, RuleJudged, RuleUnchecked
+from app.worker.repo_config_pure import CallSettings, ModelSettings
+from app.worker.rule_pure import CheckMethod, Rule, RuleSource, rule_id
+from app.worker.rules import doc_rules
+from app.worker.rules import judge_pure as judge_rules
+from app.worker.rules.judge_pure import JudgeUsage
 
 from ..fix.test_model_fix_flow import (  # noqa: F401
     AUTO,

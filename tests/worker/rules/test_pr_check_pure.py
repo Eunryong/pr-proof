@@ -1,14 +1,14 @@
-"""worker/rules/pr_check_pure.py: PR 사실의 상한, PR 패턴의 계획과 예시 확인, 모델 판단의 답 확인
-(4.5 끝)."""
+"""app/worker/rules/pr_check_pure.py: PR 사실의 상한, PR 패턴의 계획과 예시 확인, 모델 판단의 답
+확인 (4.5 끝)."""
 
 import json
 from typing import Final
 
 import pytest
 
-from worker.rule_pure import CheckMethod, Example, Rule, RuleSource
-from worker.rules import pr_check_pure as m
-from worker.rules.pr_check_pure import (
+from app.worker.rule_pure import CheckMethod, Example, Rule, RuleSource
+from app.worker.rules import pr_check_pure as m
+from app.worker.rules.pr_check_pure import (
     CaseResult,
     Commit,
     PrExample,

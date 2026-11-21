@@ -1,4 +1,4 @@
-"""worker/lang/python.py의 ruff 단위 테스트. docker 없이 run_bounded의 결과를 정해 둔다."""
+"""app/worker/lang/python.py의 ruff 단위 테스트. docker 없이 run_bounded의 결과를 정해 둔다."""
 
 import json
 from pathlib import Path
@@ -6,11 +6,11 @@ from typing import Final
 
 import pytest
 
-from worker.lang import python
-from worker.sandbox.checker_runner import Failed, Match, Ran, RawRun
-from worker.sandbox.docker_cli import SandboxError
-from worker.text_edit_pure import TextEdit
-from worker.tools_pure import RuffConfig
+from app.worker.lang import python
+from app.worker.sandbox.checker_runner import Failed, Match, Ran, RawRun
+from app.worker.sandbox.docker_cli import SandboxError
+from app.worker.text_edit_pure import TextEdit
+from app.worker.tools_pure import RuffConfig
 
 CONFIG: Final = RuffConfig("ruff.toml", "line-length = 90\n", "b" * 40)
 

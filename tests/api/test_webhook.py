@@ -7,10 +7,10 @@ import fakeredis
 import pytest
 from rq import Queue
 
-from api import signature, webhook
-from api.webhook import Ignored, parse_event
-from shared import state_keys_pure as state_keys
-from shared.comment_pure import COMMENT_MARKER
+from app.api import signature, webhook
+from app.api.webhook import Ignored, parse_event
+from app.shared import state_keys_pure as state_keys
+from app.shared.comment_pure import COMMENT_MARKER
 
 FIXTURES: Final = Path(__file__).resolve().parent.parent / "fixtures" / "webhooks"
 ALLOWED: Final = frozenset({"Eunryong/eval"})

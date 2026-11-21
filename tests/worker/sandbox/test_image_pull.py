@@ -5,7 +5,7 @@ import subprocess
 
 import pytest
 
-from worker.sandbox import docker_cli
+from app.worker.sandbox import docker_cli
 
 
 class FakeDocker:

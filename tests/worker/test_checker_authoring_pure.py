@@ -1,11 +1,11 @@
-"""worker/checker_authoring_pure.py: 검사 방법 계획, 캐시 키, 프롬프트, 예시 확인."""
+"""app/worker/checker_authoring_pure.py: 검사 방법 계획, 캐시 키, 프롬프트, 예시 확인."""
 
 from dataclasses import replace
 from typing import Final
 
 import pytest
 
-from worker.checker_authoring_pure import (
+from app.worker.checker_authoring_pure import (
     ANSWER_SCHEMA,
     EXAMPLE_FAILURES_TO_JUDGE,
     MAX_MODEL_EXAMPLES,
@@ -31,8 +31,8 @@ from worker.checker_authoring_pure import (
     shortfall,
     system_prompt,
 )
-from worker.checker_pure import CheckerKind
-from worker.rule_pure import CheckMethod, Example, Rule, RuleSource
+from app.worker.checker_pure import CheckerKind
+from app.worker.rule_pure import CheckMethod, Example, Rule, RuleSource
 
 BAD: Final = Example("def f(o):\n    print(o)\n", (2,), "document")
 GOOD: Final = Example("logger.info('x')\n", (), "document")
@@ -175,8 +175,8 @@ def test_judge_labels_model_examples() -> None:
 
 
 def test_prompt_version_follows_prompt_text() -> None:
-    from worker import checker_authoring_pure as checker_authoring
-    from worker.rule_reading_pure import prompt_version
+    from app.worker import checker_authoring_pure as checker_authoring
+    from app.worker.rule_reading_pure import prompt_version
 
     changed = prompt_version("다른 지시", checker_authoring.ANSWER_SCHEMA, "")
     assert len(checker_authoring.PROMPT_VERSION) == 12

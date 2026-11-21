@@ -1,4 +1,4 @@
-"""worker/sandbox/toolcache.py 단위 테스트. 받기는 가짜로 바꾸고 Docker 없이 돈다."""
+"""app/worker/sandbox/toolcache.py 단위 테스트. 받기는 가짜로 바꾸고 Docker 없이 돈다."""
 
 import hashlib
 import io
@@ -11,9 +11,9 @@ from typing import Final
 
 import pytest
 
-from worker.sandbox import toolcache
-from worker.sandbox.docker_cli import SandboxError
-from worker.sandbox.toolcache import COMPLETE, Asset, Tool, ToolUnavailable
+from app.worker.sandbox import toolcache
+from app.worker.sandbox.docker_cli import SandboxError
+from app.worker.sandbox.toolcache import COMPLETE, Asset, Tool, ToolUnavailable
 
 PLATFORM: Final = "linux-arm64-gnu"
 BINARY: Final = b"#!/bin/sh\necho fake\n"

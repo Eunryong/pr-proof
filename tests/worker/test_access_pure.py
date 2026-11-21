@@ -1,10 +1,10 @@
-"""worker/access_pure.py: 외부 작성자 PR 가드레일의 판단 (DESIGN 8.6, 완료 기준 6-8)."""
+"""app/worker/access_pure.py: 외부 작성자 PR 가드레일의 판단 (DESIGN 8.6, 완료 기준 6-8)."""
 
 from typing import Final
 
 import pytest
 
-from worker.access_pure import (
+from app.worker.access_pure import (
     AccessSettings,
     Allowed,
     BadCommit,

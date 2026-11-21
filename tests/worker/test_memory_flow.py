@@ -12,9 +12,9 @@ from typing import Final
 
 import pytest
 
-from worker import main, memory
-from worker.fix import model_fix_pure as model_fix_rules
-from worker.repo_config_pure import FixSettings, RagSettings, RepoConfig
+from app.worker import main, memory
+from app.worker.fix import model_fix_pure as model_fix_rules
+from app.worker.repo_config_pure import FixSettings, RagSettings, RepoConfig
 
 from .fix.test_model_fix_flow import (  # noqa: F401
     FIX_LINE_2,
