@@ -9,6 +9,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from redis import Redis
 
@@ -16,9 +17,9 @@ from app.config import PipelineConfig
 from app.controllers.webhook import PIPELINE_BRANCH_PREFIX
 from app.models.comment import command_in_comment
 from app.models.job import PRJob
-from app.models.ops_alert import Alert
+from app.models.ops_alert import Kind
 from app.models.sync_rules import EnqueueReason, enqueue_reason
-from app.notify import slack
+from app.notify import macos
 from app.services import github, queue
 from app.services.history import History
 
@@ -29,6 +30,8 @@ log = logging.getLogger(__name__)
 class SyncResult:
     enqueued: list[tuple[str, int, EnqueueReason | str]] = field(default_factory=list)
     failed_repos: list[str] = field(default_factory=list)
+    # 사람이 해야 풀리는 환경 오류로 보이는 것. 조회가 실패했고 `gh auth status`도 실패하면 gh_login
+    environment: frozenset[Kind] = frozenset()
 
 
 def run_once(
@@ -39,6 +42,7 @@ def run_once(
     list_prs: Callable[[str], list[github.OpenPR]] = github.list_open_prs,
     head_time: Callable[[str, str], str] = github.head_commit_time,
     list_comments: Callable[[str, int, str], list[github.PRComment]] = github.list_comments_since,
+    auth_ok: Callable[[], bool] = github.auth_ok,
     now: datetime | None = None,
 ) -> SyncResult:
     now = now or datetime.now(UTC)
@@ -51,7 +55,6 @@ def run_once(
         except github.GitHubReadError as e:
             log.warning("동기화: %s 조회 실패, 다음 주기에 다시 한다: %s", repo, e)
             result.failed_repos.append(repo)
-            slack.send(Alert("sync_failed", repo), redis)
             continue
         open_numbers = {pr.number for pr in prs}
         for number in sorted(history.prs_with_open_proposals(repo) - open_numbers):
@@ -83,10 +86,18 @@ def run_once(
             )
             if reason == "dead_worker":
                 queue.clear_job(redis, job)
-                slack.send(Alert("worker_lost", repo, pr.number), redis)
             if queue.enqueue(redis, job) == "queued":
                 result.enqueued.append((repo, pr.number, reason))
+    if result.failed_repos and not auth_ok():
+        result.environment = frozenset({"gh_login"})
     return result
+
+
+def alert_lasting(previous: frozenset[Kind], current: frozenset[Kind], data_dir: Path) -> None:
+    """동기화가 두 주기 연속으로 본 환경 오류만 알린다. 한 번의 네트워크 끊김은 다음 주기에 풀리고,
+    워커의 재시도에 해당하는 것이 동기화에는 다음 주기뿐이다. 같은 종류는 30분에 한 번이다."""
+    for kind in sorted(previous & current):
+        macos.send(kind, data_dir)
 
 
 def _missed_commands(

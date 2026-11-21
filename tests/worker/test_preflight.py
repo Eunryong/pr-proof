@@ -5,6 +5,7 @@ from typing import Final
 import fakeredis
 import pytest
 
+from app.models.ops_alert import TEXT
 from app.worker import preflight
 
 NOW: Final = datetime(2026, 11, 18, 12, 0, tzinfo=UTC)
@@ -31,6 +32,23 @@ def test_failures_include_hint() -> None:
     assert preflight.failures(_checks(command_ok=command_ok)) == [
         "Docker 실패 → Docker Desktop 실행"
     ]
+
+
+def test_each_failed_check_shows_its_own_line(tmp_path, notifications) -> None:
+    """6-4: 실패한 확인마다 그 종류의 정한 한 줄이 뜬다. 통과한 확인은 뜨지 않는다."""
+    server = fakeredis.FakeServer()
+    server.connected = False
+    checks = preflight.run_checks(
+        fakeredis.FakeStrictRedis(server=server),
+        command_ok=lambda args: args[0] != "gh",
+        claude_status=lambda: "",
+        now=NOW,
+    )
+    preflight.alert(checks, tmp_path)
+    assert notifications == [TEXT["gh_login"], TEXT["claude_login"], TEXT["redis"]]
+    notifications.clear()
+    preflight.alert(_checks(), tmp_path)
+    assert notifications == []
 
 
 def test_claude_login_failure_has_hint() -> None:
