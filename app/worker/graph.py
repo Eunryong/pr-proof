@@ -48,16 +48,16 @@ from app.shared.job_pure import PRJob
 from app.worker import (
     base_config,
     coverage,
+    doc_rules_pure,
     generated_tests_pure,
     mcp_pure,
     memory,
+    rag_pure,
+    rag_switch_pure,
     records,
     repo,
     report,
 )
-from app.worker import doc_rules_pure as doc_rule_models
-from app.worker import rag_pure as rag_models
-from app.worker import rag_switch_pure as rag_switch_models
 from app.worker.ai import claude_cli, workdir
 from app.worker.base_config import BaseConfig
 from app.worker.budget import CallBudget
@@ -66,10 +66,15 @@ from app.worker.checker_authoring_pure import Checked
 from app.worker.coverage import DiffCoverage
 from app.worker.doc_rules_pure import DocRules, Found, RuleOutcome, RulesRead
 from app.worker.doc_rules_report import FixView
-from app.worker.fix import decide, mechanical_fix, model_fix, proposal
-from app.worker.fix import fix_decision_pure as fix_decision_models
-from app.worker.fix import fix_pure as fix_models
-from app.worker.fix import model_fix_pure as model_fix_models
+from app.worker.fix import (
+    decide,
+    fix_decision_pure,
+    fix_pure,
+    mechanical_fix,
+    model_fix,
+    model_fix_pure,
+    proposal,
+)
 from app.worker.fix.fix_decision_pure import Decided, SafetyNet, open_targets
 from app.worker.fix.fix_pure import MECHANICAL_BUNDLE, MechanicalFix
 from app.worker.fix.model_fix_pure import ModelFix, Picked
@@ -81,8 +86,7 @@ from app.worker.rag_pure import Retrieval
 from app.worker.rag_switch_pure import RagSwitch
 from app.worker.repo import CHANGES_DIFF
 from app.worker.repo_config_pure import call_limits
-from app.worker.rules import detect, doc_rules, pr_check
-from app.worker.rules import pr_check_pure as pr_check_models
+from app.worker.rules import detect, doc_rules, pr_check, pr_check_pure
 from app.worker.rules.doc_rules import Runtime as DocRuntime
 from app.worker.rules.pr_check_pure import PrChecks
 from app.worker.sandbox import container, docker_cli, toolcache
@@ -127,15 +131,15 @@ _STATE_TYPES: Final = (
     ("app.worker.test_run_pure", "ReportSummary"),
     ("app.worker.fix.proposal_pure", "ProposalResult"),
     ("app.worker.coverage", "DiffCoverage"),
-    *doc_rule_models.STATE_TYPES,
-    *fix_decision_models.STATE_TYPES,
-    *model_fix_models.STATE_TYPES,
+    *doc_rules_pure.STATE_TYPES,
+    *fix_decision_pure.STATE_TYPES,
+    *model_fix_pure.STATE_TYPES,
     *generated_tests_pure.STATE_TYPES,
     *mcp_pure.STATE_TYPES,
-    *fix_models.STATE_TYPES,
-    *rag_models.STATE_TYPES,
-    *rag_switch_models.STATE_TYPES,
-    *pr_check_models.STATE_TYPES,
+    *fix_pure.STATE_TYPES,
+    *rag_pure.STATE_TYPES,
+    *rag_switch_pure.STATE_TYPES,
+    *pr_check_pure.STATE_TYPES,
 )
 
 
@@ -382,7 +386,7 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
         if not isinstance(result, Found):
             return {}
         ensure_checkout(job)  # `/fix`가 이어 할 때는 새 프로세스다
-        if any(isinstance(o, doc_rule_models.RuleJudged) for o in result.outcomes):
+        if any(isinstance(o, doc_rules_pure.RuleJudged) for o in result.outcomes):
             progress(job, "모델 판단")
             result = doc_rules.judge(
                 result, ctx.worktree, ctx.changes_diff, doc_runtime(state),
@@ -468,9 +472,7 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
         found, decided = state.get("doc_rules"), state.get("fix_decisions")
         if not isinstance(found, Found) or decided is None:
             return None
-        pick = (
-            mechanical_fix.pick_targets if bundle == MECHANICAL else model_fix_models.pick_targets
-        )
+        pick = mechanical_fix.pick_targets if bundle == MECHANICAL else model_fix_pure.pick_targets
         picked = pick(found.violations, decided.decisions)
         return picked if picked.targets else None
 
@@ -760,7 +762,7 @@ def _rerun(values: Mapping[str, Any], bundle: str) -> bool:
         capped
         or failed
         or doc_rules.judge_left(values.get("doc_rules"))
-        or pr_check_models.judge_left(values.get("pr_checks"))
+        or pr_check_pure.judge_left(values.get("pr_checks"))
     )
 
 
@@ -808,7 +810,7 @@ def resume_fix(job: PRJob, ctx: FlowContext, approval: dict[str, Any]) -> FlowSt
             after = TEST
             if doc_rules.judge_left(values.get("doc_rules")):
                 after = DETECT
-            elif pr_check_models.judge_left(values.get("pr_checks")):
+            elif pr_check_pure.judge_left(values.get("pr_checks")):
                 after = JUDGE
             config = graph.update_state(
                 config, {result_key: None, requested_key: True}, as_node=after

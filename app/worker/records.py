@@ -18,8 +18,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.shared.db_pure import SeenViolation
 from app.shared.job_pure import PRJob
-from app.worker import records_pure as rules
-from app.worker import repo
+from app.worker import records_pure, repo
 from app.worker.doc_rules_pure import Found, RuleChecked
 from app.worker.fix.fix_pure import MechanicalFix
 from app.worker.fix.model_fix_pure import ModelFix
@@ -45,11 +44,11 @@ _FAILED_STATUSES: Final = frozenset({
 _FINISHED_STATES: Final[Mapping[str, str]] = {"merged": "adopted", "rejected": "rejected"}
 
 
-def save(store: Store, new: Iterable[rules.NewRecord], secrets: Sequence[str]) -> int:
+def save(store: Store, new: Iterable[records_pure.NewRecord], secrets: Sequence[str]) -> int:
     """비밀값 검사를 거친 기록만 저장한다. 새로 저장한 수."""
     saved = 0
     for record in new:
-        kind = find_secret_in_text(rules.text_of(record), secrets)
+        kind = find_secret_in_text(records_pure.text_of(record), secrets)
         if kind is not None:
             log.warning(
                 "기록을 저장하지 않음 %s %s: 비밀값 (%s)", record.repo, record.source_id, kind
@@ -69,10 +68,10 @@ def after_proposals(store: Store, repo_name: str, pr_number: int, secrets: Seque
             attempt = store.fix_attempt(p.attempt_id) if p.attempt_id is not None else None
             if kind is None or attempt is None or attempt.patch is None:
                 continue
-            new = rules.fix_pr_records(
+            new = records_pure.fix_pr_records(
                 kind, repo=repo_name, pr_number=pr_number, fix_pr_number=p.number,
                 commit_sha=p.merge_commit if kind == "adopted" else p.head_sha,
-                targets=rules.targets_from_json(attempt.targets_json), patch=attempt.patch,
+                targets=records_pure.targets_from_json(attempt.targets_json), patch=attempt.patch,
             )  # fmt: skip
             save(store, new, secrets)
     except _RECORD_ERRORS:
@@ -83,7 +82,7 @@ def after_failed_fix(
     store: Store,
     job: PRJob,
     fix: ModelFix | MechanicalFix,
-    notes: Sequence[rules.Target],
+    notes: Sequence[records_pure.Target],
     worktree: Path,
     secrets: Sequence[str],
 ) -> None:
@@ -92,7 +91,7 @@ def after_failed_fix(
     if fix.status not in _FAILED_STATUSES or fix.attempt_id is None:
         return
     try:
-        new = rules.failure_records(
+        new = records_pure.failure_records(
             repo=job.repo, pr_number=job.pr_number, head_sha=job.head_sha,
             attempt_id=fix.attempt_id, targets=notes, patch=repo.head_diff(worktree),
             detail=fix.detail,
@@ -107,10 +106,10 @@ def mark_rejected(store: Store, job: PRJob, found: Found) -> Found:
     표 첫 줄이 이것으로 `skip`(이전에 거절됨)을 정한다 (4.6)."""
     if not found.violations:
         return found
-    rejected = rules.rejected_lines(store.records(job.repo, job.pr_number))
+    rejected = records_pure.rejected_lines(store.records(job.repo, job.pr_number))
     if not rejected:
         return found
-    return replace(found, violations=rules.mark_rejected(found.violations, rejected))
+    return replace(found, violations=records_pure.mark_rejected(found.violations, rejected))
 
 
 def after_detect(
@@ -134,7 +133,7 @@ def after_detect(
             checked = set(o.rule.id for o in found.outcomes if isinstance(o, RuleChecked))
             if CONFIG_RULE_ID in checked:  # 도구 설정 규칙의 위반은 ruff 코드가 규칙 id다 (4.3)
                 checked |= {p.rule_id for p in previous if RUFF_CODE.match(p.rule_id)}
-            fixed = rules.author_fixed(
+            fixed = records_pure.author_fixed(
                 previous, frozenset(v.id for v in found.violations), frozenset(checked), lines_of
             )
             if fixed:
@@ -142,7 +141,7 @@ def after_detect(
                 texts = {o.rule.id: o.rule.text for o in found.outcomes}
                 if config is not None:
                     texts |= {v.rule_id: config.text for v in fixed if RUFF_CODE.match(v.rule_id)}
-                new = rules.author_records(
+                new = records_pure.author_records(
                     fixed, rule_texts=texts, head_sha=job.head_sha,
                     diff_of=_commit_diff(worktree, fixed[0].head_sha, job.head_sha),
                 )  # fmt: skip
@@ -159,7 +158,7 @@ def after_detect(
                 line_text=v.line_text,
                 message=v.message,
                 unit=v.unit,
-                context=rules.context_around(lines_of(v.file) or [], v.line),
+                context=records_pure.context_around(lines_of(v.file) or [], v.line),
             )  # fmt: skip
             for v in found.violations
         ]
@@ -174,7 +173,7 @@ def context_of(worktree: Path) -> Callable[[Violation], str]:
     lines_of = _reader(worktree)
 
     def context(v: Violation) -> str:
-        return rules.context_around(lines_of(v.file) or [], v.line)
+        return records_pure.context_around(lines_of(v.file) or [], v.line)
 
     return context
 

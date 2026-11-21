@@ -45,8 +45,7 @@ def main(argv: list[str] | None = None) -> int:
 def evaluate(db: Path, *, baseline: bool, real_model: bool, label: str, out: Path | None = None,
              runner=subprocess.run) -> int:  # noqa: ANN001  # fmt: skip
     """runner(`subprocess.run`과 같은 꼴)는 테스트가 바꾼다."""
-    from app.worker import eval_run_pure as eval_run
-    from app.worker import evaluation, state
+    from app.worker import eval_run_pure, evaluation, state
 
     engine = state.open_engine(db)
     try:
@@ -57,13 +56,13 @@ def evaluate(db: Path, *, baseline: bool, real_model: bool, label: str, out: Pat
         return 1
     kind = "기준선" if baseline else "실행"
     print(f"eval_runs #{stored.run_id} ({kind}, {'실제 모델' if real_model else '가짜 모델'})")
-    print(eval_run.render_summary(stored.summary))
+    print(eval_run_pure.render_summary(stored.summary))
     if not baseline:
         if stored.baseline is None:
             print("비교할 기준선이 없음 (--baseline으로 먼저 남긴다)")
         else:
-            comparison = eval_run.compare(evaluation.from_row(stored.baseline), stored.summary)
-            print(eval_run.render_comparison(comparison, stored.baseline.id))
+            comparison = eval_run_pure.compare(evaluation.from_row(stored.baseline), stored.summary)
+            print(eval_run_pure.render_comparison(comparison, stored.baseline.id))
     return 0
 
 

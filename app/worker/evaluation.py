@@ -21,8 +21,7 @@ from typing import Final
 from sqlalchemy import Engine
 
 from app.shared.db_pure import EvalRun
-from app.worker import eval_run_pure as eval_run
-from app.worker import state
+from app.worker import eval_run_pure, state
 
 # 하위 프로세스에 넘기는 환경. 있을 때만 넘긴다
 PASSED_ENV: Final = (
@@ -46,7 +45,7 @@ class EvalError(RuntimeError):
 @dataclass(frozen=True)
 class Stored:
     run_id: int
-    summary: eval_run.RunSummary
+    summary: eval_run_pure.RunSummary
     baseline: EvalRun | None  # 비교한 기준선. 기준선으로 저장했거나 기준선이 없으면 None
 
 
@@ -66,7 +65,7 @@ def run_suite(
     real_model: bool,
     environ: Mapping[str, str] | None = None,
     runner: Runner = subprocess.run,
-) -> eval_run.RunSummary:
+) -> eval_run_pure.RunSummary:
     junit = out_dir / "junit.xml"
     command = [sys.executable, "-m", "pytest", "-m", "docker", SUITE, "-q",
                "-p", "no:cacheprovider", f"--junitxml={junit}"]  # fmt: skip
@@ -78,11 +77,11 @@ def run_suite(
     report = out_dir / "tools_off.json"
     if report.is_file():
         tools_off = json.loads(report.read_text()).get("by_method", {})
-    return eval_run.RunSummary(
-        cases=eval_run.parse_junit(junit.read_text()),
+    return eval_run_pure.RunSummary(
+        cases=eval_run_pure.parse_junit(junit.read_text()),
         tools_off=tools_off,
-        models=eval_run.default_models(),
-        prompts=eval_run.prompt_versions(),
+        models=eval_run_pure.default_models(),
+        prompts=eval_run_pure.prompt_versions(),
     )
 
 
@@ -92,7 +91,7 @@ def pipeline_commit(repo_root: Path, runner: Runner = subprocess.run) -> str:
     return proc.stdout.strip() if proc.returncode == 0 else ""
 
 
-def to_row(summary: eval_run.RunSummary, *, label: str, baseline: bool, commit: str,
+def to_row(summary: eval_run_pure.RunSummary, *, label: str, baseline: bool, commit: str,
            real_model: bool, now: datetime | None = None) -> EvalRun:  # fmt: skip
     return EvalRun(
         created_at=now or datetime.now(UTC),
@@ -103,16 +102,16 @@ def to_row(summary: eval_run.RunSummary, *, label: str, baseline: bool, commit: 
         passed=summary.count("passed"),
         failed=summary.count("failed"),
         skipped=summary.count("skipped"),
-        cases_json=eval_run.cases_json(summary.cases),
+        cases_json=eval_run_pure.cases_json(summary.cases),
         tools_off_json=json.dumps(summary.tools_off, ensure_ascii=False),
         models_json=json.dumps(summary.models, ensure_ascii=False),
         prompts_json=json.dumps(summary.prompts, ensure_ascii=False),
     )
 
 
-def from_row(row: EvalRun) -> eval_run.RunSummary:
-    return eval_run.RunSummary(
-        cases=eval_run.cases_from_json(row.cases_json),
+def from_row(row: EvalRun) -> eval_run_pure.RunSummary:
+    return eval_run_pure.RunSummary(
+        cases=eval_run_pure.cases_from_json(row.cases_json),
         tools_off=json.loads(row.tools_off_json),
         models=json.loads(row.models_json),
         prompts=json.loads(row.prompts_json),

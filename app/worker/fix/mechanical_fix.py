@@ -19,13 +19,11 @@ from typing import Final
 
 from app.shared.db_pure import FixAttempt
 from app.shared.job_pure import PRJob
-from app.worker import records_pure as record_rules
-from app.worker import repo
+from app.worker import records_pure, repo
 from app.worker.checker_authoring_pure import Checked, RuleCheck
 from app.worker.diff_pure import added_lines_except_moved, added_texts, new_files
 from app.worker.doc_rules_pure import Found
-from app.worker.fix import model_fix_pure as model_fix_rules
-from app.worker.fix import scope
+from app.worker.fix import model_fix_pure, scope
 from app.worker.fix.fix_decision_pure import FixDecision
 from app.worker.fix.fix_pure import (
     MECHANICAL_BUNDLE,
@@ -141,7 +139,7 @@ def fix_violations(
     if after.unchecked:
         what = "; ".join(f"{u.rule.id}: {u.detail}" for u in after.unchecked)
         return outcome("unchecked", what, **common)
-    left, new = model_fix_rules.recheck(found.violations, targets, after.violations)
+    left, new = model_fix_pure.recheck(found.violations, targets, after.violations)
     if new:
         detail = ", ".join(f"{v.file}:{v.line} {v.rule_id}" for v in new[:10])
         return outcome("new_violations", detail, **common)
@@ -153,7 +151,7 @@ def fix_violations(
     if not same_test_result(test_before, run):
         return outcome("tests_changed", format_test_line(run), **common)
     entries = [e for e in parse_porcelain(repo.status(worktree)) if not is_pipeline_output(e.path)]
-    too_big = model_fix_rules.size_problem(len(entries), changed_line_count(patch))
+    too_big = model_fix_pure.size_problem(len(entries), changed_line_count(patch))
     if too_big is not None:
         return outcome("too_big", too_big, **common)
     left_ids = {v.id for v in left}
@@ -196,7 +194,7 @@ def save_attempt(
     job: PRJob,
     merge_base: str,
     fix: MechanicalFix,
-    notes: Sequence[record_rules.Target],
+    notes: Sequence[records_pure.Target],
     worktree: Path,
 ) -> MechanicalFix:
     """시도 결과를 `fix_attempts`에 저장하고 그 id를 붙인다. 통과했으면 패치와 바뀐 파일의 해시도
@@ -206,7 +204,7 @@ def save_attempt(
         FixAttempt(
             repo=job.repo, pr_number=job.pr_number, head_sha=job.head_sha, merge_base=merge_base,
             bundle=MECHANICAL_BUNDLE, status=fix.status, attempts=1, models_json="[]",
-            detail=fix.detail, targets_json=record_rules.targets_to_json(notes),
+            detail=fix.detail, targets_json=records_pure.targets_to_json(notes),
             patch=repo.head_diff(worktree) if ready else None,
             file_hashes_json=(
                 json.dumps(file_hashes(worktree, fix.changed_files)) if ready else None

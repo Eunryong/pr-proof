@@ -31,19 +31,16 @@ import fakeredis
 import pytest
 import yaml
 
-from app.shared import config
-from app.shared import state_keys_pure as state_keys
+from app.shared import config, state_keys_pure
 from app.shared.job_pure import PRJob
-from app.worker import main, repo, retry
-from app.worker import rule_reading_pure as rule_reading
+from app.worker import main, repo, retry, rule_reading_pure
 from app.worker.ai import claude_cli
 from app.worker.ai.claude_cli import ClaudeResult, StructuredResult
 from app.worker.deps import Deps
-from app.worker.fix import fix_decision_pure as fix_decision
+from app.worker.fix import fix_decision_pure
 from app.worker.github import GitHub
 from app.worker.rule_pure import rule_id
-from app.worker.rules import judge_pure as judge
-from app.worker.rules import tool_choice_pure as tool_choice
+from app.worker.rules import judge_pure, tool_choice_pure
 from app.worker.state import Store
 from tests.sandbox_names import TEST_NAMES
 
@@ -141,12 +138,12 @@ def scripted_model(case: dict):
     ]}  # fmt: skip
 
     def ask(prompt: str, *, schema, **kw) -> StructuredResult:
-        if schema is rule_reading.ANSWER_SCHEMA:
+        if schema is rule_reading_pure.ANSWER_SCHEMA:
             return _answer(reading)
-        if schema is tool_choice.ANSWER_SCHEMA:
+        if schema is tool_choice_pure.ANSWER_SCHEMA:
             (rule,) = [r for r in rules if r["quote"] in prompt]
             return _answer(rule.get("tool") or NO_TOOL)
-        if schema is judge.ANSWER_SCHEMA:
+        if schema is judge_pure.ANSWER_SCHEMA:
             files = set(re.findall(r"^파일: (.+)$", prompt, re.M))
             found = [
                 {"rule_id": rule_id("README.md", r["quote"]), **answer}
@@ -154,7 +151,7 @@ def scripted_model(case: dict):
                 for answer in r.get("judge", []) if answer["file"] in files
             ]  # fmt: skip
             return _answer({"violations": found})
-        if schema is fix_decision.ANSWER_SCHEMA:
+        if schema is fix_decision_pure.ANSWER_SCHEMA:
             decisions = []
             for vid, file, line in _DECIDE_BLOCK.findall(prompt):
                 entry = skip.get(f"{file}:{line}")
@@ -246,7 +243,7 @@ def deps_for(tmp_path: Path, shared_venvs: Path, tool_cache: Path, monkeypatch):
 
 def _check(deps: Deps, gh: FakeGh, redis, remote: dict, pr: int) -> str:
     gh.head = remote["head"]
-    redis.set(state_keys.latest_head(REPO, pr), remote["head"])
+    redis.set(state_keys_pure.latest_head(REPO, pr), remote["head"])
     job = PRJob(repo=REPO, pr_number=pr, kind="update", head_sha=remote["head"],
                 base_sha=remote["base"], source="webhook")  # fmt: skip
     main.handle(job.model_dump_json(), deps)

@@ -42,8 +42,7 @@ import fakeredis
 import pytest
 import yaml
 
-from app.worker import base_config, repo
-from app.worker import rule_reading_pure as rule_reading
+from app.worker import base_config, repo, rule_reading_pure
 from app.worker.ai import claude_cli
 from app.worker.ai.claude_cli import StructuredResult
 from app.worker.budget import CallBudget
@@ -52,10 +51,8 @@ from app.worker.diff_pure import ChangedLines, added_lines
 from app.worker.doc_rules_pure import Found, RuleChecked, RuleJudged, RuleOutcome, RulesRead
 from app.worker.repo_config_pure import CallSettings, ModelSettings, RulesSettings
 from app.worker.rule_pure import Rule, in_scope
-from app.worker.rules import checkers, doc_rules
+from app.worker.rules import checkers, doc_rules, judge_pure, tool_choice_pure
 from app.worker.rules import judge as model_judge
-from app.worker.rules import judge_pure as judge_model
-from app.worker.rules import tool_choice_pure as tool_choice
 from app.worker.sandbox import checker_runner
 from app.worker.state import Store
 from tests.sandbox_names import TEST_NAMES
@@ -223,9 +220,9 @@ class Calls:
             raise RuntimeError(f"모델 호출이 {MAX_CALLS}회를 넘으려 함")
         schema = kwargs.get("schema")
         stage = (
-            "rules" if schema is rule_reading.ANSWER_SCHEMA
-            else "tool_choice" if schema is tool_choice.ANSWER_SCHEMA
-            else "judge" if schema is judge_model.ANSWER_SCHEMA else "checker"
+            "rules" if schema is rule_reading_pure.ANSWER_SCHEMA
+            else "tool_choice" if schema is tool_choice_pure.ANSWER_SCHEMA
+            else "judge" if schema is judge_pure.ANSWER_SCHEMA else "checker"
         )  # fmt: skip
         result = self.ask(prompt, **kwargs)
         self.log.append({"arm": self.arm, "stage": stage, "model": kwargs.get("model"),
@@ -342,7 +339,7 @@ def run_once(
             })  # fmt: skip
     choices = {}
     for rule in wanted:
-        entry = store.saved_checker(tool_choice.choice_key(rule, models.checker, ruff.version))
+        entry = store.saved_checker(tool_choice_pure.choice_key(rule, models.checker, ruff.version))
         if entry is not None:
             choices[rule.id] = {"accepted": entry.accepted, "detail": entry.detail,
                                 "answer": json.loads(entry.attempts_json)}  # fmt: skip

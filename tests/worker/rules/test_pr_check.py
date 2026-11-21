@@ -20,8 +20,7 @@ from app.worker.budget import CallBudget
 from app.worker.call_budget_pure import RulesetScope
 from app.worker.repo_config_pure import CallSettings
 from app.worker.rule_pure import CheckMethod, Example, Rule, RuleSource
-from app.worker.rules import pr_check
-from app.worker.rules import pr_check_pure as m
+from app.worker.rules import pr_check, pr_check_pure
 from app.worker.rules.pr_check_pure import Commit, PrFacts
 from app.worker.sandbox import checker_runner
 from app.worker.sandbox.checker_runner import Failed, PrRan
@@ -90,7 +89,7 @@ class Model:
         self.calls: list[dict] = []
 
     def __call__(self, prompt: str, *, schema, **kw) -> StructuredResult:
-        stage = "plan" if schema is m.PLAN_SCHEMA else "judge"
+        stage = "plan" if schema is pr_check_pure.PLAN_SCHEMA else "judge"
         self.calls.append({"stage": stage, "prompt": prompt, "schema": schema, **kw})
         if self.fail == stage:
             return StructuredResult(ok=False, error=AIErrorKind.TIMEOUT, data=None, model_id="",
@@ -184,7 +183,7 @@ def test_plan_prompt_never_contains_pr_text(store) -> None:
     pr_check.check([COMMITS], facts, _tools(store, model))
     (call,) = model.calls
     assert not any(s in call["prompt"] for s in ("본문의-지시문", "제목의-지시문", "커밋의-지시문"))
-    assert call["system_prompt"] == m.PLAN_SYSTEM_PROMPT
+    assert call["system_prompt"] == pr_check_pure.PLAN_SYSTEM_PROMPT
 
 
 @pytest.mark.parametrize(
@@ -290,7 +289,7 @@ def test_judged_rule_answers_are_verified_and_stored(store) -> None:
     assert result.usage.dropped == 2 and result.usage.judge_calls == 1
     judge_call = model.calls[-1]
     assert (
-        judge_call["system_prompt"] == m.JUDGE_SYSTEM_PROMPT
+        judge_call["system_prompt"] == pr_check_pure.JUDGE_SYSTEM_PROMPT
         and "고쳤습니다" in judge_call["prompt"]
     )
     assert SHA_A not in judge_call["prompt"]  # 본문 규칙에는 커밋을 넣지 않는다
@@ -309,7 +308,7 @@ def test_judgment_cap_leaves_the_rule_for_fix(store) -> None:
     model = Model({TESTING.id: [TESTING_PLAN]}, judge=[])
     result = pr_check.check([TESTING], _facts(), _tools(store, model, calls=calls), known=0)
     (r,) = result.results
-    assert (r.status, r.kind) == ("left", "cap") and m.judge_left(result)
+    assert (r.status, r.kind) == ("left", "cap") and pr_check_pure.judge_left(result)
     assert model.stages() == ["plan"]
     resumed = pr_check.check([TESTING], _facts(), _tools(store, model, calls=calls), known=1)
     assert resumed.results[0].status == "checked" and model.stages() == ["plan", "judge"]
@@ -320,7 +319,9 @@ def test_judgment_failure_leaves_the_rule_and_is_not_stored(store) -> None:
     store_key_count = len(store.model_calls("o/r", 1))
     failing = Model({}, fail="judge")
     (r,) = pr_check.check([TESTING], _facts(body="새 본문"), _tools(store, failing)).results
-    assert (r.status, r.kind) == ("left", "model_failed") and not m.judge_left(m.PrChecks((r,), ()))
+    assert (r.status, r.kind) == ("left", "model_failed") and not pr_check_pure.judge_left(
+        pr_check_pure.PrChecks((r,), ())
+    )
     assert len(store.model_calls("o/r", 1)) > store_key_count
 
 

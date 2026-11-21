@@ -34,7 +34,7 @@ from app.shared import config
 from app.worker import repo
 from app.worker.ai import claude_cli
 from app.worker.deps import Deps
-from app.worker.fix import fix_decision_pure as fix_decision
+from app.worker.fix import fix_decision_pure
 from app.worker.github import GitHub
 from app.worker.state import Store
 from tests.sandbox_names import TEST_NAMES
@@ -99,7 +99,7 @@ def _run(name: str, arm: str, n: int, real_stage: str, tmp: Path, eval_repo: Pat
     decide_prompts: list[str] = []
 
     def ask(prompt: str, *, schema, **kw):
-        if schema is fix_decision.ANSWER_SCHEMA:
+        if schema is fix_decision_pure.ANSWER_SCHEMA:
             decide_prompts.append(prompt)
             if real_ask is not None and real_stage == "decide":
                 return real_ask(prompt, schema=schema, **kw)

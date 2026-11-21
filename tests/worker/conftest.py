@@ -6,8 +6,7 @@ from pathlib import Path
 import fakeredis
 import pytest
 
-from app.shared import config
-from app.shared import state_keys_pure as state_keys
+from app.shared import config, state_keys_pure
 from app.worker import base_config, repo
 from app.worker.access_pure import AccessSettings
 from app.worker.deps import Deps
@@ -45,5 +44,5 @@ def env(tmp_path: Path, monkeypatch):
     # 가짜 체크아웃에는 git 기록이 없다. base에 규칙 문서도 ruff 설정도 없는 리포로 본다 (규칙
     # 흐름은 test_doc_rules_flow·test_mechanical_flow)
     monkeypatch.setattr(repo, "list_base_entries", lambda *a, **k: {})
-    redis.set(state_keys.latest_head("o/r", 1), HEAD)
+    redis.set(state_keys_pure.latest_head("o/r", 1), HEAD)
     return {"deps": deps, "gh": gh, "redis": redis, "monkeypatch": monkeypatch}

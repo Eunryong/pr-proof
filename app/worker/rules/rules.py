@@ -36,7 +36,7 @@ from app.worker.rule_reading_pure import (
     select_documents,
     verify_rules,
 )
-from app.worker.rules import doc_sections_pure as sections_rules
+from app.worker.rules import doc_sections_pure
 from app.worker.state import Store
 
 log = logging.getLogger(__name__)
@@ -199,27 +199,27 @@ def _load_sections(
     처음 보는 조각만 모은 발췌를 모델이 읽는다. 검색을 하지 못하면 None(400KB까지만 읽는
     방식으로)."""
     wide = select_documents(settings.docs, {e.path: e for e in selection.listed},
-                            max_bytes=sections_rules.MAX_LARGE_DOCS_BYTES)  # fmt: skip
+                            max_bytes=doc_sections_pure.MAX_LARGE_DOCS_BYTES)  # fmt: skip
     documents, unread = _read(worktree, wide)
-    all_chunks = [c for d in documents for c in sections_rules.chunks(d)]
+    all_chunks = [c for d in documents for c in doc_sections_pure.chunks(d)]
     diff = changes_diff.decode("utf-8", errors="replace")
     changed = sorted(added_lines(diff))
     added = "\n".join(line[1:] for line in diff.splitlines()
                       if line.startswith("+") and not line.startswith("+++"))  # fmt: skip
     try:
         hits = sections.find_sections(
-            [(c.id, c.embed_text) for c in all_chunks], sections_rules.query_text(changed, added)
+            [(c.id, c.embed_text) for c in all_chunks], doc_sections_pure.query_text(changed, added)
         )
     except Exception as e:  # noqa: BLE001 (임베딩·Chroma의 실패는 400KB까지 읽는 방식으로 넘긴다)
         log.warning("큰 규칙 문서의 절을 찾지 못함: %s", e)
         return None
     saved: dict[str, RuleSet] = {}
     for c in all_chunks:
-        text = store.saved_ruleset(sections_rules.section_key(c, model))
+        text = store.saved_ruleset(doc_sections_pure.section_key(c, model))
         if text is not None:
             saved[c.id] = RuleSet.from_json(text)
-    picked = sections_rules.pick(
-        all_chunks, scoped=sections_rules.scoped_to(saved, changed), hits=hits,
+    picked = doc_sections_pure.pick(
+        all_chunks, scoped=doc_sections_pure.scoped_to(saved, changed), hits=hits,
     )  # fmt: skip
     todo = [c for c in picked if c.id not in saved]
     scope = RulesetScope(key)
@@ -231,7 +231,7 @@ def _load_sections(
             log.info("규칙 읽기를 하지 않음: %s", call.reason)
             return CapReached(key, call)
         paths = {c.path for c in todo}
-        excerpts = tuple(sections_rules.excerpt(d, todo) for d in documents if d.path in paths)
+        excerpts = tuple(doc_sections_pure.excerpt(d, todo) for d in documents if d.path in paths)
         answer = ask(build_prompt(excerpts), system_prompt=SYSTEM_PROMPT, schema=ANSWER_SCHEMA,
                      model=model, max_budget_usd=CALL_BUDGET_USD["light"])  # fmt: skip
         failure = None if answer.ok else f"{answer.error}: {answer.detail}"
@@ -252,14 +252,14 @@ def _load_sections(
         rules, dropped = verify_rules(parsed, excerpts)
         by_chunk: dict[str, list[Rule]] = {c.id: [] for c in todo}
         for rule in rules:
-            home = sections_rules.chunk_of(rule, todo)
+            home = doc_sections_pure.chunk_of(rule, todo)
             if home is not None:
                 by_chunk[home.id].append(rule)
         for c in todo:
             part = RuleSet(rules=tuple(by_chunk[c.id]), sources=((c.path, c.blob_sha),),
                            pipeline_version=READER_VERSION, prompt_version=PROMPT_VERSION,
                            model=answered_by)  # fmt: skip
-            store.save_ruleset(sections_rules.section_key(c, model), part.to_json())
+            store.save_ruleset(doc_sections_pure.section_key(c, model), part.to_json())
             saved[c.id] = part
     else:
         budget.record_hit(scope, stage="rules", tier="light", model=model)

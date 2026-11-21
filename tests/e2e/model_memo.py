@@ -18,27 +18,24 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Final, Literal
 
-from app.worker import checker_authoring_pure as checker_authoring
-from app.worker import rule_reading_pure as rule_reading
+from app.worker import checker_authoring_pure, rule_reading_pure
 from app.worker.ai.claude_cli import AIErrorKind, ClaudeResult, StructuredResult
-from app.worker.fix import fix_decision_pure as fix_decision
-from app.worker.rules import judge_pure as judge
-from app.worker.rules import pr_check_pure as pr_check
-from app.worker.rules import tool_choice_pure as tool_choice
+from app.worker.fix import fix_decision_pure
+from app.worker.rules import judge_pure, pr_check_pure, tool_choice_pure
 
 Kind = Literal["call", "hit", "fix"]
 
 # 스키마 → 단계 이름. 호출 기록을 단계별로 세고, 한 단계의 답만 지우고 다시 묻는 데 쓴다
 STAGES: Final[tuple[tuple[Mapping[str, object], str], ...]] = (
-    (rule_reading.ANSWER_SCHEMA, "rules"),
-    (tool_choice.ANSWER_SCHEMA, "tool_choice"),
-    (checker_authoring.ANSWER_SCHEMA, "checker"),
-    (checker_authoring.PYTHON_AST_SCHEMA, "checker"),
-    (checker_authoring.AST_GREP_SCHEMA, "checker"),
-    (judge.ANSWER_SCHEMA, "judge"),
-    (fix_decision.ANSWER_SCHEMA, "decide"),
-    (pr_check.PLAN_SCHEMA, "pr_plan"),
-    (pr_check.JUDGE_SCHEMA, "pr_judge"),
+    (rule_reading_pure.ANSWER_SCHEMA, "rules"),
+    (tool_choice_pure.ANSWER_SCHEMA, "tool_choice"),
+    (checker_authoring_pure.ANSWER_SCHEMA, "checker"),
+    (checker_authoring_pure.PYTHON_AST_SCHEMA, "checker"),
+    (checker_authoring_pure.AST_GREP_SCHEMA, "checker"),
+    (judge_pure.ANSWER_SCHEMA, "judge"),
+    (fix_decision_pure.ANSWER_SCHEMA, "decide"),
+    (pr_check_pure.PLAN_SCHEMA, "pr_plan"),
+    (pr_check_pure.JUDGE_SCHEMA, "pr_judge"),
 )
 
 

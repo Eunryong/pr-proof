@@ -230,7 +230,7 @@ def test_review_is_posted_once_per_patch_and_ignores_lookalikes() -> None:
 
     gh = FakeGh()
     github = GitHub(gh)
-    marker = proposal.rules.review_marker("patch-1")
+    marker = proposal.proposal_pure.review_marker("patch-1")
     gh.reviews[900] = [{"body": marker, "login": "someone"}]
     comments = [ReviewComment("a.py", 2, "규칙 `R` 이유 `w`")]
     proposal.post_review(github, "o/r", 900, comments, "patch-1", ())

@@ -12,8 +12,7 @@ from redis import Redis
 from rq import Queue, SimpleWorker
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.shared import config
-from app.shared import state_keys_pure as state_keys
+from app.shared import config, state_keys_pure
 from app.shared.job_pure import PRJob
 from app.worker import command, preflight, retry, update
 from app.worker.deps import Deps
@@ -64,7 +63,7 @@ def main() -> int:
         preflight.alert(checks, settings.data_dir)
         return 1
     # 동시 작업 1개. macOS에서 fork 문제를 피하려고 작업을 같은 프로세스에서 실행한다
-    worker = SimpleWorker([Queue(state_keys.QUEUE_NAME, connection=redis)], connection=redis)
+    worker = SimpleWorker([Queue(state_keys_pure.QUEUE_NAME, connection=redis)], connection=redis)
     worker.work(with_scheduler=True)
     return 0
 

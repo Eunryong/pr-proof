@@ -82,18 +82,18 @@ def test_unknown_command_gets_no_reply(env, text: str) -> None:
 
 @pytest.mark.parametrize("final", [False, True])
 def test_github_failure_retries_and_releases_on_last(env, final: bool) -> None:
-    from app.shared import state_keys_pure as state_keys
+    from app.shared import state_keys_pure
     from app.worker import main
 
     env["gh"].head_error = "gh: 502"
     env["monkeypatch"].setattr(retry, "attempt", lambda: (4 if final else 1, final))
     job = PRJob.model_validate_json(_command("/fix model"))
-    env["redis"].set(state_keys.job(job.dedup_key), "1")
+    env["redis"].set(state_keys_pure.job(job.dedup_key), "1")
     with pytest.raises(GitHubError):
         main.handle(_command("/fix model"), env["deps"])
     # 마지막 시도면 실패로 적는다. 적지 않으면 동기화가 주기마다 다시 넣는다
     assert env["deps"].store.command_handled(9) == final
-    assert (env["redis"].get(state_keys.job(job.dedup_key)) is None) == final
+    assert (env["redis"].get(state_keys_pure.job(job.dedup_key)) is None) == final
 
 
 def test_messages_quote_the_command() -> None:

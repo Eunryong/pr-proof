@@ -11,7 +11,7 @@ from typing import Final
 
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 
-from app.shared import state_keys_pure as state_keys
+from app.shared import state_keys_pure
 from app.shared.job_pure import PRJob
 from app.worker import graph, main, update
 from app.worker.ai.claude_cli import StructuredResult
@@ -19,8 +19,7 @@ from app.worker.checker_authoring_pure import ToJudge, Unchecked
 from app.worker.doc_rules_pure import CallUsage, Found, RuleJudged, RuleUnchecked
 from app.worker.repo_config_pure import CallSettings, ModelSettings
 from app.worker.rule_pure import CheckMethod, Rule, RuleSource, rule_id
-from app.worker.rules import doc_rules
-from app.worker.rules import judge_pure as judge_rules
+from app.worker.rules import doc_rules, judge_pure
 from app.worker.rules.judge_pure import JudgeUsage
 
 from ..fix.test_model_fix_flow import (  # noqa: F401
@@ -72,7 +71,7 @@ class JudgeModel(FakeModel):
         self.flags = [FLAG] if flags is None else flags
 
     def __call__(self, prompt: str, *, schema, **kw) -> StructuredResult:
-        if schema is judge_rules.ANSWER_SCHEMA:
+        if schema is judge_pure.ANSWER_SCHEMA:
             self.prompts.append(("judge", prompt))
             files = set(re.findall(r"^파일: (.+)$", prompt, re.M))
             return _ok({"violations": [f for f in self.flags if f["file"] in files]})
@@ -98,7 +97,7 @@ def _run(env, tmp_path: Path, pr: dict[str, str] = PR, pr_number: int = 1):
     else:
         base_sha, head = make_remote(remote, BASE, pr)
     env["gh"].head, env["gh"].base = head, base_sha
-    env["redis"].set(state_keys.latest_head("o/r", pr_number), head)
+    env["redis"].set(state_keys_pure.latest_head("o/r", pr_number), head)
     job = PRJob(repo="o/r", pr_number=pr_number, kind="update", head_sha=head, base_sha=base_sha,
                 source="webhook")  # fmt: skip
     deps = env["deps"]
@@ -199,7 +198,7 @@ def test_judge_model_failure_is_listed_and_not_stored(doc_env, tmp_path: Path) -
 
     class Failing(JudgeModel):
         def __call__(self, prompt: str, *, schema, **kw) -> StructuredResult:
-            if schema is judge_rules.ANSWER_SCHEMA:
+            if schema is judge_pure.ANSWER_SCHEMA:
                 self.prompts.append(("judge", prompt))
                 return failed
             return super().__call__(prompt, schema=schema, **kw)

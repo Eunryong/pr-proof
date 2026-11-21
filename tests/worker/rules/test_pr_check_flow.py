@@ -10,14 +10,13 @@ from typing import Final
 
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 
-from app.shared import state_keys_pure as state_keys
+from app.shared import state_keys_pure
 from app.shared.job_pure import PRJob
 from app.worker import graph, main, repo, update
 from app.worker.ai.claude_cli import StructuredResult
 from app.worker.repo_config_pure import CallSettings, ModelSettings
 from app.worker.rule_pure import CheckMethod, Rule, RuleSource
-from app.worker.rules import pr_check
-from app.worker.rules import pr_check_pure as pr_models
+from app.worker.rules import pr_check, pr_check_pure
 from app.worker.rules.pr_check_pure import PrChecks, PrPattern, PrRuleResult, PrUsage, PrViolation
 
 from ..fix.test_model_fix_flow import AUTO, _command
@@ -53,10 +52,10 @@ class PrModel(FakeModel):
         self.judge = judge or []
 
     def __call__(self, prompt: str, *, schema, **kw) -> StructuredResult:
-        if schema is pr_models.PLAN_SCHEMA:
+        if schema is pr_check_pure.PLAN_SCHEMA:
             self.prompts.append(("pr_plan", prompt))
             return _ok(COMMIT_PLAN if COMMIT_RULE in prompt else TESTING_PLAN)
-        if schema is pr_models.JUDGE_SCHEMA:
+        if schema is pr_check_pure.JUDGE_SCHEMA:
             self.prompts.append(("pr_judge", prompt))
             return _ok({"violations": self.judge})
         return super().__call__(prompt, schema=schema, **kw)
@@ -95,7 +94,7 @@ def _remote(path: Path, messages: list[str]) -> tuple[str, list[str]]:
 def _run(env, tmp_path: Path, messages: list[str], body: str = "고쳤습니다"):
     base, shas = _remote(tmp_path / "remote", messages)
     env["gh"].head, env["gh"].base, env["gh"].body = shas[-1], base, body
-    env["redis"].set(state_keys.latest_head("o/r", 1), shas[-1])
+    env["redis"].set(state_keys_pure.latest_head("o/r", 1), shas[-1])
     sandbox = PrSandbox()
     env["monkeypatch"].setattr(graph.doc_rules, "sandbox_for", lambda *a: sandbox)
     job = PRJob(repo="o/r", pr_number=1, kind="update", head_sha=shas[-1], base_sha=base,
@@ -140,7 +139,7 @@ def test_pr_judgment_cap_is_shown_and_fix_resumes_it(doc_env, tmp_path: Path) ->
         calls=CallSettings(pr_base=0))}))  # fmt: skip
     model = use_model(doc_env, PrModel())
     state, _ = _run(doc_env, tmp_path, ["feat: 하나"])
-    assert pr_models.judge_left(state["pr_checks"]) and "pr_judge" not in _kinds(model)
+    assert pr_check_pure.judge_left(state["pr_checks"]) and "pr_judge" not in _kinds(model)
     comment = bodies(doc_env["gh"])[-1]
     assert "모델 호출 상한에 걸려 처리하지 못함: PR 단위 판단 1개 규칙" in comment
 
@@ -185,7 +184,7 @@ def test_pr_checks_survive_checkpoint() -> None:
     )  # fmt: skip
     serde = JsonPlusSerializer(allowed_msgpack_modules=list(graph._STATE_TYPES))
     restored = serde.loads_typed(serde.dumps_typed({"pr_checks": checks}))["pr_checks"]
-    assert isinstance(restored, PrChecks) and pr_models.judge_left(restored)
+    assert isinstance(restored, PrChecks) and pr_check_pure.judge_left(restored)
     (result,) = restored.results
     assert isinstance(result.decl, PrPattern) and result.decl.fact == "pr_body"
     (violation,) = restored.violations

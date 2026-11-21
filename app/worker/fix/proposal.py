@@ -18,7 +18,7 @@ from app.shared import config
 from app.shared.job_pure import PRJob
 from app.worker import records, repo
 from app.worker.doc_rules_pure import Found, outcomes_by_rule
-from app.worker.fix import proposal_pure as rules
+from app.worker.fix import proposal_pure
 from app.worker.fix.fix_pure import MECHANICAL_BUNDLE, MechanicalFix
 from app.worker.fix.model_fix_pure import MODEL_BUNDLE, Explanation, ModelFix
 from app.worker.fix.proposal_pure import ProposalResult
@@ -195,7 +195,7 @@ def model_fix_body(job: PRJob, fix: ModelFix, found: Found, skipped: int) -> str
     둔다."""
     check = fix.verification
     lines = [
-        rules.PROPOSAL_MARKER,
+        proposal_pure.PROPOSAL_MARKER,
         f"#{job.pr_number}의 커밋 `{job.head_sha[:7]}`에서 PR이 바꾼 줄의 문서 규칙 위반을 모델이 "
         "고친 수정안입니다.",
         "",
@@ -229,7 +229,8 @@ def model_fix_body(job: PRJob, fix: ModelFix, found: Found, skipped: int) -> str
                 else []
             ),  # fmt: skip
             f"- 크기: 바뀐 파일 {check.files}개, 바뀐 줄 {check.lines}줄 "
-            f"(상한 {rules.MAX_FILES}개, {rules.MAX_CHANGED_LINES}줄. 만든 테스트는 따로 셈)",
+            f"(상한 {proposal_pure.MAX_FILES}개, {proposal_pure.MAX_CHANGED_LINES}줄. "
+            "만든 테스트는 따로 셈)",
             "- 비밀값: 추가된 줄과 모델의 설명에서 찾지 못함",
             "- 설명 확인: 위반을 고친 곳마다 그 규칙의 설명이 있고, 바뀐 파일마다 설명이 있음. "
             "줄 리뷰 코멘트의 줄은 파이프라인이 diff에서 정함",
@@ -292,10 +293,10 @@ def post_review(
     """
     if not comments:
         return
-    marker = rules.review_marker(patch)
+    marker = proposal_pure.review_marker(patch)
     if github.has_review(repo_name, number, marker):
         return
-    if rules.find_secret_in_text("\n".join(c.body for c in comments), secrets) is not None:
+    if proposal_pure.find_secret_in_text("\n".join(c.body for c in comments), secrets) is not None:
         log.warning("줄 리뷰 코멘트를 달지 않음 %s#%s: 비밀값", repo_name, number)
         return
     try:
@@ -330,17 +331,17 @@ def open_model_proposal(
     if refs.head_sha != job.head_sha:
         return ProposalResult(reason="그 사이 새 커밋이 올라옴")
     secrets = list(pipeline_secrets() if secrets is None else secrets)
-    blocker = rules.push_blocker(patch, fix.changed_files, secrets)
+    blocker = proposal_pure.push_blocker(patch, fix.changed_files, secrets)
     if blocker is not None:
         log.warning("수정안 PR을 만들지 않음 %s#%s: %s", job.repo, job.pr_number, blocker)
         return ProposalResult(reason=blocker)
     # 모델의 설명도 푸시하기 전에 한 번 더 본다 (4.8의 3번 "전달 직전에 한 번 더")
-    if rules.find_secret_in_text(explanation_text(fix.explanation), secrets) is not None:
+    if proposal_pure.find_secret_in_text(explanation_text(fix.explanation), secrets) is not None:
         log.warning("수정안 PR을 만들지 않음 %s#%s: 모델의 설명", job.repo, job.pr_number)
-        return ProposalResult(reason=f"{rules.SECRET_BLOCKED} (모델의 설명)")
+        return ProposalResult(reason=f"{proposal_pure.SECRET_BLOCKED} (모델의 설명)")
 
     count = len(fix.targets)
-    branch = rules.branch_name(job.pr_number, MODEL_BUNDLE)
+    branch = proposal_pure.branch_name(job.pr_number, MODEL_BUNDLE)
     message = (
         f"[pipeline] model: #{job.pr_number} 문서 규칙 위반 {count}건 수정\n\n"
         f"원본 커밋 {job.head_sha}"
@@ -371,14 +372,14 @@ def mechanical_fix_body(job: PRJob, fix: MechanicalFix, found: Found, tool: str)
     """기계적 수정안 PR의 본문 (4.9). 모든 글은 파이프라인이 쓴다. tool은 쓴 도구와 버전이다."""
     fixed = [v for v in found.violations if v.id in set(fix.fixed)]
     lines = [
-        rules.PROPOSAL_MARKER,
+        proposal_pure.PROPOSAL_MARKER,
         f"#{job.pr_number}의 커밋 `{job.head_sha[:7]}`에서 PR이 바꾼 줄의 규칙 위반을 도구의 자동 "
         "수정으로 고친 수정안입니다.",
         "",
         f"**고친 위반** ({len(fix.fixed)}건)",
         *fixed_lines(found, fix.fixed),
     ]
-    rewrote = sorted(rules.BLOCK_REWRITE_CODES & {v.code for v in fixed})
+    rewrote = sorted(proposal_pure.BLOCK_REWRITE_CODES & {v.code for v in fixed})
     if rewrote:
         lines += ["", f"{', '.join(f'`{c}`' for c in rewrote)}(import 정렬)는 import 블록 전체를 "
                   "다시 정렬했습니다. 블록 안의 기존 줄 순서가 바뀌었을 수 있습니다."]  # fmt: skip
@@ -430,13 +431,14 @@ def open_mechanical_proposal(
         return ProposalResult(reason=FORK_NO_PR)
     if refs.head_sha != job.head_sha:
         return ProposalResult(reason="그 사이 새 커밋이 올라옴")
-    blocker = rules.push_blocker(patch, fix.changed_files, pipeline_secrets() if secrets is None
-                                 else secrets)  # fmt: skip
+    blocker = proposal_pure.push_blocker(
+        patch, fix.changed_files, pipeline_secrets() if secrets is None else secrets
+    )
     if blocker is not None:
         log.warning("수정안 PR을 만들지 않음 %s#%s: %s", job.repo, job.pr_number, blocker)
         return ProposalResult(reason=blocker)
     count = len(fix.fixed)
-    branch = rules.branch_name(job.pr_number, MECHANICAL_BUNDLE)
+    branch = proposal_pure.branch_name(job.pr_number, MECHANICAL_BUNDLE)
     message = (
         f"[pipeline] mechanical: #{job.pr_number} 위반 {count}건 수정\n\n원본 커밋 {job.head_sha}"
     )

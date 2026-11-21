@@ -35,7 +35,7 @@ from app.shared.job_pure import PRJob
 from app.worker import main, memory
 from app.worker.ai import claude_cli
 from app.worker.cli import reindex
-from app.worker.fix import fix_decision_pure as fix_decision
+from app.worker.fix import fix_decision_pure
 from app.worker.rag_pure import collection_name
 from app.worker.records_pure import NewRecord
 from app.worker.rule_pure import rule_id
@@ -133,7 +133,7 @@ class Prompts:
         self.ask, self.decide = ask, []
 
     def __call__(self, prompt: str, *, schema, **kw):
-        if schema is fix_decision.ANSWER_SCHEMA:
+        if schema is fix_decision_pure.ANSWER_SCHEMA:
             self.decide.append(prompt)
         return self.ask(prompt, schema=schema, **kw)
 

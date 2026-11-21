@@ -21,8 +21,7 @@ import fakeredis
 import pytest
 import yaml
 
-from app.shared import config
-from app.shared import state_keys_pure as state_keys
+from app.shared import config, state_keys_pure
 from app.shared.job_pure import PRJob
 from app.worker import main, repo
 from app.worker.ai import claude_cli
@@ -52,7 +51,7 @@ def _fetched(tools: Path) -> set[str]:
 
 def _check(deps: Deps, gh: FakeGh, redis, remote: dict, pr: int) -> str:
     gh.head = remote["head"]
-    redis.set(state_keys.latest_head(REPO, pr), remote["head"])
+    redis.set(state_keys_pure.latest_head(REPO, pr), remote["head"])
     job = PRJob(repo=REPO, pr_number=pr, kind="update", head_sha=remote["head"],
                 base_sha=remote["base"], source="webhook")  # fmt: skip
     main.handle(job.model_dump_json(), deps)

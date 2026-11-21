@@ -9,7 +9,7 @@ import json
 from pathlib import Path
 from typing import Final
 
-from app.worker.fix import model_fix_pure as model_fix_rules
+from app.worker.fix import model_fix_pure
 from app.worker.fix.model_fix_pure import Written
 from app.worker.repo_config_pure import FixSettings, RepoConfig
 from app.worker.test_run_pure import PytestRun, ReportSummary
@@ -55,7 +55,7 @@ def _answer(**extra) -> str:
 
 def use_stored_fix(env, patch: bytes, answer: str) -> None:
     """첫 회차의 수정 작성 키에 저장된 수정을 둔다. 모델을 부르지 않고 그 수정을 적용한다."""
-    real = model_fix_rules.write_key
+    real = model_fix_pure.write_key
     seeded: list[str] = []
 
     def key(*args, **kwargs) -> str:
@@ -63,12 +63,12 @@ def use_stored_fix(env, patch: bytes, answer: str) -> None:
         if not seeded:
             seeded.append(made)
             env["deps"].store.save_result(
-                made, stage="fix", model="stored", prompt_version=model_fix_rules.PROMPT_VERSION,
-                result_json=model_fix_rules.written_to_json(Written(patch, answer)),
+                made, stage="fix", model="stored", prompt_version=model_fix_pure.PROMPT_VERSION,
+                result_json=model_fix_pure.written_to_json(Written(patch, answer)),
             )  # fmt: skip
         return made
 
-    env["monkeypatch"].setattr(model_fix_rules, "write_key", key)
+    env["monkeypatch"].setattr(model_fix_pure, "write_key", key)
 
 
 def use_tests(env, tmp_path: Path, *, before: str, after: str = "passed") -> list[str]:

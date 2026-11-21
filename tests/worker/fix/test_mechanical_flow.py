@@ -13,7 +13,7 @@ from typing import Final
 
 import pytest
 
-from app.shared import state_keys_pure as state_keys
+from app.shared import state_keys_pure
 from app.shared.job_pure import PRJob
 from app.worker import base_config, main, repo, retry
 from app.worker.ai import claude_cli
@@ -114,7 +114,7 @@ def mech_env(env, tmp_path: Path):
 def _open(env, base: dict[str, str] = BASE_FILES, pr: dict[str, str] = PR_FILES) -> str:
     base_sha, head = make_remote(env["remote"], base, pr)
     env["gh"].head, env["gh"].base = head, base_sha
-    env["redis"].set(state_keys.latest_head("o/r", 1), head)
+    env["redis"].set(state_keys_pure.latest_head("o/r", 1), head)
     return head
 
 
@@ -147,7 +147,7 @@ def _push_commit(env, files: dict[str, str]) -> str:
     head = git("rev-parse", "HEAD")
     git("update-ref", "refs/pull/1/head", head)
     env["gh"].head = head
-    env["redis"].set(state_keys.latest_head("o/r", 1), head)
+    env["redis"].set(state_keys_pure.latest_head("o/r", 1), head)
     return head
 
 

@@ -1,9 +1,9 @@
 import json
 from pathlib import Path
 
-from app.worker import rule_reading_pure as rule_reading
+from app.worker import rule_reading_pure
 from app.worker.ai.claude_cli import AIErrorKind, ClaudeResult, StructuredResult
-from app.worker.fix import fix_decision_pure as fix_decision
+from app.worker.fix import fix_decision_pure
 
 from .model_memo import Memo, memo_key, stage_of
 
@@ -27,7 +27,7 @@ def _rows(path: Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text().splitlines()]
 
 
-def _ask(run, prompt: str, schema=rule_reading.ANSWER_SCHEMA, model: str = "sonnet"):
+def _ask(run, prompt: str, schema=rule_reading_pure.ANSWER_SCHEMA, model: str = "sonnet"):
     return run(prompt, system_prompt="지시", schema=schema, model=model, max_budget_usd=1.0)
 
 
@@ -50,10 +50,10 @@ def test_answers_survive_in_the_file_and_failures_are_asked_again(tmp_path: Path
     path = tmp_path / "memo.jsonl"
     failed, ok = _answer(None, ok=False), _answer({"decisions": []})
     run = Memo(path).structured(Asker(failed, ok), lambda: "t::a")
-    assert not _ask(run, "v", fix_decision.ANSWER_SCHEMA).ok
-    assert _ask(run, "v", fix_decision.ANSWER_SCHEMA).ok
+    assert not _ask(run, "v", fix_decision_pure.ANSWER_SCHEMA).ok
+    assert _ask(run, "v", fix_decision_pure.ANSWER_SCHEMA).ok
     reopened = Memo(path).structured(Asker(), lambda: "t::b")
-    assert _ask(reopened, "v", fix_decision.ANSWER_SCHEMA) == ok
+    assert _ask(reopened, "v", fix_decision_pure.ANSWER_SCHEMA) == ok
     rows = _rows(path)
     assert [r["kind"] for r in rows] == ["call", "call", "hit"]
     assert rows[0]["result"]["error"] == "timeout" and rows[0]["stage"] == "decide"
@@ -81,5 +81,5 @@ def test_fix_writing_is_logged_but_never_reused(tmp_path: Path) -> None:
 def test_key_and_stage() -> None:
     assert memo_key("p", "s", {"a": 1}, "m") == memo_key("p", "s", {"a": 1}, "m")
     assert memo_key("p", "s", {"a": 1}, "m") != memo_key("p", "s2", {"a": 1}, "m")
-    assert stage_of(rule_reading.ANSWER_SCHEMA) == "rules"
+    assert stage_of(rule_reading_pure.ANSWER_SCHEMA) == "rules"
     assert stage_of({"type": "object"}) == "other" and stage_of(None) == "other"

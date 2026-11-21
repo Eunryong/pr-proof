@@ -19,7 +19,7 @@ from sqlmodel import Session, select
 from app.api import cli, signature, sync, webhook
 from app.api.github import OpenPR
 from app.api.history import History
-from app.shared import state_keys_pure as state_keys
+from app.shared import state_keys_pure
 from app.shared.comment_pure import COMMENT_MARKER
 from app.shared.db_pure import Approval, Run
 from app.shared.job_pure import PRJob
@@ -105,7 +105,7 @@ def _approvals(env) -> list[Approval]:
 
 
 def _queued_payloads(env) -> list[str]:
-    return [j.args[0] for j in Queue(state_keys.QUEUE_NAME, connection=env["redis"]).jobs]
+    return [j.args[0] for j in Queue(state_keys_pure.QUEUE_NAME, connection=env["redis"]).jobs]
 
 
 def _history(env) -> History:

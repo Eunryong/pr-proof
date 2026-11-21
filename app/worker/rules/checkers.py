@@ -36,8 +36,7 @@ from typing import Final, Protocol
 from langgraph.graph.state import CompiledStateGraph
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.worker import records
-from app.worker import records_pure as record_rules
+from app.worker import records, records_pure
 from app.worker.ai import claude_cli
 from app.worker.ai.claude_cli import StructuredResult
 from app.worker.budget import CallBudget
@@ -82,7 +81,7 @@ from app.worker.memory import FindsRecords
 from app.worker.rag_pure import EMPTY, Retrieval, Selection, query_text, render_records, retrieval
 from app.worker.repo_config_pure import ModelSettings
 from app.worker.rule_pure import Rule, looks_at_paths, normalize
-from app.worker.rules import tool_choice_pure as tool_choice
+from app.worker.rules import tool_choice_pure
 from app.worker.sandbox import checker_runner, docker_cli, toolcache
 from app.worker.sandbox.checker_runner import CheckerRun, Failed, Invalid
 from app.worker.state import Store
@@ -309,7 +308,7 @@ class _Author:
 
     def _remember(self, rule: Rule, checker: Checker) -> None:
         """채택한 검사기를 검사기 기록으로 남긴다 (4.10 표의 마지막 줄)."""
-        new = record_rules.checker_record(
+        new = records_pure.checker_record(
             repo=self.budget.repo, rule_id=rule.id, rule_text=rule.text, checker_id=checker.id,
             kind=checker.kind, body=checker.body,
             examples=[(e.code, e.expect_lines) for e in checker.examples],
@@ -401,7 +400,7 @@ class _Author:
         예시 확인을 통과하지 못하면 None(검사기 작성으로 넘어간다)."""
         assert self.ruff is not None
         model = self.models.checker
-        key = tool_choice.choice_key(rule, model, self.ruff.version)
+        key = tool_choice_pure.choice_key(rule, model, self.ruff.version)
         saved = self.store.saved_checker(key)
         if saved is not None:
             self.budget.record_hit(self.scope, stage="checker", tier="light", model=model)
@@ -412,9 +411,9 @@ class _Author:
         if isinstance(call, Denied):
             return Unchecked(rule, "cap", call.reason)
         answer = self.ask(
-            tool_choice.build_prompt(rule, shortfall(rule.examples)),
-            system_prompt=tool_choice.SYSTEM_PROMPT,
-            schema=tool_choice.ANSWER_SCHEMA,
+            tool_choice_pure.build_prompt(rule, shortfall(rule.examples)),
+            system_prompt=tool_choice_pure.SYSTEM_PROMPT,
+            schema=tool_choice_pure.ANSWER_SCHEMA,
             model=model,
             max_budget_usd=CALL_BUDGET_USD["light"],
         )
@@ -422,7 +421,7 @@ class _Author:
         parsed = None
         if failure is None:
             try:
-                parsed = tool_choice.parse_answer(answer.data or {})
+                parsed = tool_choice_pure.parse_answer(answer.data or {})
             except ValueError as e:
                 failure = f"도구 선택의 답 형식이 틀림: {str(e).splitlines()[0]}"
         self.budget.finish(
@@ -451,10 +450,12 @@ class _Author:
                                 detail=verdict, attempts_json=attempts)  # fmt: skip
         return None
 
-    def _verify_choice(self, rule: Rule, answer: tool_choice.Answer, model: str) -> Checker | str:
+    def _verify_choice(
+        self, rule: Rule, answer: tool_choice_pure.Answer, model: str
+    ) -> Checker | str:
         """고른 도구를 결정적으로 확인한다. 채택하면 검사기, 아니면 그 이유."""
         assert self.ruff is not None
-        if answer.tool == tool_choice.NO_TOOL:
+        if answer.tool == tool_choice_pure.NO_TOOL:
             return f"맞는 도구가 없음 ({answer.reason})" if answer.reason else "맞는 도구가 없음"
         kind: CheckerKind = "ruff" if answer.tool == RUFF else "ruff-format"
         codes: tuple[str, ...] = ()

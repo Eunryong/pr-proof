@@ -12,14 +12,10 @@ from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from typing import Final, Literal
 
-from app.worker import checker_authoring_pure as checker_authoring
-from app.worker import rule_reading_pure as rule_reading
-from app.worker.fix import fix_decision_pure as fix_decision
-from app.worker.fix import model_fix_pure as model_fix
+from app.worker import checker_authoring_pure, rule_reading_pure
+from app.worker.fix import fix_decision_pure, model_fix_pure
 from app.worker.repo_config_pure import ModelSettings
-from app.worker.rules import judge_pure as judge
-from app.worker.rules import pr_check_pure as pr_check
-from app.worker.rules import tool_choice_pure as tool_choice
+from app.worker.rules import judge_pure, pr_check_pure, tool_choice_pure
 
 Outcome = Literal["passed", "failed", "skipped"]
 
@@ -94,15 +90,15 @@ def _case_id(module: str, name: str) -> str:
 def prompt_versions() -> dict[str, str]:
     """모델을 부르는 단계마다 지금 코드의 프롬프트 판. 프롬프트를 고치면 바뀐다(9.1)."""
     return {
-        "rules": rule_reading.PROMPT_VERSION,
-        "tool_choice": tool_choice.PROMPT_VERSION,
-        "checker": checker_authoring.PROMPT_VERSION,
-        "checker_path": checker_authoring.PATH_PROMPT_VERSION,
-        "judge": judge.PROMPT_VERSION,
-        "pr_plan": pr_check.PLAN_PROMPT_VERSION,
-        "pr_judge": pr_check.JUDGE_PROMPT_VERSION,
-        "decide": fix_decision.PROMPT_VERSION,
-        "fix": model_fix.PROMPT_VERSION,
+        "rules": rule_reading_pure.PROMPT_VERSION,
+        "tool_choice": tool_choice_pure.PROMPT_VERSION,
+        "checker": checker_authoring_pure.PROMPT_VERSION,
+        "checker_path": checker_authoring_pure.PATH_PROMPT_VERSION,
+        "judge": judge_pure.PROMPT_VERSION,
+        "pr_plan": pr_check_pure.PLAN_PROMPT_VERSION,
+        "pr_judge": pr_check_pure.JUDGE_PROMPT_VERSION,
+        "decide": fix_decision_pure.PROMPT_VERSION,
+        "fix": model_fix_pure.PROMPT_VERSION,
     }
 
 

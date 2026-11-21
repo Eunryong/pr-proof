@@ -175,12 +175,12 @@ def test_judge_labels_model_examples() -> None:
 
 
 def test_prompt_version_follows_prompt_text() -> None:
-    from app.worker import checker_authoring_pure as checker_authoring
+    from app.worker import checker_authoring_pure
     from app.worker.rule_reading_pure import prompt_version
 
-    changed = prompt_version("다른 지시", checker_authoring.ANSWER_SCHEMA, "")
-    assert len(checker_authoring.PROMPT_VERSION) == 12
-    assert checker_authoring.PROMPT_VERSION != changed
+    changed = prompt_version("다른 지시", checker_authoring_pure.ANSWER_SCHEMA, "")
+    assert len(checker_authoring_pure.PROMPT_VERSION) == 12
+    assert checker_authoring_pure.PROMPT_VERSION != changed
 
 
 PATH_RULE: Final = replace(RULE, check=CheckMethod("path"), examples=(), scope=())

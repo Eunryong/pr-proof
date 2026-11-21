@@ -28,8 +28,7 @@ from typing import Final
 
 from app.shared.db_pure import FixAttempt
 from app.shared.job_pure import PRJob
-from app.worker import mcp_pure, repo
-from app.worker import records_pure as record_rules
+from app.worker import mcp_pure, records_pure, repo
 from app.worker.ai.claude_cli import (
     FIX_TOOLS_TIMEOUT_S,
     AIEnvironmentError,
@@ -41,8 +40,7 @@ from app.worker.cache_key_pure import text_hash
 from app.worker.call_budget_pure import Denied, PrScope
 from app.worker.diff_pure import ChangedLines, added_lines, change_blocks, new_files
 from app.worker.doc_rules_pure import Found, outcomes_by_rule
-from app.worker.fix import model_fix_pure as rules
-from app.worker.fix import scope
+from app.worker.fix import model_fix_pure, scope
 from app.worker.fix.model_fix_pure import (
     Explanation,
     ModelFix,
@@ -180,7 +178,7 @@ def file_hashes(worktree: Path, files: Sequence[str]) -> dict[str, str]:
     return out
 
 
-def notes_for(found: Found, picked: Picked, worktree: Path) -> tuple[record_rules.Target, ...]:
+def notes_for(found: Found, picked: Picked, worktree: Path) -> tuple[records_pure.Target, ...]:
     """고치기 전에 대상 위반마다 규칙 원문과 위반 줄 앞뒤를 남긴다. 그 수정안이 머지·닫히거나
     검증에 실패하면 이것으로 기록을 만든다 (4.10)."""
     texts = {rule_id: o.rule.text for rule_id, o in outcomes_by_rule(found).items()}
@@ -191,9 +189,9 @@ def notes_for(found: Found, picked: Picked, worktree: Path) -> tuple[record_rule
             data = read_regular_file(path, max_bytes=MAX_FILE_BYTES) if path is not None else None
             lines[v.file] = data.decode("utf-8", errors="replace").split("\n") if data else []
     return tuple(
-        record_rules.Target(
+        records_pure.Target(
             v.id, v.rule_id, texts.get(v.rule_id, ""), v.file, v.line, v.line_text or "",
-            record_rules.context_around(lines[v.file], v.line),
+            records_pure.context_around(lines[v.file], v.line),
         )
         for v in picked.targets
     )  # fmt: skip
@@ -204,7 +202,7 @@ def save_attempt(
     job: PRJob,
     merge_base: str,
     fix: ModelFix,
-    notes: Sequence[record_rules.Target],
+    notes: Sequence[records_pure.Target],
     worktree: Path,
 ) -> ModelFix:
     """시도 결과를 `fix_attempts`에 저장하고 그 id를 붙인다. 검증을 통과했으면 지금 worktree의
@@ -216,7 +214,7 @@ def save_attempt(
             repo=job.repo, pr_number=job.pr_number, head_sha=job.head_sha, merge_base=merge_base,
             bundle=MODEL_BUNDLE, status=fix.status, attempts=fix.attempts,
             models_json=json.dumps(list(fix.models)), detail=fix.detail,
-            targets_json=record_rules.targets_to_json(notes),
+            targets_json=records_pure.targets_to_json(notes),
             patch=repo.head_diff(worktree) if ready else None,
             explanation_json=json.dumps(explanation, ensure_ascii=False) if ready else None,
             file_hashes_json=(
@@ -279,7 +277,7 @@ def fix_violations(
     models: ModelSettings,
     max_attempts: int,
     tools: FixTools,
-    generation: int = rules.GENERATION,
+    generation: int = model_fix_pure.GENERATION,
     retriever: FindsRecords | None = None,
     context_of: Callable[[Violation], str] = lambda v: "",
 ) -> ModelFix | None:
@@ -307,7 +305,7 @@ def fix_violations(
             found_for[site] = retriever.find(site, list(dict.fromkeys(queries)))
         return found_for[site]
 
-    def outcome(status: rules.ModelFixStatus, attempts: int, detail: str = "") -> ModelFix:
+    def outcome(status: model_fix_pure.ModelFixStatus, attempts: int, detail: str = "") -> ModelFix:
         last = passed[-1] if passed else None
         found = merge_retrievals(retrieval(s, site) for site, s in found_for.items())
         error = retriever.error if retriever is not None else ""
@@ -359,9 +357,9 @@ def fix_violations(
         detection = tools.recheck(added_lines(diff), new_files(diff))
         unchecked = [f"{u.rule.id}: {u.detail}" for u in detection.unchecked]
         before = [v for v in found.violations if v.found_by != "model"]
-        left, new = rules.recheck(before, by_tools, detection.violations)
+        left, new = model_fix_pure.recheck(before, by_tools, detection.violations)
         lines_after = {f: source_lines(worktree, f) for f in lines_before}
-        left += rules.unchanged_lines(by_model, lines_before, lines_after)
+        left += model_fix_pure.unchanged_lines(by_model, lines_before, lines_after)
         return left, new, unchecked
 
     def judge_before() -> tuple[tuple[GeneratedTest, ...], Suite]:
@@ -390,13 +388,13 @@ def fix_violations(
         feedback = state.get("feedback", [])
         chosen = records_for("fix" if attempt == 1 else "fix_retry")
         records = render_records(chosen.chosen)
-        key = rules.write_key(
+        key = model_fix_pure.write_key(
             targets, start, file_hashes(worktree, allowed), feedback, model, generation,
             records=chosen.ids,
         )  # fmt: skip
         entry = store.cached_result(key)
         if entry is not None:
-            written = rules.written_from_json(entry.result_json)
+            written = model_fix_pure.written_from_json(entry.result_json)
             if written.patch:
                 try:
                     repo.apply_patch(worktree, written.patch)
@@ -408,12 +406,14 @@ def fix_violations(
         call = budget.begin(PrScope(), stage="fix", tier=tier, model=model, attempt=attempt)
         if isinstance(call, Denied):
             raise _CapHit(call.reason)
-        prompt = rules.build_prompt(
+        prompt = model_fix_pure.build_prompt(
             asked, constants=constants, feedback=feedback,
             current_diff=repo.head_diff(worktree) if attempt > 1 else "", records=records,
             test_dir=test_dir,
         )  # fmt: skip
-        system_prompt = rules.SYSTEM_PROMPT + (rules.RECORDS_NOTE if records else "")
+        system_prompt = model_fix_pure.SYSTEM_PROMPT + (
+            model_fix_pure.RECORDS_NOTE if records else ""
+        )
         result = tools.run_model(
             worktree, prompt, system_prompt=system_prompt, model=model,
             max_budget_usd=FIX_CALL_BUDGET_USD[tier], tools=pipeline_tools,
@@ -451,8 +451,8 @@ def fix_violations(
             raise WriteFailed(failure)
         store.save_result(
             key, stage="fix", model=result.model_id or model,
-            prompt_version=rules.PROMPT_VERSION,
-            result_json=rules.written_to_json(Written(result.applied, result.text)),
+            prompt_version=model_fix_pure.PROMPT_VERSION,
+            result_json=model_fix_pure.written_to_json(Written(result.applied, result.text)),
         )  # fmt: skip
         return WriteResult(artifact=key)
 
@@ -460,7 +460,7 @@ def fix_violations(
         entry = store.cached_result(state["artifact"])
         if entry is None:
             raise LookupError(f"저장한 수정이 없다: {state['artifact']}")
-        written = rules.written_from_json(entry.result_json)
+        written = model_fix_pure.written_from_json(entry.result_json)
         checked = scope.check_scope(worktree, set(allowed), ignored_before, policy=policy)
         if not checked.ok:
             return Verdict("drop", f"허용 범위 밖의 변경: {checked.detail}")
@@ -476,12 +476,12 @@ def fix_violations(
             return Verdict("drop", f"{SECRET_BLOCKED} ({kind})")
 
         try:
-            answer = rules.parse_answer(written.text)
+            answer = model_fix_pure.parse_answer(written.text)
         except ValueError as e:
             return Verdict("retry", f"설명 JSON을 읽지 못함: {e}")
         code_blocks = [b for b in change_blocks(patch) if b.file not in generated]
-        explanation = rules.explain(answer, code_blocks, targets)
-        if isinstance(explanation, rules.Mismatch):
+        explanation = model_fix_pure.explain(answer, code_blocks, targets)
+        if isinstance(explanation, model_fix_pure.Mismatch):
             detail = f"설명이 수정과 맞지 않음: {explanation.detail}"
             return Verdict("retry", detail, (detail, *explanation.feedback))
 
@@ -489,9 +489,9 @@ def fix_violations(
         if unchecked:
             return Verdict("retry", f"고친 뒤 규칙 재검사를 하지 못함: {'; '.join(unchecked)}")
         if left or new:
-            feedback = rules.violation_feedback("아직 남은 위반", left) + rules.violation_feedback(
-                "새로 생긴 위반", new
-            )
+            feedback = model_fix_pure.violation_feedback(
+                "아직 남은 위반", left
+            ) + model_fix_pure.violation_feedback("새로 생긴 위반", new)
             detail = f"남은 위반 {len(left)}건, 새 위반 {len(new)}건"
             return Verdict("retry", detail, tuple(feedback))
 
@@ -532,7 +532,7 @@ def fix_violations(
         code_files = [f for f in files if f not in test_files]
         test_lines = sum(t.lines for t in check.tests if t.accepted)
         lines = changed_line_count(repo.head_diff(worktree)) - test_lines
-        too_big = rules.size_problem(len(code_files), lines)
+        too_big = model_fix_pure.size_problem(len(code_files), lines)
         if too_big is not None:
             return Verdict("retry", too_big)
         verification = Verification(

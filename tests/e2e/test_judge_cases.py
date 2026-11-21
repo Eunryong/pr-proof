@@ -27,8 +27,7 @@ import pytest
 import yaml
 
 from app.shared.job_pure import PRJob
-from app.worker import checker_authoring_pure as checker_authoring
-from app.worker import main
+from app.worker import checker_authoring_pure, main
 from app.worker.ai import claude_cli
 from app.worker.deps import Deps
 
@@ -126,8 +125,8 @@ def _scripted_checker(case: dict, real):
     """검사기 작성의 호출만 케이스의 답으로 돌려주고, 나머지(규칙 읽기, 모델 판단, 수정 판단)는
     실제 모델을 부른다."""
     scripted = scripted_model(case)
-    schemas = (checker_authoring.ANSWER_SCHEMA, checker_authoring.AST_GREP_SCHEMA,
-               checker_authoring.PYTHON_AST_SCHEMA)  # fmt: skip
+    schemas = (checker_authoring_pure.ANSWER_SCHEMA, checker_authoring_pure.AST_GREP_SCHEMA,
+               checker_authoring_pure.PYTHON_AST_SCHEMA)  # fmt: skip
 
     def ask(prompt: str, *, schema, **kw):
         if any(schema is s for s in schemas):

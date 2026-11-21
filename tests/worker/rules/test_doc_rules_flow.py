@@ -15,11 +15,10 @@ import pytest
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from sqlmodel import Session, select
 
-from app.shared import state_keys_pure as state_keys
+from app.shared import state_keys_pure
 from app.shared.db_pure import ModelCall
 from app.shared.job_pure import PRJob
-from app.worker import base_config, graph, repo, update
-from app.worker import rule_reading_pure as rule_reading
+from app.worker import base_config, graph, repo, rule_reading_pure, update
 from app.worker.ai import claude_cli
 from app.worker.ai.claude_cli import AIErrorKind, ClaudeResult, StructuredResult
 from app.worker.checker_pure import CheckerKind
@@ -31,7 +30,7 @@ from app.worker.doc_rules_pure import (
     RuleChecked,
     RuleUnchecked,
 )
-from app.worker.fix import fix_decision_pure as fix_decision
+from app.worker.fix import fix_decision_pure
 from app.worker.fix.fix_decision_pure import Decided, FixDecision
 from app.worker.lang.python import DependencyInstallError
 from app.worker.markdown import inline_code
@@ -43,8 +42,7 @@ from app.worker.repo_config_pure import (
     RulesSettings,
 )
 from app.worker.rule_pure import CheckMethod, Rule, RuleSource, rule_id
-from app.worker.rules import doc_rules
-from app.worker.rules import tool_choice_pure as tool_choice
+from app.worker.rules import doc_rules, tool_choice_pure
 from app.worker.sandbox import checker_runner, toolcache
 from app.worker.sandbox.checker_runner import CheckerRun, Match, Ran
 from app.worker.sandbox.docker_cli import SandboxError
@@ -135,14 +133,14 @@ class FakeModel:
         self.prompts: list[tuple[str, str]] = []
 
     def __call__(self, prompt: str, *, schema, **kw) -> StructuredResult:
-        if schema is fix_decision.ANSWER_SCHEMA:
+        if schema is fix_decision_pure.ANSWER_SCHEMA:
             self.prompts.append(("decide", prompt))
             ids = re.findall(r"^<<<VIOLATION id=(\S+) ", prompt, re.M)
             return _ok({"decisions": self.decide(ids)})
-        if schema is tool_choice.ANSWER_SCHEMA:
+        if schema is tool_choice_pure.ANSWER_SCHEMA:
             self.prompts.append(("tool", prompt))
             return self.tool
-        reading = schema is rule_reading.ANSWER_SCHEMA
+        reading = schema is rule_reading_pure.ANSWER_SCHEMA
         self.prompts.append(("rules" if reading else "checker", prompt))
         return self.rules if reading else self.checker
 
@@ -220,7 +218,7 @@ def check(env, tmp_path: Path, base: dict[str, str], pr: dict[str, str], pr_numb
     else:
         base_sha, head = make_remote(remote, base, pr)
     deps = env["deps"]
-    env["redis"].set(state_keys.latest_head("o/r", pr_number), head)
+    env["redis"].set(state_keys_pure.latest_head("o/r", pr_number), head)
     job = PRJob(repo="o/r", pr_number=pr_number, kind="update", head_sha=head, base_sha=base_sha,
                 source="webhook")  # fmt: skip
     ctx = update._context(deps, deps.store.start_run(job), None)
@@ -334,7 +332,7 @@ def test_new_commit_during_rule_reading_stops_the_path(doc_env, tmp_path: Path) 
     model = FakeModel(rule_answer(print_rule()))
 
     def newer_commit_arrives(prompt: str, **kw) -> StructuredResult:
-        doc_env["redis"].set(state_keys.latest_head("o/r", 1), "f" * 40)
+        doc_env["redis"].set(state_keys_pure.latest_head("o/r", 1), "f" * 40)
         return model(prompt, **kw)
 
     use_model(doc_env, newer_commit_arrives)
@@ -450,7 +448,7 @@ def test_source_only_dependency_makes_tests_unrunnable_and_keeps_rules(doc_env, 
     remote = tmp_path / "remote"
     base_sha, head = make_remote(remote, BASE_FILES, PR_FILES)
     doc_env["gh"].head, doc_env["gh"].base = head, base_sha
-    doc_env["redis"].set(state_keys.latest_head("o/r", 1), head)
+    doc_env["redis"].set(state_keys_pure.latest_head("o/r", 1), head)
     job = PRJob(repo="o/r", pr_number=1, kind="update", head_sha=head, base_sha=base_sha,
                 source="webhook")  # fmt: skip
     assert update.process_update(job, doc_env["deps"]) == "unrunnable"

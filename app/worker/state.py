@@ -9,7 +9,7 @@ from sqlalchemy import Engine, func, inspect, text
 from sqlalchemy.schema import CreateColumn
 from sqlmodel import Session, SQLModel, create_engine, select
 
-from app.shared import state_keys_pure as state_keys
+from app.shared import state_keys_pure
 from app.shared.db_pure import (
     Approval,
     CallGrant,
@@ -92,16 +92,16 @@ class Store:
 
     def is_stale(self, job: PRJob) -> bool:
         """이 작업의 커밋이 PR의 최신 head가 아니면 True. 기록이 없으면 낡지 않은 것으로 본다."""
-        latest = self.redis.get(state_keys.latest_head(job.repo, job.pr_number))
+        latest = self.redis.get(state_keys_pure.latest_head(job.repo, job.pr_number))
         return latest is not None and latest.decode() != job.head_sha
 
     def set_latest_head(self, repo: str, pr_number: int, head_sha: str) -> None:
         """웹훅 순서가 뒤집혀 낡은 head가 기록됐을 때 GitHub에서 확인한 값으로 바로잡는다."""
-        self.redis.set(state_keys.latest_head(repo, pr_number), head_sha)
+        self.redis.set(state_keys_pure.latest_head(repo, pr_number), head_sha)
 
     def release(self, job: PRJob) -> None:
         """작업 키를 지워 같은 작업을 다시 등록할 수 있게 한다."""
-        self.redis.delete(state_keys.job(job.dedup_key))
+        self.redis.delete(state_keys_pure.job(job.dedup_key))
 
     # --- SQLite ---
 
