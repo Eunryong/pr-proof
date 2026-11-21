@@ -153,7 +153,7 @@ def test_lint_case(case_path: Path, eval_repo: Path, shared_venvs: Path, tmp_pat
             assert "자동 수정" not in rules
         case "tests":
             assert status == "failed" and "자동 수정" not in rules
-            assert "skip (테스트가 실패함)" in body and "**기계적 수정안:**" not in body
+            assert "직접 고쳐야 함 1건 (테스트가 실패함 1건)" in body and "**기계적 수정안:**" not in body
     if expect["proposal"] != "auto":
         assert _git(remote["path"], "branch", "--list", BRANCH) == ""
         return

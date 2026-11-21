@@ -86,9 +86,10 @@ def _integer_only(source: str) -> bool:
 
 # 케이스마다 팀의 방식. 검증을 통과한 수정안의 고친 파일을 받는다
 ADOPTED: Final[Mapping[str, Callable[[str], bool]]] = {
-    # 원래 있던 상수를 다시 쓰고, 수정 판단이 skip한 줄은 그대로 둔다
+    # 두 줄 모두 원래 있던 상수를 다시 쓴다 (가장 작은 변경, 2026-11-21)
     "09-old-static-01-magic-value-fix": lambda text: (
-        "order.coupon_percent > MAX_COUPON_PERCENT" in text and "discount(order) >= 50_000" in text
+        "order.coupon_percent > MAX_COUPON_PERCENT" in text
+        and "discount(order) >= FREE_SHIPPING_MIN" in text
     ),
     # 모듈 수준 상태를 없앤다 (인자로 넘기거나 다른 이름으로 옮기지 않는다)
     "10-old-static-02-global-state-fix": lambda text: "_seen_orders" not in text,
