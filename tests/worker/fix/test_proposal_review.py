@@ -3,8 +3,8 @@
 from types import SimpleNamespace
 from typing import Final
 
-from app.models.model_fix import Change, Explanation
-from app.worker import proposal
+from worker.fix import proposal
+from worker.fix.model_fix_pure import Change, Explanation
 
 NO_RULES: Final = SimpleNamespace(outcomes=(), violations=())
 

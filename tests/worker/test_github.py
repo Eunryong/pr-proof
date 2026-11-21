@@ -256,7 +256,7 @@ def test_review_with_a_secret_or_no_lines_is_not_posted() -> None:
 
 def test_review_blocked_by_the_secondary_rate_limit_is_skipped() -> None:
     """GitHub이 2차 한도로 막으면 리뷰만 빠지고 전달은 이어 간다 (MathLLM#6, 2026-11-21)."""
-    from app.worker import proposal
+    from worker.fix import proposal
 
     gh = FakeGh()
     gh.review_error = (
