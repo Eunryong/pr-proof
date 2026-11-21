@@ -198,3 +198,20 @@ def test_container_has_no_capabilities(job: str) -> None:
     assert int(fields["CapEff"].strip(), 16) == 0
     assert int(fields["CapBnd"].strip(), 16) == 0  # setuid 바이너리로도 얻지 못한다
     assert fields["NoNewPrivs"].strip() == "1"
+
+
+def test_contexts_run_tells_which_test_file_ran_each_line(job: str, worktree: Path) -> None:
+    """수정 작성의 테스트 도구와 출구 검사(4.8의 6번): 고정한 pytest-cov로 줄마다 실행한 테스트
+    파일을 coverage.json에 남기고 `read_suite`가 읽는다."""
+    (worktree / "tests" / "test_pipeline_bulk.py").write_text(
+        "from orders.models.order import Order\n"
+        "from orders.services.pricing import shipping_fee\n\n\n"
+        "def test_bulk():\n    assert shipping_fee(Order(items=())) == 0\n"
+    )
+    run = python.run_tests(job, worktree, contexts=True)
+    suite = python.read_suite(run, worktree, ["orders/services/pricing.py"])
+    assert suite.outcomes["tests/test_pipeline_bulk.py"] == "passed"
+    assert suite.counts["tests/test_pipeline_bulk.py"] == 1
+    lines = suite.lines["orders/services/pricing.py"]
+    ran = {t for by in lines.by.values() for t in by}
+    assert "tests/test_pipeline_bulk.py" in ran and "" in ran
