@@ -467,6 +467,12 @@ def commit_diff(worktree: Path, old: str, new: str, path: str) -> str:
     return _tree_git(worktree, *_DIFF, old, new, "--", path)
 
 
+def commit_patch(worktree: Path, sha: str) -> str:
+    """부모가 하나인 커밋 하나가 바꾼 내용 (`git diff sha^ sha`). PR 설명 확인이 파이프라인 수정안의
+    커밋이 넣은 변경을 모델에 따로 보이는 데 쓴다 (4.5 끝)."""
+    return _tree_git(worktree, *_DIFF, f"{sha}^", sha)
+
+
 def track_new(worktree: Path, paths: Sequence[str]) -> None:
     """새 파일을 diff에 보이게 한다(`git add -N`). 내용은 인덱스에 넣지 않는다. 수정 작성이 만든
     테스트 파일을 수정안 패치와 재검사의 바뀐 줄에 넣는 데 쓴다."""

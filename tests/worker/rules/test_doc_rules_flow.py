@@ -203,6 +203,8 @@ def use_model(env, model: FakeModel) -> FakeModel:
 
 
 def use_config(env, config: RepoConfig) -> None:
+    # PR 설명 확인은 BASE처럼 꺼 둔다 (가짜 모델의 차례에 끼어들지 않게)
+    config = config.model_copy(update={"pr_description": BASE.repo.pr_description})
     env["monkeypatch"].setattr(base_config, "load", lambda *a, **k: replace(BASE, repo=config))
 
 

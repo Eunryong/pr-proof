@@ -34,6 +34,7 @@ flowchart TD
 
 - 모든 노드 뒤에는 "이 커밋이 아직 최신인가" 분기가 있다. 낡았으면 END로 간다(그림에서는 뺐다).
 - `plan_checks`와 `author_checker`는 규칙 묶음이 캐시에 있으면 통째로 건너뛴다.
+- `detect`(지금 코드의 `detect`, `judge`, `pr_check`) 다음, 테스트 전에 `pr_description` node가 돈다(4.5 끝 "PR 설명과 diff 견주기", 2026-11-22). 규칙이 없어 규칙 경로가 일찍 끝나도 이 node를 지나 테스트로 간다. `.pipeline.yaml`의 `pr_description.enabled: false`면 아무것도 하지 않는다. 결과는 상태의 `pr_description`에만 넣고, 수정 판단과 수정 묶음은 읽지 않는다.
 - 부수 효과가 있는 노드는 `report`, `deliver`, `final_report`, `record`다. `report`와 `final_report`는 같은 코멘트를 덮어쓴다(3.1의 C5).
 
 ### 5.2 조건 분기
@@ -118,6 +119,7 @@ class FlowState(TypedDict, total=False):
     fixes: Annotated[dict[str, FixOutcome], merge]      # 묶음(mechanical | model) → 결과. 패치는 fix_attempts의 id
     proposals: dict[str, ProposalResult]
     carried: CarriedFrom                                # 수정안의 머지 커밋에 옮겨 적은 결과의 출처 (수정안 PR 번호, 묶음, 검증한 커밋)
+    pr_description: PrDescription                       # PR 설명 확인의 결과 (4.5 끝). 알리기만 한다. 체크포인트 타입으로 등록
     commented: bool
     stopped: Literal["stale", "cancelled"]
 ```

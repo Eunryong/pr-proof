@@ -151,7 +151,7 @@ def run_admitted(job: PRJob, deps: Deps, refs: PullRefs, *, carry: bool = True) 
                 job.head_sha, e.detail, base=ctx.base,
                 doc_rules=ctx.doc_rules,
                 checkers=doc_rules.shown_checkers(ctx.doc_rules, store), kind=e.kind,
-                packages=e.packages, pr=ctx.pr_checks,
+                packages=e.packages, pr=ctx.pr_checks, description=ctx.pr_description,
             )  # fmt: skip
             ctx.comment_id = github.upsert_comment(job.repo, job.pr_number, body, ctx.comment_id)
             store.finish_run(run_id, "done", test_status="unrunnable", comment_id=ctx.comment_id)
@@ -254,6 +254,13 @@ def carry_plan(job: PRJob, ctx: graph.FlowContext) -> Carry | str:
     }  # fmt: skip
     if values.get("pr_checks") is not None:
         out["pr_checks"] = values["pr_checks"]
+    if values.get("pr_description") is not None:
+        # PR 글도 사람의 커밋도 그대로이고 수정안의 변경은 세지 않으므로 검증한 커밋의 결과를 쓴다.
+        # 수정안이 바꾼 줄을 가리키면 처음부터 검사한다
+        description = merged_fix_pure.carried_description(values["pr_description"], attempt.patch)
+        if isinstance(description, str):
+            return description
+        out["pr_description"] = description
     if values.get("rag_switch") is not None:
         out["rag_switch"] = values["rag_switch"]
     return Carry(out)
@@ -272,6 +279,7 @@ def _verified_check(
         decisions=values.get("fix_decisions"),
         fix=values.get(graph.STATE_KEYS[bundle][0]),
         pr_checks=values.get("pr_checks"),
+        pr_description=values.get("pr_description"),
     ), dict(values)
 
 

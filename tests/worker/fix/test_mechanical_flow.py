@@ -8,6 +8,7 @@ tests/e2e/test_lint_cases.py가 본다.
 
 import json
 from collections.abc import Sequence
+from dataclasses import replace
 from pathlib import Path
 from typing import Final
 
@@ -21,6 +22,7 @@ from app.worker.checker_pure import CheckerKind, tool_codes
 from app.worker.doc_rules_pure import Found, NoRuleDocs, RuleChecked
 from app.worker.fix import proposal
 from app.worker.github import GitHubError
+from app.worker.repo_config_pure import PrDescriptionSettings
 from app.worker.rules import doc_rules
 from app.worker.sandbox.checker_runner import CheckerRun, Match, Ran
 from app.worker.test_run_pure import PytestRun, ReportSummary
@@ -33,6 +35,15 @@ from ..test_github import is_reply
 REAL_CHECKOUT: Final = repo.checkout
 REAL_ENTRIES: Final = repo.list_base_entries
 REAL_LOAD: Final = base_config.load
+
+
+def _load_without_description(*args, **kwargs):
+    """base의 실제 설정을 읽고 PR 설명 확인(4.5 끝)만 끈다. 이 흐름은 모델을 부르지 않는다."""
+    base = REAL_LOAD(*args, **kwargs)
+    off = PrDescriptionSettings(enabled=False)
+    return replace(base, repo=base.repo.model_copy(update={"pr_description": off}))
+
+
 BRANCH: Final = "pipeline/pr-1-fix-mechanical"
 BASE_FILES: Final = {"ruff.toml": "", "a.py": "x = 1\n"}
 PR_FILES: Final = {"a.py": "import sys\nx = 1\nl = 2\n"}  # F401(고칠 수 있음), E741(없음)
@@ -92,7 +103,7 @@ def mech_env(env, tmp_path: Path):
     mp = env["monkeypatch"]
     mp.setattr(repo, "checkout", REAL_CHECKOUT)
     mp.setattr(repo, "list_base_entries", REAL_ENTRIES)
-    mp.setattr(base_config, "load", REAL_LOAD)
+    mp.setattr(base_config, "load", _load_without_description)
     mp.setattr(repo, "remote_url", lambda name: str(tmp_path / "remote"))
     ruff = FakeRuff()
     mp.setattr(doc_rules, "sandbox_for", lambda *a: ruff)

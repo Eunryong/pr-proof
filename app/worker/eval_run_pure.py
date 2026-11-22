@@ -15,7 +15,13 @@ from typing import Final, Literal
 from app.worker import checker_authoring_pure, rule_reading_pure
 from app.worker.fix import fix_decision_pure, model_fix_pure
 from app.worker.repo_config_pure import ModelSettings
-from app.worker.rules import judge_pure, pr_check_pure, run_check_pure, tool_choice_pure
+from app.worker.rules import (
+    judge_pure,
+    pr_check_pure,
+    pr_description_pure,
+    run_check_pure,
+    tool_choice_pure,
+)
 
 Outcome = Literal["passed", "failed", "skipped"]
 
@@ -98,6 +104,7 @@ def prompt_versions() -> dict[str, str]:
         "pr_plan": pr_check_pure.PLAN_PROMPT_VERSION,
         "pr_judge": pr_check_pure.JUDGE_PROMPT_VERSION,
         "run_judge": run_check_pure.PROMPT_VERSION,
+        "pr_description": pr_description_pure.PROMPT_VERSION,
         "decide": fix_decision_pure.PROMPT_VERSION,
         "fix": model_fix_pure.PROMPT_VERSION,
     }
