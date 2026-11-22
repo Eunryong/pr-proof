@@ -183,6 +183,14 @@ class Store:
             run.heartbeat_at = run.finished_at
             session.commit()
 
+    def runs(self, repo: str, pr_number: int, head_sha: str) -> list[Run]:
+        """이 커밋의 검사 기록, 오래된 것부터."""
+        with Session(self.engine) as session:
+            stmt = select(Run).where(
+                Run.repo == repo, Run.pr_number == pr_number, Run.head_sha == head_sha
+            )
+            return list(session.exec(stmt.order_by(Run.id)))
+
     # --- 제안 PR ---
 
     def record_proposal(

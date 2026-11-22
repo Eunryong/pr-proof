@@ -19,6 +19,7 @@ from app.worker.doc_rules_report import FixView
 from app.worker.fix.fix_decision_pure import Decided
 from app.worker.lang.install_pure import InstallFailureKind
 from app.worker.markdown_pure import code_fence, inline_code
+from app.worker.merged_fix_pure import CarriedFrom
 from app.worker.rag_switch_pure import RagSwitch
 from app.worker.rules.pr_check_pure import PrChecks
 from app.worker.sandbox.docker_cli import MEMORY_LIMIT_GB
@@ -171,6 +172,33 @@ def diff_coverage_line(cov: DiffCoverage | None) -> list[str]:
     ]
 
 
+_CARRIED_LABEL: Final[Mapping[str, str]] = {"mechanical": "기계적 수정", "model": "모델 수정"}
+
+
+def carried_lines(carried: CarriedFrom | None) -> list[str]:
+    """수정안을 머지한 커밋이라 다시 검사하지 않고 옮겨 적었다는 안내 (4.9 "수정안 PR 상태
+    관리")."""
+    if carried is None:
+        return []
+    n, verified = carried.number, carried.verified_sha[:7]
+    label = _CARRIED_LABEL.get(carried.bundle, carried.bundle)
+    return [
+        "",
+        f"이 커밋은 수정안 #{n}({label})을 머지한 커밋이고, 내용이 검증한 수정안과 같아 다시 "
+        f"검사하지 않았습니다. 결과는 커밋 `{verified}`의 검사와 수정안 #{n}의 검증에서 옮겨 "
+        "적었습니다. 테스트는 수정안을 검증할 때 고친 뒤 다시 돌려 수정 전과 같은 결과를 확인한 "
+        "것입니다.",
+        *(
+            [
+                f"수정안이 고친 위반 중 {carried.unverified}건은 모델 판단으로 찾은 것이라 도구로 "
+                "재검사하지 못했고, 그 줄이 바뀐 것까지만 확인했습니다."
+            ]
+            if carried.unverified
+            else []
+        ),
+    ]
+
+
 def render_result(
     run: PytestRun,
     head_sha: str,
@@ -185,14 +213,16 @@ def render_result(
     fixes: Mapping[str, FixView] | None = None,
     rag: RagSwitch | None = None,
     pr: PrChecks | None = None,
+    carried: CarriedFrom | None = None,
 ) -> str:
     """결과 코멘트. fixes는 묶음마다 수정했으면 그 결과, 아니면 상태(대기, 진행 중 등)다. rag는 이
-    검사의 검색 상태다(규칙 절에 한 줄로 보인다). pr은 PR 단위 확인의 결과다."""
+    검사의 검색 상태다(규칙 절에 한 줄로 보인다). pr은 PR 단위 확인의 결과다. carried는 수정안을
+    머지한 커밋이라 결과를 옮겨 적었을 때 그 출처다(테스트 줄 아래에 안내가 붙는다)."""
     memory_gb = base.memory_gb if base else MEMORY_LIMIT_GB
     max_memory_gb = base.max_memory_gb if base else MEMORY_LIMIT_GB
     return _compose(
         format_test_line(run, memory_gb),
-        format_test_details(run, memory_gb, max_memory_gb),
+        carried_lines(carried) + format_test_details(run, memory_gb, max_memory_gb),
         head_sha,
         base=base,
         seconds=seconds,

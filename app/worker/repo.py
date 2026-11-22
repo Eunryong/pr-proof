@@ -166,6 +166,67 @@ def bare_blob(bare: Path, blob_sha: str) -> str:
     return _git("cat-file", "blob", blob_sha, cwd=bare)
 
 
+def commit_parents(bare: Path, sha: str) -> tuple[str, ...]:
+    """bare 캐시의 커밋 하나의 부모 SHA들 (머지 커밋이면 둘)."""
+    return tuple(_git("rev-list", "--parents", "-n", "1", sha, cwd=bare).split()[1:])
+
+
+def tree_of(bare: Path, sha: str) -> str:
+    """커밋의 트리 해시. 트리가 같으면 모든 파일의 경로·모드·내용이 같다."""
+    return _git("rev-parse", "--verify", f"{sha}^{{tree}}", cwd=bare).strip()
+
+
+def patched_tree(bare: Path, sha: str, patch: bytes, scratch: Path) -> str:
+    """sha의 트리에 patch를 적용한 트리의 해시. worktree 없이 임시 인덱스(scratch 아래)로만 한다.
+
+    수정안을 머지한 커밋의 내용이 "검증한 커밋 + 저장한 패치"와 같은지 보는 데 쓴다. 패치가 맞지
+    않으면 GitError. 패치는 파이프라인이 검증하고 저장한 것이고 bare 캐시의 설정은 파이프라인이 만든
+    것이라 훅과 필터를 끄기만 한다.
+    """
+    scratch.mkdir(parents=True, exist_ok=True)
+    index = scratch / f"index-{uuid.uuid4().hex[:8]}"
+    env = {k: os.environ[k] for k in _ENV_PASSTHROUGH if k in os.environ}
+    env |= {"GIT_TERMINAL_PROMPT": "0", "GIT_INDEX_FILE": str(index)}
+    safe = ("-c", "core.hooksPath=/dev/null", "-c", "core.autocrlf=false")
+
+    def run(*args: str, stdin: bytes | None = None) -> str:
+        try:
+            proc = subprocess.run(
+                ["git", *safe, *args], cwd=bare, input=stdin, capture_output=True, env=env,
+                timeout=GIT_TIMEOUT, check=False,
+            )  # fmt: skip
+        except (OSError, subprocess.TimeoutExpired) as e:
+            raise GitError(f"git {args[0]} 실행 실패: {e}") from e
+        if proc.returncode != 0:
+            detail = proc.stderr.decode(errors="replace").strip()[-500:]
+            raise GitError(f"git {args[0]} 실패 ({proc.returncode}): {detail}")
+        return proc.stdout.decode().strip()
+
+    try:
+        run("read-tree", sha)
+        run("apply", "--cached", "--binary", "--whitespace=nowarn", "-", stdin=patch)
+        return run("write-tree")
+    finally:
+        index.unlink(missing_ok=True)
+
+
+def bare_lines(
+    bare: Path, sha: str, path: str, max_bytes: int = 5 * 1024 * 1024
+) -> list[str] | None:
+    """bare 캐시의 커밋에서 일반 파일 하나의 줄들. 없거나, 링크·폴더이거나, max_bytes보다 크거나,
+    글로 읽을 수 없으면 None. 줄은 worktree에서 읽을 때(`records._reader`)와 같이 "\\n"으로
+    나눈다."""
+    entry = bare_entries(bare, sha, [path]).get(path)
+    if entry is None or entry.mode not in ("100644", "100755"):
+        return None
+    if entry.size is None or entry.size > max_bytes:
+        return None
+    try:
+        return bare_blob(bare, entry.sha).split("\n")
+    except (GitError, UnicodeDecodeError):
+        return None
+
+
 def bare_pr_facts(
     bare: Path, base_sha: str, head_sha: str, *, limit: int
 ) -> tuple[list[str], list[str]]:

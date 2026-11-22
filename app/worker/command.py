@@ -91,7 +91,8 @@ def process_command(job: PRJob, deps: Deps) -> str:
             else:
                 result = guard.block(job, deps, refs)
         elif parsed.name == "recheck":
-            result = f"recheck:{update.run_admitted(_target(job, refs), deps, refs)}"
+            # `/recheck`는 수정안의 머지 커밋이어도 옮겨 적지 않고 처음부터 검사한다
+            result = f"recheck:{update.run_admitted(_target(job, refs), deps, refs, carry=False)}"
         else:
             result = _fix(job, deps, parsed.word, parsed.arg, refs)
     except Exception:  # 환경 오류든 버그든 재시도는 RQ가 한다
@@ -138,7 +139,7 @@ def _approve(job: PRJob, deps: Deps, gate: guard.Gate) -> str:
             deps.github.reply(job.repo, job.pr_number, guard.head_moved_reply(refs.head_sha))
             return "approval_head_moved"
     deps.store.add_approval(job.repo, job.pr_number, refs.head_sha, comment.login, job.comment_id)
-    return f"approved:{update.run_admitted(_target(job, refs), deps, refs)}"
+    return f"approved:{update.run_admitted(_target(job, refs), deps, refs, carry=False)}"
 
 
 def _target(job: PRJob, refs: PullRefs) -> PRJob:

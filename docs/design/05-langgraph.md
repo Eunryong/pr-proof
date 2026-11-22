@@ -117,6 +117,7 @@ class FlowState(TypedDict, total=False):
     decisions: Annotated[dict[str, FixDecision], merge] # 위반 id → 수정 판단
     fixes: Annotated[dict[str, FixOutcome], merge]      # 묶음(mechanical | model) → 결과. 패치는 fix_attempts의 id
     proposals: dict[str, ProposalResult]
+    carried: CarriedFrom                                # 수정안의 머지 커밋에 옮겨 적은 결과의 출처 (수정안 PR 번호, 묶음, 검증한 커밋)
     commented: bool
     stopped: Literal["stale", "cancelled"]
 ```
@@ -132,6 +133,7 @@ class FlowState(TypedDict, total=False):
 - 새 검사(새 커밋의 첫 검사, `/recheck`)는 같은 thread의 이전 체크포인트를 지우고 시작한다.
 - 도중에 실패하면 RQ의 재시도가 같은 thread를 실패한 노드부터 이어 간다(`invoke(None, config)`). 끝난 노드는 다시 돌지 않는다.
 - 새 커밋이 오면 SHA가 달라져, 멈춰 있던 그래프는 따로 지우지 않아도 쓰이지 않는다.
+- 수정안의 머지 커밋에 검증한 결과를 옮겨 적을 때(4.9 "수정안 PR 상태 관리")는 검증한 커밋의 thread에서 끝난 상태를 읽어, 고친 위반을 빼고 남은 위반의 줄 번호를 머지 커밋에 맞춘 값으로 이 커밋의 thread를 채운다(`update_state`, 수정 판단이 끝난 것처럼). 그 뒤 코멘트 node만 돌린다(`graph.carry_flow`). 그래서 이 커밋의 체크포인트와 위반 기록(`violations`)도 보통의 검사처럼 남고, 코멘트 수정(4.11)과 다음 커밋이 그것을 읽는다.
 
 **모델 호출 결과는 그래프 상태가 아니라 해시 키 캐시 테이블에 둔다.**
 
