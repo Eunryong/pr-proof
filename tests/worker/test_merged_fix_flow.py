@@ -21,13 +21,15 @@ from app.shared.db_pure import FixAttempt
 from app.shared.job_pure import PRJob
 from app.worker import graph, update
 from app.worker.ai import claude_cli
+from app.worker.fix.model_fix_pure import Verification
 from app.worker.fix.proposal_pure import ProposalResult
 from app.worker.merged_fix_pure import CarriedFrom
+from app.worker.rules.pr_check_pure import PrChecks, PrRuleResult
 from app.worker.violation_pure import violation_id
 
 from .helpers import PASSED, bodies, use_runner
 from .rules.test_doc_rules_flow import BASE_FILES, _commit, _git, doc_env, make_remote  # noqa: F401
-from .test_merged_fix_pure import FIX_IT, MODEL_FIX, SKIP_IT, decided, found
+from .test_merged_fix_pure import FIX_IT, MODEL_FIX, RULE, SKIP_IT, decided, found
 from .test_merged_fix_pure import FIXED as FIXED_SAMPLE
 from .test_merged_fix_pure import LEFT as LEFT_SAMPLE
 
@@ -49,7 +51,7 @@ def merge_env(doc_env):  # noqa: F811
     return doc_env
 
 
-def _verified(env, tmp_path: Path) -> tuple[PRJob, str]:
+def _verified(env, tmp_path: Path, **extra: object) -> tuple[PRJob, str]:
     """원래 PR의 커밋 V를 검사해 모델 수정안을 검증하고 수정안 PR을 연 상태. (V의 작업, 패치)."""
     remote = tmp_path / "remote"
     base_sha, v = make_remote(remote, BASE_FILES, {"orders/a.py": V_FILE})
@@ -76,7 +78,7 @@ def _verified(env, tmp_path: Path) -> tuple[PRJob, str]:
         "model_fix": replace(MODEL_FIX, targets=(FIXED.id,), attempt_id=attempt_id),
         "proposals": {"model": ProposalResult(number=FIX_NUMBER, url="u")},
         "commented": True,
-    }  # fmt: skip
+    } | extra  # fmt: skip
     ctx = update.flow_context(env["deps"], run_id, None)
     with ExitStack() as stack:
         flow = graph.build_graph(ctx, graph.open_checkpointer(ctx.data_dir, stack))
@@ -145,6 +147,39 @@ def test_merge_commit_of_the_verified_fix_is_carried_without_checking(
     values, finished = graph.finished_values(merged, ctx)
     assert finished and values["carried"] == CarriedFrom(FIX_NUMBER, "model", job.head_sha)
     assert [v.line for v in values["doc_rules"].violations] == [6]
+
+
+def test_pr_level_result_and_model_found_fix_are_carried(merge_env, tmp_path: Path) -> None:
+    """PR 단위 규칙이 있고 수정안이 모델 판단으로 찾은 위반을 고친 경우에도 옮겨 적는다. PR 단위
+    확인의 결과는 검증한 커밋의 것을 그대로 두고, 재검사하지 못한 수를 코멘트에 적는다."""
+    pr_rule = replace(RULE, id="R-pr")
+    pr_checks = PrChecks(results=(PrRuleResult(pr_rule, "unchecked", kind="plan_none"),),
+                         violations=())  # fmt: skip
+    fix = replace(MODEL_FIX, targets=(FIXED.id,),
+                  verification=Verification(9, 1, 0, 1, 2, unverified=1))  # fmt: skip
+    job, _ = _verified(merge_env, tmp_path, pr_checks=pr_checks)
+    ctx = update.flow_context(merge_env["deps"], 0, None)
+    (p,) = merge_env["deps"].store.proposals("o/r", 1)
+    with ExitStack() as stack:
+        flow = graph.build_graph(ctx, graph.open_checkpointer(ctx.data_dir, stack))
+        flow.update_state(graph.thread_config(job),
+                          {"model_fix": replace(fix, attempt_id=p.attempt_id)},
+                          as_node=graph.FIX_COMMENT)  # fmt: skip
+    merged = _merged(merge_env, tmp_path, job, "merge")
+
+    assert update.process_update(merged, merge_env["deps"]) == "passed"
+    body = bodies(merge_env["gh"])[-1]
+    assert "다시 검사하지 않았습니다" in body
+    assert (
+        "수정안이 고친 위반 중 1건은 모델 판단으로 찾은 것이라 도구로 재검사하지 못했고, 그 줄이 "
+        "바뀐 것까지만 확인했습니다."
+    ) in body
+    assert "모델이 PR의 커밋, 글, 바뀐 파일로는 판단하지 못함" in body
+    values, finished = graph.finished_values(merged, ctx)
+    # 체크포인트를 거치면 튜플이 목록으로 돌아오므로 값 전체가 아니라 규칙과 상태로 견준다
+    kept = [(r.rule.id, r.status, r.kind) for r in values["pr_checks"].results]
+    assert finished and kept == [("R-pr", "unchecked", "plan_none")]
+    assert values["carried"] == CarriedFrom(FIX_NUMBER, "model", job.head_sha, unverified=1)
 
 
 def test_squash_merge_is_carried_too(merge_env, tmp_path: Path) -> None:

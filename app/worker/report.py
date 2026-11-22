@@ -188,6 +188,14 @@ def carried_lines(carried: CarriedFrom | None) -> list[str]:
         f"검사하지 않았습니다. 결과는 커밋 `{verified}`의 검사와 수정안 #{n}의 검증에서 옮겨 "
         "적었습니다. 테스트는 수정안을 검증할 때 고친 뒤 다시 돌려 수정 전과 같은 결과를 확인한 "
         "것입니다.",
+        *(
+            [
+                f"수정안이 고친 위반 중 {carried.unverified}건은 모델 판단으로 찾은 것이라 도구로 "
+                "재검사하지 못했고, 그 줄이 바뀐 것까지만 확인했습니다."
+            ]
+            if carried.unverified
+            else []
+        ),
     ]
 
 

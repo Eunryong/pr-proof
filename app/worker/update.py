@@ -249,8 +249,11 @@ def carry_plan(job: PRJob, ctx: graph.FlowContext) -> Carry | str:
         return "검증한 뒤 같은 줄을 고친 수정안이 거절됨"
     out: graph.FlowState = {
         "doc_rules": found, "test_run": check.test_run, "fix_decisions": decisions,
-        "carried": CarriedFrom(picked.number, picked.skill, verified_sha),
+        "carried": CarriedFrom(picked.number, picked.skill, verified_sha,
+                               merged_fix_pure.unverified_count(check.fix)),
     }  # fmt: skip
+    if values.get("pr_checks") is not None:
+        out["pr_checks"] = values["pr_checks"]
     if values.get("rag_switch") is not None:
         out["rag_switch"] = values["rag_switch"]
     return Carry(out)

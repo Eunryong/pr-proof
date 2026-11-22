@@ -17,6 +17,7 @@ from app.worker.doc_rules_pure import Found, RuleJudged
 from app.worker.fix.fix_decision_pure import Decided
 from app.worker.fix.fix_pure import MECHANICAL_BUNDLE, MechanicalFix
 from app.worker.fix.model_fix_pure import MODEL_BUNDLE, ModelFix
+from app.worker.rules import pr_check_pure
 from app.worker.test_run_pure import PytestRun
 
 # 규칙 수정안의 묶음. 코멘트 수정안(feedback)은 규칙 검사의 결과를 고친 것이 아니라 넣지 않는다
@@ -34,6 +35,9 @@ class CarriedFrom:
     number: int  # 머지한 수정안 PR
     bundle: str  # mechanical, model
     verified_sha: str  # 수정안을 검증한 원래 PR의 커밋
+    # 수정안이 고친 위반 중 모델 판단으로 찾아 도구로 재검사하지 못한 것 (4.8의 5번). 수정안 PR에
+    # 적었던 안내를 결과 코멘트에도 적는다
+    unverified: int = 0
 
 
 # 체크포인트에서 되살릴 수 있게 graph.py가 등록하는 타입
@@ -110,8 +114,13 @@ def state_problem(
     check: VerifiedCheck, *, bundle: str, attempt_id: int, base_sha: str | None
 ) -> str | None:
     """검증한 커밋의 체크포인트로 본 조건. 남은 일(승인 대기, 호출 상한으로 남은 판단, 다른 묶음의
-    수정)이 있거나 PR 단위 규칙이 있으면 옮겨 적지 않는다. PR 단위 규칙은 PR의 커밋 목록을 보는데
-    머지 커밋이 그 목록을 바꾼다."""
+    수정)이 있으면 옮겨 적지 않는다.
+
+    PR 단위 확인의 결과는 옮겨 적는다. PR 단위 확인은 파이프라인의 수정안이 데려온 커밋을 PR의
+    커밋으로 세지 않으므로(`pr_check_pure.pipeline_commits`) 머지 커밋에서 다시 봐도 볼 것이 같다.
+    모델 판단으로 찾은 위반을 고친 수정안도 옮겨 적는다. 그 위반은 도구로 재검사하지 못한 것이고
+    (4.8의 5번) 수정안 PR에 그렇게 적혔으며 사람이 보고 머지했다. 같은 안내를 결과 코멘트에 적는다
+    (`unverified_count`)."""
     if not check.finished:
         return "검증한 커밋의 검사가 끝까지 가지 않음"
     found, decisions, fix = check.found, check.decisions, check.fix
@@ -121,10 +130,10 @@ def state_problem(
         return "base가 그 뒤 바뀜"
     if fix is None or not fix.ready or fix.attempt_id != attempt_id:
         return "검증한 커밋의 수정 결과가 수정안의 시도와 다름"
-    if isinstance(fix, ModelFix) and (fix.verification is None or fix.verification.unverified):
-        return "도구로 재검사하지 못한 위반을 고친 수정안"
-    if check.pr_checks is not None:
-        return "PR 단위 규칙이 있음"
+    if isinstance(fix, ModelFix) and fix.verification is None:
+        return "수정안의 검증 결과가 없음"
+    if pr_check_pure.judge_left(check.pr_checks):
+        return "호출 상한으로 남은 PR 단위 판단이 있음"
     if any(isinstance(o, RuleJudged) and o.left for o in found.outcomes):
         return "판단하지 못한 hunk가 남음"
     if any(d.reason == "call_limit" for d in decisions.decisions):
@@ -145,6 +154,13 @@ def merge_problem(
     if tree != expected:
         return "머지 커밋의 내용이 검증한 수정안과 다름"
     return None
+
+
+def unverified_count(fix: MechanicalFix | ModelFix) -> int:
+    """수정안이 고친 위반 중 도구로 재검사하지 못한 것의 수. 기계적 수정은 도구가 다시 본다."""
+    if isinstance(fix, ModelFix) and fix.verification is not None:
+        return fix.verification.unverified
+    return 0
 
 
 def fixed_ids(fix: MechanicalFix | ModelFix) -> frozenset[str]:

@@ -23,8 +23,10 @@ from app.worker.merged_fix_pure import (
     merged_proposal,
     runs_problem,
     state_problem,
+    unverified_count,
 )
 from app.worker.rule_pure import CheckMethod, Rule, RuleSource
+from app.worker.rules.pr_check_pure import PrChecks, PrRuleResult
 from app.worker.test_run_pure import PytestRun, ReportSummary
 from app.worker.violation_pure import Violation
 
@@ -180,9 +182,7 @@ def test_finished_check_with_one_bundle_allows_carrying() -> None:
         ({"fix": None}, OTHER_FIX),
         ({"fix": replace(MODEL_FIX, attempt_id=4)}, OTHER_FIX),
         ({"fix": replace(MODEL_FIX, status="failed")}, OTHER_FIX),
-        ({"fix": replace(MODEL_FIX, verification=Verification(9, 1, 1, 1, 2, unverified=1))},
-         "도구로 재검사하지 못한 위반을 고친 수정안"),
-        ({"pr_checks": object()}, "PR 단위 규칙이 있음"),
+        ({"fix": replace(MODEL_FIX, verification=None)}, "수정안의 검증 결과가 없음"),
         ({"found": found(FIXED, LEFT, judged=RuleJudged(RULE, "r", left=1, left_kind="cap"))},
          "판단하지 못한 hunk가 남음"),
         ({"decisions": decided(FIX_IT, replace(SKIP_IT, reason="call_limit"))},
@@ -193,6 +193,27 @@ def test_finished_check_with_one_bundle_allows_carrying() -> None:
 )  # fmt: skip
 def test_checks_that_do_not_allow_carrying(fields: dict, why: str) -> None:
     assert state_problem(check(**fields), bundle="model", attempt_id=3, base_sha="base") == why
+
+
+def test_pr_level_results_are_carried_unless_a_judgement_is_left() -> None:
+    """PR 단위 확인은 수정안이 데려온 커밋을 세지 않으므로 그 결과를 옮겨 적는다. 호출 상한으로
+    남은 판단이 있으면 처음부터 검사한다."""
+    seen = PrChecks(results=(PrRuleResult(RULE, "unchecked", kind="plan_none"),), violations=())
+    left = PrChecks(results=(PrRuleResult(RULE, "left", kind="cap"),), violations=())
+    ok = state_problem(check(pr_checks=seen), bundle="model", attempt_id=3, base_sha="base")
+    assert ok is None
+    assert (
+        state_problem(check(pr_checks=left), bundle="model", attempt_id=3, base_sha="base")
+        == "호출 상한으로 남은 PR 단위 판단이 있음"
+    )
+
+
+def test_fix_of_model_found_violations_is_carried_with_its_unverified_count() -> None:
+    """모델 판단으로 찾은 위반을 고친 수정안도 옮겨 적고, 재검사하지 못한 수를 같이 넘긴다."""
+    fix = replace(MODEL_FIX, verification=Verification(9, 2, 0, 1, 2, unverified=2))
+    assert state_problem(check(fix=fix), bundle="model", attempt_id=3, base_sha="base") is None
+    assert unverified_count(fix) == 2
+    assert unverified_count(MODEL_FIX) == 0
 
 
 def test_mechanical_fix_counts_only_what_disappeared() -> None:
