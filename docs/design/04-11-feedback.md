@@ -41,10 +41,12 @@
 | 열린 수정안이 고침 | 수정안 #N이 이미 고칩니다 + why | `accepted` + N | 머지 뒤 `resolve` |
 | 머지된 수정안이 고침 / 이미 반영됨 | 수정안 #N에서 고쳤습니다 / 지금 코드에 이미 반영돼 있습니다 | `accepted` + `resolved_at` | 바로 해결 |
 | 규칙 검사가 같은 줄을 알림 | 규칙 검사가 같은 줄을 이미 위반으로 알렸습니다 | `no_action` | 그대로 |
-| 거절 | 반영하지 않습니다 + why | `rejected` | 그대로 |
+| 거절 | 반영하지 않습니다 + why | `rejected` | Copilot의 스레드는 바로 해결(사유 Won't fix / Incorrect). 사람의 스레드는 그대로 |
 | 할 일 없음 | 없음 | `no_action` | 그대로 |
 | 고칠 수 없음 (테스트, 포크, 열린 코멘트 수정안) | 받아들이지만 지금은 고칠 수 없습니다 + why + 이유 | `deferred` | 그대로 |
 | 검증을 통과한 수정을 못 만듦 / 상한 | 반영하려 했지만 검증을 통과한 수정을 만들지 못했습니다 + 이유 | `error` | 그대로 |
 | 판단하지 못함 | 없음 | `error` | 그대로 |
 
 **다시 보는 때.** `deferred`·`error`, 그리고 받아들여 연 수정안이 새 커밋으로 닫힌(`superseded`) 코멘트는 그 기록의 커밋이 지금 head가 아니면 처리하지 않은 것으로 본다(`feedback_pure.handled`). 워커의 `collect`와 동기화가 같은 함수로 정한다.
+
+**Copilot 스레드의 해결 사유 (2026-11-22).** GitHub은 Copilot 리뷰의 스레드를 해결할 때 사유를 받는다(화면의 Addressed / Won't fix / Incorrect, GraphQL `resolveReviewThread`의 `resolutionReason`: `ADDRESSED`, `WONT_FIX`, `INVALID`). 스레드의 첫 글쓴이가 Copilot이면(`COPILOT_LOGINS`) 해결할 때 사유를 같이 준다(`feedback_pure.resolution_reason`). 고쳤거나 이미 반영된 것(머지 뒤의 `resolve` 작업, 머지된 수정안과 겹침, `already_fixed`)은 `ADDRESSED`다. 거절은 판단 모델이 종류를 같이 답한다(`reject_kind`): 코멘트의 말이 사실이 아니거나 제안대로 하면 코드가 틀려지면 `incorrect` → `INVALID`, 말은 맞을 수 있지만 이 PR에서 하지 않으면 `wont_fix` → `WONT_FIX`. Copilot의 스레드는 거절도 답글을 단 뒤 바로 해결한다(`resolved_at`을 남긴다). 사람의 스레드에는 사유를 주지 않고, 거절하면 답글만 달고 열어 둔다(리뷰어가 다시 말할 수 있게. 담당이 정한 것). 이미 해결된 스레드에 다시 보내면 사유만 덮어쓴다(실제 GitHub에서 확인).

@@ -65,3 +65,20 @@ def fix_branch_pr(ref: str) -> int | None:
     """`pipeline/pr-<n>-fix-<묶음>` 꼴의 브랜치 이름에서 원래 PR 번호 n. 꼴이 다르면 None."""
     match = _FIX_BRANCH.fullmatch(ref)
     return int(match.group(1)) if match else None
+
+
+ResolutionReason = Literal["ADDRESSED", "WONT_FIX", "INVALID"]
+
+
+def resolution_reason(login: str, *, rejected: bool = False, incorrect: bool = False
+                      ) -> ResolutionReason | None:  # fmt: skip
+    """Copilot 리뷰 스레드를 해결할 때 GitHub에 주는 사유. 사람의 스레드면 None(사유를 받지 않는다).
+
+    고쳤거나 이미 반영됐으면 ADDRESSED, 거절이면 WONT_FIX, 코멘트의 말이 사실이 아니어서 거절이면
+    INVALID다(화면의 Addressed / Won't fix / Incorrect).
+    """
+    if login not in COPILOT_LOGINS:
+        return None
+    if not rejected:
+        return "ADDRESSED"
+    return "INVALID" if incorrect else "WONT_FIX"

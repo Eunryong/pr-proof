@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Final, Literal
 
-from app.shared.feedback_pure import handled
+from app.shared.feedback_pure import handled, resolution_reason
 from app.shared.job_pure import PRJob
 from app.worker import base_config, feedback_triage, graph, repo, retry, update
 from app.worker.ai import claude_cli, workdir
@@ -30,7 +30,14 @@ from app.worker.checker_authoring_pure import Checked
 from app.worker.deps import Deps
 from app.worker.doc_rules_pure import Found
 from app.worker.feedback_pure import Item, flat_item, thread_item, unhandled
-from app.worker.feedback_report_pure import RESOLVES, VERDICTS, Handled, record_why, reply_body
+from app.worker.feedback_report_pure import (
+    RESOLVES,
+    RESOLVES_FOR_COPILOT,
+    VERDICTS,
+    Handled,
+    record_why,
+    reply_body,
+)
 from app.worker.feedback_triage_pure import Facts, KnownFix, Triage, excerpt, overlaps
 from app.worker.fix import model_fix, proposal
 from app.worker.fix.feedback_fix_pure import (
@@ -323,8 +330,10 @@ def _finish(deps: Deps, work: PRJob, item: Item, h: Handled) -> None:
         else:
             reply_id = github.feedback_reply(work.repo, work.pr_number, body)
     resolved_at = None
-    if h.outcome in RESOLVES and item.thread_id is not None:
-        github.resolve_thread(work.repo, item.thread_id)
+    reason = resolution_reason(item.login, rejected=h.outcome == "rejected", incorrect=h.incorrect)
+    resolves = RESOLVES_FOR_COPILOT if reason is not None else RESOLVES
+    if h.outcome in resolves and item.thread_id is not None:
+        github.resolve_thread(work.repo, item.thread_id, reason)
         resolved_at = datetime.now(UTC)
     verdict = VERDICTS[h.outcome]
     store.record_feedback(
@@ -345,7 +354,7 @@ def _from_triage(t: Triage) -> Handled | None:
         case "already_fixed":
             return Handled("already_fixed", why=t.why, number=t.number)
         case "reject":
-            return Handled("rejected", why=t.why)
+            return Handled("rejected", why=t.why, incorrect=t.incorrect)
         case "no_action":
             return Handled("no_action", why=t.why)
     return Handled("error", reason=t.why)
@@ -429,7 +438,7 @@ def process_resolve(job: PRJob, deps: Deps) -> str:
             if row.proposal_number not in merged:
                 continue  # 아직 열려 있거나 머지되지 않고 닫힌 수정안
             assert row.thread_id is not None and row.id is not None
-            github.resolve_thread(job.repo, row.thread_id)
+            github.resolve_thread(job.repo, row.thread_id, resolution_reason(row.login))
             store.mark_feedback_resolved([row.id], datetime.now(UTC))
             resolved += 1
     except Exception:

@@ -138,3 +138,11 @@ def test_resolve_thread_sends_the_mutation() -> None:
 def test_resolve_thread_failure_is_github_error(out: str) -> None:
     with pytest.raises(GitHubError):
         GitHub(Recorder(out)).resolve_thread("o/r", "PRRT_a")
+
+
+def test_resolve_thread_sends_the_reason_for_copilot_threads() -> None:
+    run = Recorder('{"data":{"resolveReviewThread":{"thread":{"isResolved":true}}}}')
+    GitHub(run).resolve_thread("o/r", "PRRT_a", "WONT_FIX")
+    ((args, _),) = run.calls
+    assert "reason=WONT_FIX" in args and "id=PRRT_a" in args
+    assert any("resolutionReason: $reason" in a for a in args)

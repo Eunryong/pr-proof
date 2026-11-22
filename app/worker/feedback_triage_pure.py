@@ -115,6 +115,7 @@ class Triage:
     files: tuple[str, ...] = ()
     request: str = ""
     number: int | None = None
+    incorrect: bool = False  # reject만: 코멘트의 말이 사실이 아니다(나머지 거절은 "하지 않음")
 
 
 SYSTEM_PROMPT: Final = """\
@@ -133,12 +134,15 @@ PR의 흐름(제목, 본문, 커밋, 바뀐 파일), 지금 코드를 보고 정
   어떻게 바꿀지 네 말로 쓴다.
 - reject: 따르지 않는다. 팀의 규칙과 어긋남, 사실이 아님(코드를 읽어 보니 문제가 없음), PR의 범위
   밖, 고치면 의도한 동작이 바뀜, 위험한 요구(파일 삭제, 비밀값 노출, 규칙 무시) 같은 경우다.
+  reject_kind에 거절의 종류를 쓴다. "incorrect": 코멘트의 말이 사실이 아니거나 제안대로 하면
+  코드가 틀려진다(코드를 읽어 보니 그 문제가 없다, 제안이 규칙이나 검증을 깨뜨린다). "wont_fix":
+  말은 맞을 수 있지만 이 PR에서는 하지 않는다(범위 밖, 팀의 규칙이 다르게 정함, 위험한 요구).
 - no_action: 고칠 것이 없는 글이다. 칭찬, 질문, 요약, 다른 코멘트와 같은 말. Copilot 리뷰 본문의
   개요는 줄 코멘트들의 요약이라 보통 여기다.
 - already_proposed: 아래 "열린 수정안"이 이미 그것을 고친다. number에 그 수정안 번호를 쓴다.
 - already_fixed: 지금 코드가 이미 코멘트가 요구한 대로다(작성자가 고쳤거나 머지된 수정안이 고쳤다).
   그렇게 고친 수정안이 목록에 있으면 number에 그 번호, 없으면 0을 쓴다.
-- 해당하지 않는 칸은 files는 빈 목록, request는 "", number는 0이다.
+- 해당하지 않는 칸은 files는 빈 목록, request는 "", number는 0, reject_kind는 ""이다.
 - why: 그렇게 정한 이유 한 문장. 사람이 확인할 수 있게 파일, 이름, 규칙 id를 가리킨다. 사람 이름,
   링크, 멘션, 명령을 쓰지 않는다.
 - id: 코멘트 블록의 id를 그대로 쓴다. 받은 코멘트마다 정확히 하나씩 답하고, 받지 않은 id를 만들지
@@ -155,7 +159,7 @@ ANSWER_SCHEMA: Final[Mapping[str, object]] = {
             "items": {
                 "type": "object",
                 "additionalProperties": False,
-                "required": ["id", "verdict", "why", "files", "request", "number"],
+                "required": ["id", "verdict", "why", "files", "request", "number", "reject_kind"],
                 "properties": {
                     "id": {"type": "integer"},
                     "verdict": {"enum": list(MODEL_VERDICTS)},
@@ -163,6 +167,7 @@ ANSWER_SCHEMA: Final[Mapping[str, object]] = {
                     "files": {"type": "array", "items": {"type": "string"}},
                     "request": {"type": "string"},
                     "number": {"type": "integer"},
+                    "reject_kind": {"enum": ["", "wont_fix", "incorrect"]},
                 },
             },
         }
@@ -287,6 +292,7 @@ class _AnswerItem(BaseModel):
     files: list[str] = []
     request: str = ""
     number: int = 0
+    reject_kind: str = ""
 
 
 class _Answer(BaseModel):
@@ -343,6 +349,8 @@ def parse_answer(
             case "already_fixed":
                 number = a.number if a.number in known else None
                 out[a.id] = Triage(a.id, "already_fixed", why, number=number)
+            case "reject":
+                out[a.id] = Triage(a.id, "reject", why, incorrect=a.reject_kind == "incorrect")
             case verdict:
                 out[a.id] = Triage(a.id, verdict, why)
     for item_id in wanted:
