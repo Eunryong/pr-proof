@@ -46,6 +46,37 @@ class CommandRecord(SQLModel, table=True):
     handled_at: datetime
 
 
+# accepted: 받아들여 수정안을 올림, rejected: 받아들이지 않고 이유를 답함, no_action: 고칠 것이
+# 없는 코멘트(칭찬, 질문 없음 등), error: 처리하지 못함
+FeedbackVerdict = Literal["accepted", "rejected", "no_action", "error"]
+
+
+class Feedback(SQLModel, table=True):
+    """처리한 PR 코멘트 (Copilot 리뷰, 사람의 리뷰). 같은 코멘트를 두 번 처리하지 않는다.
+
+    item_id는 줄 코멘트면 스레드의 첫 코멘트의 database id, 리뷰면 리뷰 id, 일반 코멘트면 코멘트
+    id다. 줄 코멘트만 thread_id(GraphQL 노드 id)가 있고, 수정안이 머지되면 그 스레드를 해결됨으로
+    바꾼다(resolved_at).
+    """
+
+    __table_args__ = (UniqueConstraint("repo", "kind", "item_id"),)
+
+    id: int | None = Field(default=None, primary_key=True)
+    repo: str = Field(index=True)
+    pr_number: int = Field(index=True)
+    kind: str  # FeedbackKind
+    item_id: int
+    thread_id: str | None = None
+    login: str
+    head_sha: str  # 처리할 때의 PR head
+    verdict: str  # FeedbackVerdict
+    why: str = ""
+    reply_id: int | None = None  # 단 답글의 id
+    proposal_number: int | None = None  # 받아들여 올린 수정안 PR 번호
+    resolved_at: datetime | None = None
+    handled_at: datetime
+
+
 class CallGrant(SQLModel, table=True):
     """`/fix`가 PR 호출 상한을 한 번 더 준 기록 (DESIGN.md 4.9 명령, 9.2 "걸렸을 때").
 

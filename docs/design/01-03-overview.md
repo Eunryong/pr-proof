@@ -126,6 +126,8 @@
 | `update` | `pull_request` opened, reopened, synchronize, ready_for_review | 현재 head에 검사 이력이 없으면 3절의 흐름 전체. PR 이후의 새 커밋도 같은 자동 경로를 탄다 |
 | `command` | `issue_comment` created | `/recheck`, `/fix` |
 | `close` | `pull_request` closed | 진행 중인 검사를 멈추고, 남은 수정안 PR을 닫고, 기록을 확정한다 |
+| `feedback` | `pull_request_review` submitted, `pull_request_review_comment` created, `issue_comment` created(명령이 아닌 것) | PR의 처리하지 않은 코멘트(Copilot 리뷰, 소유자·멤버·협업자의 리뷰)를 지금 상태에 맞춘다. 어떤 코멘트인지는 워커가 GitHub에서 읽는다 |
+| `resolve` | `pull_request` closed(머지된 수정안 PR) | 머지된 수정안으로 받아들인 코멘트의 스레드를 해결됨으로 바꾼다. 머지되지 않고 닫힌 수정안은 바꾸지 않는다 |
 
-`pipeline/*` 브랜치에서 온 PR은 무시한다.
+`pipeline/*` 브랜치에서 온 PR은 무시한다. 다만 머지된 수정안(`pipeline/pr-<n>-fix-<묶음>`)의 closed는 원래 PR n의 `resolve`가 된다.
 

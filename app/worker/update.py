@@ -19,7 +19,7 @@ CLOSED_HEAD: Final = "closed"  # PR이 닫혔다는 Redis 최신 head 표시. �
 log = logging.getLogger(__name__)
 
 
-def _admit(job: PRJob, deps: Deps, final: bool) -> PullRefs | str:
+def admit(job: PRJob, deps: Deps, final: bool) -> PullRefs | str:
     """GitHub에서 PR의 지금 상태를 확인하고 가드레일을 지난다 (8.6). 검사할 작업이면 조회한 PR을,
     아니면 결과 이름을 돌려준다.
 
@@ -102,7 +102,7 @@ def resume_fix(job: PRJob, deps: Deps, approval: dict[str, Any], author: Author)
 
 def process_update(job: PRJob, deps: Deps) -> str:
     _, final = retry.attempt()
-    admitted = _admit(job, deps, final)
+    admitted = admit(job, deps, final)
     if isinstance(admitted, str):
         return admitted  # closed, needs_approval: 할 일이 없다
     return run_admitted(job, deps, admitted)

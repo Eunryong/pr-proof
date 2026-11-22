@@ -16,6 +16,7 @@ from app.shared.db_pure import (
     CheckerEntry,
     CommandRecord,
     EvalRun,
+    Feedback,
     FixAttempt,
     ModelCacheEntry,
     ModelCall,
@@ -485,6 +486,68 @@ class Store:
                     handled_at=_now(),
                 )
             )
+            session.commit()
+
+    # --- PR 코멘트 (feedback) ---
+
+    def record_feedback(
+        self,
+        *,
+        repo: str,
+        pr_number: int,
+        kind: str,
+        item_id: int,
+        thread_id: str | None,
+        login: str,
+        head_sha: str,
+        verdict: str,
+        why: str = "",
+        reply_id: int | None = None,
+        proposal_number: int | None = None,
+    ) -> None:
+        """처리한 코멘트를 적는다. 같은 (repo, kind, item_id)가 있으면 그 줄을 고친다."""
+        with Session(self.engine) as session:
+            stmt = select(Feedback).where(
+                Feedback.repo == repo, Feedback.kind == kind, Feedback.item_id == item_id
+            )
+            row = session.exec(stmt).first()
+            if row is None:
+                row = Feedback(
+                    repo=repo, pr_number=pr_number, kind=kind, item_id=item_id, login=login,
+                    head_sha=head_sha, verdict=verdict, handled_at=_now(),
+                )  # fmt: skip
+            row.pr_number, row.thread_id, row.login, row.head_sha = (
+                pr_number, thread_id, login, head_sha,
+            )  # fmt: skip
+            row.verdict, row.why, row.reply_id = verdict, why, reply_id
+            row.proposal_number, row.handled_at = proposal_number, _now()
+            session.add(row)
+            session.commit()
+
+    def handled_feedback(self, repo: str, pr_number: int) -> list[Feedback]:
+        with Session(self.engine) as session:
+            stmt = select(Feedback).where(Feedback.repo == repo, Feedback.pr_number == pr_number)
+            return list(session.exec(stmt.order_by(Feedback.id)))
+
+    def feedback_awaiting_merge(self, repo: str, pr_number: int) -> list[Feedback]:
+        """받아들여 수정안을 올렸는데 스레드를 아직 해결하지 않은 줄 코멘트."""
+        with Session(self.engine) as session:
+            stmt = select(Feedback).where(
+                Feedback.repo == repo, Feedback.pr_number == pr_number,
+                Feedback.verdict == "accepted",
+                Feedback.proposal_number.is_not(None),
+                Feedback.resolved_at.is_(None),
+                Feedback.thread_id.is_not(None),
+            )  # fmt: skip
+            return list(session.exec(stmt.order_by(Feedback.id)))
+
+    def mark_feedback_resolved(self, ids: Iterable[int], at: datetime) -> None:
+        with Session(self.engine) as session:
+            for feedback_id in ids:
+                row = session.get(Feedback, feedback_id)
+                if row is not None:
+                    row.resolved_at = at
+                    session.add(row)
             session.commit()
 
     def add_call_grant(self, repo: str, pr_number: int, head_sha: str, comment_id: int) -> None:

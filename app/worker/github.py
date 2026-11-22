@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Final
 
 from app.shared.comment_pure import COMMENT_MARKER, REPLY_MARKER
+from app.shared.feedback_pure import FEEDBACK_MARKER
 
 GH_TIMEOUT: Final = 60
 _ENV_PASSTHROUGH: Final = ("PATH", "HOME", "GH_CONFIG_DIR")
@@ -57,6 +58,69 @@ class PullStatus:
     merged: bool
     merge_commit: str | None
 
+
+@dataclass(frozen=True)
+class ThreadComment:
+    """리뷰 스레드의 코멘트 하나. id는 REST의 코멘트 id(GraphQL의 databaseId)다."""
+
+    id: int
+    login: str
+    association: str
+    body: str
+
+
+@dataclass(frozen=True)
+class ReviewThread:
+    """줄 리뷰 코멘트의 스레드. comments의 첫 코멘트가 스레드를 연 글이다."""
+
+    id: str  # GraphQL 노드 id. 해결됨으로 바꿀 때 쓴다
+    resolved: bool
+    outdated: bool
+    path: str
+    line: int | None  # 코드가 바뀌어 줄을 잃은 스레드는 None
+    comments: tuple[ThreadComment, ...]
+
+
+@dataclass(frozen=True)
+class ReviewBody:
+    """리뷰의 본문 (줄 코멘트와 따로 단 글)."""
+
+    id: int
+    login: str
+    association: str
+    body: str
+
+
+@dataclass(frozen=True)
+class PullComment:
+    """PR의 일반 코멘트."""
+
+    id: int
+    login: str
+    association: str
+    body: str
+
+
+# 스레드는 100개, 스레드마다 코멘트는 50개까지 읽는다
+THREADS_QUERY: Final = """
+query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 100) {
+        nodes {
+          id isResolved isOutdated path line
+          comments(first: 50) { nodes { databaseId author { login } authorAssociation body } }
+        }
+      }
+    }
+  }
+}
+"""
+RESOLVE_MUTATION: Final = """
+mutation($id: ID!) {
+  resolveReviewThread(input: {threadId: $id}) { thread { id isResolved } }
+}
+"""
 
 # 브랜치가 이미 없을 때 GitHub이 돌려주는 실패
 _BRANCH_GONE: Final = ("Not Found", "404", "422", "Reference does not exist")
@@ -244,6 +308,100 @@ class GitHub:
             payload,
         )
         return int(out.strip())
+
+    # --- PR 코멘트 (Copilot 리뷰, 사람의 리뷰) ---
+
+    def review_threads(self, repo: str, pr_number: int) -> list[ReviewThread]:
+        """줄 리뷰 코멘트의 스레드 (GraphQL). 해결됨·낡음 표시와 스레드의 코멘트를 같이 읽는다."""
+        owner, _, name = repo.partition("/")
+        out = self._run(
+            ["api", "graphql", "-f", f"query={THREADS_QUERY}", "-F", f"owner={owner}",
+             "-F", f"name={name}", "-F", f"number={pr_number}"],
+            None,
+        )  # fmt: skip
+        try:
+            data = json.loads(out)
+            if data.get("errors"):
+                raise GitHubError(f"스레드 조회 실패: {repo}#{pr_number}: {data['errors']}")
+            nodes = data["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"]
+            return [
+                ReviewThread(
+                    id=str(node["id"]),
+                    resolved=bool(node["isResolved"]),
+                    outdated=bool(node["isOutdated"]),
+                    path=node.get("path") or "",
+                    line=node.get("line"),
+                    comments=tuple(
+                        ThreadComment(
+                            id=int(c["databaseId"]),
+                            login=(c.get("author") or {}).get("login") or "",
+                            association=c.get("authorAssociation") or "",
+                            body=c.get("body") or "",
+                        )
+                        for c in node["comments"]["nodes"]
+                    ),
+                )
+                for node in nodes
+            ]
+        except (ValueError, KeyError, TypeError) as e:
+            raise GitHubError(f"스레드 조회 응답을 읽지 못함: {repo}#{pr_number}") from e
+
+    def reviews(self, repo: str, pr_number: int) -> list[ReviewBody]:
+        """리뷰 본문. 본문이 빈 리뷰(줄 코멘트만 단 것)는 뺀다."""
+        keep = 'select((.body // "") != "")'
+        return [
+            ReviewBody(**fields)
+            for fields in self._rest_comments(repo, f"pulls/{pr_number}/reviews", keep)
+        ]
+
+    def issue_comments(self, repo: str, pr_number: int) -> list[PullComment]:
+        """PR의 일반 코멘트."""
+        return [
+            PullComment(**fields)
+            for fields in self._rest_comments(repo, f"issues/{pr_number}/comments", "select(true)")
+        ]
+
+    def _rest_comments(self, repo: str, path: str, keep: str) -> list[dict[str, object]]:
+        jq = (
+            f'.[] | {keep} | {{id, login: (.user.login // ""), '
+            'association: (.author_association // ""), body: (.body // "")} | @json'
+        )
+        out = self._run(["api", "--paginate", f"repos/{repo}/{path}", "--jq", jq], None)
+        try:
+            return [json.loads(line) for line in out.splitlines() if line.strip()]
+        except ValueError as e:
+            raise GitHubError(f"코멘트 조회 응답을 읽지 못함: {repo}/{path}") from e
+
+    def reply_to_review_comment(self, repo: str, pr_number: int, comment_id: int, body: str) -> int:
+        """줄 리뷰 코멘트의 스레드에 답글을 단다. 본문 앞에 파이프라인 표시를 붙인다."""
+        payload = json.dumps({"body": f"{FEEDBACK_MARKER}\n{body}"})
+        out = self._run(
+            ["api", "-X", "POST", f"repos/{repo}/pulls/{pr_number}/comments/{comment_id}/replies",
+             "--input", "-", "--jq", ".id"],
+            payload,
+        )  # fmt: skip
+        return int(out.strip())
+
+    def feedback_reply(self, repo: str, pr_number: int, body: str) -> int:
+        """리뷰 본문과 일반 코멘트에 일반 코멘트로 답한다(둘에는 스레드가 없다)."""
+        payload = json.dumps({"body": f"{FEEDBACK_MARKER}\n{body}"})
+        out = self._run(
+            ["api", f"repos/{repo}/issues/{pr_number}/comments", "--input", "-", "--jq", ".id"],
+            payload,
+        )
+        return int(out.strip())
+
+    def resolve_thread(self, repo: str, thread_id: str) -> None:
+        """리뷰 스레드를 해결됨으로 바꾼다 (GraphQL). 이미 해결된 스레드여도 같다."""
+        out = self._run(
+            ["api", "graphql", "-f", f"query={RESOLVE_MUTATION}", "-f", f"id={thread_id}"], None
+        )
+        try:
+            errors = json.loads(out).get("errors")
+        except ValueError as e:
+            raise GitHubError(f"스레드 해결 응답을 읽지 못함: {repo} {thread_id}") from e
+        if errors:
+            raise GitHubError(f"스레드 해결 실패: {repo} {thread_id}: {errors}")
 
     def find_comment(self, repo: str, pr_number: int) -> int | None:
         """이 계정이 단, 파이프라인 표시가 있는 코멘트의 ID."""
