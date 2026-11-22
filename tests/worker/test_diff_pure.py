@@ -9,6 +9,7 @@ from app.worker.diff_pure import (
     added_lines,
     change_blocks,
     hunk_around,
+    line_after,
     new_files,
     touches,
 )
@@ -284,3 +285,54 @@ def test_change_blocks_skip_deleted_files() -> None:
         "@@ -1 +0,0 @@\n-x = 1\n"
     )
     assert change_blocks(diff) == ()
+
+
+LINES: Final = "".join(f"L{n}\n" for n in range(1, 21))
+
+
+@pytest.mark.parametrize("context", [(), ("-U0",)], ids=["context-3", "no-context"])
+def test_line_after_follows_untouched_lines_and_drops_changed_ones(
+    tmp_path: Path, context: tuple[str, ...]
+) -> None:
+    """수정안을 머지한 커밋으로 남은 위반을 옮길 때의 줄 번호. 위에 줄을 더하고, 한 줄을 바꾸고,
+    두 줄을 지운 diff에서 바뀌지 않은 줄은 같은 내용의 새 줄로, 바뀐 줄은 None이다."""
+    before = LINES.splitlines()
+    after = ["new0", *before[:4], "L5 fixed", *before[5:9], *before[11:], "tail"]
+    diff = _git_diff(tmp_path, LINES, "\n".join(after) + "\n", *context)
+    moved = {n: line_after(diff, "a.py", n) for n in range(1, 21)}
+    assert {n for n, m in moved.items() if m is None} == {5, 10, 11}
+    for n, m in moved.items():
+        if m is not None:
+            assert after[m - 1] == before[n - 1]
+    assert (moved[1], moved[4], moved[12], moved[20]) == (2, 5, 11, 19)
+
+
+def test_line_after_insert_only_and_delete_only_hunks(tmp_path: Path) -> None:
+    inserted = _git_diff(tmp_path, "a\nb\nc\n", "a\nb\nx\nc\n", "-U0")
+    assert [line_after(inserted, "a.py", n) for n in (1, 2, 3)] == [1, 2, 4]
+    deleted = _git_diff(tmp_path, "a\nb\nc\nd\n", "a\nd\n", "-U0")
+    assert [line_after(deleted, "a.py", n) for n in (1, 2, 3, 4)] == [1, None, None, 2]
+
+
+def test_line_after_other_files_and_whole_file_changes() -> None:
+    """diff에 없는 파일의 줄은 그대로다. 지우거나 이름을 바꾸거나 바이너리로 바꾼 파일은 옮기지
+    못한다. 새 파일(만든 테스트)은 다른 파일의 줄에 영향이 없다."""
+    added = (
+        "diff --git a/tests/test_x.py b/tests/test_x.py\nnew file mode 100644\n"
+        "--- /dev/null\n+++ b/tests/test_x.py\n@@ -0,0 +1,2 @@\n+def test():\n+    pass\n"
+    )
+    assert line_after(added, "orders/a.py", 7) == 7
+    deleted = (
+        "diff --git a/x.py b/x.py\ndeleted file mode 100644\n--- a/x.py\n+++ /dev/null\n"
+        "@@ -1,2 +0,0 @@\n-x = 1\n-y = 2\n"
+    )
+    assert line_after(deleted, "x.py", 2) is None
+    renamed = "diff --git a/x.py b/y.py\nsimilarity index 100%\nrename from x.py\nrename to y.py\n"
+    assert line_after(renamed, "x.py", 1) is None
+    binary = "diff --git a/x.py b/x.py\nindex 1..2 100644\nBinary files a/x.py and b/x.py differ\n"
+    assert line_after(binary, "x.py", 1) is None
+    # 내용이 `--- a/x.py`처럼 보이는 줄도 hunk의 줄 수만큼 내용으로 읽는다
+    tricky = (
+        "diff --git a/y.py b/y.py\n--- a/y.py\n+++ b/y.py\n@@ -1 +1,2 @@\n-old\n+-- a/x.py\n++new\n"
+    )
+    assert line_after(tricky, "x.py", 3) == 3

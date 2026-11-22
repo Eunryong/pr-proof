@@ -12,6 +12,7 @@ from typing import Final
 
 _HUNK: Final = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 _NEW_FILE_HEADER: Final = "+++ "
+_OLD_FILE_HEADER: Final = "--- "
 _DELETED: Final = "+++ /dev/null"
 
 ChangedLines = Mapping[str, frozenset[int]]
@@ -333,6 +334,78 @@ def hunk_removing(diff: str, file: str, line_text: str, max_lines: int) -> str:
             new_left = int(new_count) if new_count is not None else 1
             hunk, hit = [raw], False
     return "\n".join(first[:max_lines]) if first is not None else ""
+
+
+def _old_path(header: str) -> str | None:
+    """`--- a/<경로>` 헤더의 경로. 새 파일(`/dev/null`)이나 형식이 다르면 None."""
+    raw = header[len(_OLD_FILE_HEADER) :].removesuffix("\t")
+    if raw.startswith('"') and raw.endswith('"') and len(raw) >= 2:
+        raw = codecs.escape_decode(raw[1:-1].encode())[0].decode("utf-8", "surrogateescape")
+    return raw.removeprefix("a/") if raw.startswith("a/") else None
+
+
+def line_after(diff: str, file: str, line: int) -> int | None:
+    """diff 앞쪽(고치기 전) file의 line이 뒤쪽(고친 뒤)에서 몇 번째 줄인지. diff가 그 줄을 지우거나
+    바꿨으면, 그 파일을 지우거나 이름을 바꿨거나 바이너리로 바꿨으면 None. diff에 없는 파일의 줄은
+    그대로다.
+
+    수정안을 머지한 커밋에 앞 커밋의 위반을 옮겨 적을 때 줄 번호를 맞춘다. 문맥 줄이 몇 줄이든
+    hunk 헤더의 줄 수만큼 내용 줄로 읽는다.
+    """
+    target = False  # 지금 읽는 절이 file의 것이다
+    git_path: str | None = None
+    old_path: str | None = None
+    offset = 0  # 지난 hunk들이 더하고 뺀 줄 수
+    old_no = new_no = 0
+    old_left = new_left = 0
+    for raw in diff.splitlines():
+        if old_left > 0 or new_left > 0:
+            tag = raw[:1]
+            if tag == "+":
+                new_no += 1
+                new_left -= 1
+            elif tag == "-":
+                if target and old_no == line:
+                    return None
+                old_no += 1
+                old_left -= 1
+            elif tag != "\\":
+                if target and old_no == line:
+                    return new_no
+                old_no += 1
+                new_no += 1
+                old_left -= 1
+                new_left -= 1
+            if old_left <= 0 and new_left <= 0:
+                offset = new_no - old_no
+            continue
+        if raw.startswith("diff --git "):
+            if target:
+                return line + offset
+            git_path, old_path = _same_path(raw[len("diff --git ") :]), None
+        elif raw.startswith(("rename from ", "deleted file mode ")):
+            if git_path == file or _unquoted(raw.split(" ", 2)[-1]) == file:
+                return None
+        elif raw.startswith(("Binary files ", "GIT binary patch")):
+            if git_path == file or target:
+                return None
+        elif raw.startswith(_OLD_FILE_HEADER):
+            old_path = _old_path(raw)
+        elif raw.startswith(_NEW_FILE_HEADER):
+            if old_path == file:
+                if _new_path(raw) != file:
+                    return None
+                target = True
+        elif match := _HUNK.match(raw):
+            old_start, old_count, new_start, new_count = match.groups()
+            old_left = int(old_count) if old_count is not None else 1
+            new_left = int(new_count) if new_count is not None else 1
+            # 더하기만 한 hunk의 시작 줄은 더한 자리의 앞줄, 지우기만 한 hunk는 뒤쪽이 그렇다
+            old_no = int(old_start) + (1 if old_left == 0 else 0)
+            new_no = int(new_start) + (1 if new_left == 0 else 0)
+            if target and line < old_no:
+                return line + offset
+    return line + offset if target else line
 
 
 def touches(changed: ChangedLines, file: str, start: int, end: int) -> bool:
