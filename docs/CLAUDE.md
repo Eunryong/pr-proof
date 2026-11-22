@@ -61,7 +61,7 @@ BACKLOG.md 형식:
 - PR 하나의 순서: 작성자 확인(가드레일) → 규칙 읽기(모델, base의 문서와 도구 설정) → 규칙마다 확인 방법(저장소의 도구 / 모델이 쓴 검사기 / 모델 판단) → 위반 찾기 → 테스트 기준선 → 수정 판단(정해진 것은 프로그램, 나머지는 모델) → 수정 작성 → 출구 검사 → 수정안 PR과 결과 코멘트.
 - 수정 작성(DESIGN 4.7)은 모델이 한 호출 안에서 한다: 있던 테스트가 위반 줄을 실행하지 않으면 테스트(`tests/test_pipeline_<이름>.py`)를 먼저 쓰고, 도구 `run_tests`(샌드박스)와 `check_rules`(검사기)로 돌려 보며 고치고 다시 확인한다.
 - 출구 검사(DESIGN 4.8)는 프로그램이 같은 검사를 한 번 더 돌린다: 허용 범위, 비밀값, 설명 확인, 규칙 재검사, 만든 테스트의 조건(고치기 전 통과, 위반 줄 실행, 겹치지 않음, 고친 뒤 통과, 빈 테스트 아님), 테스트, 크기. 맞지 않는 만든 테스트는 그 파일만 뺀다.
-- 아직 옛 구조인 단계: 규칙 읽기, 검사기 작성, 위반 찾기, 수정 판단은 프로그램이 순서를 쥐고 모델을 도구 없이 부른다(DESIGN 12.2). 옮길지는 저장소 주인에게 물었다(DESIGN 11.3).
+- 모델이 코드를 보는 방식은 단계마다 다르다(DESIGN 8.4). 수정 작성은 저장소를 읽고 쓰는 도구와 파이프라인 도구를 받는다. 위반 찾기의 모델 판단(DESIGN 4.5)과 PR 설명 확인(DESIGN 4.5 끝)은 읽기 도구(Read, Grep, Glob)로 PR의 코드에서 필요한 곳을 찾아 읽는다(2026-11-22). 규칙 읽기, 검사기 작성, 수정 판단, PR 단위 확인은 도구 없이 프로그램이 골라 준 자료만 받는다.
 - 확인은 실제 모델로 한다. 가짜 모델은 없애는 중이고(2026-11-22, DESIGN 11.1) 남은 곳은 DESIGN 12.2에 있다. 새 테스트에 가짜 모델을 만들지 않는다.
 - 대상 저장소: 예제 `Eunryong/eval`, 저장소 주인이 쓰는 `Eunryong/MathLLM`(둘 다 비공개). 이 리포(`pr-proof`)는 자기 PR을 검사하지 않는다. 실제 모델 확인은 `PR_PROOF_REAL_AI=1`(CLI)과 `PR_PROOF_REAL_MODEL=1`(평가 케이스)로 켠다.
 - 열려 있는 완료 기준은 `docs/DESIGN.md` 13절, 문서와 코드가 다른 곳은 12.2, 주인에게 물은 것은 11.3에 있다. 코드 주석의 "DESIGN.md F7" 같은 번호는 v1의 절이고 12.3으로 읽는다.
@@ -113,7 +113,7 @@ tests/          코드와 같은 이름의 폴더 (tests/api, tests/worker, test
 - `rules/`: 규칙 경로(`doc_rules.py`) → 규칙 읽기(`rules.py`) → 검사 방법 정하기(`checkers.py`: 도구 설정의 규칙 묶음, 문서 규칙의 도구 선택, 검사기 작성) → 위반 찾기(`detect.py`) · 모델의 직접 판단(`judge.py`) · PR 단위 확인(`pr_check.py`, 알리기만)
 - `fix/`: 수정 판단(`decide.py`) → 기계적 수정(`mechanical_fix.py`) · 모델 수정(`model_fix.py`: 수정 작성과 도구 둘의 구현, 출구 검사) · 허용 범위(`scope.py`) → 수정안 PR(`proposal.py`). 만든 테스트의 판정은 `app/worker/generated_tests_pure.py`, 만든 테스트의 자리는 `scope_pure.is_generated_test`
 - `sandbox/`: `docker_cli`, `container`, `toolcache`, `checker_runner`, `safe_read`. 도구(ast-grep, ruff)와 Python 런타임은 `toolcache.py`가 고정한 버전과 SHA256으로 받아 캐시한다. 샌드박스 이미지에는 언어가 없다 (`debian:bookworm-slim`에 curl과 인증서)
-- `ai/`: claude CLI 호출(`claude_cli.py`, 모양 셋), 모델 전용 폴더(`workdir.py`), 경로 감시 훅(`path_hook.py`), 수정 작성의 파이프라인 도구 서버(`tool_server.py`)와 CLI가 띄우는 중계(`mcp_relay.py`). MCP 메시지와 도구 상한은 `app/worker/mcp_pure.py`
+- `ai/`: claude CLI 호출(`claude_cli.py`, 모양 넷: 수정 작성의 `file_tools`·`fix_tools`, 읽기만 하는 `read_tools`, 도구 없는 `no_tools`), 모델 전용 폴더(`workdir.py`), 경로 감시 훅(`path_hook.py`), 수정 작성의 파이프라인 도구 서버(`tool_server.py`)와 CLI가 띄우는 중계(`mcp_relay.py`). MCP 메시지와 도구 상한은 `app/worker/mcp_pure.py`
 - `lang/python.py`: Python 언어 프로필 (런타임 준비, `.venv` 설치, pytest 실행과 결과 읽기, 위반 줄의 커버리지 읽기, ruff). 테스트 파일의 정의(`fix/scope_pure.py`), coverage.xml 파싱(`coverage_pure.py`), ruff 설정 읽기와 도구 목록(`tools_pure.py`)은 순수 모듈에 있다. 두 번째 언어와 프로필 인터페이스는 만들지 않는다
 
 **웹과 워커 사이의 계약 (`app/shared/`).** 웹과 워커는 메모리를 공유하지 않는다. 둘 사이에는 큐와 Redis·SQLite 상태만 오가고, 큐에 넣는 값은 작업 계약(`job_pure.py`의 `PRJob`)뿐이다. 키 형식과 큐 이름(`state_keys_pure.py`), SQLite 테이블 정의(`db_pure.py`)는 여기 두고, 읽기·쓰기 코드는 각자 자기 쪽에 둔다. 그 밖에 코멘트 표시(`comment_pure.py`), 운영 알림의 종류와 글(`ops_alert_pure.py`), 임베딩 모델 목록(`embed_models_pure.py`), 설정과 비밀값 읽기(`config.py`), macOS 알림(`notify.py`)이 있다.
