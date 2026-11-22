@@ -50,7 +50,14 @@ def memo_key(prompt: str, system_prompt: str, schema: object, model: str) -> str
 
 def _result(row: Mapping[str, object]) -> StructuredResult:
     error = row["error"]
-    return StructuredResult(**{**row, "error": None if error is None else AIErrorKind(error)})
+    # JSON에서 목록이 된 튜플 필드(위반 판단의 읽은 경로, 목록 밖 도구)를 되돌린다
+    tuples = {
+        "reads": tuple(row.get("reads", ())),
+        "unexpected_tools": tuple(tuple(t) for t in row.get("unexpected_tools", ())),
+    }
+    return StructuredResult(
+        **{**row, **tuples, "error": None if error is None else AIErrorKind(error)}
+    )
 
 
 class Memo:

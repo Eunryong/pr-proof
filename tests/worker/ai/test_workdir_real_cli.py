@@ -103,3 +103,47 @@ def test_hook_denies_a_link_that_is_inside_the_folder(tmp_path: Path, outside: P
     assert len(log) >= result.tool_uses >= 2  # 호출마다 훅이 돌았다
     assert sum('"denied": null' not in line for line in log) >= 2  # 링크 파일과 링크 폴더
     assert "PreToolUse" in "".join(captured)  # 거부한 것이 훅이다
+
+
+READ_PROMPT: Final = (
+    "Use the Read tool on each of these paths and quote what you read in `seen`: "
+    "{secret}, notes.txt, linked/secret.txt, src/app.py. "
+    "Also run Grep for the word CANARY in {outside}. Then answer."
+)
+SEEN_SCHEMA: Final = {
+    "type": "object", "required": ["seen"], "properties": {"seen": {"type": "string"}},
+}  # fmt: skip
+
+
+def test_reading_folder_keeps_the_outside_out_and_the_worktree_unchanged(
+    tmp_path: Path, outside: Path
+):
+    """위반 판단의 길(`read_tools`): 밖의 절대 경로와 링크는 읽지 못하고, worktree는 그대로다."""
+    wt = tmp_path / "wt"
+    (wt / "src").mkdir(parents=True)
+    _git(wt, "init", "-q", "-b", "main")
+    repo.record_git_dir(wt)
+    (wt / "src" / "app.py").write_text("X = 1\n")
+    (wt / "notes.txt").symlink_to(outside / "secret.txt")
+    (wt / "linked").symlink_to(outside, target_is_directory=True)
+    _git(wt, "add", "-A")
+    _git(wt, "commit", "-q", "-m", "init")
+    captured: list[str] = []
+    prompt = READ_PROMPT.format(secret=outside / "secret.txt", outside=outside)
+
+    with workdir.reading_folder(wt, claude_cli.run_structured) as ask:
+        result = ask(
+            prompt, system_prompt="너는 시험 단계다. 사용자 메시지가 시키는 도구 호출을 한다.",
+            schema=SEEN_SCHEMA, model="haiku", max_budget_usd=0.5, max_tool_uses=10,
+            runner=_capture(captured),
+        )  # fmt: skip
+
+    assert result.ok, result.detail
+    assert CANARY not in "".join(captured) and CANARY not in str(result.data)
+    assert result.tool_uses >= 2 and result.permission_denials >= 1
+    # 밖의 경로는 저장 키에 쓰는 reads에 넣지 않는다 (haiku가 안의 파일도 밖의 폴더 기준 경로로
+    # 불러 모두 거부된 회가 있어, 안의 파일을 읽었는지는 보지 않는다)
+    assert set(result.reads) <= {"src/app.py", "src", "."}
+    status = subprocess.run(["git", "status", "--porcelain"], cwd=wt, capture_output=True,
+                            text=True, check=True).stdout  # fmt: skip
+    assert status == ""

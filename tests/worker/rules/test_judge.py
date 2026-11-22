@@ -2,18 +2,30 @@
 인용 확인(4-3), 호출 상한과 대상 위반 수(4-5), 모델 호출 실패."""
 
 import re
+import subprocess
 from pathlib import Path
 from typing import Final
 
 import fakeredis
 import pytest
 
+from app.worker import repo
+from app.worker.ai import workdir
 from app.worker.ai.claude_cli import AIErrorKind, StructuredResult
 from app.worker.budget import CallBudget
+from app.worker.diff_pure import added_lines
 from app.worker.repo_config_pure import CallSettings
 from app.worker.rule_pure import CheckMethod, Rule, RuleSource
+from app.worker.rules.detect import source_lines
 from app.worker.rules.judge import Judged, judge
-from app.worker.rules.judge_pure import ANSWER_SCHEMA, SYSTEM_PROMPT
+from app.worker.rules.judge_pure import (
+    ANSWER_SCHEMA,
+    PROMPT_VERSION,
+    SYSTEM_PROMPT,
+    flags_to_json,
+    hunks_for,
+    judge_key,
+)
 from app.worker.state import Store
 
 HEAD: Final = "a" * 40
@@ -44,6 +56,9 @@ def worktree(tmp_path: Path) -> Path:
     (root / "orders/pricing.py").write_text(PRICING)
     (root / "api.py").write_text(HANDLER)
     (root / "README.md").write_text("# x\n")
+    # 판단은 worktree의 파일을 모델 폴더로 복사해 읽게 한다 (git ls-files로 고른다)
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    repo.record_git_dir(root)
     return root
 
 
@@ -224,3 +239,46 @@ def test_undecided_pairs_are_kept_with_the_reason_and_reused(store: Store, workt
     assert first.undecided[MONEY.id].pairs == first.pairs[MONEY.id] == 1
     assert NAMES.id not in first.undecided and first.pairs[NAMES.id] == 2
     assert again.calls == []
+
+
+def _save_answer(store: Store, worktree: Path, reads: dict[str, str]) -> None:
+    """api.py의 hunk에 대한 NAMES의 답(위반 없음)을, 모델이 reads를 읽고 낸 것으로 저장해 둔다."""
+    changed = added_lines(_diff_api())["api.py"]
+    (hunk,) = hunks_for("api.py", source_lines(worktree, "api.py"), changed)
+    store.save_result(judge_key(NAMES, hunk, "sonnet"), stage="judge", model="sonnet",
+                      prompt_version=PROMPT_VERSION,
+                      result_json=flags_to_json(hunk, [], reads))  # fmt: skip
+
+
+def _diff_api() -> str:
+    return _diff("api.py", HANDLER)
+
+
+def test_stored_answer_is_reused_only_while_the_files_the_model_read_are_unchanged(
+    store: Store, worktree: Path
+) -> None:
+    """답이 hunk 밖의 코드에도 달려 있으므로, 같은 hunk여도 모델이 읽은 파일이 바뀌면 다시
+    묻는다."""
+    files = repo.list_files(worktree)
+    reads = {p: workdir.path_digest(worktree, p, files) for p in ("orders/pricing.py", "orders")}
+    _save_answer(store, worktree, reads)
+    asked: list[str] = []
+
+    def ask(prompt: str, **kw) -> StructuredResult:  # 부르면 실패로 끝나는 호출
+        asked.append(prompt)
+        return StructuredResult(ok=False, error=AIErrorKind.TIMEOUT, data=None, model_id="",
+                                input_tokens=None, output_tokens=None, cost_usd=None,
+                                permission_denials=0)  # fmt: skip
+
+    def run() -> Judged:
+        budget = CallBudget(store, "o/r", 1, HEAD, CallSettings())
+        return judge((NAMES,), worktree, _diff_api(), store=store, budget=budget, model="sonnet",
+                     ask=ask)  # fmt: skip
+
+    (worktree / "README.md").write_text("# 읽지 않은 파일만 바뀜\n")
+    kept = run()
+    assert asked == [] and kept.usage.cached == 1 and kept.gaps == {}
+    (worktree / "orders/pricing.py").write_text(PRICING + "RATE = 2\n")
+    changed = run()
+    assert len(asked) == 1 and changed.usage.cached == 0
+    assert changed.gaps[NAMES.id].kind == "model_failed"

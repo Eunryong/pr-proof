@@ -24,6 +24,8 @@ _PATH_KEYS: Final[Mapping[str, Mapping[str, bool]]] = {
     # 파이프라인 도구(`app/worker/mcp_pure.TOOL_NAMES`). 경로를 받지 않고 파이프라인의 코드가 돈다
     "mcp__proof__check_rules": {},
     "mcp__proof__run_tests": {},
+    # 위반 판단(`read_tools`)의 구조화 출력. `--json-schema`를 주면 CLI가 더하는 답 받는 도구다
+    "StructuredOutput": {},
 }
 # 경로가 아니라 패턴인 입력. 패턴이 폴더를 벗어나는 모양이면 거부한다
 _PATTERN_KEYS: Final[Mapping[str, tuple[str, ...]]] = {"Grep": ("glob",), "Glob": ("pattern",)}

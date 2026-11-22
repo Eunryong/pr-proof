@@ -1,22 +1,30 @@
 """모델의 직접 판단 (docs/DESIGN.md 4.5): 검사기를 만들지 못한 규칙을 PR이 바꾼 hunk에 대해 모델이
 본다.
 
-모델은 도구 없이 부른다 (`run_structured`, 8.4). 호출은 파일 단위로 묶고(그 파일의 hunk들과 거기
-적용되는 규칙들) 답은 (규칙, hunk) 쌍마다 `model_cache`에 저장한다. 저장된 쌍은 다시 묻지 않는다.
-답은 결정적으로 확인해 PR이 바꾼 줄을 그 줄의 내용 그대로 인용한 것만 위반으로 남긴다.
+모델은 worktree의 일반 파일을 복사한 모델 폴더를 cwd로 읽기 도구(Read, Grep, Glob)만 주고 부른다
+(`workdir.reading_folder`, `read_tools` 모양, 8.4). hunk 밖을 봐야 판단할 수 있으면 모델이 그곳을
+찾아 읽는다. 폴더는 판단 한 번에 하나를 열고(묻는 호출이 있을 때만) 모델이 무엇을 써도 worktree에
+반영하지 않는다. 호출은 파일 단위로 묶고(그 파일의 hunk들과 거기 적용되는 규칙들) 답은 (규칙, hunk)
+쌍마다 `model_cache`에 모델이 읽은 경로들의 해시와 함께 저장한다. 저장된 쌍은 읽은 경로가 모두
+그대로일 때만 다시 쓴다. 답은 결정적으로 확인해 PR이 바꾼 줄을 그 줄의 내용 그대로 인용한 것만
+위반으로 남긴다.
 
 호출은 PR 상한(9.2)에서 센다. 상한에 걸리거나 호출이 실패하면 남은 쌍을 그 규칙의 "판단하지
-못함"으로 두고 저장하지 않는다. `/fix`나 다음 검사가 남은 쌍만 다시 묻는다. 모델이 이 자료로는
+못함"으로 두고 저장하지 않는다. `/fix`나 다음 검사가 남은 쌍만 다시 묻는다. 모델이 읽어 봐도
 판단할 수 없다고 답한 쌍은 그 까닭과 함께 저장한다(같은 입력에는 같은 답이다).
 """
 
 import logging
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import ExitStack
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from app.worker import repo
+from app.worker.ai import workdir
+from app.worker.ai.claude_cli import StructuredResult
 from app.worker.budget import CallBudget
-from app.worker.call_budget_pure import CALL_BUDGET_USD, Denied, PrScope
+from app.worker.call_budget_pure import Denied, PrScope
 from app.worker.diff_pure import added_lines
 from app.worker.doc_rules_pure import JudgeGap
 from app.worker.rule_pure import Rule, checked_file
@@ -24,7 +32,9 @@ from app.worker.rules.checkers import STALE
 from app.worker.rules.detect import source_lines
 from app.worker.rules.judge_pure import (
     ANSWER_SCHEMA,
+    CALL_BUDGET_USD,
     MAX_HUNKS_PER_CALL,
+    MAX_TOOL_USES,
     PROMPT_VERSION,
     SYSTEM_PROMPT,
     Asked,
@@ -37,6 +47,7 @@ from app.worker.rules.judge_pure import (
     hunks_for,
     judge_key,
     parse_answer,
+    reads_from_json,
     undecided_from_json,
     undecided_to_json,
     verify_answer,
@@ -103,6 +114,40 @@ class _Run:
             self.gaps[rule.id] = Gap(kind, detail, (gap.pairs if gap else 0) + 1)
 
 
+class _Code:
+    """판단 한 번이 보는 PR의 코드: 읽기 도구를 주는 모델 폴더(처음 물을 때 연다)와 경로의 해시."""
+
+    def __init__(self, worktree: Path, ask: AskModel, stack: ExitStack) -> None:
+        self.worktree, self._ask, self._stack = worktree, ask, stack
+        self._asker: AskModel | None = None
+        self._files: list[str] | None = None
+        self._digests: dict[str, str] = {}
+
+    def ask(self, prompt: str, **kwargs: object) -> StructuredResult:
+        if self._asker is None:
+            self._asker = self._stack.enter_context(
+                workdir.reading_folder(self.worktree, self._ask)
+            )
+        return self._asker(prompt, **kwargs)
+
+    def digests(self, paths: Sequence[str]) -> dict[str, str]:
+        """경로(worktree 기준) → 지금의 해시 (`workdir.path_digest`). git이 실패하면 GitError."""
+        if paths and self._files is None:
+            self._files = repo.list_files(self.worktree)
+        for path in paths:
+            if path not in self._digests:
+                self._digests[path] = workdir.path_digest(self.worktree, path, self._files or [])
+        return {p: self._digests[p] for p in paths}
+
+    def unchanged(self, reads: Mapping[str, str]) -> bool:
+        """저장한 답을 낼 때 읽은 경로들이 모두 그대로인지. 확인하지 못하면 그대로가 아니다."""
+        try:
+            return self.digests(sorted(reads)) == dict(reads)
+        except repo.GitError as e:
+            log.warning("모델 판단이 읽은 파일을 확인하지 못함: %s", e)
+            return False
+
+
 def judge(
     rules: Sequence[Rule],
     worktree: Path,
@@ -115,11 +160,29 @@ def judge(
     known: int = 0,
     is_stale: Callable[[], bool] = lambda: False,
 ) -> Judged:
-    """rules를 PR이 바꾼 파일의 hunk에 대해 판단한다. model은 `model.judge`다.
+    """rules를 PR이 바꾼 파일의 hunk에 대해 판단한다. model은 `model.judge`다. ask는 구조화 출력
+    호출(`claude_cli.run_structured`)이고, worktree의 모델 폴더에서 읽기 도구를 주어 부른다.
 
     known은 이 검사에서 도구·검사기가 이미 찾은 위반 수다. PR 상한의 대상 위반 수에 더한다 (9.2).
     새 커밋이 와서 낡았으면 남은 파일은 묻지 않는다 (결과는 쓰이지 않는다).
     """
+    with ExitStack() as stack:
+        return _judge(rules, worktree, changes_diff, store=store, budget=budget, model=model,
+                      code=_Code(worktree, ask, stack), known=known, is_stale=is_stale)  # fmt: skip
+
+
+def _judge(
+    rules: Sequence[Rule],
+    worktree: Path,
+    changes_diff: str,
+    *,
+    store: Store,
+    budget: CallBudget,
+    model: str,
+    code: _Code,
+    known: int,
+    is_stale: Callable[[], bool],
+) -> Judged:
     run = _Run()
     hunks_seen = 0
     for file, changed in sorted(added_lines(changes_diff).items()):
@@ -133,7 +196,7 @@ def judge(
         hunks_seen += len(hunks)
         for rule in file_rules:
             run.pairs[rule.id] = run.pairs.get(rule.id, 0) + len(hunks)
-        to_ask = _from_cache(file_rules, hunks, store=store, model=model, run=run)
+        to_ask = _from_cache(file_rules, hunks, store=store, model=model, run=run, code=code)
         for start in range(0, len(to_ask), MAX_HUNKS_PER_CALL):
             chunk = to_ask[start : start + MAX_HUNKS_PER_CALL]
             if run.stop is None and is_stale():
@@ -143,7 +206,7 @@ def judge(
                     run.leave(asked, *run.stop)
                 continue
             _ask(chunk, store=store, budget=budget.with_targets(known + run.found()), model=model,
-                 ask=ask, run=run)  # fmt: skip
+                 code=code, run=run)  # fmt: skip
     if run.cached:
         budget.record_hit(PrScope(), stage="judge", tier="light", model=model)
     usage = JudgeUsage(
@@ -156,15 +219,17 @@ def judge(
 
 
 def _from_cache(
-    rules: Sequence[Rule], hunks: Sequence[Hunk], *, store: Store, model: str, run: _Run
-) -> list[Asked]:
-    """저장된 쌍은 답을 꺼내 run에 넣고, 저장되지 않은 쌍만 hunk마다 묶어 돌려준다."""
+    rules: Sequence[Rule], hunks: Sequence[Hunk], *, store: Store, model: str, run: _Run,
+    code: _Code,
+) -> list[Asked]:  # fmt: skip
+    """저장된 쌍은 답을 꺼내 run에 넣고, 저장되지 않았거나 그 답을 낼 때 모델이 읽은 곳이 바뀐 쌍만
+    hunk마다 묶어 돌려준다."""
     to_ask = []
     for hunk in hunks:
         missing = []
         for rule in rules:
             entry = store.cached_result(judge_key(rule, hunk, model))
-            if entry is None:
+            if entry is None or not code.unchanged(reads_from_json(entry.result_json)):
                 missing.append(rule)
                 continue
             run.cached += 1
@@ -180,7 +245,7 @@ def _from_cache(
 
 
 def _ask(
-    chunk: Sequence[Asked], *, store: Store, budget: CallBudget, model: str, ask: AskModel,
+    chunk: Sequence[Asked], *, store: Store, budget: CallBudget, model: str, code: _Code,
     run: _Run,
 ) -> None:  # fmt: skip
     """한 파일의 hunk 묶음 하나를 묻는다."""
@@ -191,20 +256,29 @@ def _ask(
         for asked in chunk:
             run.leave(asked, *run.stop)
         return
-    answer = ask(
+    answer = code.ask(
         build_prompt(chunk),
         system_prompt=SYSTEM_PROMPT,
         schema=ANSWER_SCHEMA,
         model=model,
-        max_budget_usd=CALL_BUDGET_USD["light"],
+        max_budget_usd=CALL_BUDGET_USD,
+        max_tool_uses=MAX_TOOL_USES,
     )
+    log.info(
+        "모델 판단 호출: hunk %d개, 도구 %d회, 읽은 경로 %s, 입력 %s, 출력 %s토큰, 거부 %d건",
+        len(chunk), answer.tool_uses, list(answer.reads), answer.input_tokens,
+        answer.output_tokens, answer.permission_denials,
+    )  # fmt: skip
     failure = None if answer.ok else f"{answer.error}: {answer.detail}"
-    parsed = None
+    parsed, reads = None, {}
     if failure is None:
         try:
             parsed = parse_answer(answer.data or {})
+            reads = code.digests(answer.reads)
         except ValueError as e:
             failure = f"답의 형식이 틀림: {str(e).splitlines()[0]}"
+        except repo.GitError as e:
+            failure = f"모델이 읽은 파일을 확인하지 못함: {e}"
     budget.finish(
         call, ok=failure is None, error=failure, model_id=answer.model_id,
         input_tokens=answer.input_tokens, output_tokens=answer.output_tokens,
@@ -227,7 +301,7 @@ def _ask(
         hunk = chunk[at].hunk
         rule = next(r for r in chunk[at].rules if r.id == rule_id)
         why = verified.undecided.get((at, rule_id))
-        saved = flags_to_json(hunk, flags) if why is None else undecided_to_json(why)
+        saved = flags_to_json(hunk, flags, reads) if why is None else undecided_to_json(why, reads)
         store.save_result(
             judge_key(rule, hunk, model), stage="judge", model=answer.model_id or model,
             prompt_version=PROMPT_VERSION, result_json=saved,

@@ -9,7 +9,7 @@ import pytest
 
 from app.worker import repo
 from app.worker.ai import workdir
-from app.worker.ai.claude_cli import AIErrorKind, ClaudeResult
+from app.worker.ai.claude_cli import AIErrorKind, ClaudeResult, ReadFolder, StructuredResult
 
 SECRET: Final = "outside-secret\n"
 
@@ -198,3 +198,82 @@ def test_hook_settings_register_the_hook_for_every_tool(tmp_path: Path) -> None:
     command = shlex.split(entry["hooks"][0]["command"])
     assert command[:2] == ["/py", "-I"] and command[2].endswith("path_hook.py")
     assert command[3:] == [str(tmp_path / "w k"), str(tmp_path / "hook.log")]  # 공백이 든 경로
+
+
+def _structured(tool_uses: int = 0) -> StructuredResult:
+    return StructuredResult(
+        ok=True, error=None, data={"violations": []}, model_id="m", input_tokens=1,
+        output_tokens=1, cost_usd=None, permission_denials=0, tool_uses=tool_uses,
+    )  # fmt: skip
+
+
+def _reader(write: bool = False, tool_uses: int = 0, hook_lines: int = 0):
+    """read_in으로 받은 폴더를 기록하고, write면 폴더에 파일을 바꿔 쓰는 구조화 출력 호출."""
+    seen: list[dict] = []
+
+    def ask(prompt: str, *, read_in: ReadFolder, **kwargs) -> StructuredResult:
+        seen.append({"folder": read_in, "files": _files(read_in.work), **kwargs})
+        with (read_in.settings.parent / "hook.log").open("a") as log:
+            log.write('{"tool": "Read", "denied": null}\n' * hook_lines)
+        if write:
+            (read_in.work / "src" / "app.py").write_text("HACKED = 1\n")
+            (read_in.work / "new.py").write_text("x = 1\n")
+        return _structured(tool_uses)
+
+    ask.seen = seen
+    return ask
+
+
+def test_reading_folder_reads_a_copy_and_never_writes_back(wt: Path) -> None:
+    """위반 판단: 폴더 하나를 호출들이 같이 쓰고, 폴더에서 바뀐 것은 worktree에 가지 않는다."""
+    ask = _reader(write=True, tool_uses=2, hook_lines=2)
+    with workdir.reading_folder(wt, ask) as read:
+        first = read("p", model="sonnet", max_budget_usd=1.0)
+        second = read("q", model="sonnet", max_budget_usd=1.0)
+        folder = ask.seen[0]["folder"]
+        assert folder.work not in folder.settings.parents
+    assert first.ok and second.ok
+    assert ask.seen[0]["files"] == [".gitignore", "run.sh", "src/app.py", "src/data.bin"]
+    assert ask.seen[1]["folder"] == folder and ask.seen[0]["model"] == "sonnet"
+    assert (wt / "src" / "app.py").read_text() == "X = 1\n" and not (wt / "new.py").exists()
+    assert _git(wt, "status", "--porcelain") == ""
+    assert not folder.work.exists()  # 블록이 끝나면 지운다
+
+
+def test_reading_folder_drops_the_answer_when_the_hook_did_not_run(wt: Path) -> None:
+    with workdir.reading_folder(wt, _reader(tool_uses=3, hook_lines=2)) as read:
+        result = read("p")
+    assert not result.ok and result.error == AIErrorKind.TOOLS and result.data is None
+    assert "도구 호출 3건, 훅 2건" in result.detail
+
+
+def test_reading_folder_counts_the_hook_per_call(wt: Path) -> None:
+    """앞 호출의 훅 기록이 뒤 호출의 모자란 기록을 메우지 않는다."""
+    calls = iter([(2, 5), (2, 0)])
+
+    def ask(prompt: str, *, read_in: ReadFolder, **kwargs) -> StructuredResult:
+        uses, lines = next(calls)
+        with (read_in.settings.parent / "hook.log").open("a") as log:
+            log.write("{}\n" * lines)
+        return _structured(uses)
+
+    with workdir.reading_folder(wt, ask) as read:
+        assert read("p").ok
+        assert read("q").error == AIErrorKind.TOOLS
+
+
+def test_path_digest_follows_the_content_of_files_and_folders(wt: Path) -> None:
+    files = repo.list_files(wt)
+    before = {p: workdir.path_digest(wt, p, files) for p in ("src/app.py", "src", ".", "nope.py")}
+    assert before["nope.py"] == "-"
+    assert workdir.path_digest(wt, "notes.txt", files) == "-"  # 밖을 가리키는 링크
+    assert workdir.path_digest(wt, "linked", files) == "-"  # 링크인 폴더
+    assert len({before["src/app.py"], before["src"], before["."]}) == 3
+    assert {p: workdir.path_digest(wt, p, files) for p in before} == before  # 같으면 같다
+    (wt / "run.sh").write_text("#!/bin/sh\necho\n")  # src 밖의 파일만 바꿈
+    after = {p: workdir.path_digest(wt, p, files) for p in before}
+    assert after["src/app.py"] == before["src/app.py"] and after["src"] == before["src"]
+    assert after["."] != before["."]
+    (wt / "src" / "app.py").write_text("X = 2\n")
+    assert workdir.path_digest(wt, "src/app.py", files) != before["src/app.py"]
+    assert workdir.path_digest(wt, "src", files) != before["src"]
