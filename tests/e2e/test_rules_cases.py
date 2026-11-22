@@ -199,7 +199,11 @@ def scripted_fixer(case: dict):
 
 
 def doc_rules_section(body: str) -> str:
-    start = body.index("**규칙:**")
+    """ "규칙:" 줄부터 끝까지. 규칙이 모두 PR 단위 규칙이고 그 위반이 있으면 "규칙:" 줄이 없고
+    "PR 단위:" 줄이 결론이다 (4.9)."""
+    start = body.find("**규칙:**")
+    if start < 0:
+        start = body.index("**PR 단위:**")
     return body[start : body.index("<sub>", start)]
 
 
