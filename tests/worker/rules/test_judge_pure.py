@@ -19,6 +19,8 @@ from app.worker.rules.judge_pure import (
     hunks_for,
     judge_key,
     parse_answer,
+    undecided_from_json,
+    undecided_to_json,
     verify_answer,
 )
 
@@ -100,7 +102,7 @@ def test_code_cannot_close_its_block_with_a_forged_boundary() -> None:
 
 def test_prompt_version_comes_from_the_text() -> None:
     assert len(PROMPT_VERSION) == 12
-    assert ANSWER_SCHEMA["required"] == ["violations"]
+    assert ANSWER_SCHEMA["required"] == ["violations", "undecided"]
 
 
 def _item(**fields) -> dict:
@@ -167,3 +169,32 @@ def test_stored_flags_that_no_longer_match_are_not_trusted() -> None:
                   frozenset({4, 5}))  # fmt: skip
     assert flags_from_json(RULE.id, unchanged, text) == ()
     assert flags_from_json(RULE.id, edited, text) == ()
+
+
+def test_undecided_rule_marks_only_pairs_without_a_finding() -> None:
+    """판단하지 못했다는 답은 같은 호출에서 위반을 찾은 hunk에는 붙지 않는다."""
+    other_hunk = Hunk("orders/a.py", 40, ("y = 2",), frozenset({40}))
+    asked = (Asked(HUNK, (RULE, OTHER)), Asked(other_hunk, (RULE,)))
+    answer = parse_answer({
+        "violations": [_item()],
+        "undecided": [{"rule_id": RULE.id, "why": "  hunk 밖의\n 데이터를 봐야 함 "},
+                      {"rule_id": OTHER.id, "why": "승인 절차"},
+                      {"rule_id": "R-묻지-않음", "why": "x"}],
+    })  # fmt: skip
+    result = verify_answer(asked, answer)
+    assert result.undecided == {
+        (1, RULE.id): "hunk 밖의 데이터를 봐야 함",
+        (0, OTHER.id): "승인 절차",
+    }
+    assert result.kept[(0, RULE.id)] and result.kept[(1, RULE.id)] == ()
+
+
+def test_answer_without_undecided_reads_as_all_decided() -> None:
+    assert parse_answer({"violations": []}).undecided == []
+
+
+def test_stored_undecided_pair_is_not_a_list_of_flags() -> None:
+    text = undecided_to_json("승인 절차")
+    assert undecided_from_json(text) == "승인 절차"
+    assert flags_from_json(RULE.id, HUNK, text) == ()
+    assert undecided_from_json(flags_to_json(HUNK, [])) is None

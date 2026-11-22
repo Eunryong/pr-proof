@@ -18,8 +18,9 @@ from app.worker.repo_config_pure import CallSettings
 
 Tier = Literal["light", "heavy"]
 # ai_calls의 단계 (7.8). 규칙 읽기, 검사기 작성, PR 패턴 작성(pr_plan)은 규칙 묶음 상한에서,
-# 나머지는 PR 상한에서 센다. pr_judge는 PR 단위 확인의 모델 판단이다 (4.5 끝)
-Stage = Literal["rules", "checker", "pr_plan", "judge", "pr_judge", "decide", "fix"]
+# 나머지는 PR 상한에서 센다. pr_judge는 PR 단위 확인의 모델 판단(4.5 끝), run_judge는 실행 결과의
+# 규칙의 모델 판단이다 (4.5)
+Stage = Literal["rules", "checker", "pr_plan", "judge", "pr_judge", "run_judge", "decide", "fix"]
 Cap = Literal["pr", "ruleset", "repo_daily"]
 
 TIER_COST: Final[Mapping[str, int]] = {"light": 1, "heavy": 3}

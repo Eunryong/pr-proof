@@ -19,7 +19,7 @@
 import json
 import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Final, Literal, get_args
 
 from pydantic import BaseModel, ConfigDict
@@ -374,6 +374,12 @@ PLAN_SYSTEM_PROMPT: Final = """\
 할 일: 이 규칙을 어떻게 확인할지 method로 답한다.
 - "pattern": 사실 하나에 정규식 하나로 가릴 수 있다. 예: "커밋 메시지는 feat: 나 fix: 로 시작한다"는
   fact "commit_subject", condition "must_match", pattern "^(feat|fix): ".
+  규칙이 이름 있는 표준이나 관례(Conventional Commits, Semantic Versioning, PEP 8 등)를 따르라고
+  하면 문서에 적힌 예시만이 아니라 그 표준이 허용하는 꼴을 모두 받는 패턴을 쓴다. 문서의 예시는
+  전부가 아니라 예시다. 문서가 표준에 없는 제한을 분명히 더했을 때만 좁힌다. 확신이 없으면 넓게
+  받는다: 지킨 PR을 위반으로 잡는 것이 위반을 놓치는 것보다 나쁘다. 예: Conventional Commits는
+  "feat: 설명" 말고도 "feat(범위): 설명", "feat!: 설명", "feat(범위)!: 설명"을 허용하므로 지키는
+  예에 이 꼴을 넣고 패턴이 받게 한다.
   condition: must_match는 값마다 pattern이 맞아야 지킨 것, must_not_match는 맞으면 어긴 것.
   changed_paths에서 must_match는 바뀐 파일 중 하나라도 맞아야 지킨 것, must_not_match는 하나라도
   맞으면 어긴 것. 정규식은 Python re.search로 맞춘다(전체가 맞아야 하면 ^ $를 쓴다). 여러 줄 본문의
@@ -613,6 +619,8 @@ JUDGE_SYSTEM_PROMPT: Final = """\
 할 일: 규칙을 어긴 커밋이나 PR 글을 찾는다.
 - 어긴 것마다 하나씩 답한다. 어긴 것이 없으면 빈 목록으로 답한다.
 - 규칙을 어겼는지 확실하지 않으면 답하지 않는다.
+- 규칙이 이름 있는 표준이나 관례(Conventional Commits 등)를 가리키면 문서의 예시만이 아니라 그
+  표준이 허용하는 꼴을 모두 지킨 것으로 본다.
 - where: 커밋이면 "commit", PR 제목이면 "pr_title", PR 본문이면 "pr_body".
 - sha: where가 commit이면 그 커밋 블록에 적힌 전체 해시를 그대로, 아니면 빈 문자열.
 - quote: 규칙을 어긴 부분을 자료에서 한 글자도 바꾸지 않고 그대로 옮긴다(한 줄 이내). 있어야 할
@@ -659,6 +667,30 @@ def shown_for(fact: PrFact, facts: PrFacts) -> Shown:
     if fact in COMMIT_FACTS:
         return Shown(commits=facts.checked_commits)
     return Shown(title=facts.title, body=facts.body)
+
+
+def candidates_shown(facts: PrFacts, candidates: Sequence["PrViolation"]) -> Shown:
+    """PR 패턴이 잡은 후보만 모델에게 보인다: 커밋 후보면 그 커밋들, 제목·본문 후보면 둘 다."""
+    shas = {v.sha for v in candidates if v.where == "commit"}
+    if shas:
+        return Shown(commits=tuple(c for c in facts.checked_commits if c.sha in shas))
+    return Shown(title=facts.title, body=facts.body)
+
+
+def confirmed(
+    candidates: Sequence["PrViolation"], answered: Sequence["PrViolation"]
+) -> tuple[tuple["PrViolation", ...], tuple["PrViolation", ...]]:
+    """(모델이 위반이라고 본 후보, 위반이 아니라고 본 후보). 모델은 후보 밖의 것을 위반으로 더할 수
+    없다. 확인한 후보에는 모델의 까닭을 붙인다."""
+    said = {(v.where, v.sha): v for v in answered}
+    kept, dropped = [], []
+    for v in candidates:
+        by_model = said.get((v.where, v.sha))
+        if by_model is None:
+            dropped.append(v)
+        else:
+            kept.append(replace(v, why=by_model.why or v.why))
+    return tuple(kept), tuple(dropped)
 
 
 def build_judge_prompt(rule: Rule, shown: Shown) -> str:
@@ -804,6 +836,8 @@ class PrRuleResult:
     kind: PrUnchecked | PrGap | None = None
     detail: str = ""
     partial: str = ""
+    # PR 패턴이 잡았지만 모델이 위반이 아니라고 본 후보 (4.5 끝). 결과 코멘트의 접는 블록에 남는다
+    dismissed: tuple["PrViolation", ...] = ()
 
 
 @dataclass(frozen=True)

@@ -234,10 +234,15 @@ def judge(
     def judged(o: RuleOutcome) -> RuleOutcome:
         if not isinstance(o, RuleJudged):
             return o
-        gap = result.gaps.get(o.rule.id)
-        if gap is None:
-            return RuleJudged(o.rule, o.reason, o.route)
-        return RuleJudged(o.rule, o.reason, o.route, gap.pairs, gap.kind, gap.detail)
+        rule_id = o.rule.id
+        gap, undecided = result.gaps.get(rule_id), result.undecided.get(rule_id)
+        return RuleJudged(
+            o.rule, o.reason, o.route,
+            left=gap.pairs if gap else 0, left_kind=gap.kind if gap else None,
+            left_detail=gap.detail if gap else "", pairs=result.pairs.get(rule_id, 0),
+            undecided=undecided.pairs if undecided else 0,
+            undecided_why=undecided.why if undecided else "",
+        )  # fmt: skip
 
     return replace(
         found, outcomes=tuple(judged(o) for o in found.outcomes),

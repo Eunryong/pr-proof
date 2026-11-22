@@ -180,7 +180,7 @@ def test_judge_cap_is_shown_and_fix_continues(fix_env, tmp_path: Path) -> None: 
     comment = bodies(fix_env["gh"])[-1]
     assert "모델 호출 상한에 걸려 처리하지 못함: 위반 판단 1개 규칙 (hunk 1개" in comment
     assert "`/fix`로 다시 돌릴 수 있습니다." in comment
-    assert "**규칙:** 검사한 규칙 없음 (읽은 규칙 1개)" in comment
+    assert "**규칙:** 확인한 규칙 없음 (읽은 규칙 1개)" in comment
 
     deps = fix_env["deps"]
     assert main.handle(_command("/fix", 80), deps) == "fix:ready"

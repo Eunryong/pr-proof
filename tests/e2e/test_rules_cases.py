@@ -447,8 +447,8 @@ def test_flagged_reads_locations_from_section() -> None:
         "**규칙:** ⚠️ 위반 2건 (규칙 1개)\n\n위반:\n"
         "- `R-readme-1` `` `x` `` · 2건\n  출처: `README.md > 코드 규칙`\n"
         "  - `a/b.py:3` · 고칠 대상 (모델 수정) · 수정안 #900\n"
-        "  직접 고쳐야 함 1건 (모델이 위반이 아니라고 봄 1건)\n\n"
+        "  직접 고쳐야 함 1건 (고치면 동작이 바뀜 1건)\n\n"
         "<details><summary>직접 고쳐야 함 1건의 위치</summary>\n\n"
-        "  - ``a`b.py:4`` · 모델이 위반이 아니라고 봄: `x`\n\n</details>\n\n모델 호출 1회"
+        "  - ``a`b.py:4`` · 고치면 동작이 바뀜: `x`\n\n</details>\n\n모델 호출 1회"
     )
     assert flagged(section) == ["a/b.py:3", "a`b.py:4"]

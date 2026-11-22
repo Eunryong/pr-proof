@@ -7,6 +7,7 @@
 
 import json
 from collections.abc import Mapping
+from dataclasses import replace
 from typing import Final
 
 from app.worker.markdown_pure import inline_code
@@ -20,7 +21,9 @@ from app.worker.rules.pr_check_pure import (
 )
 
 VIOLATION: Final = "⚠️"
-HEAD: Final = "PR 단위 확인 (알리기만 하고 수정안은 만들지 않음)"
+TITLE: Final = "**PR 단위:**"
+NOTIFY_ONLY: Final = "알리기만 함 (커밋 메시지, PR 글, 브랜치 이름은 수정안으로 고칠 수 없음)"
+HEAD: Final = "PR 단위 위반 (알리기만 하고 수정안은 만들지 않음)"
 MAX_SHOWN_PER_RULE: Final = 10
 MAX_QUOTE_CHARS: Final = 200
 MAX_RULE_CHARS: Final = 500
@@ -32,7 +35,7 @@ RECHECK_HINT: Final = (
     "보지 않습니다."
 )
 _UNCHECKED_TEXT: Final[Mapping[str, str]] = {
-    "plan_none": "PR 사실로 확인할 수 없는 규칙이라고 모델이 답함",
+    "plan_none": "모델이 PR의 커밋, 글, 바뀐 파일로는 판단하지 못함",
     "cap": "호출 상한에 걸려 확인 방법을 정하지 못함 (다음 검사가 이어서 합니다)",
     "model_failed": "확인 방법을 정하는 모델 호출이 실패함",
     "tool_unavailable": "샌드박스 도구를 준비하지 못함",
@@ -41,33 +44,30 @@ _UNCHECKED_TEXT: Final[Mapping[str, str]] = {
 }
 
 
-def title_part(checks: PrChecks) -> str:
-    """ "규칙:" 줄 끝에 붙는 PR 단위 확인의 요약. 코드 위반의 건수와 따로 센다."""
-    if checks.violations:
-        rules = len({v.rule_id for v in checks.violations})
-        return f" · {VIOLATION} PR 단위 위반 {len(checks.violations)}건 (규칙 {rules}개)"
-    seen = sum(1 for r in checks.results if r.status in ("checked", "not_applicable"))
-    part = f" · PR 단위 규칙 {seen}개 위반 없음" if seen else ""
-    missed = len(checks.results) - seen
-    if missed:
-        part += f" · PR 단위 규칙 {missed}개 확인하지 못함"
-    return part
+def title(checks: PrChecks | None) -> str | None:
+    """PR 단위 위반이 있을 때만 결론 아래에 붙는 따로 된 줄. 코드 위반의 결론과 섞지 않는다."""
+    if checks is None or not checks.violations:
+        return None
+    rules = len({v.rule_id for v in checks.violations})
+    return f"{TITLE} {VIOLATION} 위반 {len(checks.violations)}건 (규칙 {rules}개) · {NOTIFY_ONLY}"
 
 
-def section(checks: PrChecks) -> list[str]:
-    lines = ["", f"**{HEAD}:** {_summary(checks)}"]
-    if checks.note:
-        lines.append(
-            f"PR 사실을 읽지 못해 확인하지 않음: {inline_code(checks.note, MAX_DETAIL_CHARS)}"
-        )
-    lines += _violations(checks)
+def violations(checks: PrChecks) -> list[str]:
+    """PR 단위 위반의 목록 (펼친 부분). 없으면 빈 목록."""
+    if not checks.violations:
+        return []
+    lines = ["", f"**{HEAD}:**", *_violations(checks)]
     if any(v.where in ("pr_body", "pr_title") for v in checks.violations):
         lines.append(RECHECK_HINT)
-    clean = [r for r in checks.results if r.status in ("checked", "not_applicable")
-             and not any(v.rule_id == r.rule.id for v in checks.violations)]  # fmt: skip
-    if clean:
-        lines += ["", "PR 단위 규칙 중 위반 없음:"]
-        lines += [f"- `{r.rule.id}` {_quote(r.rule)} · {_how(r)}" for r in clean]
+    return lines
+
+
+def unresolved(checks: PrChecks) -> list[str]:
+    """확인하지 못했거나 일부만 확인한 PR 단위 규칙과 까닭 (펼친 부분). 없으면 빈 목록."""
+    lines: list[str] = []
+    if checks.note:
+        lines += ["", "PR 사실을 읽지 못해 PR 단위 규칙을 확인하지 못함: "
+                  + inline_code(checks.note, MAX_DETAIL_CHARS)]  # fmt: skip
     partial = [r for r in checks.results if r.partial]
     if partial:
         lines += ["", "상한을 넘어 일부만 확인한 PR 단위 규칙:"]
@@ -89,6 +89,23 @@ def section(checks: PrChecks) -> list[str]:
             text = _UNCHECKED_TEXT.get(r.kind or "", "확인하지 못함")
             detail = f": {inline_code(r.detail, MAX_DETAIL_CHARS)}" if r.detail else ""
             lines.append(f"- `{r.rule.id}` {_quote(r.rule)} · {text}{detail}")
+    return lines
+
+
+def details(checks: PrChecks) -> list[str]:
+    """PR 단위 확인의 사용량과 위반이 없는 규칙의 확인 방법 (접는 블록 안)."""
+    lines = ["", f"PR 단위 확인: {_summary(checks)}"]
+    clean = [r for r in checks.results if r.status in ("checked", "not_applicable")
+             and not any(v.rule_id == r.rule.id for v in checks.violations)]  # fmt: skip
+    if clean:
+        lines += ["", "PR 단위 규칙 중 위반 없음:"]
+        lines += [f"- `{r.rule.id}` {_quote(r.rule)} · {_how(r)}" for r in clean]
+    dismissed = [(r, v) for r in checks.results for v in r.dismissed]
+    if dismissed:
+        lines += ["", f"PR 패턴이 잡았지만 모델이 위반이 아니라고 판단함 {len(dismissed)}건:"]
+        lines += [f"- `{r.rule.id}` {_where(replace(v, why=''))} · 패턴 {_regex(r.decl.pattern)}"
+                  if r.decl else f"- `{r.rule.id}` {_where(replace(v, why=''))}"
+                  for r, v in dismissed]  # fmt: skip
     return lines
 
 
@@ -126,7 +143,7 @@ def _violations(checks: PrChecks) -> list[str]:
     grouped: dict[str, list[PrViolation]] = {}
     for v in checks.violations:
         grouped.setdefault(v.rule_id, []).append(v)
-    lines = ["", "PR 단위 위반:"]
+    lines = []
     for rule_id, found in grouped.items():
         result = by_rule[rule_id]
         lines += [

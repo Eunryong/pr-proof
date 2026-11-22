@@ -42,6 +42,7 @@ from app.worker.rules import judge_pure, pr_check_pure
 from app.worker.state import Store
 from tests.sandbox_names import TEST_NAMES
 
+from ..worker.rules.test_pr_check import _agree
 from ..worker.test_github import FakeGh
 from .test_lint_cases import _bodies, _git, shared_venvs  # noqa: F401
 from .test_rules_cases import (
@@ -92,17 +93,24 @@ def _pr_remote(tmp_path: Path, eval_repo: Path, case: dict, messages: list[str] 
 
 
 def pr_section(body: str) -> str:
-    start = body.index("**PR 단위 확인")
-    end = body.find("\n\n모델 호출 ", start)
-    return body[start:] if end < 0 else body[start:end]
+    """규칙 절 전체. PR 단위 위반은 펼친 부분에, 위반 없는 규칙과 사용량은 접는 블록에 있다
+    (4.9)."""
+    return doc_rules_section(body)
+
+
+def code_part(section: str) -> str:
+    """규칙 절에서 PR 단위 확인의 부분(결론 아래의 "PR 단위:" 줄, PR 단위 위반, 접는 블록)을 뺀
+    것."""
+    shown = section.split("\n<details>")[0].split("\n**PR 단위 위반")[0]
+    return "\n".join(line for line in shown.splitlines() if not line.startswith("**PR 단위:**"))
 
 
 def pr_flagged(section: str, commits: list[str]) -> list[str]:
-    """ "PR 단위 위반:" 목록의 자리. 커밋은 케이스의 순번(commit:N)으로 바꾼다."""
+    """PR 단위 위반 목록의 자리. 커밋은 케이스의 순번(commit:N)으로 바꾼다."""
     out, listing = [], False
     by_short = {sha[:7]: n for n, sha in enumerate(commits)}
     for line in section.splitlines():
-        if line == "PR 단위 위반:":
+        if line.startswith("**PR 단위 위반"):
             listing = True
         elif listing and line.startswith("  - "):
             match = _PLACE.match(line)
@@ -141,6 +149,10 @@ def pr_model(case: dict, commits: list[str], prompts: list[dict] | None = None):
             return _answer(plans[min(n, len(plans)) - 1])
         if schema is pr_check_pure.JUDGE_SCHEMA:
             (rule,) = [r for r in pr_rules if r["quote"] in prompt]
+            if (
+                "judge" not in rule
+            ):  # PR 패턴의 후보를 확인할 때: 보인 커밋을 모두 위반이라고 답한다
+                return _answer({"violations": _agree(prompt)})
             answers = [
                 {**a, "sha": commits[int(a["sha"].split(":")[1])] if a.get("sha") else ""}
                 for a in rule.get("judge", [])
@@ -355,7 +367,7 @@ def test_pr_text_isolation(eval_repo: Path, fresh_deps, tmp_path: Path, monkeypa
     }
     assert keys_a["pr_judge"] != keys_b["pr_judge"]
     sections = [doc_rules_section(r["body"]) for r in (neutral, planted)]
-    code_parts = [_strip_shas(s.split("**PR 단위 확인")[0], r["remote"])
+    code_parts = [_strip_shas(code_part(s), r["remote"])
                   for s, r in zip(sections, (neutral, planted), strict=True)]  # fmt: skip
     assert code_parts[0] == code_parts[1]
     assert neutral["pulls"] == planted["pulls"] and neutral["pushed"] == planted["pushed"]
@@ -365,7 +377,7 @@ def test_pr_text_isolation(eval_repo: Path, fresh_deps, tmp_path: Path, monkeypa
 def _code_results(body: str, remote: dict) -> list[str]:
     """코드 쪽의 결과: 위반 목록(수정 판단 포함)과 수정안의 결과 문장. 같은 데이터 폴더의 두 번째
     실행은 저장한 답을 써서 호출 수 줄과 수정안 PR 번호(새 커밋이라 새 PR)가 다르므로 뺀다."""
-    section = _strip_shas(doc_rules_section(body).split("**PR 단위 확인")[0], remote)
+    section = _strip_shas(code_part(doc_rules_section(body)), remote)
     lines = section.splitlines()
     start = lines.index("위반:")
     end = next((i for i in range(start, len(lines)) if not lines[i]), len(lines))
@@ -425,7 +437,7 @@ def test_case_files_are_well_formed() -> None:
 def test_pr_flagged_reads_places_from_the_section() -> None:
     commits = ["a" * 40, "b" * 40]
     section = (
-        "**PR 단위 확인 (알리기만 하고 수정안은 만들지 않음):** 규칙 2개\n\nPR 단위 위반:\n"
+        "**PR 단위 위반 (알리기만 하고 수정안은 만들지 않음):**\n"
         "- `R-1` `x` · 2건\n  출처: `README.md` · 확인: PR 패턴\n"
         "  - 커밋 `bbbbbbb` `update` · `이유`\n  - PR 본문 (빠진 내용)\n\n"
         "PR 단위 규칙 중 위반 없음:\n"

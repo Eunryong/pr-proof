@@ -1,18 +1,20 @@
 """결과를 PR 코멘트용 마크다운으로 바꾼다. 판정을 새로 내지 않고 모델 값만 보여준다.
 
-코멘트 맨 위는 "테스트:" 줄과 "규칙:" 줄이다. 테스트는 글자로만 쓰고, ⚠️/✅는 규칙 줄에만 쓰며
-⚠️는 "위반 있음"이라는 뜻으로만 쓴다 (docs/DESIGN.md 4.9). 그 아래에 상세를 붙인다. 규칙 줄과 규칙
-절은 app/worker/doc_rules_report.py가 그린다.
+코멘트 맨 위는 "테스트:" 줄과 결론인 "규칙:" 줄이고, PR 단위 위반이 있으면 "PR 단위:" 줄이 하나 더
+붙는다. 테스트는 글자로만 쓰고, ⚠️/✅는 규칙 줄에만 쓰며 ⚠️는 "위반 있음"이라는 뜻으로만 쓴다
+(docs/DESIGN.md 4.9). 그 아래에는 위반과 할 일만 펼쳐 두고, 규칙별 확인 방법, 사용량, 테스트 수,
+바뀐 줄 커버리지는 접는 블록 하나에 넣는다. 규칙 줄과 규칙 절은 app/worker/doc_rules_report.py가
+그린다.
 """
 
 from collections.abc import Mapping, Sequence
 from typing import Final
 
-from app.worker import doc_rules_report
+from app.worker import doc_rules_report, pr_check_report_pure
 from app.worker.base_config import PIPELINE_YAML, BaseConfig
 from app.worker.checker_pure import Checker
 from app.worker.coverage import DiffCoverage
-from app.worker.doc_rules_pure import DocRules
+from app.worker.doc_rules_pure import DocRules, Found
 from app.worker.doc_rules_report import FixView
 from app.worker.fix.fix_decision_pure import Decided
 from app.worker.lang.install_pure import InstallFailureKind
@@ -70,18 +72,21 @@ def memory_hint(memory_gb: float, max_memory_gb: float) -> str:
     )
 
 
+def format_test_counts(run: PytestRun) -> list[str]:
+    """테스트 수의 상세 (접는 블록 안). 통과·실패는 '테스트:' 줄에 이미 보인다."""
+    s = run.summary
+    if s is None or not s.total:
+        return []
+    return ["", f"테스트: 전체 {s.total} · 통과 {s.passed} · 실패 {s.failed} · 오류 {s.errors} · "
+            f"건너뜀 {s.skipped}"]  # fmt: skip
+
+
 def format_test_details(run: PytestRun, memory_gb: float, max_memory_gb: float) -> list[str]:
-    """'테스트:' 줄 아래에 붙는 상세 줄들. 비어 있을 수 있다."""
+    """'테스트:' 줄 아래에 펼쳐 두는 상세 줄들: 할 일이 있는 것만. 비어 있을 수 있다."""
     lines: list[str] = []
     if run.memory_exceeded:
         lines += ["", memory_hint(memory_gb, max_memory_gb)]
     s = run.summary
-    if s is not None and s.total:
-        lines += [
-            "",
-            f"전체 {s.total} · 통과 {s.passed} · 실패 {s.failed}"
-            f" · 오류 {s.errors} · 건너뜀 {s.skipped}",
-        ]
     if run.flaky:
         lines += ["", "불안정한 테스트 (처음엔 실패, 다시 돌려 통과):"]
         lines += [f"- {inline_code(t, 300)}" for t in run.flaky[:MAX_LISTED_FAILURES]]
@@ -124,7 +129,7 @@ def _compose(
     base: BaseConfig | None,
     seconds: float | None = None,
     from_sync: bool = False,
-    extra: list[str] | None = None,
+    folded: list[str] | None = None,
     doc_rules: DocRules | None = None,
     checkers: Mapping[str, Checker] | None = None,
     decisions: Decided | None = None,
@@ -133,12 +138,16 @@ def _compose(
     pr: PrChecks | None = None,
 ) -> str:
     lines = [HEADER, "", f"**테스트:** {test_line}"]
-    rules_line = doc_rules_report.title(doc_rules, fixes, pr)
+    rules_line = doc_rules_report.title(doc_rules, fixes, pr, decisions)
     if rules_line is not None:
         lines.append(rules_line)
+    pr_line = pr_check_report_pure.title(pr) if isinstance(doc_rules, Found) else None
+    if pr_line is not None:
+        lines.append(pr_line)
     lines += details
-    lines += extra or []
-    lines += doc_rules_report.section(doc_rules, checkers or {}, decisions, fixes, rag, pr)
+    lines += doc_rules_report.section(
+        doc_rules, checkers or {}, decisions, fixes, rag, pr, more=folded or []
+    )
     if base is not None and base.problems:
         lines += ["", "설정:"] + [f"- {p}" for p in base.problems]
     lines += ["", _footer(head_sha, seconds, from_sync=from_sync)]
@@ -150,13 +159,15 @@ def render_progress(head_sha: str, step: str) -> str:
 
 
 def diff_coverage_line(cov: DiffCoverage | None) -> list[str]:
-    """PR이 바꾼 줄의 커버리지 (참고 지표, F8). 잴 수 없으면 쓰지 않는다."""
+    """PR이 바꾼 줄의 커버리지 (참고 지표, F8). 잴 수 없으면 쓰지 않는다. 위반이 아니라 있던
+    테스트가 바뀐 코드에 얼마나 닿는지를 알려 주는 값이라 접는 블록에 들어간다 (4.9)."""
     if cov is None:
         return []
+    ran = cov.measured_lines - cov.uncovered_lines
     return [
         "",
-        f"바뀐 줄 커버리지 (참고): {cov.percent:g}% "
-        f"(테스트가 센 {cov.measured_lines}줄 중 {cov.uncovered_lines}줄이 실행되지 않음)",
+        f"바뀐 줄 커버리지 {cov.percent:g}% (참고, 위반이 아님): 있던 테스트가 PR이 바꾼 줄 "
+        f"{cov.measured_lines}줄 중 {ran}줄을 실행함",
     ]
 
 
@@ -186,7 +197,7 @@ def render_result(
         base=base,
         seconds=seconds,
         from_sync=from_sync,
-        extra=diff_coverage_line(diff_coverage),
+        folded=format_test_counts(run) + diff_coverage_line(diff_coverage),
         doc_rules=doc_rules,
         checkers=checkers,
         decisions=decisions,

@@ -1,0 +1,37 @@
+name: generated-sample-with-validation
+description: >-
+  `33`의 짝. 같은 규칙에서 PR이 더한 생성 함수가 `validate_example`을 부르고 `"verified": True`를 넣으면
+  위반이 없다. 실제 모델로만 돈다. 결론 줄은 "위반 없음"이고 그 규칙은 확인한 규칙으로 센다.
+real_only: true
+pipeline:
+  rules: {docs: [GENERATION.md]}
+  fix: {require_approval: true}
+  model: {rules: haiku, checker: haiku, decide: haiku, judge: haiku, light: haiku, heavy: haiku}
+base:
+  - file: GENERATION.md
+    create: |
+      # 데이터 생성
+
+      ## 데이터 규칙
+
+      - 생성된 모든 샘플은 `validators.validate_example` 검증을 통과하고 `"verified": true` 필드를 포함해야 한다.
+  - file: data/validators.py
+    create: |
+      def validate_example(sample: dict) -> None:
+          if sample["answer"] != eval(sample["question"]):
+              raise ValueError("wrong answer")
+  - file: data/generate.py
+    create: |
+      from data.validators import validate_example
+
+
+      def make_addition(a: int, b: int) -> dict:
+          sample = {"question": f"{a}+{b}", "answer": a + b, "verified": True}
+          validate_example(sample)
+          return sample
+pr:
+  - file: data/generate.py
+    append: "\n\ndef make_subtraction(a: int, b: int) -> dict:\n    sample = {\"question\": f\"{a}-{b}\", \"answer\": a - b, \"verified\": True}\n    validate_example(sample)\n    return sample\n"
+expect:
+  violations: []
+  contains: ["**규칙:** ✅ 위반 없음 · 규칙 1개를 확인함"]

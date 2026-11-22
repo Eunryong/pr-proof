@@ -128,7 +128,7 @@ class FakeModel:
         self.tool = tool or _ok(NO_TOOL)
         # 기본은 고치지 않는 답이다. 수정 작성은 이 파일에서 보지 않는다 (test_model_fix_flow.py)
         self.decide = decide or (lambda ids: [{"id": i, "action": "skip",
-                                               "reason": "not_a_violation", "why": "케이스"}
+                                               "reason": "changes_behavior", "why": "케이스"}
                                               for i in ids])  # fmt: skip
         self.prompts: list[tuple[str, str]] = []
 
@@ -379,9 +379,9 @@ def test_comment_shows_rules_violations_and_checker(doc_env, tmp_path: Path) -> 
         "<details><summary>모델이 쓴 검사기 <code>" in body and "```yaml\ngrep:print(\n```" in body
     )
     assert "예시: 문서 0개, 모델이 쓴 것 4개" in body and "모델이 쓴 예시, 위반 (줄 1):" in body
-    assert "<details><summary>읽은 규칙 1개</summary>" in body
+    assert "읽은 규칙 1개:" in body
     assert "모델 호출 3회 / 상한 14회 (규칙 읽기와 검사기 작성)" in body
-    assert "`rules.disabled`에 규칙 id를 적으세요." in body
+    assert "`rules.disabled`에 규칙 id를 적으세요." not in body
     assert body.count("**규칙:**") == 1  # 맨 위의 한 줄로 합쳤다 (4.9)
 
 
@@ -462,7 +462,7 @@ def test_source_only_dependency_makes_tests_unrunnable_and_keeps_rules(doc_env, 
     ("base", "answer"),
     [
         ({"orders/a.py": "x = 1\n"}, rule_answer()),
-        (BASE_FILES, rule_answer(print_rule(target="human", check="none", reason="사람이 할 일"))),
+        (BASE_FILES, rule_answer(print_rule(target="run", check="none", reason="테스트 결과"))),
     ],
     ids=["no-rule-documents", "no-rule-needs-a-checker"],
 )
@@ -611,7 +611,7 @@ def test_recheck_of_the_same_commit_makes_no_decision_call(doc_env, tmp_path: Pa
     assert [kind for kind, _ in model.prompts] == ["rules", "tool", "checker", "decide"]
     assert again["fix_decisions"].decisions == first["fix_decisions"].decisions
     assert again["fix_decisions"].calls == 0 and again["fix_decisions"].cached == 2
-    assert {d.reason for d in again["fix_decisions"].decisions} == {"not_a_violation"}
+    assert {d.reason for d in again["fix_decisions"].decisions} == {"changes_behavior"}
     assert "저장된 판단 2건 사용" in _last_comment(doc_env)
 
 

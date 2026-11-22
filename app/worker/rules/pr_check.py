@@ -49,8 +49,11 @@ from app.worker.rules.pr_check_pure import (
     PrRuleResult,
     PrUsage,
     PrViolation,
+    Shown,
     build_judge_prompt,
     build_plan_prompt,
+    candidates_shown,
+    confirmed,
     example_cases,
     example_problems,
     facts_from,
@@ -323,7 +326,17 @@ def _check_rule(
         if not result.gated:
             return _with(base, status="not_applicable"), ()
         if plan.method == "pattern":
-            return _with(base, partial=partial), pattern_violations(rule, decl, facts, result)
+            candidates = pattern_violations(rule, decl, facts, result)
+            if not candidates or decl.fact not in TEXT_FACTS:
+                return _with(base, partial=partial), candidates
+            # 패턴이 잡은 것은 후보다. 규칙 원문과 그 글을 모델에게 보여 위반인지 정한다 (4.5 끝)
+            shown = candidates_shown(facts, candidates)
+            judged, answered = _judge(rule, plan, decl, facts, tools, run, base, partial, known,
+                                      is_stale, shown=shown)  # fmt: skip
+            if judged.status != "checked":
+                return judged, ()
+            kept, dropped = confirmed(candidates, answered)
+            return _with(judged, dismissed=dropped), kept
     return _judge(rule, plan, decl, facts, tools, run, base, partial, known, is_stale)
 
 
@@ -334,9 +347,11 @@ def _with(result: PrRuleResult, **changes: object) -> PrRuleResult:
 def _judge(
     rule: Rule, plan: PrPlan, decl: PrPattern, facts: PrFacts, tools: Tools, run: _Run,
     base: PrRuleResult, partial: str, known: int, is_stale: Callable[[], bool],
+    shown: Shown | None = None,
 ) -> tuple[PrRuleResult, tuple[PrViolation, ...]]:  # fmt: skip
-    """글 규칙 하나를 모델에 묻는다. 저장한 답이 있으면 묻지 않는다."""
-    shown = shown_for(decl.fact, facts)
+    """글 규칙 하나를 모델에 묻는다. 저장한 답이 있으면 묻지 않는다. shown이 있으면 그것만
+    보인다(PR 패턴의 후보)."""
+    shown = shown or shown_for(decl.fact, facts)
     if not shown.commits and shown.title is None:
         return _with(base, partial=partial), ()  # 볼 커밋이 없다
     key = judge_key(rule, shown, tools.judge_model)

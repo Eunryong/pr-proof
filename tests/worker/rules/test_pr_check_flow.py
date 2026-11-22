@@ -31,7 +31,7 @@ from .test_doc_rules_flow import (  # noqa: F401
     use_config,
     use_model,
 )
-from .test_pr_check import COMMIT_PLAN, TESTING_PLAN, ScriptSandbox
+from .test_pr_check import COMMIT_PLAN, TESTING_PLAN, ScriptSandbox, _agree
 
 COMMIT_RULE: Final = "커밋 메시지는 feat: 나 fix: 로 시작한다."
 TESTING_RULE: Final = "PR 본문에 테스트 방법을 적는다."
@@ -45,7 +45,8 @@ def _pr_rule(quote: str) -> dict:
 
 
 class PrModel(FakeModel):
-    """FakeModel에 PR 패턴 작성과 PR 단위 판단의 답을 더한다."""
+    """FakeModel에 PR 패턴 작성과 PR 단위 판단의 답을 더한다. 커밋 규칙의 판단은 패턴의 후보를
+    확인하는 것이라 보인 커밋을 모두 위반이라고 답한다."""
 
     def __init__(self, judge: list[dict] | None = None, **kwargs) -> None:
         super().__init__(rule_answer(_pr_rule(COMMIT_RULE), _pr_rule(TESTING_RULE)), **kwargs)
@@ -57,7 +58,7 @@ class PrModel(FakeModel):
             return _ok(COMMIT_PLAN if COMMIT_RULE in prompt else TESTING_PLAN)
         if schema is pr_check_pure.JUDGE_SCHEMA:
             self.prompts.append(("pr_judge", prompt))
-            return _ok({"violations": self.judge})
+            return _ok({"violations": _agree(prompt) if COMMIT_RULE in prompt else self.judge})
         return super().__call__(prompt, schema=schema, **kw)
 
 
@@ -116,10 +117,10 @@ def test_pr_rules_are_checked_after_admission_and_shown_apart(doc_env, tmp_path:
     checks = state["pr_checks"]
     assert [(v.where, v.sha) for v in checks.violations] == [("commit", shas[1]), ("pr_body", "")]
     assert state["doc_rules"].violations == () and "fix_decisions" not in state
-    assert _kinds(model) == ["rules", "pr_plan", "pr_plan", "pr_judge"]
+    assert _kinds(model) == ["rules", "pr_plan", "pr_judge", "pr_plan", "pr_judge"]
     assert doc_env["gh"].text_lookups == 1
     comment = bodies(doc_env["gh"])[-1]
-    assert "⚠️ PR 단위 위반 2건 (규칙 2개)" in comment
+    assert "**PR 단위:** ⚠️ 위반 2건 (규칙 2개)" in comment
     assert f"  - 커밋 `{shas[1][:7]}` `update`" in comment
     assert "  - PR 본문 (빠진 내용) · `테스트 방법이 없음`" in comment
     assert "아직 확인하지 않음" not in comment
@@ -147,7 +148,8 @@ def test_pr_judgment_cap_is_shown_and_fix_resumes_it(doc_env, tmp_path: Path) ->
     assert main.handle(_command("/fix", 80), deps) == "fix:no_targets"
     assert _kinds(model).count("pr_judge") == 1 and _kinds(model).count("pr_plan") == 2
     comment = bodies(doc_env["gh"])[-1]
-    assert "PR 단위 판단" not in comment and "PR 단위 규칙 2개 위반 없음" in comment
+    assert "PR 단위 판단" not in comment
+    assert "**규칙:** ✅ 위반 없음 · 규칙 2개를 확인함 (PR 단위 2개)" in comment
     assert main.handle(_command("/fix", 81), deps) == "no_pending_fix"
 
 

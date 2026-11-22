@@ -206,3 +206,21 @@ def test_unreadable_or_non_python_files_are_not_judged(store, worktree) -> None:
 def test_no_rules_means_no_call(store, worktree) -> None:
     model = FakeModel()
     assert _run(store, model, worktree, rules=()).violations == () and model.calls == []
+
+
+def test_undecided_pairs_are_kept_with_the_reason_and_reused(store: Store, worktree: Path) -> None:
+    """모델이 판단하지 못했다고 답한 쌍은 까닭과 함께 저장되고, 다음 검사가 묻지 않고 같은 답을
+    쓴다."""
+    answer = StructuredResult(
+        ok=True, error=None, model_id="claude-sonnet-5", input_tokens=1, output_tokens=1,
+        cost_usd=0.0, permission_denials=0,
+        data={"violations": [], "undecided": [{"rule_id": MONEY.id, "why": "데이터를 봐야 앎"}]},
+    )  # fmt: skip
+    first = _run(store, FakeModel(result=answer), worktree)
+    again = FakeModel()
+    second = _run(store, again, worktree)
+    assert first.violations == second.violations == ()
+    assert first.undecided[MONEY.id].why == second.undecided[MONEY.id].why == "데이터를 봐야 앎"
+    assert first.undecided[MONEY.id].pairs == first.pairs[MONEY.id] == 1
+    assert NAMES.id not in first.undecided and first.pairs[NAMES.id] == 2
+    assert again.calls == []

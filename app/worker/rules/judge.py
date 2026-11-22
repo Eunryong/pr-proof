@@ -6,7 +6,8 @@
 답은 결정적으로 확인해 PR이 바꾼 줄을 그 줄의 내용 그대로 인용한 것만 위반으로 남긴다.
 
 호출은 PR 상한(9.2)에서 센다. 상한에 걸리거나 호출이 실패하면 남은 쌍을 그 규칙의 "판단하지
-못함"으로 두고 저장하지 않는다. `/fix`나 다음 검사가 남은 쌍만 다시 묻는다.
+못함"으로 두고 저장하지 않는다. `/fix`나 다음 검사가 남은 쌍만 다시 묻는다. 모델이 이 자료로는
+판단할 수 없다고 답한 쌍은 그 까닭과 함께 저장한다(같은 입력에는 같은 답이다).
 """
 
 import logging
@@ -36,6 +37,8 @@ from app.worker.rules.judge_pure import (
     hunks_for,
     judge_key,
     parse_answer,
+    undecided_from_json,
+    undecided_to_json,
     verify_answer,
 )
 from app.worker.rules.rules import AskModel
@@ -55,10 +58,20 @@ class Gap:
 
 
 @dataclass(frozen=True)
+class Undecided:
+    """한 규칙에서 모델이 이 자료로는 판단할 수 없다고 답한 쌍."""
+
+    pairs: int
+    why: str  # 처음 답한 까닭
+
+
+@dataclass(frozen=True)
 class Judged:
     violations: tuple[Violation, ...]
     gaps: Mapping[str, Gap]  # 규칙 id → 판단하지 못한 쌍. 다 판단한 규칙은 없다
     usage: JudgeUsage
+    undecided: Mapping[str, Undecided] = field(default_factory=dict)
+    pairs: Mapping[str, int] = field(default_factory=dict)  # 규칙 id → 본 (규칙, hunk) 쌍 수
 
 
 @dataclass
@@ -67,6 +80,8 @@ class _Run:
 
     flags: dict[tuple[str, str], list[Flag]] = field(default_factory=dict)  # (파일, 규칙) → 위반
     gaps: dict[str, Gap] = field(default_factory=dict)
+    undecided: dict[str, Undecided] = field(default_factory=dict)
+    pairs: dict[str, int] = field(default_factory=dict)
     stop: tuple[JudgeGap, str] | None = None  # 상한에 걸려 남은 쌍을 묻지 않는다
     calls: int = 0
     cached: int = 0
@@ -77,6 +92,10 @@ class _Run:
 
     def found(self) -> int:
         return sum(len(f) for f in self.flags.values())
+
+    def undecide(self, rule_id: str, why: str) -> None:
+        old = self.undecided.get(rule_id)
+        self.undecided[rule_id] = Undecided((old.pairs if old else 0) + 1, old.why if old else why)
 
     def leave(self, asked: Asked, kind: JudgeGap, detail: str) -> None:
         for rule in asked.rules:
@@ -112,6 +131,8 @@ def judge(
             continue  # 읽을 수 없는 파일(링크, 특수 파일, 크기 초과). 검사기도 그 파일을 버린다
         hunks = hunks_for(file, lines, changed)
         hunks_seen += len(hunks)
+        for rule in file_rules:
+            run.pairs[rule.id] = run.pairs.get(rule.id, 0) + len(hunks)
         to_ask = _from_cache(file_rules, hunks, store=store, model=model, run=run)
         for start in range(0, len(to_ask), MAX_HUNKS_PER_CALL):
             chunk = to_ask[start : start + MAX_HUNKS_PER_CALL]
@@ -130,7 +151,8 @@ def judge(
         dropped=run.dropped, input_tokens=run.input_tokens, output_tokens=run.output_tokens,
         models=tuple(sorted(set(run.models))),
     )  # fmt: skip
-    return Judged(_violations(run.flags, rules, worktree), dict(run.gaps), usage)
+    return Judged(_violations(run.flags, rules, worktree), dict(run.gaps), usage,
+                  dict(run.undecided), dict(run.pairs))  # fmt: skip
 
 
 def _from_cache(
@@ -146,6 +168,10 @@ def _from_cache(
                 missing.append(rule)
                 continue
             run.cached += 1
+            why = undecided_from_json(entry.result_json)
+            if why is not None:
+                run.undecide(rule.id, why)
+                continue
             flags = flags_from_json(rule.id, hunk, entry.result_json)
             run.flags.setdefault((hunk.file, rule.id), []).extend(flags)
         if missing:
@@ -173,10 +199,10 @@ def _ask(
         max_budget_usd=CALL_BUDGET_USD["light"],
     )
     failure = None if answer.ok else f"{answer.error}: {answer.detail}"
-    items = ()
+    parsed = None
     if failure is None:
         try:
-            items = parse_answer(answer.data or {})
+            parsed = parse_answer(answer.data or {})
         except ValueError as e:
             failure = f"답의 형식이 틀림: {str(e).splitlines()[0]}"
     budget.finish(
@@ -188,22 +214,26 @@ def _ask(
     run.input_tokens += answer.input_tokens or 0
     run.output_tokens += answer.output_tokens or 0
     run.models.append(answer.model_id or model)
-    if failure is not None:
+    if failure is not None or parsed is None:
         log.warning("모델 판단 실패: %s", failure)
         for asked in chunk:
-            run.leave(asked, "model_failed", failure)
+            run.leave(asked, "model_failed", failure or "")
         return
-    verified = verify_answer(chunk, items)
+    verified = verify_answer(chunk, parsed)
     for reason in verified.dropped:
         log.info("모델 판단의 답을 버림: %s", reason)
     run.dropped += len(verified.dropped)
     for (at, rule_id), flags in verified.kept.items():
         hunk = chunk[at].hunk
         rule = next(r for r in chunk[at].rules if r.id == rule_id)
+        why = verified.undecided.get((at, rule_id))
+        saved = flags_to_json(hunk, flags) if why is None else undecided_to_json(why)
         store.save_result(
             judge_key(rule, hunk, model), stage="judge", model=answer.model_id or model,
-            prompt_version=PROMPT_VERSION, result_json=flags_to_json(hunk, flags),
+            prompt_version=PROMPT_VERSION, result_json=saved,
         )  # fmt: skip
+        if why is not None:
+            run.undecide(rule_id, why)
         run.flags.setdefault((hunk.file, rule_id), []).extend(flags)
 
 

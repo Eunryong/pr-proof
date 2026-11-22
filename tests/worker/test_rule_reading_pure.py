@@ -311,9 +311,9 @@ def test_target_defaults_to_code_and_is_kept() -> None:
     assert [r.target for r in rules] == ["code", "code"]
 
 
-@pytest.mark.parametrize("target", ["pr", "human"])
+@pytest.mark.parametrize("target", ["pr", "run"])
 def test_rules_outside_code_keep_only_the_reason(target: str) -> None:
-    """PR 단위 규칙과 사람이 확인하는 규칙은 검사하지 않는다. 범위, 예시, 확인 방법은 버린다."""
+    """PR 단위 규칙과 run 규칙은 검사기로 보지 않는다. 범위, 예시, 확인 방법은 버린다."""
     rules, dropped = _verify(
         {"section": "출력", "quote": PRINT_RULE, "target": target, "scope": ["orders/**"],
          "scope_exclude": ["tests/**"], "scope_reason": "테스트", "check": "checker",
@@ -327,7 +327,7 @@ def test_rules_outside_code_keep_only_the_reason(target: str) -> None:
     assert (rule.scope, rule.exclude, rule.exclude_reason, rule.examples) == ((), (), "", ())
 
 
-@pytest.mark.parametrize(("target", "kept"), [("pr", 1), ("human", 0)])
+@pytest.mark.parametrize(("target", "kept"), [("pr", 1), ("run", 0)])
 def test_pr_rules_keep_document_examples_for_their_pattern(target: str, kept: int) -> None:
     """PR 패턴의 예시 확인(4.5 끝)은 문서의 예시를 먼저 쓴다. 문서에 없는 예시는 버린다."""
     examples = [{"code": BAD_PRINT, "violates": True, "lines": [1]},
@@ -346,14 +346,31 @@ def test_code_rule_answered_with_no_check_is_still_tried() -> None:
 
 
 def test_quote_of_a_rule_outside_code_is_still_verified() -> None:
-    rules, dropped = _verify({"section": "출력", "quote": "없는 문장을 지었다", "target": "human"})
+    rules, dropped = _verify({"section": "출력", "quote": "없는 문장을 지었다", "target": "run"})
     assert rules == () and dropped[0].reason == "원문이 그 절에 없음"
 
 
 def test_answer_schema_requires_a_target() -> None:
     item = ANSWER_SCHEMA["properties"]["rules"]["items"]
     assert "target" in item["required"]
-    assert item["properties"]["target"] == {"enum": ["code", "pr", "human"]}
+    assert item["properties"]["target"] == {"enum": ["code", "pr", "run"]}
+
+
+@pytest.mark.parametrize(
+    ("runs", "expected"),
+    [(["lint", "tests"], ("tests", "lint")), (["tests"], ("tests",)), ([], ("tests",))],
+)
+def test_run_rule_keeps_which_results_it_names(runs: list[str], expected: tuple) -> None:
+    """run 규칙은 테스트와 정적 검사 중 무엇의 결과로 답할지를 갖는다. 비면 테스트로 답한다."""
+    (rule,), _ = _verify({"section": "출력", "quote": PRINT_RULE, "target": "run", "runs": runs})
+    assert (rule.target, rule.runs) == ("run", expected)
+
+
+def test_old_target_human_is_not_a_valid_answer_any_more() -> None:
+    """확인하지 않고 보이기만 하는 길은 없다. 모델이 옛 값을 답하면 형식이 틀린 답이다."""
+    with pytest.raises(ValueError):
+        parse_answer({"rules": [{"file": "README.md", "section": "출력", "quote": PRINT_RULE,
+                                 "target": "human", "check": "none"}]})  # fmt: skip
 
 
 @pytest.mark.parametrize(
