@@ -3,6 +3,7 @@ name = "pr-proof"
 version = "0.1.0"
 description = "PR의 협업 규칙 위반을 검출하고, 테스트로 검증한 수정안을 제안 PR로 올리는 로컬 파이프라인"
 requires-python = ">=3.11"
+license = { text = "MIT" }
 dependencies = [
     "fastapi>=0.115",
     "uvicorn>=0.32",
