@@ -22,9 +22,11 @@ from app.worker.rules.judge_pure import (
     ANSWER_SCHEMA,
     PROMPT_VERSION,
     SYSTEM_PROMPT,
+    Origin,
     flags_to_json,
     hunks_for,
     judge_key,
+    origin_from_json,
 )
 from app.worker.state import Store
 
@@ -282,3 +284,87 @@ def test_stored_answer_is_reused_only_while_the_files_the_model_read_are_unchang
     changed = run()
     assert len(asked) == 1 and changed.usage.cached == 0
     assert changed.gaps[NAMES.id].kind == "model_failed"
+
+
+def _commit(worktree: Path, message: str) -> str:
+    def git(*args: str) -> str:
+        return subprocess.run(
+            ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", *args], cwd=worktree,
+            check=True, capture_output=True, text=True,
+        ).stdout.strip()  # fmt: skip
+
+    git("add", "-A")
+    git("commit", "-q", "-m", message)
+    return git("rev-parse", "HEAD")
+
+
+def _reask_prompt(store: Store, worktree: Path, *, pr: int = 1, head: str) -> tuple[str, Judged]:
+    """읽은 곳이 바뀐 저장된 쌍을 다시 물을 때의 프롬프트. 호출은 실패로 끝난다(답을 쓰지 않음)."""
+    asked: list[str] = []
+
+    def ask(prompt: str, **kw) -> StructuredResult:
+        asked.append(prompt)
+        return StructuredResult(ok=False, error=AIErrorKind.TIMEOUT, data=None, model_id="",
+                                input_tokens=None, output_tokens=None, cost_usd=None,
+                                permission_denials=0)  # fmt: skip
+
+    budget = CallBudget(store, "o/r", pr, head, CallSettings())
+    result = judge((NAMES,), worktree, _diff_api(), store=store, budget=budget, model="sonnet",
+                   ask=ask)  # fmt: skip
+    (prompt,) = asked
+    return prompt, result
+
+
+def _save_prior(store: Store, worktree: Path, sha: str, pr: str = "o/r#1") -> str:
+    changed = added_lines(_diff_api())["api.py"]
+    (hunk,) = hunks_for("api.py", source_lines(worktree, "api.py"), changed)
+    files = repo.list_files(worktree)
+    reads = {"orders/pricing.py": workdir.path_digest(worktree, "orders/pricing.py", files)}
+    store.save_result(
+        judge_key(NAMES, hunk, "sonnet"), stage="judge", model="sonnet",
+        prompt_version=PROMPT_VERSION,
+        result_json=flags_to_json(hunk, [], reads, basis="pricing.py의 line_amount를 읽음",
+                                  origin=Origin(pr, sha)),
+    )  # fmt: skip
+    return judge_key(NAMES, hunk, "sonnet")
+
+
+def test_reasked_pair_gets_its_prior_answer_and_the_files_changed_since_that_commit(
+    store: Store, worktree: Path
+) -> None:
+    """같은 PR의 앞 커밋에서 낸 답은 지난 판단, 근거, 그 커밋 뒤 바뀐 파일(git)과 함께 다시 묻는다.
+    호출이 실패하면 저장한 답은 그대로 남는다."""
+    first = _commit(worktree, "c1")
+    key = _save_prior(store, worktree, first)
+    (worktree / "orders/pricing.py").write_text(PRICING + "RATE = 2\n")
+    (worktree / "notes.txt").write_text("메모\n")
+    second = _commit(worktree, "c2")
+    prompt, result = _reask_prompt(store, worktree, head=second)
+    assert f"<<<PRIOR n=1 rule={NAMES.id} tag=" in prompt
+    assert "지난 판단: 위반 없음\n근거: pricing.py의 line_amount를 읽음" in prompt
+    assert (
+        f"커밋 {first[:12]} 뒤 지금 커밋까지 바뀐 파일 2개:\nnotes.txt\norders/pricing.py" in prompt
+    )
+    assert "그중 지난번에 읽은 곳 안의 파일: orders/pricing.py" in prompt
+    assert "지난번에 읽은 곳 중 내용이 달라진 곳: orders/pricing.py" in prompt
+    assert result.usage.reasked == 1 and result.usage.kept_prior == 0
+    entry = store.cached_result(key)
+    assert entry is not None and origin_from_json(entry.result_json).sha == first
+
+
+def test_prior_answer_from_another_pr_is_not_shown(store: Store, worktree: Path) -> None:
+    """저장 키는 PR을 가리지 않는다. 다른 PR이 낸 같은 키의 답은 지난 판단으로 보이지 않는다."""
+    first = _commit(worktree, "c1")
+    _save_prior(store, worktree, first, pr="o/r#7")
+    (worktree / "orders/pricing.py").write_text(PRICING + "RATE = 2\n")
+    prompt, result = _reask_prompt(store, worktree, head=_commit(worktree, "c2"))
+    assert "<<<PRIOR" not in prompt and result.usage.reasked == 0
+
+
+def test_prior_commit_that_is_gone_means_changes_are_unknown(store: Store, worktree: Path) -> None:
+    _commit(worktree, "c1")
+    _save_prior(store, worktree, "f" * 40)  # 저장소에 없는 커밋 (강제 push 뒤 지워짐 등)
+    (worktree / "orders/pricing.py").write_text(PRICING + "RATE = 2\n")
+    prompt, _ = _reask_prompt(store, worktree, head=_commit(worktree, "c2"))
+    assert "그 뒤 바뀐 파일: 알 수 없음" in prompt
+    assert "지난번에 읽은 곳 중 내용이 달라진 곳: orders/pricing.py" in prompt

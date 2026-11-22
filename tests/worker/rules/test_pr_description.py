@@ -11,6 +11,7 @@ import pytest
 
 from app.worker import repo
 from app.worker.ai import workdir
+from app.worker.ai.claude_cli import AIErrorKind, StructuredResult
 from app.worker.budget import CallBudget
 from app.worker.repo_config_pure import CallSettings
 from app.worker.rules import pr_description
@@ -119,6 +120,47 @@ def test_saved_answer_is_not_used_once_a_read_file_changed(wt: Path, store: Stor
     out = pr_description.check(FACTS, _diff(wt), wt, _tools(store, pr_base=0))
     assert (out.status, out.gap) == ("unchecked", "cap") and out.items == ()
     assert out.usage.calls == 0
+
+
+def test_next_commit_is_asked_with_the_earlier_result_and_what_changed(
+    wt: Path, store: Store
+) -> None:
+    """저장한 답을 쓴 커밋의 결과를 그 PR의 바로 앞 결과로 두고, 다음 커밋은 그 결과와 PR 글이
+    바뀌었는지, 그 커밋 뒤 바뀐 파일(git)을 같이 주고 묻는다. 호출은 실패로 끝난다."""
+    first = _git(wt, "rev-parse", "HEAD").strip()
+    _save(store, wt, {"config.py": workdir.path_digest(wt, "config.py", repo.list_files(wt))})
+    budget = CallBudget(store, "o/r", 1, first, CallSettings())
+    tools = pr_description.Tools(store=store, budget=budget, ask=_never, model=MODEL)
+    assert pr_description.check(FACTS, _diff(wt), wt, tools).usage.cached == 1
+    (wt / "notes.txt").write_text("메모\n")
+    _git(wt, "add", "-A")
+    _git(wt, "commit", "-qm", "메모")
+    second = _git(wt, "rev-parse", "HEAD").strip()
+    asked: list[str] = []
+
+    def ask(prompt: str, **kw) -> StructuredResult:
+        asked.append(prompt)
+        return StructuredResult(ok=False, error=AIErrorKind.TIMEOUT, data=None, model_id="",
+                                input_tokens=None, output_tokens=None, cost_usd=None,
+                                permission_denials=0)  # fmt: skip
+
+    budget = CallBudget(store, "o/r", 1, second, CallSettings())
+    tools = pr_description.Tools(store=store, budget=budget, ask=ask, model=MODEL)
+    out = pr_description.check(FACTS, _git(wt, "diff", "HEAD~2", "HEAD"), wt, tools)
+    (prompt,) = asked
+    assert f"같은 PR의 앞 커밋 {first[:12]}에서 견준 결과다." in prompt
+    assert f"1. unrelated (config.py:2, new: TIMEOUT = 5) — {UNRELATED.summary}" in prompt
+    assert "PR 글(제목, 본문, 커밋 메시지): 그대로" in prompt
+    assert "그 뒤 지금 커밋까지 바뀐 파일 1개:\nnotes.txt" in prompt
+    assert (out.usage.earlier, out.usage.earlier_items) == (1, 1)
+    other = CallBudget(store, "o/r", 2, second, CallSettings())  # 다른 PR은 그 결과를 받지 않는다
+    pr_description.check(
+        FACTS,
+        _git(wt, "diff", "HEAD~2", "HEAD"),
+        wt,
+        pr_description.Tools(store=store, budget=other, ask=ask, model=MODEL),
+    )
+    assert "<<<EARLIER" not in asked[-1]
 
 
 def test_new_commit_stops_before_asking(wt: Path, store: Store) -> None:

@@ -98,6 +98,9 @@ def folded(d: PrDescription | None) -> list[str]:
         parts.append(f"버린 답 {usage.dropped}건 (PR 글이나 바뀐 줄을 그대로 가리키지 않음)")
     if usage.calls:
         parts.append(f"토큰 입력 {usage.input_tokens}, 출력 {usage.output_tokens}")
+    if usage.earlier:
+        parts.append(f"지난 결과를 주고 다시 견줌 (지난 어긋남 {usage.earlier_items}건 중 유지 "
+                     f"{usage.kept_earlier}건)")  # fmt: skip
     return ["", "PR 설명 확인: " + " · ".join(parts)]
 
 

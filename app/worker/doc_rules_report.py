@@ -417,7 +417,13 @@ def _judge_usage(found: Found) -> list[str]:
         line += f" · 버린 답 {usage.dropped}건 (PR이 바꾼 줄을 그대로 인용하지 않음)"
     if usage.calls:
         line += f" · 토큰 입력 {usage.input_tokens}, 출력 {usage.output_tokens}"
-    return ["", line]
+    if not usage.reasked:
+        return ["", line]
+    # 읽은 곳이 바뀐 저장된 쌍을 지난 판단과 함께 다시 물은 수 (4.5)
+    reasked = (
+        f"모델 판단: 지난 판단을 주고 다시 물음 {usage.reasked}쌍, 그중 유지 {usage.kept_prior}쌍"
+    )
+    return ["", line, "", reasked]
 
 
 def _judge_gaps(found: Found) -> list[str]:

@@ -20,9 +20,12 @@ import pytest
 from app.worker import repo
 from app.worker.ai import claude_cli
 from app.worker.budget import CallBudget
+from app.worker.diff_pure import added_lines
 from app.worker.repo_config_pure import CallSettings
 from app.worker.rule_pure import CheckMethod, Rule, RuleSource
+from app.worker.rules.detect import source_lines
 from app.worker.rules.judge import Judged, judge
+from app.worker.rules.judge_pure import basis_from_json, hunks_for, judge_key, reads_from_json
 from app.worker.state import Store
 
 REAL_AI_ENV: Final = "PR_PROOF_REAL_AI"
@@ -124,3 +127,82 @@ def test_body_that_skips_the_validator_is_read_and_flagged(tmp_path: Path, store
     second = _judge(wt, diff, store)
     assert second.usage.calls == 1 and second.usage.cached == 0, second
     assert second.violations == () and second.undecided == {}, second
+
+
+class _Recorder:
+    """실제 호출을 그대로 하고 도구 횟수와 토큰을 적어 둔다."""
+
+    def __init__(self) -> None:
+        self.results: list[claude_cli.StructuredResult] = []
+
+    def __call__(self, prompt: str, **kw: object) -> claude_cli.StructuredResult:
+        result = claude_cli.run_structured(prompt, **kw)  # type: ignore[arg-type]
+        self.results.append(result)
+        return result
+
+    def since(self, start: int) -> tuple[int, int, int, int]:
+        """start번째 뒤의 (호출, 도구, 입력 토큰, 출력 토큰)."""
+        rs = self.results[start:]
+        return (len(rs), sum(r.tool_uses for r in rs), sum(r.input_tokens or 0 for r in rs),
+                sum(r.output_tokens or 0 for r in rs))  # fmt: skip
+
+
+def _stored(wt: Path, diff: str, store: Store) -> str:
+    changed = added_lines(diff)["gen/make.py"]
+    (hunk,) = hunks_for("gen/make.py", source_lines(wt, "gen/make.py"), changed)
+    entry = store.cached_result(judge_key(RULE, hunk, MODEL))
+    assert entry is not None
+    return entry.result_json
+
+
+def test_prior_answer_is_kept_for_unrelated_changes_and_revised_when_the_body_changes(
+    tmp_path: Path, store: Store
+) -> None:
+    """(가) 첫 판단은 위반 없음과 근거 메모를 저장한다. (나) 관계없는 변경만 있는 다음 커밋은 다시
+    묻더라도 지난 판단을 유지한다(글이 같다). 모델이 읽은 곳 밖만 바뀌어 다시 묻지 않았으면, 읽은
+    파일에 동작과 관계없는 주석을 더해 다시 묻게 한다. (다) `_validate`가 검증 함수를 부르지 않게
+    바뀐 커밋은 위반으로 바뀌고 근거에 까닭이 적힌다. 호출은 3–4회다."""
+    wt, diff = _worktree(tmp_path, CALLS_VALIDATOR)
+    rec = _Recorder()
+
+    def judge_at_head() -> Judged:
+        head = _git(wt, "rev-parse", "HEAD").strip()
+        budget = CallBudget(store, "o/r", 1, head, CallSettings())
+        return judge((RULE,), wt, diff, store=store, budget=budget, model=MODEL, ask=rec)
+
+    first = judge_at_head()
+    stored = _stored(wt, diff, store)
+    print("\n(가)", rec.since(0), basis_from_json(stored), reads_from_json(stored).keys())
+    assert first.violations == () and first.undecided == {} and first.gaps == {}, first
+    assert basis_from_json(stored), stored
+
+    (wt / "notes.txt").write_text("메모\n")
+    (wt / "other.py").write_text("def unrelated():\n    return 1\n")
+    _git(wt, "add", "-A")
+    _git(wt, "commit", "-qm", "관계없는 파일")
+    start = len(rec.results)
+    second = judge_at_head()
+    print("(나)", rec.since(start), second.usage)
+    if second.usage.calls == 0:  # 모델이 읽은 곳 밖만 바뀌었다
+        assert second.usage.cached == 1 and second.violations == ()
+        (wt / "gen" / "checks.py").write_text("# 샘플 검증\n" + CALLS_VALIDATOR)
+        _git(wt, "commit", "-qam", "주석만 더함")
+        start = len(rec.results)
+        second = judge_at_head()
+        print("(나')", rec.since(start), second.usage)
+    kept = _stored(wt, diff, store)
+    print("(나) 근거", basis_from_json(kept))
+    assert second.usage.reasked == 1 and second.usage.kept_prior == 1, second
+    assert second.violations == () and second.undecided == {}, second
+    assert basis_from_json(kept) == basis_from_json(stored)
+
+    (wt / "gen" / "checks.py").write_text(SKIPS_VALIDATOR)
+    _git(wt, "commit", "-qam", "검증 함수를 부르지 않음")
+    start = len(rec.results)
+    third = judge_at_head()
+    changed = _stored(wt, diff, store)
+    print("(다)", rec.since(start), third.usage, basis_from_json(changed))
+    assert third.usage.reasked == 1 and third.usage.kept_prior == 0, third
+    (v,) = third.violations
+    assert (v.file, v.line_text) == ("gen/make.py", ADDED.strip()), v
+    assert basis_from_json(changed) and basis_from_json(changed) != basis_from_json(stored)

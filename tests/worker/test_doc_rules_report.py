@@ -26,6 +26,7 @@ from app.worker.fix.model_fix_pure import ModelFix, Verification
 from app.worker.fix.proposal_pure import ProposalResult
 from app.worker.markdown_pure import inline_code
 from app.worker.rule_pure import CheckMethod, Example, Rule, RuleSource, UnreadDoc
+from app.worker.rules.judge_pure import JudgeUsage
 from app.worker.test_run_pure import PytestRun
 from app.worker.violation_pure import Violation
 
@@ -560,3 +561,15 @@ def test_run_rule_shows_the_models_answer_and_the_results_it_saw() -> None:
     assert (
         "모델이 테스트·정적 검사 결과로 판단하지 못함: `테스트를 돌리기 전에 끝남`" in before_tests
     )
+
+
+def test_reasked_pairs_with_a_prior_answer_get_one_folded_line() -> None:
+    """읽은 곳이 바뀌어 지난 판단을 주고 다시 물은 쌍이 있을 때만 접는 블록에 한 줄 더한다."""
+    judged = RuleJudged(RULE, "뜻을 읽어야 한다", "none", pairs=3)
+    usage = JudgeUsage(rules=1, hunks=3, calls=1, cached=1, dropped=0, reasked=2, kept_prior=1)
+    found = replace(_found(judged), judge=usage)
+    text = _text(found)
+    details = text.split("<details>")[1]
+    assert "모델 판단: 지난 판단을 주고 다시 물음 2쌍, 그중 유지 1쌍" in details
+    plain = _text(replace(found, judge=replace(usage, reasked=0, kept_prior=0)))
+    assert "지난 판단을 주고" not in plain and "모델 판단: 규칙 1개" in plain
