@@ -49,14 +49,14 @@ PR을 열면 결과 코멘트 하나가 달린다. 맨 위가 결론이다.
 리뷰 코멘트에는 그 스레드에 답글이 달린다.
 
 ```
-[Copilot]  The deduplication key keeps addition operands ordered, so (a, b) does not collide with (b, a) …
-[pr-proof] 반영했습니다. 수정안 #9
-           까닭 (모델의 판단): 중복 키 (op, a, b)가 덧셈 교환법칙을 무시해 격리 규칙에 어긋난다.
-           → 수정안 #9가 머지되면 스레드를 Resolved (Addressed)로 바꾼다
+[Copilot]  average_quantity() divides by len(quantities) without checking for an empty list …
+[pr-proof] 반영했습니다. 수정안 #32
+           까닭 (모델의 판단): orders/stats.py의 average_quantity가 빈 목록에서 0으로 나눈다.
+           → 수정안 #32가 머지되면 스레드를 Resolved (Addressed)로 바꾼다
 
-[Copilot]  The exporter needs an explicit NoPE mode …
+[Copilot]  Use print() here instead of the logger so the output is visible …
 [pr-proof] 반영하지 않습니다.
-           까닭 (모델의 판단): 고칠 곳이 이 PR이 바꾼 파일 밖이라 범위를 벗어난다.
+           까닭 (모델의 판단): README의 규칙이 orders/ 아래에서 print를 쓰지 않게 정한다.
            → 스레드를 Resolved (Won't fix)로 바꾼다
 ```
 
