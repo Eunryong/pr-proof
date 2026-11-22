@@ -92,8 +92,14 @@
 ### 8.2 비밀값
 
 - 코드, Dockerfile의 `ENV`, 환경변수에 넣지 않는다.
-- `~/.config/pipeline/` 아래 파일(`chmod 600`)에서 읽어 메모리에만 둔다. `app/shared/config.py`의 파일 읽기 함수로만 접근한다.
-- GitHub과 Claude는 로컬 로그인을 쓴다. subprocess에는 최소 환경만 넘긴다(claude에는 `HOME`, `USER`, `PATH`, 있으면 `CLAUDE_CONFIG_DIR`).
+- `~/.config/pipeline/` 아래 파일(`chmod 600`)에서 읽어 메모리에만 둔다. `app/shared/config.py`의 파일 읽기 함수로만 접근한다. 파일: `webhook_secret`(웹훅 비밀값), `github_token`(토큰 방식일 때만), `webhook_url`(웹훅 받는 주소. smee 주소는 아는 사람이 소식을 볼 수 있어 같이 600으로 둔다).
+- Claude는 로컬 로그인을 쓴다. subprocess에는 최소 환경만 넘긴다(claude에는 `HOME`, `USER`, `PATH`, 있으면 `CLAUDE_CONFIG_DIR`).
+- **GitHub 인증은 두 방식이다 (2026-11-22).** `github_token` 파일이 있으면 토큰 방식, 없으면 `gh auth login`으로 저장한 로그인. 두 방식 모두 `gh` 프로그램으로 부른다(`app/shared/github_auth.py`).
+  - 토큰은 파일에서 읽어 `gh`와, GitHub과 주고받는 git 명령(clone, fetch, push. 자격 증명 도우미 `gh auth git-credential`이 git의 환경을 물려받는다)의 환경에만 `GH_TOKEN`으로 넣는다. gh는 이 변수를 저장된 로그인보다 앞세운다(`gh help environment`, 틀린 가짜 토큰을 넣으면 저장된 로그인이 있어도 `gh auth status`와 `gh api user`가 실패하는 것으로 확인). 워커 프로세스의 환경(`os.environ`)에는 넣지 않으므로 claude, 샌드박스, 도구 서버, 알림에는 가지 않는다. 서버 환경에 `GH_TOKEN`이 있어도 허용 목록에 없어 넘기지 않는다.
+  - gh·git의 stderr를 오류 메시지에 실을 때 토큰을 먼저 지우고 자른다. 토큰은 수정안 diff의 비밀값 검사(`pipeline_secrets`)에도 들어간다.
+  - 시작 확인은 토큰 계정만 본다(`gh auth status --active`). 실패하면 "토큰이 만료·폐기됐으면 새 토큰을 `github_token`에 넣는다"를 알린다(알림 종류 `gh_token`).
+  - 필요한 권한(코드가 부르는 API를 센 것): fine-grained 토큰은 Contents·Pull requests·Issues 읽기·쓰기와 Metadata 읽기, classic 토큰은 `repo`(공개 repo만이면 `public_repo`). 웹훅 권한(fine-grained의 Webhooks 읽기·쓰기, classic의 `admin:repo_hook`)은 configure·add·rm이 웹훅을 등록·지울 때만 쓴다. 수정안은 `.github/`를 고치지 못해 Workflows 권한은 쓰지 않는다.
+  - configure는 토큰을 화면에 보이지 않게 입력받거나 환경 변수 `PR_PROOF_GITHUB_TOKEN`으로 받는다. 명령줄 인자로는 받지 않는다(셸 기록에 남는다). 받은 토큰은 gh로 확인한 뒤에만 파일에 쓴다.
 - **밖으로 나가는 모든 것을 검사한다:** 수정안 diff, 모델이 쓴 모든 글(제목, 본문, 커밋 메시지, 줄 리뷰 코멘트, 결과 코멘트의 설명), 저장하는 RAG 기록.
 
 ### 8.3 base에서만 읽는 것
@@ -144,7 +150,12 @@
 - **포크에서 온 PR에는 수정안 PR을 열지 않는다.**
 - 명령은 `access.trusted`(기본 OWNER·MEMBER·COLLABORATOR)의 것만 처리한다. 웹훅과 동기화가 같은 함수를 쓴다. PR 작성자에 대한 확인은 8.6에 있다.
 - 수정안 PR의 커밋은 허용된 경로만 스테이징하고, 사용자 전역의 서명·훅을 끈다.
-- 워커 시작 시 preflight로 gh 로그인, claude 로그인(`claude auth status`의 `loggedIn`, `loginExpiresAt`), Docker, Redis를 확인한다. 벡터 저장소는 워커 안에서 도는 임베디드라 확인할 서비스가 없다. 실행 중에 풀리면 환경 오류로 처리하고 PR에 결과를 쓰지 않는다.
+- 워커 시작 시 preflight로 GitHub 인증(gh 로그인 또는 토큰), claude 로그인(`claude auth status`의 `loggedIn`, `loginExpiresAt`), Docker, Redis를 확인한다. 벡터 저장소는 워커 안에서 도는 임베디드라 확인할 서비스가 없다. 실행 중에 풀리면 환경 오류로 처리하고 PR에 결과를 쓰지 않는다.
+- **설치와 인증 (`npx pr-proof`, 2026-11-22).** npm 패키지는 입구(`bin/pr-proof.js`)이고 본체는 Python이다(`app/setup/`. 서버의 api·worker는 이 패키지를 import하지 않는다). 명령은 다섯이다.
+  - `configure`: 1 프로그램 확인(docker, git, gh, claude. 빠진 것을 한 번에 보인다. python은 입구가 먼저 본다) → 2 Docker가 켜져 있는지 → 3 설치(포트 기본 8765, Redis. venv는 입구가 만든다) → 4 GitHub 인증 → 5 Claude 로그인 → 6 repo 등록과 권한 확인 → 7 웹훅(비밀값, 받는 주소, API 등록) → 8 끝 확인 표(위 preflight와 같은 함수). 묻는 것은 repo, 인증 방식, 토큰, 웹훅 받는 주소 넷이다. 터미널이 아니면 묻지 않고 `--repo`, `--auth`, `--webhook-url`, `--port`로 받는다. `--dry-run`은 파일과 GitHub에 쓰지 않는다. 여러 번 돌려도 같다: `config.yaml`은 `repos`만 줄 단위로 고치고(다른 설정과 주석을 지킨다), 있는 비밀값과 저장한 주소는 덮어쓰지 않는다.
+  - 웹훅: 이벤트는 서버가 처리하는 넷(`pull_request`, `issue_comment`, `pull_request_review`, `pull_request_review_comment`). 같은 주소의 웹훅이 있으면 만들지 않고 맞춘다(비밀값은 GitHub이 돌려주지 않아 늘 다시 넣는다). 같은 주소는 없고 pr-proof의 것으로 보이는 다른 주소(smee 주소, `/webhook/github`로 끝나는 주소)가 있으면 같은 소식이 두 번 오지 않게 만들지 않고 알린다. 권한이 없으면 손으로 등록할 값을 보인다(비밀값 자체는 화면에 내지 않고 파일 경로를 보인다).
+  - 웹훅 받는 주소는 pr-proof가 도는 컴퓨터로 들어오는 주소다(저장소가 공개인지와 상관없다). 주지 않으면 smee.io 주소를 만들고 "PR 소식이 smee.io를 거친다"를 알린다. `start`는 저장한 주소가 smee 주소일 때만 `smee-client`(npm 의존성, 판 고정)를 api·worker와 함께 honcho로 띄운다. 하나가 끝나면 honcho가 나머지를 내린다.
+  - `add <repo>...`: configure의 6·7단계와 같은 코드. 설정이 없으면 configure를 먼저 하라고 한다. `rm <repo>...`: 허용 목록에서 빼고 저장한 주소의 웹훅만 지운다(다른 주소의 웹훅, PR의 코멘트, 열린 수정안 PR, 데이터 폴더의 기록은 그대로). 마지막 repo를 빼면 `repos: []`로 둔다(서버는 빈 목록으로도 뜬다). 지우는 일이라 터미널에서는 한 번 묻고 `--yes`로 건너뛴다. `list`는 설정 파일만 읽고 `--check`일 때만 GitHub에서 웹훅을 본다. 서버는 `config.yaml`을 시작할 때만 읽어 `add`·`rm` 끝에 다시 띄우라고 말한다.
 
 ### 8.6 외부 작성자 PR 가드레일
 

@@ -99,31 +99,86 @@ GitHub 웹훅 ─▶ api (서명 확인, 큐 등록, 동기화) ─▶ Redis 큐
 
 ## 시작하기
 
-필요한 것: macOS나 Linux, Python 3.11 이상, Docker, git, [gh](https://cli.github.com/), [claude](https://docs.anthropic.com/en/docs/claude-code) CLI. 모델 호출은 로그인한 `claude` 계정의 사용량으로 나간다.
+필요한 것:
+
+- macOS나 Linux
+- node 20.18 이상 (`npx`로 친다)
+- python 3.11 이상, Docker(켜 둔다), git, [gh](https://cli.github.com/)
+- [claude](https://docs.anthropic.com/en/docs/claude-code) CLI 설치와 로그인. 깔기만 해서는 안 되고 로그인까지 해 둔다. 모델 호출은 이 로그인한 계정의 사용량으로 나간다. 로그인은 터미널에서 `claude`를 실행해 `/login` 한다.
+
+빠진 것이 있으면 configure가 한 번에 모두 알려 주고 운영체제에 맞는 설치 방법을 보인다.
+
+npm에는 아직 올리지 않았다. 지금은 clone한 폴더에서 `npx .`로 친다. 올린 뒤에는 clone 없이 `npx pr-proof configure`, `npx pr-proof start`가 된다.
+
+```
+git clone https://github.com/Eunryong/pr-proof && cd pr-proof
+npx . configure                  # 처음 설정. 묻는 말에 답한다
+npx . start                      # 서버 실행 (api, worker, smee에서 받아 오기)
+```
+
+configure가 묻는 것은 넷이다.
+
+1. 처리할 repo. 예: `octocat/hello-world`. 여럿이면 띄어 쓴다
+2. GitHub 인증 방식: gh 로그인(`gh auth login`을 해 둔 계정) 또는 토큰
+3. 토큰. 토큰 방식일 때만 묻고, 화면에 보이지 않게 입력한다
+4. 웹훅 받는 주소. 없으면 Enter
+
+나머지는 묻지 않고 한다: Python 실행 환경 설치, 포트(기본 8765. 쓰이고 있을 때만 다른 번호를 묻는다), Redis, 웹훅 비밀값, repo의 읽기·쓰기 권한 확인, 웹훅 등록, Claude 로그인 확인, 끝 확인 표(서버가 시작할 때 하는 확인과 같다: GitHub 인증, Claude 로그인, Docker, Redis). 여러 번 돌려도 같다. 있는 설정과 비밀값은 덮어쓰지 않는다. Claude 로그인이 안 되어 있으면 무엇을 치면 되는지 보이고, 로그인한 뒤 Enter를 누르면 그 자리에서 다시 확인한다(나중에 configure를 다시 돌려도 된다).
+
+**웹훅 받는 주소.** GitHub이 PR 소식을 보낼 주소이고, pr-proof가 도는 컴퓨터로 들어오는 주소다. repo가 공개인지와는 상관없다. 이미 있으면 적는다. 없으면 Enter를 누른다. 그러면 configure가 smee.io 주소를 만들고, `start`가 smee에서 소식을 받아 온다. 이때 PR 소식이 smee.io를 거친다(smee 주소를 아는 사람은 그 소식을 볼 수 있다. 주소는 `chmod 600` 파일에 둔다). 웹훅은 configure가 GitHub API로 등록한다. 등록할 권한이 없으면 손으로 등록할 값을 보인다.
+
+**토큰 방식.** gh 로그인 대신 토큰을 쓸 수 있다. 토큰은 설정 폴더의 `github_token`(`chmod 600`)에 두고 gh와 git에만 넘긴다. 모델 호출과 샌드박스에는 가지 않는다. 필요한 권한(처리할 repo마다):
+
+| 토큰 | 권한 |
+| --- | --- |
+| fine-grained | Contents: Read and write, Pull requests: Read and write, Issues: Read and write, Metadata: Read-only |
+| classic | `repo` (공개 repo만이면 `public_repo`) |
+| 웹훅 등록·삭제 (configure, add, rm) | fine-grained는 Webhooks: Read and write, classic은 `admin:repo_hook` |
+
+토큰이 만료되거나 폐기되면 새 토큰을 `github_token`에 넣는다. 질문 없이 돌릴 때는 환경 변수 `PR_PROOF_GITHUB_TOKEN`으로 준다. 명령줄 인자로는 받지 않는다(셸 기록에 남는다).
+
+repo를 나중에 더하고 빼고 보기:
+
+```
+npx . add <repo>                 # 허용 목록에 더하고 권한을 확인하고 웹훅을 등록한다
+npx . rm <repo>                  # 허용 목록에서 빼고 pr-proof가 등록한 웹훅만 지운다
+npx . list                       # 처리하는 repo 목록. --check를 주면 웹훅까지 확인한다
+```
+
+`rm`은 그 repo의 PR 코멘트, 열린 수정안 PR, 데이터 폴더의 기록(DB, 캐시)은 그대로 둔다. 도는 서버는 목록을 시작할 때만 읽으므로 `add`와 `rm` 뒤에는 서버를 다시 띄운다.
+
+질문 없이 돌리기: `npx . configure --repo octocat/hello-world --auth gh`. 그 밖의 인자는 `--webhook-url`, `--port`, `--dry-run`(파일과 GitHub에 쓰지 않고 할 일만 보인다), `--manual-webhook`(웹훅을 손으로 등록할 값만 보인다)이다. 명령마다 `--help`로 본다.
+
+파이프라인 쪽 설정과 비밀값은 대상 저장소 밖의 `~/.config/pipeline/`에 둔다(`PIPELINE_CONFIG_DIR`로 바꿀 수 있다): `config.yaml`, `webhook_secret`, `github_token`(토큰 방식일 때), `webhook_url`, `pr-proof.env`(포트). Python 실행 환경은 clone한 폴더의 `.venv`에 둔다(npm 패키지로 받았으면 `~/.cache/pipeline/runtime/venv`).
+
+워커는 시작할 때 GitHub 인증, Claude 로그인, Docker, Redis를 확인하고 하나라도 안 되면 멈춘다. 계속 띄워 두는 방법(macOS launchd)과 알림은 [docs/OPERATIONS.md](docs/OPERATIONS.md)에 있다.
+
+<details>
+<summary>손으로 하는 방법</summary>
 
 ```
 git clone https://github.com/Eunryong/pr-proof && cd pr-proof
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e '.[dev]'          # 과거 기록 검색까지 쓰려면 '.[dev,rag]'
 docker compose up -d             # Redis
-cp .env.example .env             # API_PORT 같은 로컬 실행 설정. 비밀값은 넣지 않는다
-gh auth login                    # 코멘트와 수정안 PR을 이 계정으로 단다. 대상 저장소에 쓰기 권한이 필요하다
-claude                           # 처음 한 번 로그인
+cp .env.example .env             # API_PORT(기본 8765) 같은 로컬 실행 설정. 비밀값은 넣지 않는다
+gh auth login                    # 코멘트와 수정안 PR을 이 계정으로 단다. 대상 repo에 쓰기 권한이 필요하다
+claude                           # 처음 한 번 /login
 ```
 
-파이프라인 쪽 설정과 비밀값은 대상 저장소 밖의 `~/.config/pipeline/`에 둔다(`PIPELINE_CONFIG_DIR`로 폴더를 바꿀 수 있다). 비밀값 파일은 `chmod 600`이어야 읽는다.
+비밀값 파일은 `chmod 600`이어야 읽는다.
 
 ```
 mkdir -p ~/.config/pipeline
 cat > ~/.config/pipeline/config.yaml <<'YAML'
-repos: [owner/name]              # 처리할 저장소 허용 목록
+repos: [octocat/hello-world]     # 처리할 repo 허용 목록
 YAML
 openssl rand -hex 32 > ~/.config/pipeline/webhook_secret && chmod 600 ~/.config/pipeline/webhook_secret
 ```
 
-대상 저장소의 GitHub 설정 → Webhooks에 웹훅을 더한다(저장소 주인만 할 수 있다).
+대상 repo의 GitHub 설정 → Webhooks에 웹훅을 더한다(저장소 관리자만 할 수 있다).
 
-- Payload URL: `https://<터널 주소>/webhook/github`. 로컬 서버로 받으려면 터널(예: smee.io)을 쓴다
+- Payload URL: 웹훅 받는 주소. 이 컴퓨터로 받을 주소가 없으면 smee.io 주소를 만들고 `smee-client`로 `http://127.0.0.1:8765/webhook/github`에 넘긴다
 - Content type: `application/json`, Secret: `webhook_secret` 파일의 값
 - 이벤트: Pull requests, Issue comments, Pull request reviews, Pull request review comments
 
@@ -133,7 +188,7 @@ openssl rand -hex 32 > ~/.config/pipeline/webhook_secret && chmod 600 ~/.config/
 scripts/start.sh                 # api(웹훅 + 동기화)와 worker
 ```
 
-워커는 시작할 때 gh·claude 로그인, Docker, Redis를 확인하고 하나라도 안 되면 멈춘다. 계속 띄워 두는 방법(macOS launchd)과 알림은 [docs/OPERATIONS.md](docs/OPERATIONS.md)에 있다.
+</details>
 
 ## 규칙 적기
 
@@ -233,6 +288,7 @@ PR의 코드와 글, 리뷰 코멘트는 모두 믿지 않는 입력으로 다�
 pytest                # 파이프라인 자체 테스트 (Docker 없이)
 pytest -m docker      # 실제 Docker·예제 저장소가 필요한 통합 테스트
 ruff check . && ruff format --check .
+npm test              # npx 입구(bin/pr-proof.js)의 작은 테스트 (node --test)
 ```
 
 - 작업 원칙: [docs/CLAUDE.md](docs/CLAUDE.md)
