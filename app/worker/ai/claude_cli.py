@@ -1,9 +1,11 @@
 """claude CLI 호출 (docs/DESIGN.md 8.4).
 
-호출 모양은 셋이다. 수정 작성은 모델 폴더를 cwd로 파일 도구 다섯 개와 파이프라인 도구 둘(규칙 검사,
+호출 모양은 넷이다. 수정 작성은 모델 폴더를 cwd로 파일 도구 다섯 개와 파이프라인 도구 둘(규칙 검사,
 테스트)을 주고(`fix_tools`), 파이프라인 도구가 없는 수정 작성은 파일 도구만 준다(`file_tools`).
-나머지 단계는 빈 임시 폴더를 cwd로 도구 없이 부르고 구조화 출력을 받는다(`run_structured`). 모두
-권한을 제한한 같은 옵션 위에 모양별 옵션을 더한다. 모델과 호출당 예산은 호출하는 쪽이 정한다.
+위반 판단은 모델 폴더를 cwd로 읽기 도구 셋(Read, Grep, Glob)만 주고 구조화 출력을 받는다
+(`read_tools`: `run_structured`에 `read_in`을 준 호출). 나머지 단계는 빈 임시 폴더를 cwd로 도구
+없이 부르고 구조화 출력을 받는다(`no_tools`). 모두 권한을 제한한 같은 옵션 위에 모양별 옵션을
+더한다. 모델과 호출당 예산은 호출하는 쪽이 정한다.
 파이프라인 도구는 파이프라인이 띄우는 stdio MCP 서버 하나로만 준다(`--mcp-config`와
 `--strict-mcp-config`). 모델에게 명령 실행 도구는 주지 않는다.
 """
@@ -46,13 +48,16 @@ _COMMON_ARGS: Final = (
     "--verbose",
 )
 FILE_TOOLS: Final = "Read,Grep,Glob,Write,Edit"
+# 읽기만 하는 모양의 도구. 쓰기 도구와 명령 실행 도구는 없다
+READ_TOOLS: Final = "Read,Grep,Glob"
 PIPELINE_TOOLS: Final = ",".join(TOOL_NAMES)
-CallShape = Literal["file_tools", "fix_tools", "no_tools"]
+CallShape = Literal["file_tools", "fix_tools", "read_tools", "no_tools"]
 # --tools는 내장 도구만 고른다. MCP 도구는 --mcp-config의 서버에서 오고, dontAsk 모드에서는
 # --allowedTools에 이름이 있어야 부를 수 있다
 _SHAPE_ARGS: Final[Mapping[str, tuple[str, ...]]] = {
     "file_tools": ("--tools", FILE_TOOLS, "--allowedTools", FILE_TOOLS),
     "fix_tools": ("--tools", FILE_TOOLS, "--allowedTools", f"{FILE_TOOLS},{PIPELINE_TOOLS}"),
+    "read_tools": ("--tools", READ_TOOLS, "--allowedTools", READ_TOOLS),
     "no_tools": ("--tools", ""),
 }
 # --json-schema를 주면 CLI가 답을 받는 도구 하나를 스스로 더한다. 파일·웹·실행 도구가 아니다
@@ -61,8 +66,11 @@ STRUCTURED_OUTPUT_TOOL: Final = "StructuredOutput"
 _SHAPE_TOOLS: Final[Mapping[str, frozenset[str]]] = {
     "file_tools": frozenset(FILE_TOOLS.split(",")),
     "fix_tools": frozenset(FILE_TOOLS.split(",")) | frozenset(TOOL_NAMES),
+    "read_tools": frozenset(READ_TOOLS.split(",")) | {STRUCTURED_OUTPUT_TOOL},
     "no_tools": frozenset({STRUCTURED_OUTPUT_TOOL}),
 }
+# 읽기 도구 중 경로를 받는 입력 키. Grep·Glob에 경로가 없으면 cwd 전체를 본 것이다
+_READ_PATH_KEYS: Final[Mapping[str, str]] = {"Read": "file_path", "Grep": "path", "Glob": "path"}
 # 파이프라인 도구가 든 호출의 시간 상한(초): 모델 600초 + 도구 시간 상한 900초 + 여유 300초
 FIX_TOOLS_TIMEOUT_S: Final = 1800.0
 # 테스트 도구 한 번은 샌드박스의 pytest 시간 상한(600초)까지 걸린다. CLI의 MCP 도구 대기 시간(ms)
@@ -94,6 +102,7 @@ class AIErrorKind(StrEnum):
     BUDGET = "budget"  # --max-budget-usd를 넘김
     # 모델에 보인 도구 목록이 기대와 다르거나, 경로 감시 훅이 돌지 않음. 결과를 쓰지 않는다
     TOOLS = "tools"
+    TOOL_CAP = "tool_cap"  # 읽기 도구를 부른 횟수가 호출 하나의 상한을 넘음
     APPLY = "apply"  # 모델 폴더의 변경을 worktree에 적용하지 못함
 
 
@@ -162,6 +171,18 @@ class ToolListMismatch(Exception):
     """system/init의 도구 목록이 기대와 달라 호출을 중단했다."""
 
 
+class ToolCapReached(Exception):
+    """읽기 도구를 부른 횟수가 호출 하나의 상한을 넘어 호출을 중단했다."""
+
+
+@dataclass(frozen=True)
+class ReadFolder:
+    """읽기 도구를 주는 호출의 폴더 (`app/worker/ai/workdir.py`의 모델 폴더)."""
+
+    work: Path  # cwd. worktree의 일반 파일만 복사한 폴더
+    settings: Path  # 경로 감시 훅을 건 설정 파일. work 밖에 있다
+
+
 def claude_env(environ: Mapping[str, str] | None = None) -> dict[str, str]:
     """claude가 로그인을 찾는 데 필요한 변수만 고른다."""
     source = os.environ if environ is None else environ
@@ -211,10 +232,21 @@ def _init_event(line: str) -> dict | None:
     return None
 
 
-def _watch_for(shape: CallShape) -> Watch:
+def _watch_for(shape: CallShape, max_tool_uses: int | None = None) -> Watch:
+    """init의 도구 목록을 확인한다. max_tool_uses가 있으면 모델이 부른 도구(구조화 출력을 내는
+    도구는 빼고)가 그보다 많아지는 순간 ToolCapReached로 멈춘다."""
+    used = 0
+
     def watch(line: str) -> str | None:
-        event = _init_event(line)
-        return None if event is None else tool_list_problem(event, shape)
+        nonlocal used
+        event = _json_object(line)
+        if event is not None and event.get("type") == "system" and event.get("subtype") == "init":
+            return tool_list_problem(event, shape)
+        if max_tool_uses is not None:
+            used += sum(1 for n in _tool_names(event) if n != STRUCTURED_OUTPUT_TOOL)
+            if used > max_tool_uses:
+                raise ToolCapReached(f"도구 호출이 상한 {max_tool_uses}회를 넘음")
+        return None
 
     return watch
 
@@ -321,6 +353,8 @@ class StructuredResult:
 
     model_id는 별칭이 가리킨 전체 모델 id(`modelUsage`의 키)다. 모르면 "".
     input_tokens는 캐시 생성·읽기를 합친 실제 입력이다. 모르면 None.
+    tool_uses(목록 안 도구를 부른 횟수, 구조화 출력은 빼고)와 reads(모델이 읽기 도구에 준 경로.
+    cwd 기준이고 cwd 자체는 ".")는 읽기 도구를 준 호출(`read_tools`)에서만 찬다.
     """
 
     ok: bool
@@ -332,6 +366,10 @@ class StructuredResult:
     cost_usd: float | None
     permission_denials: int
     detail: str = ""
+    tool_uses: int = 0
+    reads: tuple[str, ...] = ()
+    unexpected_tools: tuple[tuple[str, int], ...] = ()  # 목록 밖 도구의 (이름, 횟수)
+    num_turns: int = 0
 
 
 def run_structured(
@@ -344,27 +382,45 @@ def run_structured(
     timeout: float = DEFAULT_TIMEOUT_S,
     runner: Runner = _run,
     environ: Mapping[str, str] | None = None,
+    read_in: ReadFolder | None = None,
+    max_tool_uses: int | None = None,
 ) -> StructuredResult:
-    """도구 없이 claude를 한 번 실행하고 스키마에 맞춘 JSON 객체를 받는다 (8.4).
+    """claude를 한 번 실행하고 스키마에 맞춘 JSON 객체를 받는다 (8.4).
 
     파이프라인의 지시는 system_prompt(--append-system-prompt)로만, 믿지 않는 자료는 prompt(표준
-    입력)로만 넘긴다. cwd는 이 호출만의 빈 임시 폴더라 저장소의 파일·설정이 보이지 않는다.
+    입력)로만 넘긴다. read_in이 없으면 도구 없이(`no_tools`) 부르고, cwd는 이 호출만의 빈 임시
+    폴더라 저장소의 파일·설정이 보이지 않는다. read_in이 있으면 그 폴더를 cwd로 읽기 도구 셋만
+    주고(`read_tools`) 경로 감시 훅의 설정을 `--settings`로 넘긴다. 훅이 돌았는지는 폴더를 연 쪽
+    (`workdir.reading_folder`)이 확인한다. max_tool_uses는 읽기 도구를 부를 수 있는 횟수이고,
+    넘으면 프로세스를 멈추고 TOOL_CAP으로 돌려준다.
     """
     _check_system_prompt(system_prompt)
-    extra = ("--append-system-prompt", system_prompt, "--json-schema", json.dumps(schema))
-    args = build_args("no_tools", model, max_budget_usd, extra)
+    shape: CallShape = "no_tools" if read_in is None else "read_tools"
+    extra: tuple[str, ...] = () if read_in is None else ("--settings", str(read_in.settings))
+    extra += ("--append-system-prompt", system_prompt, "--json-schema", json.dumps(schema))
+    args = build_args(shape, model, max_budget_usd, extra)
+    watch = _watch_for(shape, None if read_in is None else max_tool_uses)
     try:
-        with tempfile.TemporaryDirectory(prefix="claude-no-tools-") as empty:
-            watch = _watch_for("no_tools")
-            proc = runner(args, prompt, Path(empty), claude_env(environ), timeout, watch)
+        if read_in is None:
+            with tempfile.TemporaryDirectory(prefix="claude-no-tools-") as empty:
+                proc = runner(args, prompt, Path(empty), claude_env(environ), timeout, watch)
+        else:
+            proc = runner(args, prompt, read_in.work, claude_env(environ), timeout, watch)
     except subprocess.TimeoutExpired:
         return _structured_failure(AIErrorKind.TIMEOUT, f"{timeout:g}초 안에 끝나지 않음")
     except ToolListMismatch as e:
-        log.error("claude 도구 없는 호출을 중단함: %s", e)
+        log.error("claude 구조화 출력 호출(%s)을 중단함: %s", shape, e)
         return _structured_failure(AIErrorKind.TOOLS, str(e))
+    except ToolCapReached as e:
+        log.warning("claude 읽기 호출을 중단함: %s", e)
+        return _structured_failure(AIErrorKind.TOOL_CAP, str(e))
     except OSError as e:
         return _structured_failure(AIErrorKind.LAUNCH, str(e))
-    return parse_structured_output(proc.stdout, proc.returncode, proc.stderr)
+    cwd = None if read_in is None else read_in.work
+    result = parse_structured_output(proc.stdout, proc.returncode, proc.stderr, shape, cwd)
+    if result.unexpected_tools:
+        log.warning("claude가 목록 밖 도구를 부르려 함: %s", result.unexpected_tools)
+    return result
 
 
 def _check_system_prompt(system_prompt: str) -> None:
@@ -380,14 +436,13 @@ def parse_output(
     if data is None:
         return _failure(AIErrorKind.BAD_JSON, _tail(stderr or stdout), returncode=returncode)
     error, detail = _checked_status(init, shape, data, returncode)
-    turns = data.get("num_turns")
     text = data.get("result")
     input_tokens, output_tokens = _usage(data.get("usage"))
     return ClaudeResult(
         ok=error is None,
         error=error,
         cost_usd=_cost(data),
-        num_turns=turns if isinstance(turns, int) else 0,
+        num_turns=_turns(data),
         permission_denials=_denials(data.get("permission_denials")),
         text=text if isinstance(text, str) else "",
         detail=detail,
@@ -399,13 +454,21 @@ def parse_output(
     )
 
 
-def parse_structured_output(stdout: str, returncode: int, stderr: str = "") -> StructuredResult:
-    """`--json-schema`를 준 호출의 출력. `structured_output`, 없으면 `result`를 JSON으로 읽는다."""
+def parse_structured_output(
+    stdout: str,
+    returncode: int,
+    stderr: str = "",
+    shape: CallShape = "no_tools",
+    cwd: Path | None = None,
+) -> StructuredResult:
+    """`--json-schema`를 준 호출의 출력. `structured_output`, 없으면 `result`를 JSON으로 읽는다.
+
+    cwd가 있으면(읽기 도구를 준 호출) 모델이 읽은 경로를 cwd 기준으로 모은다."""
     init, data = _events(stdout)
     if data is None:
         detail = f"종료 코드 {returncode}: {_tail(stderr or stdout)}"
         return _structured_failure(AIErrorKind.BAD_JSON, detail)
-    error, detail = _checked_status(init, "no_tools", data, returncode)
+    error, detail = _checked_status(init, shape, data, returncode)
     answer = None
     if error is None:
         answer = _answer(data)
@@ -422,7 +485,16 @@ def parse_structured_output(stdout: str, returncode: int, stderr: str = "") -> S
         cost_usd=_cost(data),
         permission_denials=len(_denials(data.get("permission_denials"))),
         detail=detail,
+        tool_uses=_expected_tool_uses(stdout, shape, skip=STRUCTURED_OUTPUT_TOOL),
+        reads=() if cwd is None else read_paths(stdout, cwd),
+        unexpected_tools=_unexpected_tools(stdout, shape),
+        num_turns=_turns(data),
     )
+
+
+def _turns(data: dict) -> int:
+    turns = data.get("num_turns")
+    return turns if isinstance(turns, int) else 0
 
 
 def _json_object(text: str) -> dict | None:
@@ -447,19 +519,57 @@ def _events(stdout: str) -> tuple[dict | None, dict | None]:
     return init, result
 
 
+def _tool_blocks(event: dict | None) -> list[dict]:
+    """assistant 메시지 한 줄의 tool_use 블록들."""
+    message = event.get("message") if event and event.get("type") == "assistant" else None
+    content = message.get("content") if isinstance(message, dict) else None
+    return [
+        b for b in (content if isinstance(content, list) else ())
+        if isinstance(b, dict) and b.get("type") == "tool_use"
+    ]  # fmt: skip
+
+
+def _tool_names(event: dict | None) -> list[str]:
+    return [str(b.get("name", "")) for b in _tool_blocks(event)]
+
+
 def _tool_counts(stdout: str) -> dict[str, int]:
     """assistant 메시지의 tool_use를 도구 이름별로 센다."""
     counts: dict[str, int] = {}
     for line in stdout.splitlines():
-        event = _json_object(line)
-        message = event.get("message") if event and event.get("type") == "assistant" else None
-        content = message.get("content") if isinstance(message, dict) else None
-        for block in content if isinstance(content, list) else ():
-            if not isinstance(block, dict) or block.get("type") != "tool_use":
-                continue
-            name = str(block.get("name", ""))
+        for name in _tool_names(_json_object(line)):
             counts[name] = counts.get(name, 0) + 1
     return counts
+
+
+def folder_relative(path: str, cwd: Path) -> str | None:
+    """도구 입력의 경로를 cwd 기준 경로로. 링크를 푼 실제 위치가 cwd 밖이면 None, cwd 자체는 "."."""
+    if not path or "\0" in path:
+        return None
+    root = os.path.realpath(cwd)
+    real = os.path.realpath(os.path.join(root, path))
+    if real != root and not real.startswith(root + os.sep):
+        return None
+    return Path(os.path.relpath(real, root)).as_posix()
+
+
+def read_paths(stdout: str, cwd: Path) -> tuple[str, ...]:
+    """모델이 Read·Grep·Glob에 준 경로 (cwd 기준, 이름순, 겹침 없음). 경로가 없는 Grep·Glob은
+    cwd 전체(".")다. cwd 밖의 경로는 훅이 거부했으므로 넣지 않는다."""
+    found: set[str] = set()
+    for line in stdout.splitlines():
+        for block in _tool_blocks(_json_object(line)):
+            key = _READ_PATH_KEYS.get(str(block.get("name", "")))
+            tool_input = block.get("input")
+            if key is None or not isinstance(tool_input, dict):
+                continue
+            value = tool_input.get(key)
+            if value is None and key == "path":
+                value = "."
+            rel = folder_relative(value, cwd) if isinstance(value, str) else None
+            if rel is not None:
+                found.add(rel)
+    return tuple(sorted(found))
 
 
 def _unexpected_tools(stdout: str, shape: CallShape) -> tuple[tuple[str, int], ...]:
@@ -468,8 +578,9 @@ def _unexpected_tools(stdout: str, shape: CallShape) -> tuple[tuple[str, int], .
     return tuple(sorted((n, c) for n, c in counts.items() if n not in _SHAPE_TOOLS[shape]))
 
 
-def _expected_tool_uses(stdout: str, shape: CallShape) -> int:
-    return sum(c for n, c in _tool_counts(stdout).items() if n in _SHAPE_TOOLS[shape])
+def _expected_tool_uses(stdout: str, shape: CallShape, skip: str = "") -> int:
+    counts = _tool_counts(stdout)
+    return sum(c for n, c in counts.items() if n in _SHAPE_TOOLS[shape] and n != skip)
 
 
 def _checked_status(

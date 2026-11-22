@@ -549,3 +549,96 @@ def test_pipeline_tool_uses_are_expected_and_others_are_counted() -> None:
     result = _run(FakeRunner("".join(json.dumps(e) + "\n" for e in events)), mcp_config="{}")
     assert result.ok and result.tool_uses == 2
     assert result.unexpected_tools == (("mcp__other__x", 1),)
+
+
+READ_TOOLS: Final = ["Read", "Grep", "Glob", "StructuredOutput"]
+
+
+def _read_use(name: str, **tool_input: object) -> dict:
+    block = {"type": "tool_use", "name": name, "input": tool_input}
+    return {"type": "assistant", "message": {"content": [block]}}
+
+
+def _read_stream(*uses: dict, tools: list[str] = READ_TOOLS) -> str:
+    events = [
+        {"type": "system", "subtype": "init", "tools": tools}, *uses,
+        json.loads(_structured_output().splitlines()[-1]),
+    ]  # fmt: skip
+    return "".join(json.dumps(e) + "\n" for e in events)
+
+
+def _folder(tmp_path: Path) -> ai.ReadFolder:
+    work = tmp_path / "work"
+    (work / "pkg").mkdir(parents=True)
+    (work / "pkg" / "a.py").write_text("x = 1\n")
+    return ai.ReadFolder(work, tmp_path / "settings.json")
+
+
+def test_read_tools_call_runs_in_the_folder_with_only_the_three_read_tools(tmp_path) -> None:
+    """위반 판단의 모양: 모델 폴더가 cwd, 읽기 도구 셋만, 훅 설정은 --settings로 (8.4)."""
+    folder = _folder(tmp_path)
+    runner = FakeRunner(_read_stream())
+    result = _structured(runner, prompt="--hunk", system_prompt="지시", read_in=folder)
+    args, stdin, cwd, env, _ = runner.calls[0]
+    assert args[: args.index("--model")] == [
+        "claude", "-p", "--restricted", "--strict-mcp-config", "--permission-mode", "dontAsk",
+        "--disable-slash-commands", "--no-session-persistence",
+        "--output-format", "stream-json", "--verbose",
+        "--tools", "Read,Grep,Glob", "--allowedTools", "Read,Grep,Glob",
+        "--settings", str(folder.settings),
+        "--append-system-prompt", "지시",
+        "--json-schema", json.dumps(SCHEMA),
+    ]  # fmt: skip
+    assert (stdin, cwd, env) == ("--hunk", folder.work, {"HOME": "/h"})
+    assert result.ok and result.data == {"rules": []}
+
+
+@pytest.mark.parametrize(
+    "tools",
+    [["Read", "Grep", "Glob"], [*READ_TOOLS, "Write"], [*READ_TOOLS, "Bash"],
+     ["StructuredOutput"], [*READ_TOOLS, "Edit"]],
+)  # fmt: skip
+def test_read_tools_call_stops_unless_the_list_is_exactly_the_four(tmp_path, tools) -> None:
+    runner = FakeRunner(_read_stream(tools=tools))
+    result = _structured(runner, read_in=_folder(tmp_path))
+    assert result.error == AIErrorKind.TOOLS and result.data is None
+    assert runner.lines_seen == 1  # init에서 멈춘다
+
+
+def test_no_tools_call_still_rejects_the_read_tools() -> None:
+    result = _structured(FakeRunner(_structured_output(tools=READ_TOOLS)))
+    assert result.error == AIErrorKind.TOOLS
+
+
+def test_read_paths_are_relative_to_the_folder_and_outside_paths_are_left_out(tmp_path) -> None:
+    folder = _folder(tmp_path)
+    outside = tmp_path / "outside.txt"
+    outside.write_text("secret\n")
+    (folder.work / "link.txt").symlink_to(outside)
+    runner = FakeRunner(_read_stream(
+        _read_use("Read", file_path=str(folder.work / "pkg" / "a.py")),
+        _read_use("Read", file_path="pkg/a.py"),
+        _read_use("Grep", pattern="validate"),  # 경로가 없으면 폴더 전체
+        _read_use("Glob", pattern="*.py", path="pkg"),
+        _read_use("Read", file_path=str(outside)),
+        _read_use("Read", file_path="link.txt"),  # 링크의 실제 위치가 밖이다
+        _read_use("Grep", pattern="x", path="../"),
+        _read_use("Bash", command="cat /etc/passwd"),
+        _read_use("StructuredOutput", rules=[]),
+    ))  # fmt: skip
+    result = _structured(runner, read_in=folder)
+    assert result.reads == (".", "pkg", "pkg/a.py")
+    assert result.tool_uses == 7  # 목록 안의 Read·Grep·Glob. 구조화 출력과 Bash는 세지 않는다
+    assert result.unexpected_tools == (("Bash", 1),)
+
+
+def test_read_tools_call_stops_when_the_model_reads_more_than_the_cap(tmp_path) -> None:
+    uses = [_read_use("Read", file_path="pkg/a.py") for _ in range(3)]
+    runner = FakeRunner(_read_stream(*uses, _read_use("StructuredOutput")))
+    result = _structured(runner, read_in=_folder(tmp_path), max_tool_uses=2)
+    assert result.error == AIErrorKind.TOOL_CAP and result.data is None
+    assert "2회" in result.detail
+    assert runner.lines_seen == 4  # init과 도구 셋. 세 번째에서 멈춘다
+    ok = _structured(FakeRunner(_read_stream(*uses[:2], _read_use("StructuredOutput"))),
+                     read_in=_folder(tmp_path / "b"), max_tool_uses=2)  # fmt: skip
+    assert ok.ok and ok.tool_uses == 2

@@ -124,7 +124,9 @@ def test_script_blocks_when_it_cannot_decide(dirs, tmp_path: Path) -> None:
     assert unwritable.returncode == 2
 
 
-@pytest.mark.parametrize("tool", ["mcp__proof__check_rules", "mcp__proof__run_tests"])
+@pytest.mark.parametrize(
+    "tool", ["mcp__proof__check_rules", "mcp__proof__run_tests", "StructuredOutput"]
+)
 def test_pipeline_tools_are_allowed_without_a_path(dirs, tool: str) -> None:
     root, _ = dirs
     assert (

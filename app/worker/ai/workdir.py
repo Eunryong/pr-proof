@@ -14,8 +14,12 @@
 
 훅이 실제로 돌았는지는 훅의 기록 줄 수로 확인한다. 모델이 도구를 불렀는데 기록이 그보다 적으면
 결과를 버린다.
+
+위반 판단(4.5)도 같은 폴더와 훅에서 읽기 도구(Read, Grep, Glob)로 PR의 코드를 읽는다
+(`reading_folder`). 쓰기 도구가 없고, 폴더의 변경은 worktree에 적용하지 않는다.
 """
 
+import hashlib
 import json
 import logging
 import os
@@ -32,7 +36,7 @@ from typing import Final
 
 from app.worker import repo
 from app.worker.ai import claude_cli, tool_server
-from app.worker.ai.claude_cli import AIErrorKind, ClaudeResult
+from app.worker.ai.claude_cli import AIErrorKind, ClaudeResult, StructuredResult
 from app.worker.ai.tool_server import Handler
 from app.worker.sandbox.container import OUT_DIR
 
@@ -140,8 +144,8 @@ def _real_directories(root: Path, rel: str) -> bool:
     return True
 
 
-def _copy_regular(source: Path, target: Path) -> bool:
-    """일반 파일 하나를 복사한다. 링크·특수 파일·너무 큰 파일은 False.
+def _read_regular(source: Path) -> tuple[bytes, int] | None:
+    """일반 파일 하나의 (내용, 모드). 링크·특수 파일·너무 큰 파일은 None.
 
     O_NOFOLLOW로 열고, 연 파일을 fstat으로 다시 확인한다(확인과 열기 사이에 바뀐 경우).
     """
@@ -149,39 +153,74 @@ def _copy_regular(source: Path, target: Path) -> bool:
     try:
         fd = os.open(source, flags)
     except OSError:
-        return False
+        return None
     try:
         info = os.fstat(fd)
         if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_FILE_BYTES:
-            return False
+            return None
         with os.fdopen(fd, "rb", closefd=False) as f:
             data = f.read(MAX_FILE_BYTES + 1)
     except OSError:
-        return False
+        return None
     finally:
         os.close(fd)
-    if len(data) > MAX_FILE_BYTES:
-        return False
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_bytes(data)
-    target.chmod(0o755 if info.st_mode & stat.S_IXUSR else 0o644)
-    return True
+    return None if len(data) > MAX_FILE_BYTES else (data, info.st_mode)
+
+
+def _copyable(worktree: Path, rel: str) -> tuple[bytes, int] | None:
+    """모델 폴더에 복사될 파일이면 (내용, 모드), 아니면 None. 안전한 상대 경로, `.git`과 파이프라인
+    산출물이 아님, 상위 폴더가 모두 진짜 폴더, 일반 파일, 크기 상한 안."""
+    is_output = rel == OUT_DIR or rel.startswith(f"{OUT_DIR}/")
+    if (
+        is_output
+        or not _safe_relative(rel)
+        or rel.split("/")[0] == ".git"
+        or not _real_directories(worktree, rel)
+    ):
+        return None
+    return _read_regular(worktree / rel)
+
+
+def regular_bytes(worktree: Path, rel: str) -> bytes | None:
+    """모델 폴더에 복사될 파일이면 그 내용, 아니면 None (복사와 같은 조건)."""
+    found = _copyable(worktree, rel)
+    return None if found is None else found[0]
 
 
 def copy_regular_files(worktree: Path, paths: Sequence[str], work: Path) -> list[str]:
     """paths(worktree 기준) 중 일반 파일만 work로 복사하고, 복사하지 않은 경로를 돌려준다."""
     skipped: list[str] = []
     for rel in paths:
-        is_output = rel == OUT_DIR or rel.startswith(f"{OUT_DIR}/")
-        if (
-            is_output
-            or not _safe_relative(rel)
-            or rel.split("/")[0] == ".git"
-            or not _real_directories(worktree, rel)
-            or not _copy_regular(worktree / rel, work / rel)
-        ):
+        found = _copyable(worktree, rel)
+        if found is None:
             skipped.append(rel)
+            continue
+        data, mode = found
+        target = work / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+        target.chmod(0o755 if mode & stat.S_IXUSR else 0o644)
     return skipped
+
+
+def path_digest(worktree: Path, rel: str, files: Sequence[str]) -> str:
+    """모델 폴더에서 rel이 가리키던 것의 해시. files는 `repo.list_files(worktree)`다.
+
+    파일이면 그 내용, 폴더(또는 ".")면 그 아래 복사될 파일들의 경로와 내용, 아무것도 없으면 "-".
+    위반 판단이 저장한 답을 다시 쓸 때 모델이 읽은 곳이 그대로인지 맞춰 보는 데 쓴다 (4.5)."""
+    if rel in files:
+        data = regular_bytes(worktree, rel)
+        return "-" if data is None else hashlib.sha256(data).hexdigest()
+    prefix = "" if rel == "." else rel.rstrip("/") + "/"
+    entries = []
+    for path in files:
+        if path.startswith(prefix):
+            data = regular_bytes(worktree, path)
+            if data is not None:
+                entries.append([path, hashlib.sha256(data).hexdigest()])
+    if not entries:
+        return "-"
+    return hashlib.sha256(json.dumps(entries, ensure_ascii=False).encode()).hexdigest()
 
 
 def hook_settings(work: Path, hook_log: Path, python: str = sys.executable) -> str:
@@ -211,6 +250,35 @@ def model_folder(worktree: Path, paths: Sequence[str]) -> Iterator[ModelFolder]:
 
 def _failed(result: ClaudeResult, kind: AIErrorKind, detail: str) -> ClaudeResult:
     return replace(result, ok=False, error=kind, detail=detail)
+
+
+# (사용자 메시지, *, system_prompt, schema, model, max_budget_usd, ...) → 결과.
+# `claude_cli.run_structured`의 모양이다
+AsksModel = Callable[..., StructuredResult]
+
+
+@contextmanager
+def reading_folder(worktree: Path, ask: AsksModel) -> Iterator[AsksModel]:
+    """worktree의 일반 파일만 복사한 모델 폴더를 열고, 그 폴더에서 읽기 도구로 묻는 함수를 준다.
+
+    폴더 하나를 블록 안의 호출들이 같이 쓰고 블록이 끝나면 지운다. 모델에게는 쓰기 도구가 없고,
+    폴더에서 무엇이 바뀌어도 worktree에 적용하지 않는다. 호출마다 경로 감시 훅의 기록이 모델이 부른
+    도구 수만큼 늘었는지 보고, 모자라면 답을 버리고 TOOLS 오류로 돌려준다(수정 작성과 같은 확인).
+    """
+    with model_folder(worktree, repo.list_files(worktree)) as folder:
+        where = claude_cli.ReadFolder(folder.work, folder.settings)
+
+        def ask_in_folder(prompt: str, **kwargs: object) -> StructuredResult:
+            before = folder.hook_calls()
+            result = ask(prompt, read_in=where, **kwargs)
+            ran = folder.hook_calls() - before
+            if result.error != AIErrorKind.TOOLS and ran < result.tool_uses:
+                detail = f"경로 감시 훅이 돌지 않음: 도구 호출 {result.tool_uses}건, 훅 {ran}건"
+                log.error("%s. 위반 판단의 답을 버린다", detail)
+                return replace(result, ok=False, error=AIErrorKind.TOOLS, data=None, detail=detail)
+            return result
+
+        yield ask_in_folder
 
 
 def _synced_first(folder: ModelFolder, worktree: Path, handler: Handler) -> Handler:
