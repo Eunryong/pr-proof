@@ -35,6 +35,15 @@ def test_command_key_uses_comment_id_not_head_sha():
     assert first.dedup_key != second.dedup_key
 
 
+def test_feedback_and_resolve_have_one_key_per_pr_regardless_of_head():
+    """작업은 "이 PR의 처리하지 않은 코멘트를 맞춰라"라서 커밋이 바뀌어도 같은 작업이다."""
+    a = make(kind="feedback", head_sha="a")
+    b = make(kind="feedback", head_sha=None)
+    assert a.dedup_key == b.dedup_key == "owner/name#7#feedback"
+    assert make(kind="resolve", head_sha=None).dedup_key == "owner/name#7#resolve"
+    assert make(kind="feedback").dedup_key != make(pr_number=8, kind="feedback").dedup_key
+
+
 @pytest.mark.parametrize(
     "fields",
     [
@@ -42,6 +51,8 @@ def test_command_key_uses_comment_id_not_head_sha():
         {"kind": "command", "comment_id": 1},
         {"kind": "update", "command": "/recheck"},
         {"kind": "update", "comment_id": 1},
+        {"kind": "feedback", "command": "/fix"},
+        {"kind": "resolve", "comment_id": 1},
         {"kind": "merge"},
         {"source": "manual"},
     ],

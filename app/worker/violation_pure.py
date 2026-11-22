@@ -13,7 +13,8 @@ class Violation:
     file: str
     line: int  # 파일 단위 위반이면 0
     message: str  # 도구의 메시지 또는 모델의 why
-    found_by: Literal["tool", "checker", "model"]
+    # feedback: 받아들인 PR 코멘트(4.11). 검사기가 없어 고친 뒤에는 그 파일이 바뀐 것만 본다
+    found_by: Literal["tool", "checker", "model", "feedback"]
     code: str = ""  # 도구의 규칙 코드
     line_text: str | None = None  # 앞뒤 공백을 뺀 줄 내용. 거절 기록과 맞춰 본다
     mechanical_fix: bool = False  # 도구가 동작을 바꾸지 않는 수정을 낼 수 있다

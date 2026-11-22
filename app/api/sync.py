@@ -21,6 +21,7 @@ from app.shared import notify as macos
 from app.shared import version
 from app.shared.comment_pure import command_in_comment
 from app.shared.config import PipelineConfig
+from app.shared.feedback_pure import feedback_in_comment
 from app.shared.job_pure import PRJob
 from app.shared.ops_alert_pure import Kind
 
@@ -43,6 +44,7 @@ def run_once(
     list_prs: Callable[[str], list[github.OpenPR]] = github.list_open_prs,
     head_time: Callable[[str, str], str] = github.head_commit_time,
     list_comments: Callable[[str, int, str], list[github.PRComment]] = github.list_comments_since,
+    list_feedback: Callable[[str, int], list[github.FeedbackItem]] = github.list_feedback,
     auth_ok: Callable[[], bool] = github.auth_ok,
     now: datetime | None = None,
     pipeline_commit: str | None = None,
@@ -66,6 +68,12 @@ def run_once(
             job = PRJob(repo=repo, pr_number=number, kind="close", source="sync")
             if queue.enqueue(redis, job) == "queued":
                 result.enqueued.append((repo, number, "closed_pr"))
+        # 받아들인 코멘트의 수정안이 머지됐는데 웹훅을 놓쳤다. 원래 PR이 이미 닫혔어도 넣는다
+        # (수정안을 머지한 뒤 원래 PR도 머지됐을 수 있다). 머지됐는지는 워커가 GitHub에서 본다
+        for number in sorted(history.prs_awaiting_resolve(repo)):
+            job = PRJob(repo=repo, pr_number=number, kind="resolve", source="sync")
+            if queue.enqueue(redis, job) == "queued":
+                result.enqueued.append((repo, number, "awaiting_resolve"))
         for pr in prs:
             if pr.head_ref.startswith(PIPELINE_BRANCH_PREFIX):
                 continue
@@ -74,6 +82,13 @@ def run_once(
             except github.GitHubReadError as e:
                 log.warning("동기화: %s#%s 명령 조회 실패: %s", repo, pr.number, e)
             runs = history.runs_for(repo, pr.number, pr.head_sha)
+            # 승인을 기다리는 외부 작성자의 PR은 코멘트도 처리하지 않는다. 넣으면 주기마다
+            # 승인 안내를 다시 달고 blocked 기록이 쌓인다 (8.6)
+            if not (runs and runs[-1].state == "blocked"):
+                try:
+                    _unhandled_feedback(repo, pr, redis, history, result, list_feedback)
+                except github.GitHubReadError as e:
+                    log.warning("동기화: %s#%s 코멘트 조회 실패: %s", repo, pr.number, e)
             reason = enqueue_reason(
                 runs, now, env_error_backoff=backoff, heartbeat_timeout=heartbeat_timeout,
                 pipeline_commit=pipeline_commit,
@@ -137,3 +152,36 @@ def _missed_commands(
         )
         if queue.enqueue(redis, job) == "queued":
             result.enqueued.append((repo, pr.number, "missed_command"))
+
+
+def _unhandled_feedback(
+    repo: str,
+    pr: github.OpenPR,
+    redis: Redis,
+    history: History,
+    result: SyncResult,
+    list_feedback: Callable[[str, int], list[github.FeedbackItem]],
+) -> None:
+    """다룰 코멘트 중 워커가 처리하지 않은 것이 하나라도 있으면 PR마다 feedback 작업 하나를 넣는다.
+
+    어떤 코멘트인지는 싣지 않는다(워커가 GitHub에서 읽는다). 웹훅이 오지 않았거나 이 기능이 생기기
+    전에 달린 코멘트도 여기서 걸리므로 `/recheck`가 필요 없다. 거르는 규칙은 웹훅과 같은 함수다.
+    """
+    handled = history.handled_feedback_keys(repo, pr.number, pr.head_sha)
+    for item in list_feedback(repo, pr.number):
+        if (item.kind, item.id) in handled:
+            continue
+        if not feedback_in_comment(item.body, item.author_association, item.login)[0]:
+            continue
+        job = PRJob(
+            repo=repo,
+            pr_number=pr.number,
+            kind="feedback",
+            head_sha=pr.head_sha,
+            base_sha=pr.base_sha,
+            source="sync",
+            author_login=pr.author_login or None,
+        )
+        if queue.enqueue(redis, job) == "queued":
+            result.enqueued.append((repo, pr.number, "unhandled_feedback"))
+        return

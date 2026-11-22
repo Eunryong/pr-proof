@@ -8,7 +8,9 @@ from pydantic import BaseModel, model_validator
 class PRJob(BaseModel):
     repo: str  # "owner/name"
     pr_number: int
-    kind: Literal["update", "command", "close"]
+    # feedback: PR의 처리하지 않은 코멘트를 지금 상태에 맞춘다(어떤 코멘트인지는 워커가 읽는다).
+    # resolve: 머지된 수정안의 코멘트 스레드를 해결됨으로 바꾼다. pr_number는 원래 PR이다
+    kind: Literal["update", "command", "close", "feedback", "resolve"]
     head_sha: str | None = None  # issue_comment 웹훅에는 없다. 없으면 워커가 조회한다
     base_sha: str | None = None
     command: str | None = None  # "/recheck", "/fix mechanical" 등. 값 검증과 안내는 워커가 한다
@@ -35,4 +37,7 @@ class PRJob(BaseModel):
         """대기·실행 중인 같은 작업을 다시 등록하지 않기 위한 키."""
         if self.kind == "command":
             return f"{self.repo}#{self.pr_number}#command#{self.comment_id}"
+        if self.kind in ("feedback", "resolve"):
+            # PR마다 대기 중인 작업 하나. 커밋이 바뀌어도 같은 작업이다
+            return f"{self.repo}#{self.pr_number}#{self.kind}"
         return f"{self.repo}#{self.pr_number}#{self.head_sha}#{self.kind}"

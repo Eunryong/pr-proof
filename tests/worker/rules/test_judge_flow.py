@@ -101,7 +101,7 @@ def _run(env, tmp_path: Path, pr: dict[str, str] = PR, pr_number: int = 1):
     job = PRJob(repo="o/r", pr_number=pr_number, kind="update", head_sha=head, base_sha=base_sha,
                 source="webhook")  # fmt: skip
     deps = env["deps"]
-    return graph.run_flow(job, update._context(deps, deps.store.start_run(job), None))
+    return graph.run_flow(job, update.flow_context(deps, deps.store.start_run(job), None))
 
 
 def _kinds(model: FakeModel) -> list[str]:

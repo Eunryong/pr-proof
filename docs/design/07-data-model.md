@@ -178,6 +178,7 @@ class Record:
 | `rulesets` | 캐시 키 → 규칙 묶음 | 새로 |
 | `checkers` | 채택한 검사기와 실패한 시도 | 새로 |
 | `model_cache` | 해시 키 → 모델 결과 (단계, 모델, 프롬프트 버전, 결과 JSON) | 있음. 모델 판단은 (규칙, hunk) 쌍마다 한 줄 (4단계, 2026-11-20). 테이블은 그대로다 |
+| `feedback` | 처리한 PR 코멘트(4.11): 종류, 코멘트 id, 스레드, 글쓴이, 처리한 커밋, 판단(`accepted`·`rejected`·`no_action`·`deferred`·`error`), 까닭, 답글 id, 수정안 번호, 스레드를 해결한 때. (repo, kind, item_id)마다 하나 | 있음 (2026-11-22. `deferred`와 처리하며 바로 해결한 `resolved_at`은 둘째 덩어리) |
 | `violations` | 검사별 위반. 다음 커밋에서 "작성자가 직접 고침"을 알아내는 데 쓴다 | 있음 (문서 규칙 위반, 2026-11-20) |
 | `fix_decisions` | 위반별 수정 판단과 이유 | 새로 |
 | `fix_attempts` | 수정 시도: 묶음, 회차, 모델, 검증 결과, 통과한 패치와 설명 JSON | 있음 (문서 규칙 경로, 2026-11-20. 고친 뒤 파일 해시와 대상 위반도 둔다. v1 경로는 `fixes/` 폴더의 패치 파일. 5단계에 검색으로 넣은 기록 id `references_json`(NULL 허용 열)을 더했다) |

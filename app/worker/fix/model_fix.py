@@ -102,6 +102,8 @@ NOTHING_CHANGED: Final = "아무 파일도 바꾸지 않았다. 목록의 위반
 # 0.50)보다 크게 둔다. 끝없이 도는 호출을 막을 뿐 상한 계산은 호출 수로 한다
 FIX_CALL_BUDGET_USD: Final = {"light": 1.00, "heavy": 2.00}
 _NEW_FILE_CODES: Final = frozenset({"??", " A"})
+# 도구·검사기로 다시 확인하지 못하는 위반: 모델이 찾은 것, 받아들인 코멘트 (4.8의 5번, 4.11)
+_UNCHECKED: Final = frozenset({"model", "feedback"})
 
 
 def module_constants(worktree: Path, files: Sequence[str]) -> dict[str, list[str]]:
@@ -204,15 +206,17 @@ def save_attempt(
     fix: ModelFix,
     notes: Sequence[records_pure.Target],
     worktree: Path,
+    bundle: str = MODEL_BUNDLE,
 ) -> ModelFix:
     """시도 결과를 `fix_attempts`에 저장하고 그 id를 붙인다. 검증을 통과했으면 지금 worktree의
-    패치와 바뀐 파일의 해시도 남긴다. 전달은 이 패치만 올린다 (4.8 끝)."""
+    패치와 바뀐 파일의 해시도 남긴다. 전달은 이 패치만 올린다 (4.8 끝). bundle은 코멘트 수정이면
+    `feedback`이다 (4.11)."""
     ready = fix.ready
     explanation = asdict(fix.explanation) if fix.explanation is not None else None
     attempt_id = store.save_fix_attempt(
         FixAttempt(
             repo=job.repo, pr_number=job.pr_number, head_sha=job.head_sha, merge_base=merge_base,
-            bundle=MODEL_BUNDLE, status=fix.status, attempts=fix.attempts,
+            bundle=bundle, status=fix.status, attempts=fix.attempts,
             models_json=json.dumps(list(fix.models)), detail=fix.detail,
             targets_json=records_pure.targets_to_json(notes),
             patch=repo.head_diff(worktree) if ready else None,
@@ -280,13 +284,15 @@ def fix_violations(
     generation: int = model_fix_pure.GENERATION,
     retriever: FindsRecords | None = None,
     context_of: Callable[[Violation], str] = lambda v: "",
+    note: str = "",
 ) -> ModelFix | None:
     """picked.targets를 모델로 고치고 출구 검사를 한다. 새 커밋이 와서 중단되면 None.
 
     found는 수정 전 위반 전체, picked는 `model_fix.pick_targets`의 결과다(대상이 하나 이상).
     generation은 시도 세대다. `/fix`가 다시 돌릴 때마다 올라 저장된 수정 작성을 쓰지 않는다 (4.9).
     retriever가 있으면(검색을 켬) 첫 회차에는 비슷한 채택 기록을, 재시도에는 비슷한 실패 기록을
-    참고 자료로 넣는다 (6.2). context_of(위반)는 위반 줄과 앞뒤 5줄이다.
+    참고 자료로 넣는다 (6.2). context_of(위반)는 위반 줄과 앞뒤 5줄이다. note는 시스템 프롬프트
+    뒤에 붙이는 글이다(코멘트 수정의 안내, 4.11). 저장 키에도 들어간다.
     """
     by_rule = {rule_id: o.rule for rule_id, o in outcomes_by_rule(found).items()}
     targets = picked.targets
@@ -334,9 +340,11 @@ def fix_violations(
     constants = module_constants(worktree, allowed)
     start = file_hashes(worktree, allowed)
     sources_before = read_sources(worktree, allowed)  # 만든 테스트를 고치기 전 코드로 판정한다
-    # 모델이 찾은 위반은 도구로 다시 확인하지 못해 그 줄이 바뀌었는지만 본다 (4.8의 5번)
+    # 모델이 찾은 위반은 도구로 다시 확인하지 못해 그 줄이 바뀌었는지만 본다 (4.8의 5번).
+    # 받아들인 코멘트(feedback)는 검사기가 없어 그 파일이 바뀌었는지만 본다 (4.11)
     by_model = [v for v in targets if v.found_by == "model"]
-    by_tools = [v for v in targets if v.found_by != "model"]
+    by_feedback = [v for v in targets if v.found_by == "feedback"]
+    by_tools = [v for v in targets if v.found_by not in _UNCHECKED]
     lines_before = {f: source_lines(worktree, f) for f in {v.file for v in by_model}}
     asked = [Target(v, by_rule[v.rule_id]) for v in targets]
 
@@ -356,10 +364,12 @@ def fix_violations(
         diff = repo.working_diff(worktree, merge_base)
         detection = tools.recheck(added_lines(diff), new_files(diff))
         unchecked = [f"{u.rule.id}: {u.detail}" for u in detection.unchecked]
-        before = [v for v in found.violations if v.found_by != "model"]
+        before = [v for v in found.violations if v.found_by not in _UNCHECKED]
         left, new = model_fix_pure.recheck(before, by_tools, detection.violations)
         lines_after = {f: source_lines(worktree, f) for f in lines_before}
         left += model_fix_pure.unchanged_lines(by_model, lines_before, lines_after)
+        now = file_hashes(worktree, sorted({v.file for v in by_feedback}))
+        left += [v for v in by_feedback if now[v.file] == start[v.file]]
         return left, new, unchecked
 
     def judge_before() -> tuple[tuple[GeneratedTest, ...], Suite]:
@@ -390,7 +400,7 @@ def fix_violations(
         records = render_records(chosen.chosen)
         key = model_fix_pure.write_key(
             targets, start, file_hashes(worktree, allowed), feedback, model, generation,
-            records=chosen.ids,
+            records=chosen.ids, note=note,
         )  # fmt: skip
         entry = store.cached_result(key)
         if entry is not None:
@@ -411,8 +421,8 @@ def fix_violations(
             current_diff=repo.head_diff(worktree) if attempt > 1 else "", records=records,
             test_dir=test_dir,
         )  # fmt: skip
-        system_prompt = model_fix_pure.SYSTEM_PROMPT + (
-            model_fix_pure.RECORDS_NOTE if records else ""
+        system_prompt = (
+            model_fix_pure.SYSTEM_PROMPT + (model_fix_pure.RECORDS_NOTE if records else "") + note
         )
         result = tools.run_model(
             worktree, prompt, system_prompt=system_prompt, model=model,
@@ -538,7 +548,7 @@ def fix_violations(
         verification = Verification(
             tests=test_before.passed_count, resolved=len(targets),
             rules_rechecked=tools.rules_rechecked, files=len(code_files), lines=lines,
-            unverified=len(by_model),
+            unverified=len(by_model) + len(by_feedback),
         )  # fmt: skip
         untested = {(n.file, n.rule): n.why for n in explanation.untested}
         passed.append(_Passed(explanation, tuple(files), verification, check.tests, untested))

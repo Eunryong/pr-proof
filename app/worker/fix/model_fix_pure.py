@@ -323,10 +323,12 @@ def write_key(
     model: str,
     generation: int = GENERATION,
     records: Sequence[int] = (),
+    note: str = "",
 ) -> str:
     """수정 작성 한 회차의 저장 키 (4.7, 9.1): 대상 위반, 허용 파일의 처음 내용과 지금 내용의 해시,
-    이전 회차의 오류, 모델, 프롬프트 버전, 시도 세대, 참고한 기록 id(있을 때만, 6.2). 값은 그 회차가
-    적용한 diff와 마지막 답이다."""
+    이전 회차의 오류, 모델, 프롬프트 버전, 시도 세대, 참고한 기록 id(있을 때만, 6.2), 시스템
+    프롬프트에 덧붙인 글(있을 때만, 코멘트 수정 4.11). 값은 그 회차가 적용한 diff와 마지막
+    답이다."""
     parts = {
         "targets": [v.id for v in targets],
         "start": sorted([f, h] for f, h in start.items()),
@@ -336,6 +338,8 @@ def write_key(
     }
     if records:
         parts["records"] = [RECORDS_VERSION, *map(str, records)]
+    if note:
+        parts["note"] = text_hash(note)[:12]
     return model_cache_key("fix", model, PROMPT_VERSION, parts)
 
 

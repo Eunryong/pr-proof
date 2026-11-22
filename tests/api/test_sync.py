@@ -7,9 +7,10 @@ import pytest
 from rq import Queue
 
 from app.api import sync
-from app.api.github import GitHubReadError, OpenPR, PRComment
+from app.api.github import FeedbackItem, GitHubReadError, OpenPR, PRComment
 from app.api.history import History
 from app.shared import config, state_keys_pure
+from app.shared.feedback_pure import FEEDBACK_MARKER
 from app.shared.job_pure import PRJob
 from app.shared.ops_alert_pure import TEXT
 from app.worker.state import Store
@@ -46,11 +47,12 @@ def _comment(cid: int, body: str, assoc: str = "MEMBER", at: str = "2026-11-17T1
     return PRComment(id=cid, author_association=assoc, created_at=at, body=body)
 
 
-def _sync(env, prs, now=None, comments=()):
+def _sync(env, prs, now=None, comments=(), feedback=()):
     return sync.run_once(
         env["settings"], env["redis"], env["history"], list_prs=lambda repo: prs,
         head_time=lambda repo, sha: HEAD_TIME,
         list_comments=lambda repo, n, since: [c for c in comments if c.created_at >= since],
+        list_feedback=lambda repo, n: list(feedback),
         now=now,
     )  # fmt: skip
 
@@ -219,6 +221,7 @@ def test_comment_lookup_failure_still_syncs_heads(env) -> None:
     sync.run_once(
         env["settings"], env["redis"], env["history"], list_prs=lambda repo: [_pr()],
         head_time=lambda repo, sha: HEAD_TIME, list_comments=broken,
+        list_feedback=lambda repo, n: [],
     )  # fmt: skip
     assert [j.kind for j in _queued(env)] == ["update"]
 
@@ -252,9 +255,189 @@ def test_result_of_older_pipeline_code_is_queued_once_without_recheck(env) -> No
         return sync.run_once(
             env["settings"], env["redis"], env["history"], list_prs=lambda repo: [_pr()],
             head_time=lambda repo, sha: HEAD_TIME, list_comments=lambda repo, n, since: [],
-            pipeline_commit=commit,
+            list_feedback=lambda repo, n: [], pipeline_commit=commit,
         )  # fmt: skip
 
     assert sync_as("f" * 40).enqueued == [("o/r", 1, "new_pipeline")]
     assert [(j.kind, j.source, j.head_sha) for j in _queued(env)] == [("update", "sync", HEAD)]
     assert sync_as("").enqueued == []  # 커밋을 모르면 이 규칙을 쓰지 않는다
+
+
+# --- PR 코멘트 (feedback) · 수정안 머지 (resolve) ----------------------------------------
+
+
+def _item(
+    item_id: int,
+    body: str = "고쳐 주세요",
+    login: str = "kim",
+    assoc: str = "MEMBER",
+    kind: str = "review_comment",
+) -> FeedbackItem:
+    return FeedbackItem(kind=kind, id=item_id, login=login, author_association=assoc, body=body)  # type: ignore[arg-type]  # fmt: skip
+
+
+def _jobs(env, kind: str) -> list[PRJob]:
+    return [j for j in _queued(env) if j.kind == kind]
+
+
+def _handle(env, kind: str, item_id: int, **extra) -> None:
+    env["store"].record_feedback(
+        repo="o/r", pr_number=1, kind=kind, item_id=item_id, thread_id=None, login="kim",
+        head_sha=HEAD, verdict=extra.pop("verdict", "no_action"), **extra,
+    )  # fmt: skip
+
+
+def test_unhandled_feedback_is_queued_once_per_pr_without_recheck(env) -> None:
+    """웹훅이 오지 않았거나 이 기능이 생기기 전에 달린 코멘트도 동기화가 본다."""
+    items = [_item(1), _item(2, login="Copilot", assoc="NONE"), _item(3, kind="issue_comment")]
+    result = _sync(env, [_pr()], feedback=items)
+    (job,) = _jobs(env, "feedback")
+    assert (job.pr_number, job.source, job.head_sha, job.base_sha) == (1, "sync", HEAD, "b" * 40)
+    assert ("o/r", 1, "unhandled_feedback") in result.enqueued
+    assert [e for e in result.enqueued if e[2] == "unhandled_feedback"] == [
+        ("o/r", 1, "unhandled_feedback")
+    ]
+
+
+def test_pr_with_only_handled_feedback_is_not_queued_again(env) -> None:
+    _handle(env, "review_comment", 1)
+    _handle(env, "issue_comment", 3)
+    result = _sync(env, [_pr()], feedback=[_item(1), _item(3, kind="issue_comment")])
+    assert _jobs(env, "feedback") == []
+    assert all(reason != "unhandled_feedback" for _, _, reason in result.enqueued)
+
+
+def test_one_unhandled_among_handled_is_enough(env) -> None:
+    _handle(env, "review_comment", 1)
+    _sync(env, [_pr()], feedback=[_item(1), _item(2)])
+    assert len(_jobs(env, "feedback")) == 1
+
+
+def test_same_id_of_another_kind_is_not_handled(env) -> None:
+    """키는 (종류, id)다. 리뷰 id와 코멘트 id가 같은 숫자여도 서로 다른 글이다."""
+    _handle(env, "review", 1)
+    _sync(env, [_pr()], feedback=[_item(1, kind="issue_comment")])
+    assert len(_jobs(env, "feedback")) == 1
+
+
+@pytest.mark.parametrize(
+    "item",
+    [
+        _item(1, login="outsider", assoc="CONTRIBUTOR"),
+        _item(2, login="outsider", assoc="NONE"),
+        _item(3, body=f"{FEEDBACK_MARKER}\n답글", assoc="OWNER", login="owner"),
+        _item(4, body="<!-- pr-proof -->\n결과", assoc="OWNER", login="owner"),
+        _item(5, body="<!-- pr-proof:reply -->\n> /fix", assoc="OWNER", login="owner"),
+        _item(6, body="/fix model", assoc="OWNER", login="owner"),
+        _item(7, body="  "),
+    ],
+    ids=["contributor", "none", "own-reply", "own-result", "own-command-reply", "command", "empty"],
+)
+def test_feedback_filter_is_the_webhooks(env, item: FeedbackItem) -> None:
+    result = _sync(env, [_pr()], feedback=[item])
+    assert _jobs(env, "feedback") == []
+    assert all(reason != "unhandled_feedback" for _, _, reason in result.enqueued)
+
+
+def test_copilot_feedback_is_queued_whatever_the_association(env) -> None:
+    _sync(env, [_pr()], feedback=[_item(1, login="copilot-pull-request-reviewer", assoc="NONE")])
+    assert len(_jobs(env, "feedback")) == 1
+
+
+def test_pipeline_branch_prs_get_no_feedback_job(env) -> None:
+    _sync(env, [_pr(ref="pipeline/pr-1-fix-model")], feedback=[_item(1)])
+    assert _jobs(env, "feedback") == []
+
+
+def test_feedback_is_queued_even_when_the_head_is_done(env) -> None:
+    run = env["store"].start_run(_job())
+    env["store"].finish_run(run, "done", test_status="passed")
+    result = _sync(env, [_pr()], feedback=[_item(1)], now=datetime.now(UTC))
+    assert [r for _, _, r in result.enqueued] == ["unhandled_feedback"]
+
+
+def test_blocked_pr_gets_no_feedback_job(env) -> None:
+    """승인을 기다리는 PR에 넣으면 주기마다 승인 안내를 다시 달고 blocked 기록이 쌓인다."""
+    run = env["store"].start_run(_job())
+    env["store"].finish_run(run, "blocked")
+    _sync(env, [_pr()], feedback=[_item(1)])
+    assert _jobs(env, "feedback") == []
+
+
+def test_feedback_lookup_failure_still_syncs_the_rest(env) -> None:
+    def broken(repo, n):
+        raise GitHubReadError("502")
+
+    sync.run_once(
+        env["settings"], env["redis"], env["history"], list_prs=lambda repo: [_pr()],
+        head_time=lambda repo, sha: HEAD_TIME, list_comments=lambda repo, n, since: [],
+        list_feedback=broken,
+    )  # fmt: skip
+    assert [j.kind for j in _queued(env)] == ["update"]
+
+
+def test_webhook_and_sync_share_the_feedback_filter() -> None:
+    from app.api import webhook
+    from app.shared import feedback_pure
+
+    assert webhook.feedback_in_comment is feedback_pure.feedback_in_comment
+    assert sync.feedback_in_comment is feedback_pure.feedback_in_comment
+
+
+def _accepted(
+    env, number: int, proposal: int = 900, thread: str | None = "T1", pr: int = 1
+) -> None:
+    env["store"].record_feedback(
+        repo="o/r", pr_number=pr, kind="review_comment", item_id=number, thread_id=thread,
+        login="Copilot", head_sha=HEAD, verdict="accepted", proposal_number=proposal,
+    )  # fmt: skip
+
+
+def test_accepted_comment_awaiting_merge_gets_a_resolve_job(env) -> None:
+    _accepted(env, 11)
+    result = _sync(env, [_pr()])
+    (job,) = _jobs(env, "resolve")
+    assert (job.pr_number, job.source, job.head_sha) == (1, "sync", None)
+    assert ("o/r", 1, "awaiting_resolve") in result.enqueued
+
+
+def test_resolve_job_is_queued_even_when_the_original_pr_is_closed(env) -> None:
+    """수정안을 머지한 뒤 원래 PR도 머지됐을 수 있다. 열린 PR 목록에 없어도 넣는다."""
+    _accepted(env, 11, pr=7)
+    result = _sync(env, [])
+    assert [(j.pr_number, j.source) for j in _jobs(env, "resolve")] == [(7, "sync")]
+    assert result.enqueued == [("o/r", 7, "awaiting_resolve")]
+
+
+def test_resolve_job_is_one_per_pr(env) -> None:
+    _accepted(env, 11)
+    _accepted(env, 12, thread="T2")
+    _sync(env, [_pr()])
+    assert len(_jobs(env, "resolve")) == 1
+
+
+@pytest.mark.parametrize(
+    "setup",
+    ["resolved", "no_thread", "closed_without_merge"],
+)
+def test_nothing_to_resolve_means_no_resolve_job(env, setup: str) -> None:
+    store = env["store"]
+    if setup == "resolved":
+        _accepted(env, 11)
+        (row,) = store.handled_feedback("o/r", 1)
+        store.mark_feedback_resolved([row.id], datetime.now(UTC))
+    elif setup == "no_thread":
+        _accepted(env, 11, thread=None)  # 리뷰 본문·일반 코멘트는 스레드가 없다
+    else:
+        _accepted(env, 11, proposal=900)
+        store.record_proposal("o/r", 1, "model", HEAD, "pipeline/pr-1-fix-model", 900)
+        (p,) = store.proposals("o/r", 1)
+        store.set_proposal_state(p.id, "rejected")
+    _sync(env, [_pr()])
+    assert _jobs(env, "resolve") == []
+
+
+def test_not_accepted_comment_is_not_awaiting_resolve(env) -> None:
+    _handle(env, "review_comment", 1, verdict="rejected")
+    _sync(env, [_pr()])
+    assert _jobs(env, "resolve") == []
