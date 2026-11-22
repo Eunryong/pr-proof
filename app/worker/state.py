@@ -9,7 +9,7 @@ from sqlalchemy import Engine, func, inspect, text
 from sqlalchemy.schema import CreateColumn
 from sqlmodel import Session, SQLModel, create_engine, select
 
-from app.shared import state_keys_pure
+from app.shared import state_keys_pure, version
 from app.shared.db_pure import (
     Approval,
     CallGrant,
@@ -120,6 +120,7 @@ class Store:
             state="running",
             started_at=now,
             heartbeat_at=now,
+            pipeline_commit=version.current() or None,
             author_association=author.association if author else None,
             author_login=author.login if author else None,
             job_author_association=job.author_association,

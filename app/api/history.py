@@ -25,7 +25,12 @@ class History:
                 .order_by(Run.id)
             )
             return [
-                RunSnapshot(state=r.state, heartbeat_at=r.heartbeat_at, finished_at=r.finished_at)
+                RunSnapshot(
+                    state=r.state,
+                    heartbeat_at=r.heartbeat_at,
+                    finished_at=r.finished_at,
+                    pipeline_commit=r.pipeline_commit,
+                )
                 for r in session.exec(stmt)
             ]
 
