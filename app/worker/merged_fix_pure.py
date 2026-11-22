@@ -17,7 +17,8 @@ from app.worker.doc_rules_pure import Found, RuleJudged
 from app.worker.fix.fix_decision_pure import Decided
 from app.worker.fix.fix_pure import MECHANICAL_BUNDLE, MechanicalFix
 from app.worker.fix.model_fix_pure import MODEL_BUNDLE, ModelFix
-from app.worker.rules import pr_check_pure
+from app.worker.rules import pr_check_pure, pr_description_pure
+from app.worker.rules.pr_description_pure import PrDescription
 from app.worker.test_run_pure import PytestRun
 
 # 규칙 수정안의 묶음. 코멘트 수정안(feedback)은 규칙 검사의 결과를 고친 것이 아니라 넣지 않는다
@@ -55,6 +56,7 @@ class VerifiedCheck:
     decisions: Decided | None
     fix: MechanicalFix | ModelFix | None  # 머지한 묶음의 수정 결과
     pr_checks: object  # PR 단위 확인의 결과. PR 규칙이 없으면 None
+    pr_description: object = None  # PR 설명 확인의 결과. 끈 저장소면 None
 
 
 def merged_proposal(proposals: Sequence[Proposal], head: str) -> Proposal | str:
@@ -120,7 +122,10 @@ def state_problem(
     커밋으로 세지 않으므로(`pr_check_pure.pipeline_commits`) 머지 커밋에서 다시 봐도 볼 것이 같다.
     모델 판단으로 찾은 위반을 고친 수정안도 옮겨 적는다. 그 위반은 도구로 재검사하지 못한 것이고
     (4.8의 5번) 수정안 PR에 그렇게 적혔으며 사람이 보고 머지했다. 같은 안내를 결과 코멘트에 적는다
-    (`unverified_count`)."""
+    (`unverified_count`).
+
+    PR 설명 확인의 결과도 옮겨 적는다(`carried_description`). PR 글도 사람의 커밋도 그대로이고
+    수정안의 변경은 PR의 변경으로 세지 않는다. 호출 상한으로 견주지 못했으면 처음부터 검사한다."""
     if not check.finished:
         return "검증한 커밋의 검사가 끝까지 가지 않음"
     found, decisions, fix = check.found, check.decisions, check.fix
@@ -134,6 +139,8 @@ def state_problem(
         return "수정안의 검증 결과가 없음"
     if pr_check_pure.judge_left(check.pr_checks):
         return "호출 상한으로 남은 PR 단위 판단이 있음"
+    if pr_description_pure.description_left(check.pr_description):
+        return "호출 상한으로 견주지 못한 PR 설명 확인이 있음"
     if any(isinstance(o, RuleJudged) and o.left for o in found.outcomes):
         return "판단하지 못한 hunk가 남음"
     if any(d.reason == "call_limit" for d in decisions.decisions):
@@ -211,3 +218,19 @@ def carried(
             decisions, decisions=tuple(d for d in decisions.decisions if d.violation_id in ids)
         ),
     )
+
+
+def carried_description(description: PrDescription, patch: str) -> PrDescription | str:
+    """검증한 커밋의 PR 설명 확인을 머지 커밋에 옮긴다. 더한 줄(head 쪽)을 가리킨 어긋남은 패치로 줄
+    번호를 옮기고, 지운 줄은 base의 번호라 그대로 둔다. 패치가 그 줄을 바꿨으면 까닭을 돌려준다
+    (처음부터 검사한다)."""
+    moved = []
+    for m in description.items:
+        if m.side != "new" or not m.file:
+            moved.append(m)
+            continue
+        line = line_after(patch, m.file, m.line)
+        if line is None:
+            return f"수정안이 PR 설명 확인이 가리킨 줄을 바꿈 ({m.file}:{m.line})"
+        moved.append(replace(m, line=line))
+    return replace(description, items=tuple(moved))

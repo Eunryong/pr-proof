@@ -1,14 +1,15 @@
 """워커의 작업 흐름 (LangGraph, docs/DESIGN.md 5.1).
 
-    체크아웃 → 규칙 읽기 → 검사 방법 정하기 → 위반 찾기 → 모델 판단 → PR 단위 확인 → 테스트
-        → 수정 판단 → 코멘트
+    체크아웃 → 규칙 읽기 → 검사 방법 정하기 → 위반 찾기 → 모델 판단 → PR 단위 확인 → PR 설명 확인
+        → 테스트 → 수정 판단 → 코멘트
         ─┬─ (고칠 위반 없음) → 끝
          ├─ (기본: 바로) 기계적 수정 → 수정안 PR ─┬→ 수정 코멘트 ─┬─ (남은 묶음 없음) → 끝
          ├─ (기본: 바로) 모델 수정 → 수정안 PR ───┘              └─ 다른 묶음의 대기·수정
          └─ 승인 대기(interrupt, `require_approval: true`) ─ /fix <묶음>
 
 규칙은 base의 문서와 도구 설정(ruff 설정)에서 나온다. 규칙이 하나도 없으면 규칙 검사를 하지 않고
-테스트로 넘어간다. 테스트 뒤에 위반마다 수정 판단(fix/skip과 이유, 4.6)을 정해 코멘트에 보인다.
+PR 설명 확인과 테스트로 넘어간다. 테스트 뒤에 위반마다 수정 판단(fix/skip과 이유, 4.6)을 정해
+코멘트에 보인다.
 `fix`로 정한 위반은 수정 방법별 묶음(`mechanical`: 도구의 수정, `model`: 모델이 검사기와 샌드박스
 테스트를 도구로 부르며 고침, 3.1의 C7)으로 고치고 출구 검사를 통과한 것만 묶음마다 수정안 PR로
 올린다. 파이프라인이 정한 규칙의 검사와 수정은 없다 (2.2).
@@ -19,7 +20,8 @@
 테스트도 다시 돌린다(새로 찾은 위반 줄의 커버 여부가 필요하다). 호출 상한으로 남은 PR 단위 판단만
 있으면 PR 단위 확인부터 다시 돈다.
 
-PR 단위 확인(4.5 끝)의 결과는 `pr_checks`에만 있고 알리기만 한다. 수정 판단과 수정 묶음은
+PR 단위 확인(4.5 끝)의 결과는 `pr_checks`에만 있고 알리기만 한다. PR 설명 확인(PR 글과 diff 견주기,
+4.5 끝)의 결과는 `pr_description`에만 있고 역시 알리기만 한다. 수정 판단과 수정 묶음은
 `doc_rules`(코드 위반)만 읽는다 (4-13).
 
 각 단계 사이에서 이 작업의 커밋이 아직 PR의 최신 커밋인지 확인하고, 낡았으면 멈춘다.
@@ -88,9 +90,19 @@ from app.worker.rag_pure import Retrieval
 from app.worker.rag_switch_pure import RagSwitch
 from app.worker.repo import CHANGES_DIFF
 from app.worker.repo_config_pure import call_limits
-from app.worker.rules import detect, doc_rules, pr_check, pr_check_pure, run_check, run_check_pure
+from app.worker.rules import (
+    detect,
+    doc_rules,
+    pr_check,
+    pr_check_pure,
+    pr_description,
+    pr_description_pure,
+    run_check,
+    run_check_pure,
+)
 from app.worker.rules.doc_rules import Runtime as DocRuntime
-from app.worker.rules.pr_check_pure import PrChecks
+from app.worker.rules.pr_check_pure import PrChecks, PrFacts
+from app.worker.rules.pr_description_pure import PrDescription
 from app.worker.sandbox import container, docker_cli, toolcache
 from app.worker.state import Store
 from app.worker.test_run_pure import PytestRun
@@ -106,6 +118,7 @@ AUTHOR_CHECKERS: Final = "author_checkers"
 DETECT: Final = "detect"
 JUDGE: Final = "judge"
 PR_CHECK: Final = "pr_check"
+PR_DESCRIPTION: Final = "pr_description"
 TEST: Final = "test"
 DECIDE: Final = "decide"
 FIX_MECHANICAL: Final = "fix_mechanical"
@@ -143,6 +156,7 @@ _STATE_TYPES: Final = (
     *rag_pure.STATE_TYPES,
     *rag_switch_pure.STATE_TYPES,
     *pr_check_pure.STATE_TYPES,
+    *pr_description_pure.STATE_TYPES,
 )
 
 
@@ -185,6 +199,8 @@ class FlowState(TypedDict, total=False):
     doc_rules: DocRules  # 규칙 경로의 결과. 코멘트의 규칙 절은 이 값으로만 그린다
     # PR 단위 확인의 결과 (4.5 끝). PR 규칙이 있는 검사만. 알리기만 하고 수정 경로는 읽지 않는다
     pr_checks: PrChecks
+    # PR 설명 확인의 결과 (4.5 끝). `.pipeline.yaml`로 끄지 않은 검사만. 알리기만 한다
+    pr_description: PrDescription
     fix_decisions: Decided  # 위반마다 수정 판단 (테스트 뒤, 4.6)
     mechanical_fix: MechanicalFix | None  # 기계적 수정 묶음의 결과. 수정안 PR은 proposals에
     mechanical_requested: bool  # 사람이 `/fix`로 이 커밋의 기계적 묶음을 승인했거나 다시 돌림
@@ -218,6 +234,9 @@ class FlowContext:
     doc_rules: DocRules | None = None
     doc_runtime: DocRuntime | None = None
     pr_checks: PrChecks | None = None  # doc_rules와 같은 까닭으로 둔다
+    pr_description: PrDescription | None = None  # doc_rules와 같은 까닭으로 둔다
+    # 이 작업에서 읽은 PR 사실 (PR 단위 확인과 PR 설명 확인이 같이 쓴다. 그래프 상태에 넣지 않는다)
+    pr_facts: PrFacts | str | None = None
     first_call: int = 0  # 규칙 경로를 시작하기 전 마지막 호출 기록의 id
     dirty: bool = False  # 수정이 worktree를 바꿨다. 다음 수정은 새 worktree에서 한다
     changes_diff: bytes = b""  # 테스트 전에 읽은 PR의 diff (테스트 뒤에는 샌드박스가 바꿀 수 있다)
@@ -440,10 +459,7 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
         rt = doc_runtime(state)
         read = state.get("rules_read")
         scope = RulesetScope(read.key, len(read.rules)) if read is not None else RulesetScope("pr")
-        facts = pr_check.gather(
-            ctx.worktree, ctx.merge_base or job.base_sha, job.head_sha, github=ctx.github,
-            store=ctx.store, repo_name=job.repo, pr_number=job.pr_number,
-        )  # fmt: skip
+        facts = pr_facts(job)
         tools = pr_check.Tools(
             store=rt.store, budget=rt.budget, ask=rt.ask, sandbox=rt.sandbox,
             plan_model=rt.models.checker, judge_model=rt.models.judge, ruleset=scope,
@@ -454,6 +470,43 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
         )
         ctx.pr_checks = result
         return {"pr_checks": result}
+
+    def pr_facts(job: PRJob) -> PrFacts | str:
+        """이 작업의 PR 사실. 처음 부를 때 한 번 읽는다 (GitHub 조회 한 번)."""
+        if ctx.pr_facts is None:
+            ctx.pr_facts = pr_check.gather(
+                ctx.worktree, ctx.merge_base or job.base_sha, job.head_sha, github=ctx.github,
+                store=ctx.store, repo_name=job.repo, pr_number=job.pr_number,
+            )  # fmt: skip
+        return ctx.pr_facts
+
+    def describe_pr(state: FlowState) -> FlowState:
+        """PR 글(제목, 본문, 커밋 메시지)과 diff를 모델이 견준다 (4.5 끝). 팀 문서의 규칙과 따로
+        돌고(규칙이 없어도), 알리기만 한다. 가드레일(8.6)이 들인 작업에서만 이 node까지 와서 PR 글을
+        읽는다. `.pipeline.yaml`의 `pr_description.enabled: false`면 돌지 않는다. `/fix`가 앞
+        node부터 다시 돌 때 이미 견준 결과가 있으면(호출 상한으로 남은 것이 아니면) 그대로 둔다."""
+        job = state["job"]
+        if not ctx.base.repo.pr_description.enabled:
+            return {}
+        saved = state.get("pr_description")
+        if saved is not None and not pr_description_pure.description_left(saved):
+            return {}
+        ensure_checkout(job)
+        progress(job, "PR 설명 확인")
+        rt, found = doc_runtime(state), state.get("doc_rules")
+        facts = pr_facts(job)
+        pipeline = (
+            () if isinstance(facts, str) else pr_description.pipeline_diffs(ctx.worktree, facts)
+        )
+        result = pr_description.check(
+            facts, ctx.changes_diff.decode("utf-8", errors="replace"), ctx.worktree,
+            pr_description.Tools(store=rt.store, budget=rt.budget, ask=rt.ask,
+                                 model=rt.models.judge),
+            pipeline=pipeline, known=len(found.violations) if isinstance(found, Found) else 0,
+            is_stale=lambda: ctx.store.is_stale(job),
+        )  # fmt: skip
+        ctx.pr_description = result
+        return {"pr_description": result}
 
     def after_doc_step(state: FlowState) -> str:
         if state.get("stopped") or ctx.store.is_stale(state["job"]):
@@ -554,6 +607,7 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
             rag=state.get("rag_switch"),
             pr=state.get("pr_checks"),
             carried=state.get("carried"),
+            description=state.get("pr_description"),
         )
 
     def comment(state: FlowState) -> FlowState:
@@ -717,6 +771,7 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
     graph.add_node(DETECT, detect_rules)
     graph.add_node(JUDGE, judge_rules)
     graph.add_node(PR_CHECK, pr_check_rules)
+    graph.add_node(PR_DESCRIPTION, describe_pr)
     graph.add_node(TEST, test)
     graph.add_node(DECIDE, decide_fixes)
     graph.add_node("comment", comment)
@@ -729,14 +784,15 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
     graph.add_edge(START, "checkout")
     graph.add_conditional_edges("checkout", route, {"next": LOAD_RULES, "stop": END})
     graph.add_conditional_edges(
-        LOAD_RULES, after_doc_step, {"next": AUTHOR_CHECKERS, "done": TEST, "stop": END}
+        LOAD_RULES, after_doc_step, {"next": AUTHOR_CHECKERS, "done": PR_DESCRIPTION, "stop": END}
     )
     graph.add_conditional_edges(
-        AUTHOR_CHECKERS, after_doc_step, {"next": DETECT, "done": TEST, "stop": END}
+        AUTHOR_CHECKERS, after_doc_step, {"next": DETECT, "done": PR_DESCRIPTION, "stop": END}
     )
     graph.add_conditional_edges(DETECT, route, {"next": JUDGE, "stop": END})
     graph.add_conditional_edges(JUDGE, route, {"next": PR_CHECK, "stop": END})
-    graph.add_conditional_edges(PR_CHECK, route, {"next": TEST, "stop": END})
+    graph.add_conditional_edges(PR_CHECK, route, {"next": PR_DESCRIPTION, "stop": END})
+    graph.add_conditional_edges(PR_DESCRIPTION, route, {"next": TEST, "stop": END})
     graph.add_conditional_edges(TEST, route, {"next": DECIDE, "stop": END})
     graph.add_conditional_edges(DECIDE, route, {"next": "comment", "stop": END})
     graph.add_conditional_edges("comment", next_fix, fix_targets)

@@ -34,6 +34,9 @@ model:
     ruleset_max: 100
     repo_daily: 500                    # 이 저장소의 하루 상한
 
+pr_description:                        # PR 설명 확인 (4.5 끝): 제목·본문·커밋 메시지와 diff를 모델이 견주어
+  enabled: true                        # 어긋난 곳을 결과 코멘트에 알린다. false면 PR 글을 읽지도 모델을 부르지도 않는다
+
 access:                                # 외부 작성자 PR 가드레일 (8.6). PR이 아니라 base에서만 읽는다
   trusted: [OWNER, MEMBER, COLLABORATOR]  # 이 author_association의 PR은 바로 검사한다. 그 밖은 승인을 기다린다
   bots: []                             # 신뢰할 봇 계정의 로그인 이름. 예: ["dependabot[bot]"]. 봇은 승인할 수 없다

@@ -149,6 +149,14 @@ class RagSettings(BaseModel):
         return parse_mode(value) or DEFAULT_MODE
 
 
+class PrDescriptionSettings(BaseModel):
+    """PR 설명 확인 (DESIGN.md 4.5 끝, 10절 `pr_description`): PR 제목·본문·커밋 메시지와 diff를
+    모델이 견주어 어긋난 곳을 결과 코멘트에 알린다. 기본은 켬."""
+
+    model_config = ConfigDict(extra="ignore")
+    enabled: bool = True
+
+
 class RepoConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
     rules: RulesSettings = RulesSettings()
@@ -157,6 +165,7 @@ class RepoConfig(BaseModel):
     model: ModelSettings = ModelSettings()
     fix: FixSettings = FixSettings()
     rag: RagSettings = RagSettings()
+    pr_description: PrDescriptionSettings = PrDescriptionSettings()
 
     @model_validator(mode="before")
     @classmethod

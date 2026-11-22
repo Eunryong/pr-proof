@@ -114,7 +114,7 @@ class _Run:
             self.gaps[rule.id] = Gap(kind, detail, (gap.pairs if gap else 0) + 1)
 
 
-class _Code:
+class CodeReader:
     """판단 한 번이 보는 PR의 코드: 읽기 도구를 주는 모델 폴더(처음 물을 때 연다)와 경로의 해시."""
 
     def __init__(self, worktree: Path, ask: AskModel, stack: ExitStack) -> None:
@@ -167,8 +167,9 @@ def judge(
     새 커밋이 와서 낡았으면 남은 파일은 묻지 않는다 (결과는 쓰이지 않는다).
     """
     with ExitStack() as stack:
+        code = CodeReader(worktree, ask, stack)
         return _judge(rules, worktree, changes_diff, store=store, budget=budget, model=model,
-                      code=_Code(worktree, ask, stack), known=known, is_stale=is_stale)  # fmt: skip
+                      code=code, known=known, is_stale=is_stale)  # fmt: skip
 
 
 def _judge(
@@ -179,7 +180,7 @@ def _judge(
     store: Store,
     budget: CallBudget,
     model: str,
-    code: _Code,
+    code: CodeReader,
     known: int,
     is_stale: Callable[[], bool],
 ) -> Judged:
@@ -220,7 +221,7 @@ def _judge(
 
 def _from_cache(
     rules: Sequence[Rule], hunks: Sequence[Hunk], *, store: Store, model: str, run: _Run,
-    code: _Code,
+    code: CodeReader,
 ) -> list[Asked]:  # fmt: skip
     """저장된 쌍은 답을 꺼내 run에 넣고, 저장되지 않았거나 그 답을 낼 때 모델이 읽은 곳이 바뀐 쌍만
     hunk마다 묶어 돌려준다."""
@@ -245,7 +246,7 @@ def _from_cache(
 
 
 def _ask(
-    chunk: Sequence[Asked], *, store: Store, budget: CallBudget, model: str, code: _Code,
+    chunk: Sequence[Asked], *, store: Store, budget: CallBudget, model: str, code: CodeReader,
     run: _Run,
 ) -> None:  # fmt: skip
     """한 파일의 hunk 묶음 하나를 묻는다."""

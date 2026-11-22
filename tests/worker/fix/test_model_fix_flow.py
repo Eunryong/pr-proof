@@ -487,7 +487,9 @@ def test_model_rerun_while_mechanical_waits_keeps_its_approval(fix_env, tmp_path
     fix_env["monkeypatch"].setattr(doc_rules, "sandbox_for", lambda *a: sandbox)
     use_model(fix_env, FakeModel(rule_answer(print_rule()), decide=first_fix_then_skip))
     config = RepoConfig(
-        fix=FixSettings(require_approval=True), model=ModelSettings(calls=CallSettings(pr_max=3))
+        fix=FixSettings(require_approval=True),
+        model=ModelSettings(calls=CallSettings(pr_max=3)),
+        pr_description=BASE.repo.pr_description,
     )
     ruff = RuffSetup("0.17.5", config=RuffConfig("ruff.toml", "", "0" * 40))
     fix_env["monkeypatch"].setattr(

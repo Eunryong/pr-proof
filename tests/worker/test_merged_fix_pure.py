@@ -18,6 +18,7 @@ from app.worker.merged_fix_pure import (
     VerifiedCheck,
     attempt_problem,
     carried,
+    carried_description,
     fixed_ids,
     merge_problem,
     merged_proposal,
@@ -27,6 +28,7 @@ from app.worker.merged_fix_pure import (
 )
 from app.worker.rule_pure import CheckMethod, Rule, RuleSource
 from app.worker.rules.pr_check_pure import PrChecks, PrRuleResult
+from app.worker.rules.pr_description_pure import Mismatch, PrDescription
 from app.worker.test_run_pure import PytestRun, ReportSummary
 from app.worker.violation_pure import Violation
 
@@ -296,3 +298,36 @@ def test_file_violation_stays_while_the_file_exists() -> None:
     assert carried(found(path), decided(), set(), PATCH, _lines({})) == (
         "남은 파일 위반의 파일을 머지 커밋에서 읽지 못함 (orders/Bad.py)"
     )
+
+
+# --- PR 설명 확인 (4.5 끝) ---
+
+
+def test_description_left_by_the_call_cap_means_a_full_check() -> None:
+    left = PrDescription("unchecked", gap="cap", detail="PR 상한")
+    why = state_problem(check(pr_description=left), bundle="model", attempt_id=3, base_sha="base")
+    assert why == "호출 상한으로 견주지 못한 PR 설명 확인이 있음"
+    failed = PrDescription("unchecked", gap="model_failed", detail="timeout")
+    for value in (failed, PrDescription("checked"), PrDescription("empty"), None):
+        assert state_problem(check(pr_description=value), bundle="model", attempt_id=3,
+                             base_sha="base") is None  # fmt: skip
+
+
+def test_description_lines_move_with_the_patch() -> None:
+    """head 쪽 줄은 패치로 옮기고, 지운 줄(base 번호)과 코드 근거가 없는 항목은 그대로 둔다."""
+    unrelated = Mismatch("unrelated", "s", file="orders/a.py", side="new", line=5, code="print(y)")
+    removed = Mismatch("different", "s", claim="c", file="orders/a.py", side="old", line=2,
+                       code="print(x)")  # fmt: skip
+    missing = Mismatch("missing", "s", claim="c")
+    other = Mismatch("unrelated", "s", file="b.py", side="new", line=7, code="y = 2")
+    before = PrDescription("checked", (unrelated, removed, missing, other), files=2, shown=2)
+    out = carried_description(before, PATCH)
+    assert not isinstance(out, str)
+    assert out.items == (replace(unrelated, line=6), removed, missing, other)
+    assert (out.files, out.shown, out.status) == (2, 2, "checked")
+
+
+def test_description_on_a_line_the_patch_changed_means_a_full_check() -> None:
+    touched = Mismatch("unrelated", "s", file="orders/a.py", side="new", line=2, code="print(x)")
+    out = carried_description(PrDescription("checked", (touched,)), PATCH)
+    assert out == "수정안이 PR 설명 확인이 가리킨 줄을 바꿈 (orders/a.py:2)"

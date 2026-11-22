@@ -310,3 +310,11 @@ def test_rag_values_out_of_range_fall_back_to_defaults_with_a_reason(text: str) 
     got, problem = parse_repo_config(text)
     assert got.rag.enabled == "auto"
     assert problem is not None and "rag" in problem
+
+
+def test_pr_description_check_is_on_by_default_and_can_be_turned_off() -> None:
+    assert parse_repo_config(None)[0].pr_description.enabled is True
+    config, problem = parse_repo_config("pr_description:\n  enabled: false\n")
+    assert problem is None and config.pr_description.enabled is False
+    _, problem = parse_repo_config("pr_description:\n  enabled: maybe\n")
+    assert problem is not None and "pr_description.enabled" in problem
