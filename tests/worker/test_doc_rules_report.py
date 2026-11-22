@@ -71,7 +71,7 @@ def test_violation_lists_location_quote_source_and_checker() -> None:
     assert "- `R-readme-1` `` `orders/` 아래 모듈은 `print`를 쓰지 않는다. `` · 1건" in text
     assert "  - `orders/a.py:2`" in text
     assert doc_rules_report.MANY_VIOLATIONS_NOTE not in text
-    assert "  출처: `README.md > 코드 규칙 > 출력` · 검사기 `cccccccc` (ast-grep)" in text
+    assert "  출처: `README.md > 코드 규칙 > 출력` · 모델이 쓴 검사기 (ast-grep)" in text
     assert "```yaml\nid: no-print\nlanguage: python\nrule:\n  pattern: print($$$A)\n```" in text
     assert "예시: 문서 1개, 모델이 쓴 것 1개" in text
     assert "모델이 쓴 예시, 정상:\n\n```python\nlog(1)\n```" in text
@@ -86,7 +86,7 @@ def test_violation_lists_location_quote_source_and_checker() -> None:
 def test_checker_without_violation_has_no_body() -> None:
     text = _text(_found(RuleChecked(RULE, REF)), {"k1": CHECKER})
     assert "**규칙:** ✅ 위반 없음 · 규칙 1개를 확인함 (도구·검사기 1개)" in text
-    assert "모델이 쓴 검사기" not in text and "읽은 규칙 1개" in text
+    assert "<summary>모델이 쓴 검사기" not in text and "읽은 규칙 1개" in text
     shown, _, _ = text.partition("<details>")
     assert shown.strip() == "**규칙:** ✅ 위반 없음 · 규칙 1개를 확인함 (도구·검사기 1개)"
 
@@ -536,7 +536,7 @@ def test_rule_the_model_could_not_judge_is_listed_with_its_reason() -> None:
         "- `R-2` " in shown
         and "모델이 코드를 보고 판단하지 못함: `hunk 밖의 데이터를 봐야 함`" in shown
     )
-    assert "모델이 코드를 보고 판단하지 못함 (hunk 4개 중 1개): `x`" in shown
+    assert "모델이 코드를 보고 판단하지 못함 (바뀐 곳 4군데 중 1군데): `x`" in shown
 
 
 def test_run_rule_shows_the_models_answer_and_the_results_it_saw() -> None:

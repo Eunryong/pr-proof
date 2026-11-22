@@ -53,7 +53,7 @@ expect:
   violations: ["orders/services/pricing.py:9"]
   contains:
     - "모델 판단 (검사기로 가릴 수 없는 규칙이라고 검사기 작성 모델이 답함: `주석이 말하는 일과 아래 코드가 하는 일이 같은지는 뜻을 읽어야 안다`)"
-    - "모델 판단: 규칙 1개, hunk 1개"
+    - "모델 판단: 규칙 1개, 바뀐 곳 1군데"
   fix: ready
   fix_file: orders/services/pricing.py
   pr_contains: ["이 규칙은 도구로 재검사하지 못함"]
