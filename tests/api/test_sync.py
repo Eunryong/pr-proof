@@ -240,3 +240,21 @@ def test_closed_pr_with_open_proposal_gets_close_job(env) -> None:
     closes = [j for j in _queued(env) if j.kind == "close"]
     assert [(j.pr_number, j.source) for j in closes] == [(7, "sync")]
     assert ("o/r", 7, "closed_pr") in result.enqueued
+
+
+def test_result_of_older_pipeline_code_is_queued_once_without_recheck(env) -> None:
+    """배포 뒤 열린 PR의 결과가 옛 코드의 것이면 동기화가 `/recheck` 없이 다시 넣는다. 지금 코드로
+    끝난 기록이 생기면 다시 넣지 않는다."""
+    run = env["store"].start_run(_job())
+    env["store"].finish_run(run, "done", test_status="passed")
+
+    def sync_as(commit: str):
+        return sync.run_once(
+            env["settings"], env["redis"], env["history"], list_prs=lambda repo: [_pr()],
+            head_time=lambda repo, sha: HEAD_TIME, list_comments=lambda repo, n, since: [],
+            pipeline_commit=commit,
+        )  # fmt: skip
+
+    assert sync_as("f" * 40).enqueued == [("o/r", 1, "new_pipeline")]
+    assert [(j.kind, j.source, j.head_sha) for j in _queued(env)] == [("update", "sync", HEAD)]
+    assert sync_as("").enqueued == []  # 커밋을 모르면 이 규칙을 쓰지 않는다

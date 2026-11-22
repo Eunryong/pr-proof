@@ -99,7 +99,8 @@ def test_sync_reads_the_old_db_after_the_worker_has_started(deploy) -> None:
     assert deploy["waiting"] == [deploy["data_dir"]]  # 작업은 하나도 처리하지 않았다
 
     result = _sync(settings, History(settings.db_path))
-    assert result.enqueued == [("o/r", 2, "no_record")]  # PR 1은 이미 done
+    # PR 1의 done은 파이프라인 커밋을 적기 전의 기록이라 지금 코드로 다시 검사한다
+    assert result.enqueued == [("o/r", 1, "new_pipeline"), ("o/r", 2, "no_record")]
 
 
 def test_sync_started_before_the_worker_recovers_on_the_next_cycle(deploy, caplog) -> None:
@@ -131,7 +132,7 @@ def test_sync_started_before_the_worker_recovers_on_the_next_cycle(deploy, caplo
     (failed,) = [r for r in caplog.records if r.name == api.__name__]
     assert failed.getMessage() == "동기화 실패"
     assert isinstance(failed.exc_info[1], OperationalError)
-    assert [r.enqueued for r in results] == [[("o/r", 2, "no_record")]]
+    assert [r.enqueued for r in results] == [[("o/r", 1, "new_pipeline"), ("o/r", 2, "no_record")]]
 
 
 def test_start_up_creates_the_db_on_a_fresh_machine_and_is_idempotent(deploy) -> None:

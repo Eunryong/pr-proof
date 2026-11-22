@@ -76,6 +76,8 @@ class Run(SQLModel, table=True):
     started_at: datetime
     heartbeat_at: datetime
     finished_at: datetime | None = None
+    # 이 검사를 돌린 파이프라인 코드의 커밋 (`app/shared/version.py`). 이 열이 생기기 전의 줄은 NULL
+    pipeline_commit: str | None = None
     # PR 작성자 (8.6). 판단에 쓴 값은 워커가 GitHub의 PR 조회에서 읽은 것이고, `job_` 쪽은 작업을
     # 만든 경로가 `PRJob`에 실은 기록용 값이다. 둘이 다르면 여기서 알 수 있다
     author_association: str | None = None

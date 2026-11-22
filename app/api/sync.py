@@ -18,6 +18,7 @@ from app.api.history import History
 from app.api.sync_rules_pure import EnqueueReason, enqueue_reason
 from app.api.webhook import PIPELINE_BRANCH_PREFIX
 from app.shared import notify as macos
+from app.shared import version
 from app.shared.comment_pure import command_in_comment
 from app.shared.config import PipelineConfig
 from app.shared.job_pure import PRJob
@@ -44,8 +45,11 @@ def run_once(
     list_comments: Callable[[str, int, str], list[github.PRComment]] = github.list_comments_since,
     auth_ok: Callable[[], bool] = github.auth_ok,
     now: datetime | None = None,
+    pipeline_commit: str | None = None,
 ) -> SyncResult:
     now = now or datetime.now(UTC)
+    if pipeline_commit is None:
+        pipeline_commit = version.current()
     backoff = timedelta(minutes=settings.sync.env_error_backoff_minutes)
     heartbeat_timeout = timedelta(minutes=settings.sync.heartbeat_timeout_minutes)
     result = SyncResult()
@@ -71,8 +75,9 @@ def run_once(
                 log.warning("동기화: %s#%s 명령 조회 실패: %s", repo, pr.number, e)
             runs = history.runs_for(repo, pr.number, pr.head_sha)
             reason = enqueue_reason(
-                runs, now, env_error_backoff=backoff, heartbeat_timeout=heartbeat_timeout
-            )
+                runs, now, env_error_backoff=backoff, heartbeat_timeout=heartbeat_timeout,
+                pipeline_commit=pipeline_commit,
+            )  # fmt: skip
             if reason is None:
                 continue
             job = PRJob(

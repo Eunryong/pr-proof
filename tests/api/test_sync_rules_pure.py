@@ -15,8 +15,9 @@ def _run(state: str, *, ago: int, finished: bool = True) -> RunSnapshot:
     return RunSnapshot(state=state, heartbeat_at=at, finished_at=at if finished else None)
 
 
-def _reason(*runs: RunSnapshot):
-    return enqueue_reason(runs, NOW, env_error_backoff=BACKOFF, heartbeat_timeout=HEARTBEAT)
+def _reason(*runs: RunSnapshot, commit: str = ""):
+    return enqueue_reason(runs, NOW, env_error_backoff=BACKOFF, heartbeat_timeout=HEARTBEAT,
+                          pipeline_commit=commit)  # fmt: skip
 
 
 @pytest.mark.parametrize(
@@ -50,3 +51,40 @@ def test_naive_timestamps_from_sqlite_are_utc() -> None:
     naive = (NOW - timedelta(minutes=31)).replace(tzinfo=None)
     run = RunSnapshot(state="env_error", heartbeat_at=naive, finished_at=naive)
     assert _reason(run) == "env_error_backoff"
+
+
+def _by(state: str, commit: str | None, *, ago: int = 60, finished: bool = True) -> RunSnapshot:
+    at = NOW - timedelta(minutes=ago)
+    return RunSnapshot(state=state, heartbeat_at=at, finished_at=at if finished else None,
+                       pipeline_commit=commit)  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    ("runs", "reason"),
+    [
+        ((_by("done", "old"),), "new_pipeline"),  # 옛 코드가 낸 결과는 `/recheck` 없이 다시 본다
+        ((_by("done", None),), "new_pipeline"),  # 커밋을 적기 전의 기록도 옛 코드의 것이다
+        ((_by("done", "new"),), None),  # 지금 코드로 한 번 끝났으면 다시 넣지 않는다
+        ((_by("done", "old"), _by("done", "new")), None),
+        ((_by("error", "old"),), "new_pipeline"),  # 옛 코드의 버그는 새 코드로 다시 해 본다
+        ((_by("error", "new"),), None),
+        ((_by("done", "old"), _by("error", "new")), None),  # 지금 코드로 이미 해 봤다
+        ((_by("blocked", "old"),), None),  # 승인은 코드가 바뀌어도 사람이 한다 (8.6)
+        ((_by("done", "old"), _by("running", "new", ago=1, finished=False)), None),  # 도는 중
+        ((_by("done", "old"), _by("env_error", "new", ago=5)), None),  # 물러나 기다리는 중
+        ((_by("done", "old"), _by("env_error", "new", ago=45)), "env_error_backoff"),
+    ],
+    ids=[
+        "done-old", "done-unknown", "done-new", "old-then-new", "error-old", "error-new",
+        "old-done-then-new-error", "blocked", "rerun-running", "rerun-env-error-recent",
+        "rerun-env-error-old",
+    ],
+)  # fmt: skip
+def test_results_of_older_pipeline_code_are_checked_again(runs, reason) -> None:
+    assert _reason(*runs, commit="new") == reason
+
+
+def test_unknown_pipeline_commit_never_requeues_finished_results() -> None:
+    """지금 코드의 커밋을 모르면(git이 없는 배포) 끝난 결과를 다시 넣지 않는다."""
+    assert _reason(_by("done", "old"), commit="") is None
+    assert _reason(_by("done", None), commit="") is None
