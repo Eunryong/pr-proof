@@ -15,7 +15,7 @@
 
 지금 구현을 그대로 쓴다. 규칙은 v1 F1–F3과 같고 요점만 옮긴다.
 
-- **웹훅 (v1 F1):** `POST /webhook/github` 하나. `X-Hub-Signature-256` HMAC 검증, `X-GitHub-Delivery` ID로 재전송 제거, 허용 목록의 저장소만, 큐에 넣고 바로 202. api는 GitHub을 조회하지 않는다. PR 작성자의 `author_association`과 로그인 이름은 판단 없이 기록용으로 `PRJob`에 실어 넘긴다. 외부 작성자의 PR을 돌릴지는 워커가 GitHub에서 직접 읽은 값으로 정한다(8.6). `issue_comment`는 `created`이고, 파이프라인 자신의 코멘트가 아니고, 작성자의 `author_association`이 OWNER·MEMBER·COLLABORATOR인 것만 받는다.
+- **웹훅 (v1 F1):** `POST /webhook/github` 하나. `X-Hub-Signature-256` HMAC 검증, `X-GitHub-Delivery` ID로 재전송 제거, 허용 목록의 저장소만, 큐에 넣고 바로 202. api는 GitHub을 조회하지 않는다. PR 작성자의 `author_association`과 로그인 이름은 판단 없이 기록용으로 `PRJob`에 실어 넘긴다. 외부 작성자의 PR을 돌릴지는 워커가 GitHub에서 직접 읽은 값으로 정한다(8.6). `issue_comment`는 `created`이고, 파이프라인 자신의 코멘트가 아니고, 작성자의 `author_association`이 OWNER·MEMBER·COLLABORATOR인 것만 받는다. 코멘트를 다루는 이벤트 셋을 더 받는다: `pull_request_review`(submitted)와 `pull_request_review_comment`(created)는 글쓴이가 Copilot이거나 OWNER·MEMBER·COLLABORATOR일 때 `feedback`이 되고, 머지된 수정안 PR(`pipeline/pr-<n>-fix-<묶음>`)의 `pull_request` closed는 원래 PR n의 `resolve`가 된다. `issue_comment`는 명령이 아니면 같은 규칙으로 `feedback`이 될 수 있다. 파이프라인이 단 글(`<!-- pr-proof` 표시)과 `/` 명령은 `feedback`이 되지 않아, 답글이 다시 이벤트를 일으켜 도는 일이 없다. 웹훅·동기화·워커가 `feedback_in_comment()` 하나로 거른다.
 - **동기화 (v1 F2):** api 시작 시 한 번, 이후 5분마다. GitHub의 PR 상태와 SQLite의 처리 이력을 비교해 차이를 작업으로 넣는다.
 
   | 비교 | 차이가 있으면 |
@@ -23,6 +23,8 @@
   | 열린 PR의 head SHA와 그 SHA로 끝난 검사 이력 | `update` |
   | 열린 수정안 PR이 남았는데 GitHub에서는 닫힌 원본 PR | `close` |
   | PR 코멘트의 명령과 처리한 코멘트 ID | `command` |
+  | 다룰 코멘트(Copilot 리뷰, 사람의 리뷰) 중 처리하지 않은 것 | `feedback` |
+  | 수정안 PR의 머지를 기다리는 받아들인 코멘트(해결하지 않은 스레드) | `resolve` |
   | "실행 중"인데 생존 확인이 끊긴 작업 | 다시 등록 |
 
   | 같은 head의 마지막 `runs` 상태 | 같은 head를 다시 넣나 |

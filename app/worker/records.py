@@ -20,6 +20,7 @@ from app.shared.db_pure import SeenViolation
 from app.shared.job_pure import PRJob
 from app.worker import records_pure, repo
 from app.worker.doc_rules_pure import Found, RuleChecked
+from app.worker.fix.feedback_fix_pure import FEEDBACK_BUNDLE
 from app.worker.fix.fix_pure import MechanicalFix
 from app.worker.fix.model_fix_pure import ModelFix
 from app.worker.fix.proposal_pure import find_secret_in_text
@@ -65,6 +66,8 @@ def after_proposals(store: Store, repo_name: str, pr_number: int, secrets: Seque
     try:
         for p in store.proposals(repo_name, pr_number):
             kind = _FINISHED_STATES.get(p.state)
+            if p.skill == FEEDBACK_BUNDLE:  # 코멘트 수정안은 문서 규칙의 기록을 만들지 않는다
+                continue
             attempt = store.fix_attempt(p.attempt_id) if p.attempt_id is not None else None
             if kind is None or attempt is None or attempt.patch is None:
                 continue

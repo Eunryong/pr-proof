@@ -221,7 +221,7 @@ def check(env, tmp_path: Path, base: dict[str, str], pr: dict[str, str], pr_numb
     env["redis"].set(state_keys_pure.latest_head("o/r", pr_number), head)
     job = PRJob(repo="o/r", pr_number=pr_number, kind="update", head_sha=head, base_sha=base_sha,
                 source="webhook")  # fmt: skip
-    ctx = update._context(deps, deps.store.start_run(job), None)
+    ctx = update.flow_context(deps, deps.store.start_run(job), None)
     return graph.run_flow(job, ctx)
 
 
@@ -607,7 +607,7 @@ def test_recheck_of_the_same_commit_makes_no_decision_call(doc_env, tmp_path: Pa
     _covered_tests(doc_env, tmp_path, {"orders/a.py": [1, 2, 3]})
     first = check(doc_env, tmp_path, BASE_FILES, TWO_PRINTS)
     job, deps = first["job"], doc_env["deps"]
-    again = graph.run_flow(job, update._context(deps, deps.store.start_run(job), None))
+    again = graph.run_flow(job, update.flow_context(deps, deps.store.start_run(job), None))
     assert [kind for kind, _ in model.prompts] == ["rules", "tool", "checker", "decide"]
     assert again["fix_decisions"].decisions == first["fix_decisions"].decisions
     assert again["fix_decisions"].calls == 0 and again["fix_decisions"].cached == 2

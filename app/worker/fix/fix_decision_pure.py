@@ -88,6 +88,17 @@ def decide_by_table(
     return None
 
 
+def safety_gap(tests: SafetyNet) -> str | None:
+    """모델 수정을 테스트로 확인할 수 없는 까닭 (표의 tests_failed·no_safety_net과 같은 기준).
+    확인할 수 있으면 None. 코멘트 수정(4.11)이 고치기 전에 본다."""
+    if tests.status in _TESTS_BROKEN:
+        return _TESTS_BROKEN[tests.status]
+    if tests.status == "no_tests" or tests.flaky:
+        why = "테스트가 없음" if tests.status == "no_tests" else "불안정한 테스트가 있음"
+        return f"테스트로 확인할 수 없음 ({why})"
+    return None
+
+
 @dataclass(frozen=True)
 class Planned:
     """표를 적용한 결과. decided는 끝난 판단, for_model은 모델이 정할 위반이다."""

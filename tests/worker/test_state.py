@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from pathlib import Path
 
 import fakeredis
@@ -287,3 +288,72 @@ def test_existing_database_gets_rag_auto_off_and_keeps_its_rows(tmp_path: Path) 
     assert "rag_auto_off" in inspect(store.engine).get_table_names()
     assert store.rag_evidence("o/r") == Evidence(3, Outcomes(1, 1), Outcomes(0, 0))
     assert store.rag_turned_off("o/r", 30, 10) is None
+
+
+# --- PR 코멘트 (feedback) --------------------------------------------------------------
+
+
+def _feedback(store: Store, item_id: int, **fields) -> None:
+    base = {"repo": "o/r", "pr_number": 1, "kind": "review_comment", "item_id": item_id,
+            "thread_id": f"T{item_id}", "login": "Copilot", "head_sha": "h",
+            "verdict": "accepted", "proposal_number": 900}  # fmt: skip
+    store.record_feedback(**(base | fields))
+
+
+def test_record_feedback_updates_the_same_repo_kind_item(store: Store) -> None:
+    _feedback(store, 1, verdict="error", why="실패", proposal_number=None)
+    _feedback(store, 1, verdict="accepted", why="", reply_id=55)
+    (row,) = store.handled_feedback("o/r", 1)
+    assert (row.verdict, row.reply_id, row.proposal_number) == ("accepted", 55, 900)
+    _feedback(store, 1, kind="review", thread_id=None)  # 종류가 다르면 다른 줄
+    assert len(store.handled_feedback("o/r", 1)) == 2
+
+
+def test_handled_feedback_is_per_pr(store: Store) -> None:
+    _feedback(store, 1)
+    _feedback(store, 2, pr_number=2)
+    assert [f.item_id for f in store.handled_feedback("o/r", 1)] == [1]
+    assert store.handled_feedback("o/r", 3) == []
+
+
+def test_feedback_awaiting_merge_is_accepted_with_proposal_and_thread_and_unresolved(
+    store: Store,
+) -> None:
+    _feedback(store, 1)  # 기다림
+    _feedback(store, 2, verdict="rejected", proposal_number=None)
+    _feedback(store, 3, verdict="no_action", proposal_number=None)
+    _feedback(store, 4, proposal_number=None)  # 아직 수정안이 없다
+    _feedback(store, 5, thread_id=None)  # 스레드가 없다
+    _feedback(store, 6)
+    (done,) = [f for f in store.handled_feedback("o/r", 1) if f.item_id == 6]
+    store.mark_feedback_resolved([done.id], datetime.now(UTC))
+    assert [f.item_id for f in store.feedback_awaiting_merge("o/r", 1)] == [1]
+
+
+def test_mark_feedback_resolved_sets_the_time_and_ignores_unknown_ids(store: Store) -> None:
+    _feedback(store, 1)
+    _feedback(store, 2)
+    first, second = store.handled_feedback("o/r", 1)
+    at = datetime(2026, 11, 22, tzinfo=UTC)
+    store.mark_feedback_resolved([first.id, 999], at)
+    rows = {f.item_id: f.resolved_at for f in store.handled_feedback("o/r", 1)}
+    assert rows[1] is not None and rows[1].replace(tzinfo=UTC) == at and rows[2] is None
+    assert [f.item_id for f in store.feedback_awaiting_merge("o/r", 1)] == [2]
+
+
+def test_feedback_table_is_added_to_an_existing_database(tmp_path: Path) -> None:
+    """배포가 더한 테이블은 워커가 시작할 때 만든다. 있던 DB의 줄은 그대로다."""
+    db = tmp_path / "old.db"
+    engine = create_engine(f"sqlite:///{db}")
+    with engine.begin() as conn:
+        conn.execute(text("CREATE TABLE commandrecord (comment_id INTEGER PRIMARY KEY, "
+                          "repo TEXT, pr_number INTEGER, command TEXT, result TEXT, "
+                          "handled_at TEXT)"))  # fmt: skip
+        conn.execute(
+            text(
+                "INSERT INTO commandrecord VALUES (1, 'o/r', 1, '/fix', 'x', '2026-11-22 00:00:00')"
+            )
+        )
+    store = Store(db, fakeredis.FakeStrictRedis())
+    assert "feedback" in inspect(store.engine).get_table_names()
+    assert store.command_handled(1)

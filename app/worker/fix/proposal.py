@@ -19,6 +19,12 @@ from app.shared.job_pure import PRJob
 from app.worker import records, repo
 from app.worker.doc_rules_pure import Found, outcomes_by_rule
 from app.worker.fix import proposal_pure
+from app.worker.fix.feedback_fix_pure import (
+    FEEDBACK_BUNDLE,
+    Accepted,
+    comment_lines,
+    proposal_title,
+)
 from app.worker.fix.fix_pure import MECHANICAL_BUNDLE, MechanicalFix
 from app.worker.fix.model_fix_pure import MODEL_BUNDLE, Explanation, ModelFix
 from app.worker.fix.proposal_pure import ProposalResult
@@ -361,6 +367,116 @@ def open_model_proposal(
         attempt_id=fix.attempt_id,
     )  # fmt: skip
     post_review(github, job.repo, number, review_comments(fix, found), patch, secrets)
+    return ProposalResult(
+        number=number,
+        url=f"https://github.com/{job.repo}/pull/{number}",
+        updated=existing is not None,
+    )
+
+
+def feedback_fix_body(job: PRJob, fix: ModelFix, found: Found, accepted: Sequence[Accepted]) -> str:
+    """코멘트 수정안 PR의 본문 (4.11). 검증 절은 파이프라인이 쓰고, 사람과 모델의 글은 코드 스팬과
+    코드 울타리 안에만 둔다. 코멘트에는 검사기가 없어 "대상 위반 해소" 대신 그 파일이 바뀐 것만
+    확인했다고 적는다 (4.8의 5번이 약해진 자리)."""
+    check = fix.verification
+    lines = [
+        proposal_pure.PROPOSAL_MARKER,
+        f"#{job.pr_number}의 커밋 `{job.head_sha[:7]}`에 달린 리뷰 코멘트 중 파이프라인이 받아들인 "
+        "것을 모델이 고친 수정안입니다.",
+        "",
+        f"**반영한 코멘트** ({len(accepted)}건)",
+        *comment_lines(accepted, fix),
+        "",
+        "**검증** (파이프라인이 확인한 결과)",
+    ]
+    if check is not None:
+        kept = [t for t in fix.generated if t.accepted]
+        made = {t.file for t in kept}
+        files = ", ".join(inline_code(f, 200) for f in fix.changed_files if f not in made)
+        new_tests = f"만든 테스트 파일 {len(kept)}개는 테스트 폴더의 새 파일. " if kept else ""
+        recheck = (
+            f"이 커밋의 규칙 검사가 쓴 도구·검사기 {check.rules_rechecked}개를 다시 돌려 새 위반 "
+            "없음"
+            if check.rules_rechecked
+            else "이 커밋의 규칙 검사 결과가 없어 도구·검사기를 다시 돌리지 않음"
+        )
+        lines += [
+            f"- 허용 범위: 판단이 정한 파일만 바뀜 ({files}). {new_tests}있던 테스트 파일, "
+            "`.github/`, 새로 생긴 무시된 파일 없음",
+            f"- 코멘트 반영: 검사기가 없어 그 파일이 바뀐 것까지만 확인했습니다 "
+            f"({check.resolved}건). 반영 여부는 리뷰어가 확인해 주세요",
+            f"- 규칙 재검사: {recheck}",
+            f"- 테스트: 있던 테스트 {check.tests}개가 수정 전후 같은 결과로 통과",
+            *([f"- 만든 테스트: {len(kept)}개가 고치기 전 코드와 고친 뒤 코드에서 모두 통과"]
+              if kept else []),
+            f"- 크기: 바뀐 파일 {check.files}개, 바뀐 줄 {check.lines}줄 "
+            f"(상한 {proposal_pure.MAX_FILES}개, {proposal_pure.MAX_CHANGED_LINES}줄. "
+            "만든 테스트는 따로 셈)",
+            "- 비밀값: 추가된 줄과 모델의 설명에서 찾지 못함",
+        ]  # fmt: skip
+        lines += test_section(found, fix.targets, fix)
+    text = explanation_text(fix.explanation)
+    if text:
+        fence = code_fence(text)
+        lines += ["", "**모델의 설명** (모델이 쓴 글입니다)", "", f"{fence}text", text, fence]
+    models = ", ".join(inline_code(m, 80) for m in fix.models) or "저장된 결과"
+    lines += [
+        "",
+        f"모델: {models} · 작성 회차 {fix.attempts}",
+        "",
+        f"머지하면 #{job.pr_number}의 브랜치에 들어가고, 반영한 줄 코멘트의 스레드를 파이프라인이 "
+        "해결됨으로 바꿉니다. 모델이 쓴 코드이니 리뷰한 뒤 머지해 주세요. 원하지 않으면 닫아 "
+        "주세요.",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def open_feedback_proposal(
+    job: PRJob,
+    worktree: Path,
+    store: Store,
+    github: GitHub,
+    fix: ModelFix,
+    found: Found,
+    accepted: Sequence[Accepted],
+    *,
+    patch: str,
+    secrets: Sequence[str] | None = None,
+) -> ProposalResult:
+    """검증을 통과한 코멘트 수정안을 수정안 PR로 올린다 (4.11). `open_model_proposal`의 짝이고 막는
+    규칙(포크, 새 커밋, 비밀값)과 다시 불러도 중복되지 않는 것이 같다. 브랜치는
+    pipeline/pr-<n>-fix-feedback, base는 원래 PR의 브랜치다."""
+    refs = github.pr_refs(job.repo, job.pr_number)
+    if refs.head_repo != job.repo:
+        return ProposalResult(reason=FORK_NO_PR)
+    if refs.head_sha != job.head_sha:
+        return ProposalResult(reason="그 사이 새 커밋이 올라옴")
+    secrets = list(pipeline_secrets() if secrets is None else secrets)
+    blocker = proposal_pure.push_blocker(patch, fix.changed_files, secrets)
+    if blocker is not None:
+        log.warning("코멘트 수정안 PR을 만들지 않음 %s#%s: %s", job.repo, job.pr_number, blocker)
+        return ProposalResult(reason=blocker)
+    body = feedback_fix_body(job, fix, found, accepted)
+    if proposal_pure.find_secret_in_text(body, secrets) is not None:
+        log.warning("코멘트 수정안 PR을 만들지 않음 %s#%s: 본문", job.repo, job.pr_number)
+        return ProposalResult(reason=f"{proposal_pure.SECRET_BLOCKED} (수정안 본문)")
+    branch = proposal_pure.branch_name(job.pr_number, FEEDBACK_BUNDLE)
+    message = (
+        f"[pipeline] feedback: #{job.pr_number} 리뷰 코멘트 {len(accepted)}건 반영\n\n"
+        f"원본 커밋 {job.head_sha}"
+    )
+    repo.commit_and_push(worktree, fix.changed_files, message, branch, github.identity())
+    title = proposal_title(job.pr_number, len(accepted))
+    existing = github.open_pr_for_branch(job.repo, branch)
+    if existing is not None:
+        github.update_pr(job.repo, existing, title, body)
+        number = existing
+    else:
+        number = github.create_pr(job.repo, refs.head_ref, branch, title, body)
+    store.record_proposal(
+        job.repo, job.pr_number, FEEDBACK_BUNDLE, job.head_sha, branch, number,
+        attempt_id=fix.attempt_id,
+    )  # fmt: skip
     return ProposalResult(
         number=number,
         url=f"https://github.com/{job.repo}/pull/{number}",

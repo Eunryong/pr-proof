@@ -7,6 +7,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Final
 
+from app.shared.feedback_pure import FeedbackKind
+
 GH_TIMEOUT: Final = 60
 _ENV_PASSTHROUGH: Final = ("PATH", "HOME", "GH_CONFIG_DIR")
 PR_FIELDS: Final = "number,headRefOid,baseRefOid,headRefName,isDraft,author"
@@ -93,6 +95,54 @@ def list_comments_since(
             )
         )
     return comments
+
+
+@dataclass(frozen=True)
+class FeedbackItem:
+    """PR에 달린 코멘트 하나 (줄 리뷰 코멘트, 리뷰 본문, 일반 코멘트). 거르기는 호출한 쪽이 한다."""
+
+    kind: FeedbackKind
+    id: int
+    login: str
+    author_association: str
+    body: str
+
+
+# 읽는 곳과 그 응답에서 뺄 것. 줄 코멘트는 스레드의 첫 코멘트만(답글은 in_reply_to_id가 있다),
+# 리뷰는 본문이 빈 것(줄 코멘트만 단 리뷰)을 뺀다
+_FEEDBACK_SOURCES: Final[tuple[tuple[FeedbackKind, str, str], ...]] = (
+    ("review_comment", "pulls/{n}/comments", "select(.in_reply_to_id == null)"),
+    ("review", "pulls/{n}/reviews", 'select((.body // "") != "")'),
+    ("issue_comment", "issues/{n}/comments", "select(true)"),
+)
+
+
+def list_feedback(repo: str, pr_number: int, runner: GhRunner = run_gh) -> list[FeedbackItem]:
+    """PR에 달린 코멘트 전부(세 곳). 본문은 여러 줄일 수 있어 한 줄에 JSON 하나로 받는다.
+
+    동기화가 처리하지 않은 코멘트가 있는지 볼 때 쓴다. 글쓴이와 표시는 걸러 오지 않는다.
+    """
+    items: list[FeedbackItem] = []
+    for kind, path, keep in _FEEDBACK_SOURCES:
+        jq = f'.[] | {keep} | {{id, author_association, body, login: (.user.login // "")}} | @json'
+        out = runner(["api", "--paginate", f"repos/{repo}/{path.format(n=pr_number)}", "--jq", jq])
+        for line in out.splitlines():
+            if not line.strip():
+                continue
+            try:
+                item = json.loads(line)
+                items.append(
+                    FeedbackItem(
+                        kind=kind,
+                        id=int(item["id"]),
+                        login=item.get("login") or "",
+                        author_association=item.get("author_association") or "",
+                        body=item.get("body") or "",
+                    )
+                )
+            except (ValueError, KeyError, TypeError) as e:
+                raise GitHubReadError(f"코멘트 조회 응답을 읽지 못함: {repo}#{pr_number}") from e
+    return items
 
 
 def list_open_prs(repo: str, runner: GhRunner = run_gh) -> list[OpenPR]:

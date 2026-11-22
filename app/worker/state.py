@@ -16,6 +16,7 @@ from app.shared.db_pure import (
     CheckerEntry,
     CommandRecord,
     EvalRun,
+    Feedback,
     FixAttempt,
     ModelCacheEntry,
     ModelCall,
@@ -157,8 +158,11 @@ class Store:
             return set(session.exec(stmt))
 
     def heartbeat(self, run_id: int) -> None:
+        """runs 기록이 없는 작업(코멘트 수정, run_id 0)은 남길 줄이 없어 아무것도 하지 않는다."""
         with Session(self.engine) as session:
             run = session.get(Run, run_id)
+            if run is None:
+                return
             run.heartbeat_at = _now()
             session.commit()
 
@@ -355,6 +359,15 @@ class Store:
                 session.add(row)
             session.commit()
 
+    def violations_at(self, repo: str, pr_number: int, head_sha: str) -> list[SeenViolation]:
+        """이 커밋의 규칙 검사가 찾은 위반. 아직 검사하지 않았으면 빈 목록이다."""
+        with Session(self.engine) as session:
+            stmt = select(SeenViolation).where(
+                SeenViolation.repo == repo, SeenViolation.pr_number == pr_number,
+                SeenViolation.head_sha == head_sha,
+            )  # fmt: skip
+            return list(session.exec(stmt.order_by(SeenViolation.id)))
+
     def previous_violations(self, repo: str, pr_number: int, head_sha: str) -> list[SeenViolation]:
         """이 PR에서 head_sha가 아닌 커밋 중 가장 최근에 기록한 커밋의 위반."""
         with Session(self.engine) as session:
@@ -485,6 +498,72 @@ class Store:
                     handled_at=_now(),
                 )
             )
+            session.commit()
+
+    # --- PR 코멘트 (feedback) ---
+
+    def record_feedback(
+        self,
+        *,
+        repo: str,
+        pr_number: int,
+        kind: str,
+        item_id: int,
+        thread_id: str | None,
+        login: str,
+        head_sha: str,
+        verdict: str,
+        why: str = "",
+        reply_id: int | None = None,
+        proposal_number: int | None = None,
+        resolved_at: datetime | None = None,
+    ) -> None:
+        """처리한 코멘트를 적는다. 같은 (repo, kind, item_id)가 있으면 그 줄을 고친다.
+
+        resolved_at은 처리하면서 스레드를 바로 해결됨으로 바꾼 때다(이미 고쳐진 코멘트, 4.11)."""
+        with Session(self.engine) as session:
+            stmt = select(Feedback).where(
+                Feedback.repo == repo, Feedback.kind == kind, Feedback.item_id == item_id
+            )
+            row = session.exec(stmt).first()
+            if row is None:
+                row = Feedback(
+                    repo=repo, pr_number=pr_number, kind=kind, item_id=item_id, login=login,
+                    head_sha=head_sha, verdict=verdict, handled_at=_now(),
+                )  # fmt: skip
+            row.pr_number, row.thread_id, row.login, row.head_sha = (
+                pr_number, thread_id, login, head_sha,
+            )  # fmt: skip
+            row.verdict, row.why, row.reply_id = verdict, why, reply_id
+            row.proposal_number, row.handled_at = proposal_number, _now()
+            row.resolved_at = resolved_at
+            session.add(row)
+            session.commit()
+
+    def handled_feedback(self, repo: str, pr_number: int) -> list[Feedback]:
+        with Session(self.engine) as session:
+            stmt = select(Feedback).where(Feedback.repo == repo, Feedback.pr_number == pr_number)
+            return list(session.exec(stmt.order_by(Feedback.id)))
+
+    def feedback_awaiting_merge(self, repo: str, pr_number: int) -> list[Feedback]:
+        """받아들여 수정안을 올렸는데 스레드를 아직 해결하지 않은 줄 코멘트."""
+        with Session(self.engine) as session:
+            stmt = select(Feedback).where(
+                Feedback.repo == repo, Feedback.pr_number == pr_number,
+                Feedback.verdict == "accepted",
+                Feedback.proposal_number.is_not(None),
+                Feedback.resolved_at.is_(None),
+                Feedback.thread_id.is_not(None),
+            )  # fmt: skip
+            return list(session.exec(stmt.order_by(Feedback.id)))
+
+    def mark_feedback_resolved(self, ids: Iterable[int], at: datetime) -> None:
+        with Session(self.engine) as session:
+            for feedback_id in ids:
+                row = session.get(Feedback, feedback_id)
+                if row is not None:
+                    row.resolved_at = at
+                    session.add(row)
             session.commit()
 
     def add_call_grant(self, repo: str, pr_number: int, head_sha: str, comment_id: int) -> None:

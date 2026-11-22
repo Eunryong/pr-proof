@@ -85,6 +85,22 @@ def load_access(
     아니거나 너무 크거나 글이 아니면 기본값이다. 문제는 검사가 돌 때 `load`가 "설정:"에 알린다.
     git이 실패하면 GitError를 올려 실행하지 않는다.
     """
+    text = _bare_settings(data_dir, repo_name, base_sha, url)
+    return parse_access(text)[0] if text is not None else AccessSettings()
+
+
+def load_repo(
+    data_dir: Path, repo_name: str, base_sha: str, *, url: str | None = None
+) -> RepoConfig:
+    """코멘트 판단(4.11)이 체크아웃 전에 읽는 `.pipeline.yaml`. `load_access`와 같이 bare 캐시에서
+    읽고, 읽지 못하면 기본값이다. `fix`에는 파이프라인 쪽 최댓값을 적용한다."""
+    config, _ = parse_repo_config(_bare_settings(data_dir, repo_name, base_sha, url))
+    return config.model_copy(update={"fix": fix_limits(config.fix)})
+
+
+def _bare_settings(data_dir: Path, repo_name: str, base_sha: str, url: str | None) -> str | None:
+    """bare 캐시에서 base 커밋의 `.pipeline.yaml` 글. 일반 파일이 아니거나 너무 크거나 글이 아니면
+    None."""
     bare = repo.ensure_bare(data_dir, repo_name, url)
     repo.fetch_commit(bare, base_sha)
     entry = repo.bare_entries(bare, base_sha, [PIPELINE_YAML]).get(PIPELINE_YAML)
@@ -94,12 +110,11 @@ def load_access(
         or entry.size is None
         or entry.size > MAX_SETTINGS_BYTES
     ):
-        return AccessSettings()
+        return None
     try:
-        text = repo.bare_blob(bare, entry.sha)
+        return repo.bare_blob(bare, entry.sha)
     except UnicodeDecodeError:
-        return AccessSettings()
-    return parse_access(text)[0]
+        return None
 
 
 def load(worktree: Path, base_sha: str, max_memory_gb: float) -> BaseConfig:
