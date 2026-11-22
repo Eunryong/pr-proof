@@ -1,5 +1,7 @@
 """app/worker/feedback_triage_pure.py: 겹침 가리기, 프롬프트, 답 읽기 (4.11)."""
 
+from typing import Final
+
 import pytest
 
 from app.worker.feedback_pure import Item, line_at
@@ -15,8 +17,8 @@ from app.worker.feedback_triage_pure import (
 )
 from app.worker.rule_pure import CheckMethod, Rule, RuleSource
 
-HEAD = "h" * 40
-OLD = "o" * 40
+HEAD: Final = "h" * 40
+OLD: Final = "o" * 40
 
 
 def _item(item_id=1, *, line=3, commit=HEAD, original=3, outdated=False, kind="review_comment",

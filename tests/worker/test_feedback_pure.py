@@ -12,6 +12,7 @@ class C:
     login: str = "copilot-pull-request-reviewer"
     association: str = "NONE"
     body: str = "이 줄은 위험합니다."
+    original_commit: str = ""
 
 
 @dataclass(frozen=True)
@@ -22,6 +23,7 @@ class T:
     outdated: bool = False
     path: str = "src/a.py"
     line: int | None = 12
+    original_line: int | None = None
 
 
 def test_thread_is_one_item_based_on_the_first_comment() -> None:
