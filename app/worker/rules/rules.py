@@ -94,6 +94,22 @@ class FindsSections(Protocol):
     ) -> list[tuple[str, float]]: ...
 
 
+def saved_rules(
+    bare: Path, base_sha: str, settings: RulesSettings, *, model: str, store: Store
+) -> RulesResult | None:
+    """worktree 없이 base의 규칙 문서 목록으로 저장된 규칙 묶음을 찾는다 (4.11). 저장된 것이 없으면
+    None. 모델을 부르지 않고 문서도 읽지 않는다. 키는 `load_rules`와 같다(문서의 blob 해시와 모델).
+    """
+    selection = select_documents(settings.docs, repo.bare_entries(bare, base_sha, settings.docs))
+    if not selection.listed:
+        return NoRuleDocuments(unread=())
+    key = ruleset_key(selection.listed, model)
+    saved = store.saved_ruleset(key)
+    if saved is None:
+        return None
+    return _result(key, RuleSet.from_json(saved), settings.disabled, cached=True)
+
+
 def load_rules(
     worktree: Path,
     base_sha: str,

@@ -41,9 +41,22 @@ def test_handled_feedback_keys_are_kind_and_id_of_the_pr(tmp_path: Path) -> None
     _record(store, 2, kind="review", thread_id=None, verdict="no_action", proposal_number=None)
     _record(store, 3, pr_number=2)
     history = History(db)
-    assert history.handled_feedback_keys("o/r", 1) == {("review_comment", 1), ("review", 2)}
-    assert history.handled_feedback_keys("o/r", 2) == {("review_comment", 3)}
-    assert history.handled_feedback_keys("x/y", 1) == set()
+    assert history.handled_feedback_keys("o/r", 1, "h") == {("review_comment", 1), ("review", 2)}
+    assert history.handled_feedback_keys("o/r", 2, "h") == {("review_comment", 3)}
+    assert history.handled_feedback_keys("x/y", 1, "h") == set()
+
+
+def test_deferred_and_error_are_revisited_on_a_new_head(tmp_path: Path) -> None:
+    db = tmp_path / "pipeline.db"
+    store = Store(db, fakeredis.FakeStrictRedis())
+    _record(store, 1, verdict="deferred", proposal_number=None)
+    _record(store, 2, verdict="error", proposal_number=None)
+    _record(store, 3, verdict="rejected", proposal_number=None)
+    history = History(db)
+    assert history.handled_feedback_keys("o/r", 1, "h") == {
+        ("review_comment", 1), ("review_comment", 2), ("review_comment", 3),
+    }  # fmt: skip
+    assert history.handled_feedback_keys("o/r", 1, "new") == {("review_comment", 3)}
 
 
 def test_prs_awaiting_resolve(tmp_path: Path) -> None:
@@ -75,9 +88,9 @@ def test_closed_unmerged_proposal_is_not_awaited_but_open_and_merged_are(tmp_pat
 
 
 def test_missing_db_or_table_means_no_feedback_history(tmp_path: Path) -> None:
-    assert History(tmp_path / "none.db").handled_feedback_keys("o/r", 1) == set()
+    assert History(tmp_path / "none.db").handled_feedback_keys("o/r", 1, "h") == set()
     assert History(tmp_path / "none.db").prs_awaiting_resolve("o/r") == set()
     empty = tmp_path / "empty.db"
     sqlite3.connect(empty).close()  # 파일은 있고 테이블이 없다 (워커가 아직 스키마를 만들지 않음)
-    assert History(empty).handled_feedback_keys("o/r", 1) == set()
+    assert History(empty).handled_feedback_keys("o/r", 1, "h") == set()
     assert History(empty).prs_awaiting_resolve("o/r") == set()

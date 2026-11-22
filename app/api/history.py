@@ -8,6 +8,7 @@ from sqlmodel import Session, create_engine, select
 
 from app.api.sync_rules_pure import RunSnapshot
 from app.shared.db_pure import CommandRecord, Feedback, Proposal, Run
+from app.shared.feedback_pure import handled
 
 # 머지되지 않고 닫힌 수정안의 상태 (db_pure.ProposalState)
 CLOSED_UNMERGED: Final = ("rejected", "superseded", "closed_with_pr")
@@ -65,16 +66,30 @@ class History:
             except OperationalError:
                 return set()
 
-    def handled_feedback_keys(self, repo: str, pr_number: int) -> set[tuple[str, int]]:
-        """워커가 처리한 코멘트의 (종류, id). 테이블이 아직 없으면 빈 집합."""
+    def handled_feedback_keys(
+        self, repo: str, pr_number: int, head_sha: str
+    ) -> set[tuple[str, int]]:
+        """워커가 처리한 코멘트의 (종류, id). 테이블이 아직 없으면 빈 집합. deferred·error는 그
+        기록의 커밋이 head_sha일 때만, 새 커밋으로 닫힌 수정안에 연결된 것도 그때만 든다
+        (`feedback_pure.handled`)."""
         if not self.db_path.is_file():
             return set()
         with Session(self.engine) as session:
-            stmt = select(Feedback.kind, Feedback.item_id).where(
-                Feedback.repo == repo, Feedback.pr_number == pr_number
-            )
+            stmt = select(
+                Feedback.kind, Feedback.item_id, Feedback.verdict, Feedback.head_sha,
+                Feedback.proposal_number,
+            ).where(Feedback.repo == repo, Feedback.pr_number == pr_number)  # fmt: skip
+            gone = select(Proposal.number).where(
+                Proposal.repo == repo, Proposal.pr_number == pr_number,
+                Proposal.state == "superseded",
+            )  # fmt: skip
             try:
-                return {(kind, item_id) for kind, item_id in session.exec(stmt)}
+                superseded = set(session.exec(gone))
+                return {
+                    (kind, item_id)
+                    for kind, item_id, verdict, head, number in session.exec(stmt)
+                    if handled(verdict, head, head_sha, number in superseded)
+                }
             except OperationalError:
                 return set()
 

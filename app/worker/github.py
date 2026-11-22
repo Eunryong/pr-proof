@@ -67,6 +67,7 @@ class ThreadComment:
     login: str
     association: str
     body: str
+    original_commit: str = ""  # 코멘트를 처음 단 커밋. original_line이 이 커밋 기준이다
 
 
 @dataclass(frozen=True)
@@ -79,6 +80,7 @@ class ReviewThread:
     path: str
     line: int | None  # 코드가 바뀌어 줄을 잃은 스레드는 None
     comments: tuple[ThreadComment, ...]
+    original_line: int | None = None  # 첫 코멘트의 original_commit 기준 줄. 낡아도 남는다
 
 
 @dataclass(frozen=True)
@@ -108,8 +110,10 @@ query($owner: String!, $name: String!, $number: Int!) {
     pullRequest(number: $number) {
       reviewThreads(first: 100) {
         nodes {
-          id isResolved isOutdated path line
-          comments(first: 50) { nodes { databaseId author { login } authorAssociation body } }
+          id isResolved isOutdated path line originalLine
+          comments(first: 50) {
+            nodes { databaseId author { login } authorAssociation body originalCommit { oid } }
+          }
         }
       }
     }
@@ -331,12 +335,14 @@ class GitHub:
                     outdated=bool(node["isOutdated"]),
                     path=node.get("path") or "",
                     line=node.get("line"),
+                    original_line=node.get("originalLine"),
                     comments=tuple(
                         ThreadComment(
                             id=int(c["databaseId"]),
                             login=(c.get("author") or {}).get("login") or "",
                             association=c.get("authorAssociation") or "",
                             body=c.get("body") or "",
+                            original_commit=(c.get("originalCommit") or {}).get("oid") or "",
                         )
                         for c in node["comments"]["nodes"]
                     ),

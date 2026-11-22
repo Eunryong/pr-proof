@@ -142,7 +142,7 @@ def run(env, tmp_path: Path, pr: dict[str, str] = TWO_PRINTS, base: dict = BASE_
     job = PRJob(repo="o/r", pr_number=1, kind="update", head_sha=head, base_sha=base_sha,
                 source="webhook")  # fmt: skip
     deps = env["deps"]
-    return graph.run_flow(job, update._context(deps, deps.store.start_run(job), None))
+    return graph.run_flow(job, update.flow_context(deps, deps.store.start_run(job), None))
 
 
 def _comment(env) -> str:
@@ -347,7 +347,7 @@ def test_same_commit_again_reuses_the_saved_fix_without_calls(fix_env, tmp_path:
     first = run(fix_env, tmp_path)
     assert first["model_fix"].status == "failed" and len(fixer.calls) == 3
     deps, job = fix_env["deps"], first["job"]
-    again = graph.run_flow(job, update._context(deps, deps.store.start_run(job), None))
+    again = graph.run_flow(job, update.flow_context(deps, deps.store.start_run(job), None))
     assert len(fixer.calls) == 3
     assert again["model_fix"].status == "failed" and again["model_fix"].cache_hits == 3
     assert again["model_fix"].calls == 0

@@ -71,3 +71,13 @@ def test_markers_all_start_with_the_same_prefix() -> None:
 )
 def test_fix_branch_pr(ref: str, number: int | None) -> None:
     assert fix_branch_pr(ref) == number
+
+
+def test_deferred_error_and_superseded_are_revisited_only_on_a_new_head() -> None:
+    from app.shared.feedback_pure import handled
+
+    assert handled("rejected", "old", "new")
+    assert handled("accepted", "old", "new")
+    assert not handled("accepted", "old", "new", superseded=True)
+    assert not handled("deferred", "old", "new") and handled("deferred", "new", "new")
+    assert not handled("error", "old", "new") and handled("error", "new", "new")

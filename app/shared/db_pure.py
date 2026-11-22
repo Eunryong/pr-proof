@@ -48,7 +48,9 @@ class CommandRecord(SQLModel, table=True):
 
 # accepted: 받아들여 수정안을 올림, rejected: 받아들이지 않고 이유를 답함, no_action: 고칠 것이
 # 없는 코멘트(칭찬, 질문 없음 등), error: 처리하지 못함
-FeedbackVerdict = Literal["accepted", "rejected", "no_action", "error"]
+# deferred: 받아들였지만 지금은 고칠 수 없음(테스트가 실패했거나 없음, 포크 PR, 이 커밋에 이미 열린
+# 코멘트 수정안). deferred와 error는 PR에 새 커밋이 오면 다시 본다 (feedback_pure.handled)
+FeedbackVerdict = Literal["accepted", "rejected", "no_action", "deferred", "error"]
 
 
 class Feedback(SQLModel, table=True):

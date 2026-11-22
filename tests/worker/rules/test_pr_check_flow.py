@@ -101,7 +101,7 @@ def _run(env, tmp_path: Path, messages: list[str], body: str = "고쳤습니다"
     job = PRJob(repo="o/r", pr_number=1, kind="update", head_sha=shas[-1], base_sha=base,
                 source="webhook")  # fmt: skip
     deps = env["deps"]
-    return graph.run_flow(job, update._context(deps, deps.store.start_run(job), None)), shas
+    return graph.run_flow(job, update.flow_context(deps, deps.store.start_run(job), None)), shas
 
 
 def _kinds(model: FakeModel) -> list[str]:

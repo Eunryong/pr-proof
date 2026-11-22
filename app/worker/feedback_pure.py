@@ -25,6 +25,13 @@ class Written(Protocol):
     def body(self) -> str: ...
 
 
+class ThreadWritten(Written, Protocol):
+    """스레드의 코멘트. 처음 단 커밋이 있다. `github.ThreadComment`가 맞는다."""
+
+    @property
+    def original_commit(self) -> str: ...
+
+
 class Thread(Protocol):
     """줄 리뷰 코멘트의 스레드. `github.ReviewThread`가 맞는다."""
 
@@ -39,7 +46,9 @@ class Thread(Protocol):
     @property
     def line(self) -> int | None: ...
     @property
-    def comments(self) -> Sequence[Written]: ...
+    def original_line(self) -> int | None: ...
+    @property
+    def comments(self) -> Sequence[ThreadWritten]: ...
 
 
 @dataclass(frozen=True)
@@ -56,6 +65,9 @@ class Item:
     body: str
     replies: tuple[str, ...]  # 스레드에서 뒤따른 답글 중 파이프라인 표시가 없는 것
     outdated: bool
+    # 줄 코멘트를 처음 단 커밋과 그 커밋 기준의 줄. 수정안이 고친 줄과 맞춰 볼 때 쓴다 (4.11)
+    original_commit: str = ""
+    original_line: int | None = None
 
 
 def thread_item(thread: Thread) -> Item | None:
@@ -76,6 +88,8 @@ def thread_item(thread: Thread) -> Item | None:
         body=first.body,
         replies=tuple(c.body for c in rest if PIPELINE_MARKER_PREFIX not in c.body),
         outdated=thread.outdated,
+        original_commit=first.original_commit,
+        original_line=thread.original_line,
     )
 
 
@@ -95,6 +109,21 @@ def flat_item(kind: FeedbackKind, written: Written) -> Item | None:
         replies=(),
         outdated=False,
     )
+
+
+def line_at(item: Item, sha: str, head_sha: str) -> int | None:
+    """커밋 sha 기준의 코멘트 줄. 맞출 수 없으면 None (4.11 "겹치는 코멘트").
+
+    코멘트를 처음 단 커밋이 sha면 그때의 줄이다. sha가 지금 head이고 스레드가 낡지 않았으면
+    GitHub이 지금 head에 맞춘 줄이다. 그 밖에는 줄이 밀렸을 수 있어 맞추지 않는다.
+    """
+    if item.kind != "review_comment" or not sha:
+        return None
+    if item.original_commit == sha and item.original_line is not None:
+        return item.original_line
+    if sha == head_sha and not item.outdated:
+        return item.line
+    return None
 
 
 def unhandled(items: Sequence[Item | None], handled: Collection[tuple[str, int]]) -> list[Item]:

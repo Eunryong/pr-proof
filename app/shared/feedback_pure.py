@@ -25,6 +25,20 @@ COPILOT_LOGINS: Final = frozenset(
 FeedbackKind = Literal["review_comment", "review", "issue_comment"]
 
 _FIX_BRANCH: Final = re.compile(r"pipeline/pr-(\d+)-fix-[^/\s]+")
+# PR에 새 커밋이 오면 다시 보는 기록: 받아들였지만 지금은 고칠 수 없었음, 처리하지 못함
+REVISIT_ON_NEW_HEAD: Final = frozenset({"deferred", "error"})
+
+
+def handled(verdict: str, handled_head: str, head_sha: str, superseded: bool = False) -> bool:
+    """기록이 있는 코멘트를 처리한 것으로 볼지. 워커의 `collect`와 동기화가 같이 쓴다.
+
+    deferred·error는 그 기록을 남긴 커밋이 지금 head일 때만 처리한 것이다. 새 커밋에서는 다시 본다
+    (테스트가 고쳐졌거나, 열린 수정안이 닫혔을 수 있다). 받아들여 연 수정안이 새 커밋으로 닫혔으면
+    (superseded) 그 코멘트도 새 커밋에서 다시 본다.
+    """
+    if handled_head == head_sha:
+        return True
+    return verdict not in REVISIT_ON_NEW_HEAD and not superseded
 
 
 def feedback_in_comment(

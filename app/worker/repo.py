@@ -166,6 +166,21 @@ def bare_blob(bare: Path, blob_sha: str) -> str:
     return _git("cat-file", "blob", blob_sha, cwd=bare)
 
 
+def bare_pr_facts(
+    bare: Path, base_sha: str, head_sha: str, *, limit: int
+) -> tuple[list[str], list[str]]:
+    """worktree 없이 PR의 커밋 제목(새 커밋부터 limit개)과 바뀐 파일 경로 (4.11 PR 사실).
+
+    `fetch_pr`로 두 커밋을 받아 둔 bare 캐시에서 읽는다. 제목은 작성자의 글이라 자료로만 쓴다.
+    """
+    fork = _git("merge-base", base_sha, head_sha, cwd=bare).strip()
+    subjects = _git(
+        "log", f"--max-count={limit}", "--format=%s", f"{fork}..{head_sha}", cwd=bare
+    ).splitlines()
+    files = _git("diff", "--name-only", "-z", fork, head_sha, cwd=bare).split("\0")
+    return subjects, [f for f in files if f]
+
+
 def list_base_entries(worktree: Path, base_sha: str, paths: Sequence[str]) -> dict[str, TreeEntry]:
     """base 커밋에서 paths 중 있는 것의 (모드, blob 해시, 크기). 경로가 정확히 같은 것만 남긴다.
 

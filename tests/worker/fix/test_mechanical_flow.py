@@ -441,7 +441,7 @@ def test_found_state_names_the_rule_set_and_codes(mech_env) -> None:
     job = PRJob(repo="o/r", pr_number=1, kind="update", head_sha=head,
                 base_sha=mech_env["gh"].base, source="webhook")  # fmt: skip
     deps = mech_env["deps"]
-    state = graph.run_flow(job, update._context(deps, deps.store.start_run(job), None))
+    state = graph.run_flow(job, update.flow_context(deps, deps.store.start_run(job), None))
     found = state["doc_rules"]
     assert isinstance(found, Found)
     (outcome,) = found.outcomes

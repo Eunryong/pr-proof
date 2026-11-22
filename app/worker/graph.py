@@ -220,6 +220,46 @@ class FlowContext:
     rag_model: str = E5_SMALL  # 파이프라인 쪽 `rag.embed_model`. 저장소가 검색을 켰을 때만 쓴다
 
 
+def _is_stale_for(ctx: FlowContext, job: PRJob) -> Callable[[], bool]:
+    def is_stale() -> bool:
+        ctx.store.heartbeat(ctx.run_id)  # 10초마다 불리므로 생존 확인도 같이 남긴다
+        return ctx.store.is_stale(job)
+
+    return is_stale
+
+
+def pr_tests(
+    ctx: FlowContext, job: PRJob, worktree: Path | None = None, *, contexts: bool = False
+) -> PytestRun:
+    """ctx의 worktree(또는 worktree)에서 PR의 테스트를 샌드박스로 돌린다. 테스트 node와 수정 단계,
+    코멘트 수정(4.11)이 같이 쓴다."""
+    kw = {"contexts": True} if contexts else {}
+    return (ctx.run_tests or run_pr_tests)(
+        worktree or ctx.worktree,
+        job_id=f"{ctx.run_id}",
+        is_stale=_is_stale_for(ctx, job),
+        venv_cache=ctx.data_dir / "venvs",
+        tool_cache=ctx.data_dir / TOOL_DIR,
+        memory_gb=ctx.base.memory_gb,
+        names=ctx.sandbox_names,
+        **kw,
+    )
+
+
+def pr_suite(
+    ctx: FlowContext, job: PRJob, generated: Mapping[str, bytes] | None, files: Sequence[str]
+) -> Suite:
+    """수정 작성의 테스트 도구와 출구 검사의 테스트 (4.7, 4.8의 6번). generated가 있으면 PR
+    head의 따로 된 worktree에 그 테스트 파일만 얹어 고치기 전 코드로 돌린다."""
+    if generated is None:
+        return python.read_suite(pr_tests(ctx, job, contexts=True), ctx.worktree, files)
+    with repo.side_worktree(ctx.worktree, job.head_sha) as side:
+        for rel, data in generated.items():
+            (side / rel).parent.mkdir(parents=True, exist_ok=True)
+            (side / rel).write_bytes(data)
+        return python.read_suite(pr_tests(ctx, job, side, contexts=True), side, files)
+
+
 def thread_id(repo_name: str, pr_number: int, head_sha: str) -> str:
     return f"{repo_name}#{pr_number}#{head_sha}"
 
@@ -265,36 +305,11 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
             job.repo, job.pr_number, report.render_progress(job.head_sha, step), ctx.comment_id
         )
 
-    def is_stale_for(job: PRJob) -> Callable[[], bool]:
-        def is_stale() -> bool:
-            ctx.store.heartbeat(ctx.run_id)  # 10초마다 불리므로 생존 확인도 같이 남긴다
-            return ctx.store.is_stale(job)
-
-        return is_stale
-
     def tests_for(job: PRJob, worktree: Path | None = None, *, contexts: bool = False) -> PytestRun:
-        kw = {"contexts": True} if contexts else {}
-        return (ctx.run_tests or run_pr_tests)(
-            worktree or ctx.worktree,
-            job_id=f"{ctx.run_id}",
-            is_stale=is_stale_for(job),
-            venv_cache=ctx.data_dir / "venvs",
-            tool_cache=ctx.data_dir / TOOL_DIR,
-            memory_gb=ctx.base.memory_gb,
-            names=ctx.sandbox_names,
-            **kw,
-        )
+        return pr_tests(ctx, job, worktree, contexts=contexts)
 
     def suite_for(job: PRJob, generated: Mapping[str, bytes] | None, files: Sequence[str]) -> Suite:
-        """수정 작성의 테스트 도구와 출구 검사의 테스트 (4.7, 4.8의 6번). generated가 있으면 PR
-        head의 따로 된 worktree에 그 테스트 파일만 얹어 고치기 전 코드로 돌린다."""
-        if generated is None:
-            return python.read_suite(tests_for(job, contexts=True), ctx.worktree, files)
-        with repo.side_worktree(ctx.worktree, job.head_sha) as side:
-            for rel, data in generated.items():
-                (side / rel).parent.mkdir(parents=True, exist_ok=True)
-                (side / rel).write_bytes(data)
-            return python.read_suite(tests_for(job, side, contexts=True), side, files)
+        return pr_suite(ctx, job, generated, files)
 
     def checkout(state: FlowState) -> FlowState:
         enter_checkout(state["job"])
@@ -745,6 +760,17 @@ def run_flow(job: PRJob, ctx: FlowContext, *, retry: bool = False) -> FlowState:
     if not result.get("commented"):
         result.setdefault("stopped", "stale")
     return result
+
+
+def checked_values(job: PRJob, ctx: FlowContext) -> Mapping[str, Any]:
+    """이 커밋의 규칙 검사가 체크포인트에 남긴 상태(규칙 결과, 테스트 결과 등). 없으면 빈 dict.
+
+    코멘트 수정(4.11)이 같은 커밋에서 이미 한 실행을 되풀이하지 않으려고 읽는다. 그래프를 돌리지
+    않는다.
+    """
+    with ExitStack() as stack:
+        saver = open_checkpointer(ctx.data_dir, stack)
+        return dict(build_graph(ctx, saver).get_state(thread_config(job)).values)
 
 
 PendingFix = Literal["awaiting", "interrupted_fix", "rerun"]

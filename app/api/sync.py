@@ -167,7 +167,7 @@ def _unhandled_feedback(
     어떤 코멘트인지는 싣지 않는다(워커가 GitHub에서 읽는다). 웹훅이 오지 않았거나 이 기능이 생기기
     전에 달린 코멘트도 여기서 걸리므로 `/recheck`가 필요 없다. 거르는 규칙은 웹훅과 같은 함수다.
     """
-    handled = history.handled_feedback_keys(repo, pr.number)
+    handled = history.handled_feedback_keys(repo, pr.number, pr.head_sha)
     for item in list_feedback(repo, pr.number):
         if (item.kind, item.id) in handled:
             continue

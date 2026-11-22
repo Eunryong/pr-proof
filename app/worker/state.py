@@ -158,8 +158,11 @@ class Store:
             return set(session.exec(stmt))
 
     def heartbeat(self, run_id: int) -> None:
+        """runs 기록이 없는 작업(코멘트 수정, run_id 0)은 남길 줄이 없어 아무것도 하지 않는다."""
         with Session(self.engine) as session:
             run = session.get(Run, run_id)
+            if run is None:
+                return
             run.heartbeat_at = _now()
             session.commit()
 
@@ -356,6 +359,15 @@ class Store:
                 session.add(row)
             session.commit()
 
+    def violations_at(self, repo: str, pr_number: int, head_sha: str) -> list[SeenViolation]:
+        """이 커밋의 규칙 검사가 찾은 위반. 아직 검사하지 않았으면 빈 목록이다."""
+        with Session(self.engine) as session:
+            stmt = select(SeenViolation).where(
+                SeenViolation.repo == repo, SeenViolation.pr_number == pr_number,
+                SeenViolation.head_sha == head_sha,
+            )  # fmt: skip
+            return list(session.exec(stmt.order_by(SeenViolation.id)))
+
     def previous_violations(self, repo: str, pr_number: int, head_sha: str) -> list[SeenViolation]:
         """이 PR에서 head_sha가 아닌 커밋 중 가장 최근에 기록한 커밋의 위반."""
         with Session(self.engine) as session:
@@ -504,8 +516,11 @@ class Store:
         why: str = "",
         reply_id: int | None = None,
         proposal_number: int | None = None,
+        resolved_at: datetime | None = None,
     ) -> None:
-        """처리한 코멘트를 적는다. 같은 (repo, kind, item_id)가 있으면 그 줄을 고친다."""
+        """처리한 코멘트를 적는다. 같은 (repo, kind, item_id)가 있으면 그 줄을 고친다.
+
+        resolved_at은 처리하면서 스레드를 바로 해결됨으로 바꾼 때다(이미 고쳐진 코멘트, 4.11)."""
         with Session(self.engine) as session:
             stmt = select(Feedback).where(
                 Feedback.repo == repo, Feedback.kind == kind, Feedback.item_id == item_id
@@ -521,6 +536,7 @@ class Store:
             )  # fmt: skip
             row.verdict, row.why, row.reply_id = verdict, why, reply_id
             row.proposal_number, row.handled_at = proposal_number, _now()
+            row.resolved_at = resolved_at
             session.add(row)
             session.commit()
 
