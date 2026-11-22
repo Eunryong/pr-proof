@@ -1,0 +1,33 @@
+{
+  "name": "pr-proof",
+  "version": "0.1.0",
+  "description": "PR의 팀 규칙 위반과 리뷰 코멘트를 판단해, 테스트로 확인한 수정안을 별도 PR로 올리는 로컬 파이프라인",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Eunryong/pr-proof.git"
+  },
+  "bin": {
+    "pr-proof": "bin/pr-proof.js"
+  },
+  "engines": {
+    "node": ">=20.18"
+  },
+  "files": [
+    "bin/pr-proof.js",
+    "app/**/*.py",
+    "app/**/*.json",
+    "docker/",
+    "docker-compose.yml",
+    "Procfile",
+    "pyproject.toml",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test bin/pr-proof.test.js"
+  },
+  "dependencies": {
+    "smee-client": "5.0.0"
+  }
+}
