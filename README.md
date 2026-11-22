@@ -190,3 +190,7 @@ ruff check . && ruff format --check .
 - 설계: [docs/DESIGN.md](docs/DESIGN.md)(찾아보기) → `docs/design/`
 - 문제 해결 일지: [docs/JOURNAL.md](docs/JOURNAL.md), 지난 기록: [docs/HISTORY.md](docs/HISTORY.md), 초기 설계 검토: [docs/design-review-2026-11-17.md](docs/design-review-2026-11-17.md)
 - 평가 케이스: [eval/README.md](eval/README.md)
+
+## 라이선스
+
+[MIT](LICENSE)
