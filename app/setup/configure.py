@@ -151,7 +151,8 @@ def real_deps(environ: Mapping[str, str]) -> Deps:
         compose_up=_compose_up,
         port_busy=_port_busy,
         pr_proof_on=_pr_proof_on,
-        smee_new=gh.new_smee_url,
+        # 입구(bin/pr-proof.js)가 자기 node를 PR_PROOF_NODE로 넘긴다
+        smee_new=lambda: gh.new_smee_url(environ.get("PR_PROOF_NODE") or shutil.which("node")),
         checks=_checks,
         environ=environ,
         hints=hints,
@@ -294,7 +295,14 @@ def add_to_config(directory: Path, repos: Sequence[str], io: Io, dry_run: bool) 
         io.say(str(e))
         raise Stop from e
     for repo in repos:
-        io.say(f"  {repo}: " + ("허용 목록에 더함" if repo in added else "이미 허용 목록에 있음"))
+        if repo not in added:
+            io.say(f"  {repo}: 이미 허용 목록에 있음")
+        else:
+            io.say(
+                f"  (dry-run) {repo}: 허용 목록에 더한다"
+                if dry_run
+                else f"  {repo}: 허용 목록에 더함"
+            )
     if not dry_run and (added or not (directory / files.CONFIG_FILE).is_file()):
         _write_config(directory, new_text)
     return added
@@ -555,7 +563,9 @@ def configure(opts: Options, io: Io, deps: Deps, directory: Path | None = None) 
         return 1
     checks_ok = _final(io, deps, redis_url)
     io.say("")
-    if not hooks_ok:
+    if opts.manual_webhook:
+        io.say("웹훅은 위의 값으로 손으로 등록하세요.")
+    elif not hooks_ok:
         io.say("웹훅을 모두 등록하지는 못했습니다. 위의 값으로 손으로 등록하세요.")
     if not checks_ok:
         io.say("끝 확인에 실패한 줄이 있습니다. 고친 뒤 npx pr-proof configure를 다시 실행하세요.")
@@ -596,7 +606,7 @@ def add(opts: Options, io: Io, deps: Deps, directory: Path | None = None) -> int
         return 1
     if added and not opts.dry_run:
         io.say(RESTART)
-    return 0 if hooks_ok else 1
+    return 0 if hooks_ok or opts.manual_webhook else 1
 
 
 def remove(opts: Options, io: Io, deps: Deps, directory: Path | None = None) -> int:

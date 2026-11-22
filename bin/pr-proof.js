@@ -153,7 +153,11 @@ function main(argv) {
   if (command === "start" && !rest.includes("--help") && !rest.includes("-h")) {
     args.push("--node", process.execPath, "--smee", smeeBin());
   }
-  const child = spawn(venvPython, args, { stdio: "inherit" });
+  // PR_PROOF_NODE: configure가 smee 주소를 만들 때 쓰는 node (이 node)
+  const child = spawn(venvPython, args, {
+    stdio: "inherit",
+    env: { ...process.env, PR_PROOF_NODE: process.execPath },
+  });
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
     process.on(signal, () => child.kill(signal));
   }

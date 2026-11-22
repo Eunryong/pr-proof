@@ -8,6 +8,7 @@
 """
 
 import re
+import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Final, Literal
@@ -293,10 +294,19 @@ def missing_programs_text(
     return "\n".join(lines)
 
 
+def _cells(text: str) -> int:
+    """터미널에서 차지하는 칸 수. 한글 같은 넓은 글자는 두 칸이다."""
+    return sum(2 if unicodedata.east_asian_width(c) in ("W", "F") else 1 for c in text)
+
+
+def _pad(text: str, width: int) -> str:
+    return text + " " * (width - _cells(text))
+
+
 def check_table(rows: Sequence[tuple[str, bool, str]]) -> str:
     """끝 확인 표. (이름, 통과, 고치는 방법)."""
-    width = max(len(name) for name, _, _ in rows) + 2
-    lines = [f"{'확인'.ljust(width)}결과"]
+    width = max(_cells(name) for name, _, _ in [("확인", True, ""), *rows]) + 2
+    lines = [f"{_pad('확인', width)}결과"]
     for name, ok, hint in rows:
-        lines.append(f"{name.ljust(width)}" + ("통과" if ok else f"실패 → {hint}"))
+        lines.append(_pad(name, width) + ("통과" if ok else f"실패 → {hint}"))
     return "\n".join(lines)

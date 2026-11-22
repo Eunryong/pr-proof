@@ -5,7 +5,6 @@ GitHub 호출은 받는 runner(`Runner`)로 한다. 테스트는 runner를 바�
 파일에 쓰기 전에 확인할 때는 그 토큰을 직접 받는다.
 """
 
-import http.client
 import json
 import os
 import subprocess
@@ -118,20 +117,29 @@ def delete_hook(run: Runner, repo: str, hook_id: int) -> None:
     run(["api", "-X", "DELETE", f"repos/{repo}/hooks/{hook_id}"], None)
 
 
-def new_smee_url(timeout: float = 15) -> str:
-    """smee.io에 새 채널을 만든다. `https://smee.io/new`가 새 주소로 넘겨 주는 것(307의 Location)을
-    읽는다(smee-client의 createChannel과 같다)."""
-    conn = http.client.HTTPSConnection(SMEE_HOST, timeout=timeout)
+# `https://smee.io/new`가 새 주소로 넘겨 주는 것(307의 Location)을 읽는다(smee-client의
+# createChannel과 같다). node로 한다: python.org에서 받은 macOS의 Python은 인증서를 따로 깔기
+# 전에는 HTTPS 확인이 실패한다. node는 입구의 전제이고 자기 인증서 묶음을 쓴다
+_SMEE_NEW_JS: Final = (
+    f"fetch('https://{SMEE_HOST}/new', {{method: 'HEAD', redirect: 'manual'}})"
+    ".then((r) => console.log(r.headers.get('location') || ''))"
+    ".catch((e) => { console.error(String(e)); process.exit(1); })"
+)
+
+
+def new_smee_url(node: str | None, timeout: float = 20) -> str:
+    """smee.io에 새 채널을 만들어 그 주소를 돌려준다."""
+    if not node:
+        raise SetupGitHubError("smee 주소를 만들 node를 찾지 못함")
+    env = {k: os.environ[k] for k in ("PATH", "HOME") if k in os.environ}
     try:
-        conn.request("HEAD", "/new", headers={"User-Agent": "pr-proof-configure"})
-        response = conn.getresponse()
-        location = response.getheader("Location") or ""
-    except OSError as e:
+        proc = subprocess.run([node, "-e", _SMEE_NEW_JS], capture_output=True, text=True,
+                              env=env, timeout=timeout, check=False)  # fmt: skip
+    except (OSError, subprocess.TimeoutExpired) as e:
         raise SetupGitHubError(f"smee 주소를 만들지 못함: {e}") from e
-    finally:
-        conn.close()
-    if not location.startswith(f"https://{SMEE_HOST}/"):
-        raise SetupGitHubError(f"smee 주소를 만들지 못함 (응답 {response.status})")
+    location = proc.stdout.strip()
+    if proc.returncode != 0 or not location.startswith(f"https://{SMEE_HOST}/"):
+        raise SetupGitHubError(f"smee 주소를 만들지 못함: {proc.stderr.strip()[-300:]}")
     return location
 
 
