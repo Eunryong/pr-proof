@@ -220,3 +220,41 @@ def test_change_from_a_merged_pipeline_fix_is_not_unrelated(tmp_path: Path, stor
           f"{u.output_tokens}, 버림 {u.dropped}")  # fmt: skip
     print("\n".join([shown.title(out) or "", *shown.expanded(out)]))
     assert out.status == "checked" and out.items == (), out
+
+
+def test_next_commit_keeps_the_same_mismatch_in_the_same_words(
+    tmp_path: Path, store: Store
+) -> None:
+    """(바) (나)의 PR에 동작과 관계없는 파일(notes.txt)만 더한 커밋이 올라온다. diff가 달라져 다시
+    견주지만 바로 앞 결과를 같이 받아, 그대로인 타임아웃 어긋남을 같은 글로 유지한다. 호출 2회."""
+    changes = {
+        "parser.py": PARSER_SKIPS_BLANK, "tests/test_parser.py": PARSER_TEST,
+        "config.py": CONFIG.replace("TIMEOUT = 30", "TIMEOUT = 5"), "utils.py": UTILS_FORMATTED,
+    }  # fmt: skip
+    wt, diff, facts = _pr(tmp_path, changes, BLANK_TITLE, BLANK_BODY)
+
+    def check(diff: str, facts: PrFacts, case: str) -> PrDescription:
+        head = _git(wt, "rev-parse", "HEAD").strip()
+        budget = CallBudget(store, "o/r", 1, head, CallSettings())
+        tools = pr_description.Tools(store=store, budget=budget, ask=claude_cli.run_structured,
+                                     model=MODEL)  # fmt: skip
+        out = pr_description.check(facts, diff, wt, tools)
+        u = out.usage
+        print(f"\n[{case}] 호출 {u.calls}, 도구 {u.tool_uses}, 입력 {u.input_tokens}, 출력 "
+              f"{u.output_tokens}, 지난 결과 {u.earlier}, 지난 어긋남 {u.earlier_items}, 유지 "
+              f"{u.kept_earlier}")  # fmt: skip
+        print("\n".join([shown.title(out) or "", *shown.expanded(out)]))
+        return out
+
+    first = check(diff, facts, "바 첫 커밋")
+    assert [(m.kind, m.file) for m in first.items] == [("unrelated", "config.py")], first
+    (wt / "notes.txt").write_text("작업 메모: 빈 줄 처리 확인함\n")
+    _git(wt, "add", "-A")
+    _git(wt, "commit", "-q", "-m", "작업 메모를 더한다")
+    sha = _git(wt, "rev-parse", "HEAD").strip()
+    facts = PrFacts(title=facts.title, body=facts.body, branch="feature",
+                    paths=(*facts.paths, "notes.txt"),
+                    commits=(Commit(sha, "작업 메모를 더한다"), *facts.commits))  # fmt: skip
+    second = check(_git(wt, "diff", "HEAD~2", "HEAD"), facts, "바 다음 커밋")
+    assert second.usage.calls == 1 and second.usage.earlier == 1, second
+    assert second.usage.kept_earlier == 1 and second.items == first.items, second

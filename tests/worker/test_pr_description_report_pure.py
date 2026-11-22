@@ -96,6 +96,10 @@ def test_usage_goes_to_the_folded_block() -> None:
     cached = PrDescription("checked", usage=DescriptionUsage(cached=1))
     assert folded(cached) == ["", "PR 설명 확인: 모델 호출 0회 · 저장된 결과 1건 사용"]
     assert folded(PrDescription("empty")) == []
+    again = DescriptionUsage(calls=1, earlier=1, earlier_items=2, kept_earlier=1)
+    assert folded(PrDescription("checked", usage=again))[1].endswith(
+        " · 지난 결과를 주고 다시 견줌 (지난 어긋남 2건 중 유지 1건)"
+    )
 
 
 def test_result_comment_puts_the_line_on_top_and_the_items_expanded() -> None:
