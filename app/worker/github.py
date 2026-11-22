@@ -125,6 +125,14 @@ mutation($id: ID!) {
   resolveReviewThread(input: {threadId: $id}) { thread { id isResolved } }
 }
 """
+# Copilot 리뷰의 스레드는 해결한 사유를 같이 받는다 (화면의 Addressed / Won't fix / Incorrect)
+RESOLVE_WITH_REASON_MUTATION: Final = """
+mutation($id: ID!, $reason: PullRequestReviewThreadResolutionReason!) {
+  resolveReviewThread(input: {threadId: $id, resolutionReason: $reason}) {
+    thread { id isResolved resolutionReason }
+  }
+}
+"""
 
 # 브랜치가 이미 없을 때 GitHub이 돌려주는 실패
 _BRANCH_GONE: Final = ("Not Found", "404", "422", "Reference does not exist")
@@ -397,11 +405,17 @@ class GitHub:
         )
         return int(out.strip())
 
-    def resolve_thread(self, repo: str, thread_id: str) -> None:
-        """리뷰 스레드를 해결됨으로 바꾼다 (GraphQL). 이미 해결된 스레드여도 같다."""
-        out = self._run(
-            ["api", "graphql", "-f", f"query={RESOLVE_MUTATION}", "-f", f"id={thread_id}"], None
-        )
+    def resolve_thread(self, repo: str, thread_id: str, reason: str | None = None) -> None:
+        """리뷰 스레드를 해결됨으로 바꾼다 (GraphQL). 이미 해결된 스레드여도 같다(사유는 덮어쓴다).
+
+        reason은 Copilot 리뷰 스레드의 해결 사유다: `ADDRESSED`, `WONT_FIX`, `INVALID`
+        (`feedback_pure.resolution_reason`). 사람의 스레드에는 주지 않는다.
+        """
+        args = ["api", "graphql", "-f", f"query={RESOLVE_MUTATION}", "-f", f"id={thread_id}"]
+        if reason is not None:
+            args = ["api", "graphql", "-f", f"query={RESOLVE_WITH_REASON_MUTATION}",
+                    "-f", f"id={thread_id}", "-f", f"reason={reason}"]  # fmt: skip
+        out = self._run(args, None)
         try:
             errors = json.loads(out).get("errors")
         except ValueError as e:

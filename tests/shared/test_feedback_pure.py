@@ -81,3 +81,14 @@ def test_deferred_error_and_superseded_are_revisited_only_on_a_new_head() -> Non
     assert not handled("accepted", "old", "new", superseded=True)
     assert not handled("deferred", "old", "new") and handled("deferred", "new", "new")
     assert not handled("error", "old", "new") and handled("error", "new", "new")
+
+
+def test_resolution_reason_is_only_for_copilot_threads() -> None:
+    """Copilot의 스레드만 해결 사유를 받는다. 고쳤으면 ADDRESSED, 거절은 종류에 따라 둘로 나뉜다."""
+    from app.shared.feedback_pure import resolution_reason
+
+    assert resolution_reason("Copilot") == "ADDRESSED"
+    assert resolution_reason("copilot-pull-request-reviewer", rejected=True) == "WONT_FIX"
+    assert resolution_reason("Copilot", rejected=True, incorrect=True) == "INVALID"
+    assert resolution_reason("kim") is None
+    assert resolution_reason("kim", rejected=True, incorrect=True) is None

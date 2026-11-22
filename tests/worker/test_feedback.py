@@ -48,6 +48,7 @@ class FeedbackGh(FakeGh):
         self.review_bodies: list[dict] = []
         self.pr_comments: list[dict] = []
         self.resolved: list[str] = []
+        self.reasons: dict[str, str | None] = {}  # 스레드 id → 해결 사유 (없으면 None)
         self.resolve_error: str | None = None
         self.replies: list[tuple[str, str]] = []  # (어디에, 본문): 줄 코멘트 id 또는 "issue"
 
@@ -67,7 +68,9 @@ class FeedbackGh(FakeGh):
             if "resolveReviewThread" in query:
                 if self.resolve_error:
                     raise GitHubError(self.resolve_error)
-                self.resolved.append(next(a[3:] for a in args if a.startswith("id=")))
+                tid = next(a[3:] for a in args if a.startswith("id="))
+                self.resolved.append(tid)
+                self.reasons[tid] = next((a[7:] for a in args if a.startswith("reason=")), None)
                 return json.dumps({"data": {"resolveReviewThread": {}}})
             nodes = {"nodes": self.threads}
             return json.dumps({"data": {"repository": {"pullRequest": {"reviewThreads": nodes}}}})
@@ -204,7 +207,9 @@ def test_feedback_with_items_judges_replies_and_records_each(fb, material) -> No
     rows = {f.item_id: f for f in fb["deps"].store.handled_feedback("o/r", 1)}
     assert (rows[101].verdict, rows[101].reply_id, rows[21].verdict) == (
         "rejected", 801, "no_action")  # fmt: skip
-    assert gh.resolved == []  # 거절과 할 일 없음은 스레드를 바꾸지 않는다
+    # Copilot의 스레드는 거절도 바로 해결하고 사유를 준다. 할 일 없음은 스레드를 바꾸지 않는다
+    assert gh.resolved == ["T1"] and gh.reasons == {"T1": "WONT_FIX"}
+    assert rows[101].resolved_at is not None
     # 다시 불러도 기록한 코멘트는 다시 다루지 않는다(같은 답글을 두 번 달지 않는다)
     assert feedback.process_feedback(_job(), fb["deps"]) == "no_feedback"
     assert len(gh.replies) == 1
@@ -522,3 +527,32 @@ def test_a_merge_the_webhook_missed_is_seen_before_masking(fb) -> None:
     _forbid_model(fb)
     assert feedback.process_feedback(_job(), fb["deps"]) == "feedback:merged=1"
     assert fb["gh"].resolved == ["T1"]
+
+
+def test_rejecting_resolves_copilot_threads_with_a_reason_and_leaves_human_threads_open(
+    fb, material
+) -> None:
+    """Copilot의 스레드는 거절의 종류대로 사유를 주고 해결한다(Incorrect → INVALID). 사람의 스레드는
+    답글만 달고 열어 둔다."""
+    gh = fb["gh"]
+    gh.threads = [
+        _thread("T1", _comment(101)),
+        _thread("T2", _comment(102, login="kim", assoc="MEMBER")),
+    ]
+
+    def ask(prompt: str, **kw) -> StructuredResult:
+        items = [
+            {"id": i, "verdict": "reject", "why": "코드를 읽어 보니 그 문제가 없다", "files": [],
+             "request": "", "number": 0, "reject_kind": "incorrect"}
+            for i in (101, 102)
+        ]  # fmt: skip
+        return StructuredResult(ok=True, error=None, data={"items": items}, model_id="m",
+                                input_tokens=1, output_tokens=1, cost_usd=0.0,
+                                permission_denials=0)  # fmt: skip
+
+    fb["monkeypatch"].setattr(claude_cli, "run_structured", ask)
+    assert feedback.process_feedback(_job(), fb["deps"]) == "feedback:rejected=2"
+    assert gh.resolved == ["T1"] and gh.reasons == {"T1": "INVALID"}
+    assert len(gh.replies) == 2
+    rows = {f.item_id: f for f in fb["deps"].store.handled_feedback("o/r", 1)}
+    assert rows[101].resolved_at is not None and rows[102].resolved_at is None

@@ -29,6 +29,9 @@ VERDICTS: Final[Mapping[str, str]] = {
     "no_action": "no_action", "deferred": "deferred", "failed": "error", "error": "error",
 }  # fmt: skip
 RESOLVES: Final = frozenset({"merged", "already_fixed"})  # 처리하며 스레드를 바로 해결한다
+# Copilot의 스레드는 거절도 바로 해결한다(사유 Won't fix / Incorrect). 사람의 스레드는 답글만 달고
+# 열어 둔다(리뷰어가 다시 말할 수 있게)
+RESOLVES_FOR_COPILOT: Final = RESOLVES | {"rejected"}
 FLAGGED_WHY: Final = "규칙 검사가 같은 줄을 이미 위반으로 알림"
 MAX_SHOWN: Final = 300
 
@@ -41,6 +44,7 @@ class Handled:
     why: str = ""
     reason: str = ""
     number: int | None = None
+    incorrect: bool = False  # rejected만: 코멘트의 말이 사실이 아니어서 거절 (해결 사유 INVALID)
 
 
 def _quoted(label: str, text: str) -> str:
