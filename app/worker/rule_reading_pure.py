@@ -11,7 +11,7 @@ import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import PurePosixPath
-from typing import Final, Literal
+from typing import Final, Literal, get_args
 
 from pydantic import BaseModel, ConfigDict
 
@@ -22,6 +22,7 @@ from app.worker.rule_pure import (
     Example,
     Rule,
     RuleSource,
+    RunPart,
     Target,
     UnreadDoc,
     normalize,
@@ -114,29 +115,35 @@ SYSTEM_PROMPT: Final = """\
 아래 일만 한다.
 
 할 일: 문서에서 이 저장소에 기여하는 사람이 지켜야 한다고 적힌 규칙을 뽑고, 규칙마다 무엇을 보고
-확인하는 규칙인지 고른다.
+확인하는 규칙인지 고른다. 파이프라인은 모든 규칙을 확인한다. 확인하기 어려워 보여도 규칙을 빼지
+말고 셋 중 가장 가까운 것을 고른다.
 - 규칙이 아닌 것: 설치·실행 방법, 프로젝트 소개, 폴더 구조의 설명, 명령 예시,
   지키라는 뜻이 없는 설명.
 - target: 그 규칙을 지켰는지 무엇을 보면 알 수 있는지 셋 중 하나로 고른다.
   "code": PR이 바꾼 코드 줄이나 파일의 이름·경로를 보면 알 수 있다. 예: "print를 쓰지 않는다",
   "비교에 숫자를 직접 쓰지 않는다", "테스트 파일 이름은 test_<모듈>.py다".
+  규칙이 실행 결과나 생성물(만든 데이터, 출력 파일)에 대한 말이어도 그것을 만드는 코드가
+  규칙대로 하는지로 판단할 수 있으면 "code"다. 예: "생성한 샘플은 검증 함수를 통과하고
+  verified 필드를 넣는다"는 샘플을 만드는 코드가 검증을 부르고 그 필드를 넣는지 보면 된다.
+  "학습 데이터에 평가 데이터가 섞이지 않게 한다"는 학습 데이터를 만드는 코드가 평가 데이터를
+  빼는지 보면 된다.
   "pr": 코드 줄이 아니라 PR 자체를 보면 알 수 있다. 커밋 메시지, PR의 제목과 본문, 브랜치 이름,
   바뀐 파일의 종류와 조합이 여기에 든다. 예: "커밋 메시지는 feat:, fix:로 시작한다",
-  "PR 본문에 테스트 방법을 적는다", "코드를 바꾸면 테스트도 같이 바꾼다".
-  "human": 사람이 하는 절차나 판단이라 PR의 내용만 보고는 알 수 없다. 무엇을 실행해 보거나,
-  데이터나 결과물을 확인하거나, 다른 사람의 승인을 받는 일이 여기에 든다. 예: "머지 전에 리뷰어
-  한 명의 승인을 받는다", "학습 데이터에 평가 데이터가 섞이지 않게 한다", "PR을 올리기 전에
-  테스트를 돌린다".
-  코드 한 줄을 보고 어겼다고 가리킬 수 없으면 "code"가 아니다. 데이터 파일의 내용, 실행 결과,
-  작업 순서에 대한 규칙은 코드에 대한 말이 섞여 있어도 "human"이다.
+  "PR 본문에 테스트 방법을 적는다", "코드를 바꾸면 테스트도 같이 바꾼다". 리뷰어 승인처럼 PR에서
+  사람이 하는 절차도 "pr"이다.
+  "run": 저장소의 테스트나 정적 검사(린트, 문법 검사)가 통과해야 한다는 규칙. 파이프라인이 PR마다
+  테스트를 돌리고, 저장소에 린트 설정이 있으면 린트도 돌리므로 그 결과로 답한다. 예: "테스트가
+  통과해야 한다", "PR을 올리기 전에 테스트를 돌린다", "문법 검사와 테스트를 통과한다".
+- runs: target이 "run"이면 규칙이 말하는 실행 결과를 고른다. "tests"는 테스트, "lint"는 정적 검사,
+  린트, 문법 검사다. 둘 다 말하면 둘 다 적는다. target이 "run"이 아니면 빈 목록.
 - quote: 규칙 문장을 문서에서 한 글자도 바꾸지 말고 그대로 옮긴다. 요약, 번역, 여러 문장 합치기를
   하지 않는다. 한 규칙은 보통 한 문장이다. 다만 바로 뒤에 붙은 예외나 조건 문장(예: "...은
   예외다")은 같은 규칙이므로 이어서 함께 옮긴다. 앞의 목록 기호(-, *, 1.)는 빼도 된다.
 - file: 그 문장이 든 문서 블록의 path 그대로.
 - section: 그 문장이 든 절의 제목들을 " > "로 잇는다. 예: "코드 규칙 > 출력". 문서 맨 위의 제목
   (문서 이름인 # 제목)은 넣지 않는다.
-아래 scope부터 fix까지는 target이 "code"인 규칙에서만 뜻이 있다. "pr"과 "human"인 규칙은 scope,
-scope_exclude를 빈 목록으로, scope_reason을 빈 문자열로, check와 fix를 "none"으로 둔다. "human"인
+아래 scope부터 fix까지는 target이 "code"인 규칙에서만 뜻이 있다. "pr"과 "run"인 규칙은 scope,
+scope_exclude를 빈 목록으로, scope_reason을 빈 문자열로, check와 fix를 "none"으로 둔다. "run"인
 규칙은 examples도 빈 목록이다. "pr"인 규칙은 문서에 그 규칙의 지키는 예나 어기는 예(커밋 메시지,
 PR 제목, PR 본문, 브랜치 이름)가 코드 블록으로 있으면 examples에 옮긴다. 어기는 예의 lines는 [1].
 - scope: 문서가 규칙의 적용 범위(경로)를 밝혔으면 저장소 루트 기준 glob으로 옮긴다.
@@ -152,7 +159,7 @@ PR 제목, PR 본문, 브랜치 이름)가 코드 블록으로 있으면 example
 - check: 파일의 내용을 보지 않고 이름이나 경로만 보면 가릴 수 있으면 "path"(예: "테스트 파일
   이름은 test_<모듈>.py다"). 코드의 모양(import, 호출, 선언, 리터럴)으로 기계적으로 가릴 수 있으면
   "checker", 코드의 뜻을 읽어야 가릴 수 있으면 "model". target이 "code"가 아니면 "none".
-- reason: target이 "pr"이나 "human"이면 그렇게 고른 이유 한 줄. target이 "code"이고 check가
+- reason: target이 "pr"이나 "run"이면 그렇게 고른 이유 한 줄. target이 "code"이고 check가
   "model"이면 그 이유 한 줄. 그 밖에는 빈 문자열.
 - fix: 어긴 코드를 그 파일 안에서 고칠 수 있으면 "model". 수정안은 파이프라인이 테스트로 확인하고
   사람이 리뷰한 뒤 머지하므로, 고치면 동작이 달라질 수 있다는 것만으로 "none"을 고르지 않는다.
@@ -175,6 +182,7 @@ ANSWER_SCHEMA: Final[Mapping[str, object]] = {
                     "section",
                     "quote",
                     "target",
+                    "runs",
                     "scope",
                     "scope_exclude",
                     "scope_reason",
@@ -187,7 +195,8 @@ ANSWER_SCHEMA: Final[Mapping[str, object]] = {
                     "file": {"type": "string"},
                     "section": {"type": "string"},
                     "quote": {"type": "string"},
-                    "target": {"enum": ["code", "pr", "human"]},
+                    "target": {"enum": list(get_args(Target))},
+                    "runs": {"type": "array", "items": {"enum": list(get_args(RunPart))}},
                     "scope": {"type": "array", "items": {"type": "string"}},
                     "scope_exclude": {"type": "array", "items": {"type": "string"}},
                     "scope_reason": {"type": "string"},
@@ -258,6 +267,7 @@ class AnswerRule(BaseModel):
     section: str
     quote: str
     target: Target = "code"
+    runs: list[RunPart] = []
     scope: list[str] = []
     scope_exclude: list[str] = []
     scope_reason: str = ""
@@ -451,15 +461,20 @@ def verify_rules(
 def _rule(raw: AnswerRule, id_: str, source: RuleSource, flat_doc: str) -> Rule:
     """원문 확인을 통과한 답 하나를 규칙으로. 코드 규칙이 아니면 범위, 예시, 확인 방법은 버린다.
 
-    확인 대상이 pr·human인 규칙은 범위와 확인 방법 힌트를 받지 않는다. 모델이 같이 적은 값이
+    확인 대상이 pr·run인 규칙은 범위와 확인 방법 힌트를 받지 않는다. 모델이 같이 적은 값이
     있어도 버린다. pr 규칙은 문서에 그대로 있는 예시만 남긴다: PR 패턴의 예시 확인이 문서의 예시를
     먼저 쓴다 (4.5 끝). 코드 규칙인데 check가 "none"이면 답이 어긋난 것이고, 검사기부터 시도한다.
+    run 규칙인데 runs가 비면 답이 어긋난 것이고, 테스트 결과로 답한다.
     """
     text = raw.quote.strip()
     if raw.target != "code":
         check = CheckMethod("none", reason=raw.reason.strip())
         examples = _examples(raw.examples, flat_doc) if raw.target == "pr" else ()
-        return Rule(id_, text, source, "document", (), check, "none", examples, target=raw.target)
+        runs: tuple[RunPart, ...] = ()
+        if raw.target == "run":
+            runs = tuple(p for p in get_args(RunPart) if p in raw.runs) or ("tests",)
+        return Rule(id_, text, source, "document", (), check, "none", examples, target=raw.target,
+                    runs=runs)  # fmt: skip
     scope = tuple(raw.scope)
     if not all(_valid_glob(p) for p in scope):
         scope = ()  # 형식이 틀린 적용 범위는 저장소 전체로 둔다 (4.3)

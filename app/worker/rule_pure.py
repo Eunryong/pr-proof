@@ -20,9 +20,12 @@ _NOT_ALNUM: Final = re.compile(r"[^a-z0-9]+")
 # 내용을 보는 검사기(ast-grep, Python AST)의 검사 대상 (7.7 Python 프로필)
 PYTHON_SUFFIXES: Final = (".py", ".pyi")
 
-# 규칙을 무엇을 보고 확인하는지 (4.3). code: 바뀐 코드 줄. pr: PR 자체(커밋 메시지, 제목·본문,
-# 브랜치 이름, 바뀐 파일의 종류). human: 사람이 하는 절차라 PR만 보고는 확인할 수 없다
-Target = Literal["code", "pr", "human"]
+# 규칙을 무엇을 보고 확인하는지 (4.3). code: 바뀐 코드 줄(실행 결과·생성물에 대한 규칙이면 그것을
+# 만드는 코드). pr: PR 자체(커밋 메시지, 제목·본문, 브랜치 이름, 바뀐 파일의 종류). run:
+# 파이프라인이 이미 돌리는 테스트·정적 검사의 결과
+Target = Literal["code", "pr", "run"]
+# run 규칙이 말하는 실행 결과: tests는 샌드박스 테스트, lint는 도구 설정의 규칙 묶음(ruff)이다
+RunPart = Literal["tests", "lint"]
 
 
 @dataclass(frozen=True)
@@ -65,8 +68,10 @@ class Rule:
     exclude_reason: str = ""
     # 효과 확인(`checked_exclude`)이 이 PR의 base 파일 목록에 맞춰 보고 버린 추정. 코멘트에 보인다
     exclude_dropped: str = ""
-    # 확인 대상. 모델이 고른다. code만 검사하고 pr·human은 코멘트에 목록으로만 보인다
+    # 확인 대상. 모델이 고른다. code는 도구·검사기·모델 판단, pr은 PR 단위 확인, run은 테스트와
+    # 정적 검사의 결과로 답한다
     target: Target = "code"
+    runs: tuple[RunPart, ...] = ()  # target이 run일 때 규칙이 말하는 실행 결과
 
 
 @dataclass(frozen=True)

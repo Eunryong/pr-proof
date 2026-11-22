@@ -86,7 +86,7 @@ from app.worker.rag_pure import Retrieval
 from app.worker.rag_switch_pure import RagSwitch
 from app.worker.repo import CHANGES_DIFF
 from app.worker.repo_config_pure import call_limits
-from app.worker.rules import detect, doc_rules, pr_check, pr_check_pure
+from app.worker.rules import detect, doc_rules, pr_check, pr_check_pure, run_check, run_check_pure
 from app.worker.rules.doc_rules import Runtime as DocRuntime
 from app.worker.rules.pr_check_pure import PrChecks
 from app.worker.sandbox import container, docker_cli, toolcache
@@ -450,6 +450,15 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
         out["diff_coverage"] = (
             coverage.diff_coverage(run.coverage_xml, ctx.changes_diff) if ctx.changes_diff else None
         )
+        doc = out.get("doc_rules", doc)
+        if isinstance(doc, Found) and run_check_pure.run_rules(doc):
+            # 실행 결과의 규칙은 테스트와 커버리지를 보고 모델이 정한다 (4.5)
+            progress(job, "실행 결과의 규칙")
+            runs = run_check.judge_runs(
+                doc, run, ctx.changes_diff, doc_runtime(state),
+                is_stale=lambda: ctx.store.is_stale(job),
+            )  # fmt: skip
+            ctx.doc_rules = out["doc_rules"] = replace(doc, runs=runs)
         return out
 
     def decide_fixes(state: FlowState) -> FlowState:

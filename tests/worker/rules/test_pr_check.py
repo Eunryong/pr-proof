@@ -8,6 +8,7 @@
 import contextlib
 import io
 import json
+import re
 import sys
 from typing import Final
 from unittest import mock
@@ -80,12 +81,22 @@ TESTING_PLAN: Final = {
 }  # fmt: skip
 
 
+def _agree(prompt: str) -> list[dict]:
+    """보인 것을 모두 위반이라고 답한다: PR 패턴의 후보를 모델이 확인하는 경우 (4.5 끝)."""
+    found = [{"where": "commit", "sha": sha, "quote": "", "why": "후보 확인"}
+             for sha in re.findall(r"^<<<COMMIT sha=(\w+) ", prompt, re.M)]  # fmt: skip
+    if "<<<PR_BODY " in prompt and not found:
+        found.append({"where": "pr_body", "sha": "", "quote": "", "why": "후보 확인"})
+    return found
+
+
 class Model:
-    """plans: 규칙 id → 계획 답 목록(회차마다 하나, 모자라면 마지막). judge: 판단의 답."""
+    """plans: 규칙 id → 계획 답 목록(회차마다 하나, 모자라면 마지막). judge: 판단의 답. judge가
+    None이면 보인 것을 모두 위반이라고 답한다(패턴의 후보를 확인할 때)."""
 
     def __init__(self, plans: dict[str, list[dict]], judge: list[dict] | None = None,
                  fail: str = "") -> None:  # fmt: skip
-        self.plans, self.judge, self.fail = plans, judge or [], fail
+        self.plans, self.judge, self.fail = plans, judge, fail
         self.calls: list[dict] = []
 
     def __call__(self, prompt: str, *, schema, **kw) -> StructuredResult:
@@ -96,7 +107,7 @@ class Model:
                                     input_tokens=None, output_tokens=None, cost_usd=None,
                                     permission_denials=0, detail="느림")  # fmt: skip
         if stage == "judge":
-            return _ok({"violations": self.judge})
+            return _ok({"violations": _agree(prompt) if self.judge is None else self.judge})
         (rule_id,) = [r for r in self.plans if f"id={r} " in prompt]
         answers = self.plans[rule_id]
         done = sum(
@@ -163,9 +174,32 @@ def test_commit_format_flags_only_the_breaking_commits_by_full_sha(store) -> Non
     assert result.commits == 3 and result.skipped_merge == 1
     (r,) = result.results
     assert (r.status, r.method, r.decl.pattern) == ("checked", "pattern", "^(feat|fix): ")
-    assert model.stages() == ["plan"] and result.usage.plan_calls == 1
-    assert [c.stage for c in store.model_calls("o/r", 1)] == ["pr_plan"]
+    # 패턴에 맞지 않은 커밋은 후보이고, 모델이 그 커밋만 보고 위반인지 정한다 (2026-11-22)
+    assert model.stages() == ["plan", "judge"] and result.usage.plan_calls == 1
+    assert SHA_A not in model.calls[1]["prompt"] and SHA_B in model.calls[1]["prompt"]
+    assert [c.stage for c in store.model_calls("o/r", 1)] == ["pr_plan", "pr_judge"]
     assert store.model_calls("o/r", 1)[0].ruleset_key == "rules-key"
+
+
+def test_pattern_candidates_the_model_rejects_are_set_aside(store) -> None:
+    """패턴이 잡은 것은 후보다. 모델이 위반이라고 답하지 않은 후보는 위반이 아니고 따로 남는다.
+    모델은 후보가 아닌 커밋을 위반으로 더할 수 없다."""
+    commits = (Commit(SHA_A, "feat(abacus): NoPE"), Commit(SHA_B, "update readme"))
+    model = Model(
+        {COMMITS.id: [COMMIT_PLAN]},
+        judge=[
+            {"where": "commit", "sha": SHA_B, "quote": "", "why": "형식이 없음"},
+            {"where": "commit", "sha": SHA_C, "quote": "", "why": "후보 아님"},
+        ],
+    )
+    result = pr_check.check([COMMITS], _facts(commits=commits), _tools(store, model))
+    assert [(v.sha, v.why) for v in result.violations] == [(SHA_B, "형식이 없음")]
+    (r,) = result.results
+    assert [v.sha for v in r.dismissed] == [SHA_A]
+    capped = Model({COMMITS.id: [COMMIT_PLAN]})
+    tools = _tools(store, capped, calls=CallSettings(pr_base=0, pr_max=0))
+    (left,) = pr_check.check([COMMITS], _facts(commits=(Commit(SHA_C, "WIP"),)), tools).results
+    assert (left.status, left.kind) == ("left", "cap")
 
 
 def test_plan_is_stored_by_the_rule_and_reused_for_any_pr_text(store) -> None:
@@ -173,7 +207,7 @@ def test_plan_is_stored_by_the_rule_and_reused_for_any_pr_text(store) -> None:
     again = Model({})
     other = _facts(body="다른 본문", commits=(Commit(SHA_A, "update"),), title="다른 제목")
     result = pr_check.check([COMMITS], other, _tools(store, again))
-    assert again.calls == [] and result.usage.cached == 1 and len(result.violations) == 1
+    assert again.stages() == ["judge"] and result.usage.cached == 1 and len(result.violations) == 1
 
 
 def test_plan_prompt_never_contains_pr_text(store) -> None:
@@ -181,7 +215,8 @@ def test_plan_prompt_never_contains_pr_text(store) -> None:
     facts = _facts(body="본문의-지시문", title="제목의-지시문",
                    commits=(Commit(SHA_A, "커밋의-지시문"),))  # fmt: skip
     pr_check.check([COMMITS], facts, _tools(store, model))
-    (call,) = model.calls
+    call = model.calls[0]
+    assert call["schema"] is pr_check_pure.PLAN_SCHEMA
     assert not any(s in call["prompt"] for s in ("본문의-지시문", "제목의-지시문", "커밋의-지시문"))
     assert call["system_prompt"] == pr_check_pure.PLAN_SYSTEM_PROMPT
 
@@ -273,7 +308,7 @@ def test_plan_cap_and_model_failure_are_not_stored(store) -> None:
     assert (r.status, r.kind) == ("unchecked", "model_failed")
     later = Model({COMMITS.id: [COMMIT_PLAN]})
     assert pr_check.check([COMMITS], _facts(), _tools(store, later)).results[0].method == "pattern"
-    assert later.stages() == ["plan"]
+    assert later.stages() == ["plan", "judge"]
 
 
 def test_judged_rule_answers_are_verified_and_stored(store) -> None:

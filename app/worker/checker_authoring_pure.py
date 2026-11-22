@@ -52,12 +52,13 @@ MIN_VIOLATING: Final = 2
 MIN_PASSING: Final = 2
 MAX_MODEL_EXAMPLES: Final = 8
 
-# 검사하지 못한 이유. pr·human은 확인 대상이 코드 줄이 아닌 규칙(4.3), no_checker는 검사기를
+# 검사기로 보지 않는 까닭. pr·run은 확인 대상이 코드 줄이 아닌 규칙이라 PR 단위 확인과 테스트·정적
+# 검사의 결과가 답한다(4.3). no_checker는 검사기를
 # 끝내 만들지 못한 경로 규칙이다(모델 판단으로 보내지 않는다, 4.5). 나머지는 저장하지 않으므로
 # 다음 검사가 다시 시도한다.
 # run_failed는 채택한 검사기가 이 PR의 파일에서 돌지 못한 것이다 (app/worker/rules/detect.py)
 UncheckedKind = Literal[
-    "pr", "human", "no_checker", "cap", "model_failed", "tool_unavailable", "run_failed"
+    "pr", "run", "no_checker", "cap", "model_failed", "tool_unavailable", "run_failed"
 ]
 # 검사기 작성 모델의 답: 파일의 코드만 읽는 결정적 검사기가 이 규칙의 위반을 얼마나 가릴 수 있는지
 Coverage = Literal["all", "part", "none"]
@@ -112,7 +113,8 @@ def checker_from_json(text: str) -> Checker:
 def plan_check(rule: Rule) -> Unchecked | None:
     """검사기를 작성하지 않을 규칙이면 Unchecked, 작성할 규칙이면 None.
 
-    확인 대상이 코드 줄인 규칙만 검사한다. PR 단위 규칙과 사람이 확인하는 규칙은 목록으로만 보인다.
+    확인 대상이 코드 줄인 규칙만 검사기로 본다. PR 단위 규칙은 PR 단위 확인이, run 규칙은 테스트와
+    정적 검사의 결과가 답한다.
     4.4의 순서는 기존 도구 → 검사기 → 모델 판단이다 (app/worker/rules/checkers.py). 규칙 읽기의
     힌트가 "model"인 규칙도 도구나 코드 모양으로 가릴 수 있으면 그쪽이 더 싸다 (9.3).
     """

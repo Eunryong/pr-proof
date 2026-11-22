@@ -53,8 +53,9 @@ JudgeGap = Literal["cap", "model_failed"]
 class RuleJudged:
     """검사기를 채택하지 않아 모델이 바뀐 hunk를 직접 보는 규칙 (4.4의 3번, 4.5 모델의 직접 판단).
 
-    route는 모델 판단으로 보낸 까닭이다(`JudgeRoute`). left는 이번 검사에서 판단하지 못한 (이 규칙,
-    hunk) 쌍의 수다. 0이면 다 봤다.
+    route는 모델 판단으로 보낸 까닭이다(`JudgeRoute`). left는 이번 검사에서 판단하지 못한 (이
+    규칙, hunk) 쌍의 수다(호출 상한, 모델 호출 실패). 0이면 다 물었다. pairs는 본 쌍의 수,
+    undecided는 그중 모델이 이 자료로는 판단할 수 없다고 답한 쌍의 수와 그 까닭이다.
     """
 
     rule: Rule
@@ -67,9 +68,24 @@ class RuleJudged:
     left: int = 0
     left_kind: JudgeGap | None = None
     left_detail: str = ""
+    pairs: int = 0
+    undecided: int = 0
+    undecided_why: str = ""
 
 
 RuleOutcome = RuleChecked | RuleUnchecked | RuleJudged
+
+
+@dataclass(frozen=True)
+class RunJudged:
+    """run 규칙 하나에 모델이 테스트 뒤에 낸 답 (4.5 "실행 결과의 규칙"). kept는 지킴, broken은
+    어김, undecided는 모델이 이 자료로는 판단할 수 없다고 답함, left는 묻지 못함(호출 상한, 모델
+    호출 실패). facts는 모델에게 준 실행 결과의 요약, why는 모델의 까닭이나 묻지 못한 이유다."""
+
+    rule_id: str
+    verdict: Literal["kept", "broken", "undecided", "left"]
+    why: str
+    facts: str
 
 
 @dataclass(frozen=True)
@@ -123,6 +139,7 @@ class Found:
     judge: JudgeUsage | None = None  # 모델 판단을 한 검사만
     retrievals: tuple[Retrieval, ...] = ()  # 검사기 작성이 넣은 과거 기록 (검색을 켠 저장소)
     sections: tuple[str, ...] = ()  # RulesRead.sections
+    runs: tuple[RunJudged, ...] = ()  # run 규칙의 답. 테스트 뒤에 채운다
 
 
 DocRules = NotRun | NoRuleDocs | NoRulesFound | Found
@@ -133,6 +150,7 @@ STATE_TYPES: Final = (
     ("app.worker.doc_rules_pure", "RuleChecked"),
     ("app.worker.doc_rules_pure", "RuleUnchecked"),
     ("app.worker.doc_rules_pure", "RuleJudged"),
+    ("app.worker.doc_rules_pure", "RunJudged"),
     ("app.worker.rules.judge_pure", "JudgeUsage"),
     ("app.worker.doc_rules_pure", "RulesRead"),
     ("app.worker.doc_rules_pure", "CallUsage"),

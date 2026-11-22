@@ -191,8 +191,24 @@ def test_diff_coverage_line() -> None:
     assert report.diff_coverage_line(None) == []
     assert report.diff_coverage_line(DiffCoverage(66.67, 3, 1)) == [
         "",
-        "바뀐 줄 커버리지 (참고): 66.67% (테스트가 센 3줄 중 1줄이 실행되지 않음)",
+        "바뀐 줄 커버리지 66.67% (참고, 위반이 아님): 있던 테스트가 PR이 바꾼 줄 3줄 중 2줄을 "
+        "실행함",
     ]
+
+
+def test_clean_pr_comment_is_short_and_keeps_coverage_folded() -> None:
+    """위반이 없으면 결론 두 줄 뒤에 펼친 것이 없다. 테스트 수와 커버리지는 접는 블록 안에 있다."""
+    from app.worker.coverage import DiffCoverage
+    from app.worker.doc_rules_report import DETAILS_SUMMARY
+
+    text = report.render_result(PASSED, "a" * 40, 1.0, doc_rules=_found(),
+                                diff_coverage=DiffCoverage(0.0, 220, 220))  # fmt: skip
+    shown, _, folded = text.partition(f"<details><summary>{DETAILS_SUMMARY}</summary>")
+    assert shown.splitlines()[2:4] == [
+        "**테스트:** 통과 (9개)",
+        "**규칙:** ✅ 위반 없음 · 규칙 1개를 확인함 (도구·검사기 1개)",
+    ]
+    assert "커버리지" not in shown and "220줄 중 0줄을 실행함" in folded
 
 
 def test_file_names_and_tool_messages_cannot_leave_their_code_span() -> None:

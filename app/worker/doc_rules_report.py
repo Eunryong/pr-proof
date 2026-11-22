@@ -8,7 +8,7 @@
 
 from collections import Counter
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Final, Literal
 
 from app.worker import pr_check_report_pure
@@ -50,10 +50,6 @@ HOW_TO_WRITE: Final = (
     '예: "`orders/` 아래 모듈은 `print`를 쓰지 않는다." '
     "다른 문서에 적었으면 base 브랜치 `.pipeline.yaml`의 `rules.docs`에 그 경로를 적으세요."
 )
-HOW_TO_CORRECT: Final = (
-    "규칙 해석이 틀렸으면 README의 그 문장을 고치거나 "
-    "`.pipeline.yaml`의 `rules.disabled`에 규칙 id를 적으세요."
-)
 # 규칙마다 바로 보이는 위반 수. 나머지는 접는다 (11.2 D6)
 MAX_SHOWN_PER_RULE: Final = 10
 # 접은 목록에 싣는 위반 수의 합. 넘는 것은 건수만 적는다 (코멘트 길이)
@@ -77,16 +73,22 @@ MAX_DETAIL_CHARS: Final = 300
 MAX_SECTION_CHARS: Final = 30_000
 OMITTED: Final = "… (코멘트 길이 제한으로 나머지를 생략)"
 
+DETAILS_SUMMARY: Final = "자세히: 규칙별 확인 방법, 모델 호출, 바뀐 줄 커버리지"
 _UNCHECKED_TEXT: Final[Mapping[str, str]] = {
     "pr": "PR 단위 규칙 (PR 단위 확인으로 봄)",
-    "human": "사람이 확인하는 규칙 (검사하지 않음)",
     "no_checker": "읽었지만 아직 검사하지 못함",
     "cap": "호출 상한에 걸려 이번에 처리하지 못함",
     "model_failed": "검사하지 못함 (모델 호출 실패)",
     "tool_unavailable": "검사하지 못함 (도구 준비 실패)",
     "run_failed": "검사하지 못함 (검사기 실행 실패)",
 }
+# 체크포인트에 남은 옛 결과의 종류(2026-11-22 전의 "human" 등)는 이 표에 없다. 이번 검사가 확인한
+# 것이 아니므로 확인하지 못한 규칙으로 보이고, `/recheck`가 새 규칙 읽기로 다시 확인한다
+OLD_KIND_TEXT: Final = "이전 검사의 결과라 이번에 확인하지 못함. `/recheck`로 다시 확인합니다"
 _FAILED_KINDS: Final = frozenset({"model_failed", "tool_unavailable", "run_failed"})
+_CONFIRMED_LABEL: Final[Mapping[str, str]] = {
+    "tool": "도구·검사기", "model": "모델 판단", "run": "테스트·정적 검사 결과", "pr": "PR 단위",
+}  # fmt: skip
 # 모델 판단으로 보낸 까닭 (4.4 "의미 규칙을 모델 판단으로 보내는 때"). none·part 뒤에는 모델이 적은
 # "검사기로 가릴 수 없는 부분"을 붙인다
 _JUDGE_ROUTE_TEXT: Final[Mapping[JudgeRoute, str]] = {
@@ -142,17 +144,55 @@ class FixView:
     patch: str = ""  # 검증을 통과한 패치 (`fix_attempts`). 수정안 PR을 열지 못했을 때 보인다
 
 
-# 확인 대상이 코드 줄이 아닌 규칙 (4.3). 검사하지 못한 것이 아니라 검사 대상이 아니다
-_OTHER_TARGETS: Final = frozenset({"pr", "human"})
+@dataclass(frozen=True)
+class RunAnswer:
+    """run 규칙 하나의 답 (4.5). verdict는 모델의 판단이고, unknown은 판단하지 못했거나 묻지 못한
+    것이다. basis는 모델에게 준 실행 결과의 요약, why는 모델의 까닭이나 묻지 못한 이유다."""
+
+    rule: Rule
+    verdict: Literal["kept", "broken", "unknown"]
+    basis: str
+    why: str
+
+
+def run_answers(found: Found) -> dict[str, RunAnswer]:
+    """run 규칙마다 테스트 뒤 모델이 정한 답(`Found.runs`). 테스트 전에 끝났으면 묻지 못한
+    것이다."""
+    judged = {r.rule_id: r for r in found.runs}
+    out: dict[str, RunAnswer] = {}
+    for o in _unchecked(found.outcomes, frozenset({"run"})):
+        r = judged.get(o.rule.id)
+        if r is None:
+            out[o.rule.id] = RunAnswer(o.rule, "unknown", "", "테스트를 돌리기 전에 끝남")
+            continue
+        verdict = r.verdict if r.verdict in ("kept", "broken") else "unknown"
+        out[o.rule.id] = RunAnswer(o.rule, verdict, r.facts, r.why)  # type: ignore[arg-type]
+    return out
+
+
+def dismissed(found: Found, decisions: Decided | None) -> tuple[Found, list[tuple[Violation, str]]]:
+    """도구·검사기가 잡았지만 수정 판단의 모델이 위반이 아니라고 답한 것을 뺀 결과와, 뺀 위반과 그
+    까닭. 뺀 것은 위반 수에도 "직접 고쳐야 함"에도 들지 않고 접는 블록에 남는다 (4.6, 4.9)."""
+    if decisions is None:
+        return found, []
+    out = {d.violation_id: d.why for d in decisions.decisions
+           if d.reason == "not_a_violation" and d.decided_by == "model"}  # fmt: skip
+    if not out:
+        return found, []
+    kept = tuple(v for v in found.violations if v.id not in out)
+    return replace(found, violations=kept), [(v, out[v.id]) for v in found.violations
+                                             if v.id in out]  # fmt: skip
 
 
 def title(
     result: DocRules | None,
     fixes: Mapping[str, FixView] | None = None,
     pr: PrChecks | None = None,
+    decisions: Decided | None = None,
 ) -> str | None:
-    """코멘트 맨 위의 "규칙:" 줄 (4.9). 규칙 경로를 돌기 전에 끝났으면 None. pr은 PR 단위 확인의
-    결과다(PR 규칙이 있는 검사만). 그 위반은 코드 위반과 따로 센다."""
+    """코멘트 맨 위의 "규칙:" 줄, 결론이다 (4.9). 규칙 경로를 돌기 전에 끝났으면 None. pr은 PR 단위
+    확인의 결과다(PR 규칙이 있는 검사만). PR 단위 위반이 있으면 그것은 따로 된 줄
+    (`pr_check_report_pure.title`)이 말하고 이 줄은 코드와 실행 결과의 규칙만 말한다."""
     match result:
         case None:
             return None
@@ -162,7 +202,11 @@ def title(
             return f"{TITLE} {NO_RULES}"
         case Found():
             numbers = [n for v in (fixes or {}).values() if (n := _proposal_number(v)) is not None]
-            line = f"{TITLE} {_title_line(result, pr)}"
+            counted, _ = dismissed(result, decisions)
+            conclusion = _title_line(counted, pr, run_answers(result))
+            if conclusion is None:
+                return None
+            line = f"{TITLE} {conclusion}"
             return line + (f" · 수정안 {', '.join(f'#{n}' for n in numbers)}" if numbers else "")
 
 
@@ -180,26 +224,31 @@ def section(
     fixes: Mapping[str, FixView] | None = None,
     rag: RagSwitch | None = None,
     pr: PrChecks | None = None,
+    more: Sequence[str] = (),
 ) -> list[str]:
     """규칙 절의 줄들 ("규칙:" 줄 아래). checkers는 위반을 찾은 검사기의 {CheckerRef.key: 검사기}다.
 
     decisions는 테스트 뒤의 수정 판단이다. 아직 없으면(테스트 전에 끝남) 판단 없이 그린다.
     fixes는 묶음(mechanical, model)마다의 수정 상태다. 그 묶음으로 정한 위반이 없으면 없다.
-    rag는 이 검사의 검색 상태다. 규칙을 찾은 검사에서 참고 기록 블록 앞에 한 줄로 보인다.
+    rag는 이 검사의 검색 상태다. more는 부르는 쪽이 접는
+    블록에 더할 줄(테스트 수, 바뀐 줄 커버리지)이다.
+
+    위반과 확인하지 못한 규칙, 할 일은 펼친 채로 두고, 규칙별 확인 방법과 사용량은 접는 블록 하나에
+    넣는다. 위반이 없으면 펼친 부분이 거의 없다 (4.9).
     """
     match result:
         case None | NotRun():
-            return []
+            return _details(list(more))
         case NoRuleDocs(unread=unread):
             lines = ["", HOW_TO_WRITE]
             if unread:
                 lines += ["", "읽지 못한 규칙 문서:"]
                 lines += [f"- {inline_code(d.path)}: {inline_code(d.reason)}" for d in unread]
-            return lines
+            return lines + _details(list(more))
         case NoRulesFound():
-            return ["", HOW_TO_WRITE]
+            return ["", HOW_TO_WRITE, *_details(list(more))]
         case Found():
-            return _found(result, checkers, decisions, fixes or {}, rag, pr)
+            return _found(result, checkers, decisions, fixes or {}, rag, pr, more)
 
 
 def _found(
@@ -209,57 +258,101 @@ def _found(
     fixes: Mapping[str, FixView],
     rag: RagSwitch | None = None,
     pr: PrChecks | None = None,
+    more: Sequence[str] = (),
 ) -> list[str]:
+    found, set_aside = dismissed(found, decisions)
     head = (
         ["", f"규칙 문서를 읽지 못해 도구 설정의 규칙만 검사함 "
          f"({inline_code(found.note, MAX_DETAIL_CHARS)})"]
         if found.note else []
     )  # fmt: skip
     head += sections_read(found.sections)
-    tail = ["", usage_line(found.usage), "", HOW_TO_CORRECT]
+    answers = run_answers(found)
+    flagged = {v.rule_id for v in found.violations}
     by_id = {d.violation_id: d for d in decisions.decisions} if decisions else {}
-    blocks = [
-        _judge_lines(found),
+    shown = [
+        _violations(found, by_id, fixed_in(fixes)),
+        _run_broken(answers),
         _decision_summary(decisions),
         *(_fix_lines(view, bundle, _test_lines(found, view)) for bundle, view in fixes.items()),
-        _violations(found, by_id, fixed_in(fixes)),
-        pr_check_report_pure.section(pr) if pr is not None else [],
+        pr_check_report_pure.violations(pr) if pr is not None else [],
+        _unresolved(found, answers, flagged),
+        _judge_gaps(found),
         _not_checkable(found.outcomes),
         _failed(found.outcomes),
         _capped(found.outcomes),
+        pr_check_report_pure.unresolved(pr) if pr is not None else [],
         _other_targets(found.outcomes, pr_checked=pr is not None),
         _checker_details(found, checkers),
-        references_block(_retrievals(found, decisions, fixes), rag),
-        _read_rules(found),
     ]
-    budget = MAX_SECTION_CHARS - _size(head) - _size(tail)
-    return head + _fit(blocks, budget) + tail
+    folded = [
+        _dismissed_lines(set_aside),
+        _judge_usage(found),
+        ["", usage_line(found.usage)],
+        pr_check_report_pure.details(pr) if pr is not None else [],
+        [f"`rules.disabled`로 끈 규칙 {found.disabled}개"] if found.disabled else [],
+        references_block(_retrievals(found, decisions, fixes), rag),
+        list(more),
+        _read_rules(found, answers),
+    ]
+    budget = MAX_SECTION_CHARS - _size(head) - _size(_details(["x"]))
+    visible = _fit(shown, budget)
+    return head + visible + _details(_fit(folded, budget - _size(visible)))
 
 
-def _title_line(found: Found, pr_checks: PrChecks | None = None) -> str:
-    checked = sum(1 for o in found.outcomes if isinstance(o, RuleChecked)
-                  or isinstance(o, RuleJudged) and not o.left)  # fmt: skip
-    pr = len(_unchecked(found.outcomes, frozenset({"pr"})))
-    human = len(_unchecked(found.outcomes, frozenset({"human"})))
-    unchecked = len(found.outcomes) - checked - pr - human
-    if found.violations:
-        rules = len({v.rule_id for v in found.violations})
-        line = f"{VIOLATION} 위반 {len(found.violations)}건 (규칙 {rules}개)"
-    elif checked:
-        line = f"{CLEAN} 위반 없음 (규칙 {checked}개 검사)"
-    else:
-        line = f"검사한 규칙 없음 (읽은 규칙 {len(found.outcomes)}개)"
-    if unchecked and (found.violations or checked):
-        line += f" · 검사하지 못한 규칙 {unchecked}개"
-    if pr_checks is not None:
-        line += pr_check_report_pure.title_part(pr_checks)
-    elif pr:
-        line += f" · PR 단위 규칙 {pr}개"
-    if human:
-        line += f" · 사람이 확인하는 규칙 {human}개"
-    if found.disabled:
-        line += f" · `rules.disabled`로 끈 규칙 {found.disabled}개"
-    return line
+def _details(lines: list[str]) -> list[str]:
+    """접는 블록 하나. 줄이 없으면 블록도 없다."""
+    if not lines:
+        return []
+    return ["", f"<details><summary>{DETAILS_SUMMARY}</summary>", *lines, "", "</details>"]
+
+
+def _undecided(o: RuleOutcome, flagged: set[str]) -> bool:
+    """모델이 이 규칙을 판단하지 못했다고 답했고 다른 hunk에서도 위반을 찾지 않았다."""
+    return isinstance(o, RuleJudged) and o.undecided > 0 and o.rule.id not in flagged
+
+
+def _confirmed(
+    found: Found, pr: PrChecks | None, answers: Mapping[str, RunAnswer], flagged: set[str]
+) -> Counter[str]:
+    """확인한 규칙 수를 확인 방법마다 센다. 판단하지 못했거나 이번에 다 보지 못한 규칙은 세지
+    않는다. pr이 None이면 PR 단위 규칙은 세지 않는다."""
+    counts: Counter[str] = Counter()
+    seen = ("checked", "not_applicable")
+    pr_seen = {r.rule.id for r in pr.results if r.status in seen} if pr else set()
+    for o in found.outcomes:
+        if isinstance(o, RuleChecked):
+            counts["tool"] += 1
+        elif isinstance(o, RuleJudged) and not o.left and not _undecided(o, flagged):
+            counts["model"] += 1
+        elif o.rule.id in answers and answers[o.rule.id].verdict != "unknown":
+            counts["run"] += 1
+        elif isinstance(o, RuleUnchecked) and o.kind == "pr" and o.rule.id in pr_seen:
+            counts["pr"] += 1
+    return counts
+
+
+def _title_line(
+    found: Found, pr_checks: PrChecks | None, answers: Mapping[str, RunAnswer]
+) -> str | None:
+    """결론. 위반이 있으면 건수만, 없으면 몇 개의 규칙을 무엇으로 확인했는지 (4.9). 규칙이 모두 PR
+    단위 규칙이고 그 위반이 따로 된 줄에 나오면 None이다."""
+    broken = [a for a in answers.values() if a.verdict == "broken"]
+    if found.violations or broken:
+        rules = len({v.rule_id for v in found.violations} | {a.rule.id for a in broken})
+        return f"{VIOLATION} 위반 {len(found.violations) + len(broken)}건 (규칙 {rules}개)"
+    pr_apart = pr_checks is not None and bool(pr_checks.violations)
+    flagged = {v.rule_id for v in found.violations}
+    counts = _confirmed(found, None if pr_apart else pr_checks, answers, flagged)
+    pr_rules = len(_unchecked(found.outcomes, frozenset({"pr"}))) if pr_apart else 0
+    total, confirmed = len(found.outcomes) - pr_rules, sum(counts.values())
+    if pr_apart and not total:
+        return None
+    if not confirmed:
+        return f"확인한 규칙 없음 (읽은 규칙 {total}개)"
+    how = ", ".join(f"{label} {counts[k]}개" for k, label in _CONFIRMED_LABEL.items() if counts[k])
+    which = f"규칙 {total}개를" if confirmed == total else f"규칙 {total}개 중 {confirmed}개를"
+    return f"{CLEAN} {'코드 ' if pr_apart else ''}위반 없음 · {which} 확인함 ({how})"
 
 
 def usage_line(usage: CallUsage) -> str:
@@ -283,7 +376,7 @@ def _quote(rule: Rule) -> str:
     return inline_code(rule.text, MAX_QUOTE_CHARS)
 
 
-def _how_checked(outcome: RuleOutcome) -> str:
+def _how_checked(outcome: RuleOutcome, answers: Mapping[str, RunAnswer] | None = None) -> str:
     if isinstance(outcome, RuleChecked):
         ref = outcome.checker
         if outcome.rule.origin == "tool_config":
@@ -298,15 +391,21 @@ def _how_checked(outcome: RuleOutcome) -> str:
         if outcome.route in ("none", "part") and outcome.reason:
             why += f": {inline_code(outcome.reason, MAX_DETAIL_CHARS)}"
         left = f", 이번에 판단하지 못한 hunk {outcome.left}개" if outcome.left else ""
+        if outcome.undecided:
+            left += f", 모델이 판단하지 못한 hunk {outcome.undecided}개"
         return f"모델 판단 ({why}{left})"
-    return _UNCHECKED_TEXT[outcome.kind]
+    answer = (answers or {}).get(outcome.rule.id)
+    if answer is not None:
+        verdict = {"kept": "지킴", "broken": "어김", "unknown": "판단하지 못함"}[answer.verdict]
+        basis = f" · 근거: {answer.basis}" if answer.basis else ""
+        return f"모델이 테스트·정적 검사 결과로 판단함: {verdict}{basis}"
+    return _UNCHECKED_TEXT.get(outcome.kind, OLD_KIND_TEXT)
 
 
-def _judge_lines(found: Found) -> list[str]:
-    """모델 판단의 규칙 수와 호출 (9.4), 판단하지 못한 규칙 (4.9의 호출 상한 줄)."""
+def _judge_usage(found: Found) -> list[str]:
+    """모델 판단의 규칙 수와 호출 (9.4). 접는 블록에 들어간다."""
     usage = found.judge
-    judged = [o for o in found.outcomes if isinstance(o, RuleJudged)]
-    if usage is None or not judged:
+    if usage is None or not any(isinstance(o, RuleJudged) for o in found.outcomes):
         return []
     line = (
         f"모델 판단: 규칙 {usage.rules}개, hunk {usage.hunks}개 · 모델 호출 {usage.calls}회 · "
@@ -318,7 +417,13 @@ def _judge_lines(found: Found) -> list[str]:
         line += f" · 버린 답 {usage.dropped}건 (PR이 바꾼 줄을 그대로 인용하지 않음)"
     if usage.calls:
         line += f" · 토큰 입력 {usage.input_tokens}, 출력 {usage.output_tokens}"
-    lines = ["", line]
+    return ["", line]
+
+
+def _judge_gaps(found: Found) -> list[str]:
+    """모델 판단을 이번에 다 하지 못한 규칙: 호출 상한, 모델 호출 실패 (4.9의 호출 상한 줄)."""
+    judged = [o for o in found.outcomes if isinstance(o, RuleJudged)]
+    lines: list[str] = []
     capped = [o for o in judged if o.left_kind == "cap"]
     if capped:
         why = inline_code(capped[0].left_detail, MAX_DETAIL_CHARS)
@@ -339,10 +444,14 @@ def _decision_summary(decisions: Decided | None) -> list[str]:
     if not decisions or not decisions.decisions:
         return []
     fixes = sum(1 for d in decisions.decisions if d.action == "fix")
-    left = Counter(_left_label(d) for d in decisions.decisions if d.action == "skip")
+    not_one = sum(1 for d in decisions.decisions if _is_dismissed(d))
+    left = Counter(_left_label(d) for d in decisions.decisions
+                   if d.action == "skip" and not _is_dismissed(d))  # fmt: skip
     line = f"수정 판단: 고칠 대상 {fixes}건, {LEFT} {sum(left.values())}건"
     if left:
         line += f" ({', '.join(f'{label} {n}건' for label, n in left.items())})"
+    if not_one:
+        line += f", 모델이 위반이 아니라고 판단함 {not_one}건 (아래 접힌 블록)"
     line += f" · 모델 호출 {decisions.calls}회 · 저장된 판단 {decisions.cached}건 사용"
     if decisions.calls:
         line += f" · 토큰 입력 {decisions.input_tokens}, 출력 {decisions.output_tokens}"
@@ -350,6 +459,23 @@ def _decision_summary(decisions: Decided | None) -> list[str]:
     capped = sum(1 for d in decisions.decisions if d.reason == "call_limit")
     if capped:
         lines += ["", f"모델 호출 상한에 걸려 처리하지 못함: 수정 판단 {capped}건. {RERUN_HINT}"]
+    return lines
+
+
+def _is_dismissed(d: FixDecision) -> bool:
+    return d.reason == "not_a_violation" and d.decided_by == "model"
+
+
+def _dismissed_lines(set_aside: Sequence[tuple[Violation, str]]) -> list[str]:
+    """도구가 잡았지만 모델이 위반이 아니라고 판단한 것 (접는 블록 안). 사람이 뒤집어 볼 수 있게
+    위치와 모델의 까닭을 남긴다."""
+    if not set_aside:
+        return []
+    lines = ["", f"도구가 잡았지만 모델이 위반이 아니라고 판단함 {len(set_aside)}건:"]
+    for v, why in set_aside[:MAX_FOLDED_VIOLATIONS]:
+        lines.append(f"- `{v.rule_id}` {_where(v)} · {inline_code(why, MAX_DETAIL_CHARS)}")
+    if len(set_aside) > MAX_FOLDED_VIOLATIONS:
+        lines.append(f"- 외 {len(set_aside) - MAX_FOLDED_VIOLATIONS}건")
     return lines
 
 
@@ -630,21 +756,50 @@ def _not_checkable(outcomes: Sequence[RuleOutcome]) -> list[str]:
 
 
 def _other_targets(outcomes: Sequence[RuleOutcome], *, pr_checked: bool = False) -> list[str]:
-    """코드 줄로 확인하지 않는 규칙의 목록. 사람이 확인하는 규칙은 보이기만 한다. PR 단위 규칙은
-    PR 단위 확인을 했으면 그 부분에 나오고, 하지 못했으면(이전 체크포인트 등) 목록으로만 보인다."""
-    lines: list[str] = []
+    """PR 단위 확인을 마치지 못한 PR 단위 규칙(이전 체크포인트 등). 확인했으면 PR 단위 부분에
+    나온다."""
     pr = [] if pr_checked else _unchecked(outcomes, frozenset({"pr"}))
-    if pr:
-        head = (
-            f"PR 단위로 확인할 규칙 {len(pr)}개 (커밋 메시지, PR 본문, 브랜치, 바뀐 파일 종류. "
-            "아직 확인하지 않음):"
-        )
-        lines += ["", head, *_rule_lines(pr, detail=True)]
-    human = _unchecked(outcomes, frozenset({"human"}))
-    if human:
-        head = f"사람이 확인하는 규칙 {len(human)}개 (파이프라인이 검사하지 않음):"
-        lines += ["", head, *_rule_lines(human, detail=True)]
+    if not pr:
+        return []
+    head = (
+        f"PR 단위 확인을 마치지 못한 규칙 {len(pr)}개 (커밋 메시지, PR 본문, 브랜치, 바뀐 파일 "
+        "종류. 다음 검사나 `/recheck`가 확인합니다):"
+    )
+    return ["", head, *_rule_lines(pr, detail=True)]
+
+
+def _run_broken(answers: Mapping[str, RunAnswer]) -> list[str]:
+    """테스트·정적 검사의 결과를 보고 모델이 어겼다고 판단한 run 규칙 (4.5). 줄이 없어 수정안으로
+    이어지지 않는다(12.2)."""
+    broken = [a for a in answers.values() if a.verdict == "broken"]
+    if not broken:
+        return []
+    lines = ["", "테스트·정적 검사 결과로 어긴 규칙 (줄이 아니라 PR에 걸려 수정안은 만들지 않음):"]
+    for a in broken:
+        lines += [f"- `{a.rule.id}` {_quote(a.rule)} · {inline_code(a.why, MAX_DETAIL_CHARS)}",
+                  f"  근거: {a.basis}"]  # fmt: skip
     return lines
+
+
+def _unresolved(found: Found, answers: Mapping[str, RunAnswer], flagged: set[str]) -> list[str]:
+    """확인하지 못한 규칙과 까닭 (4.9). 모델이 보고 판단하지 못한 것, run 규칙을 묻지 못한 것,
+    체크포인트에 남은 옛 결과. 없으면 이 부분이 없다."""
+    lines = []
+    for o in found.outcomes:
+        head = f"- `{o.rule.id}` {_quote(o.rule)} · "
+        if isinstance(o, RuleJudged) and _undecided(o, flagged):
+            part = f" (hunk {o.pairs}개 중 {o.undecided}개)" if o.undecided < o.pairs else ""
+            why = inline_code(o.undecided_why, MAX_DETAIL_CHARS)
+            lines.append(f"{head}모델이 코드를 보고 판단하지 못함{part}: {why}")
+        elif o.rule.id in answers and answers[o.rule.id].verdict == "unknown":
+            answer = answers[o.rule.id]
+            lines.append(f"{head}모델이 테스트·정적 검사 결과로 판단하지 못함: "
+                         f"{inline_code(answer.why, MAX_DETAIL_CHARS)}")  # fmt: skip
+        elif isinstance(o, RuleUnchecked) and o.kind not in (*_UNCHECKED_TEXT, "run"):
+            lines.append(head + OLD_KIND_TEXT)
+    if not lines:
+        return []
+    return ["", f"확인하지 못한 규칙 {len(lines)}개:", *lines]
 
 
 def _failed(outcomes: Sequence[RuleOutcome]) -> list[str]:
@@ -775,16 +930,17 @@ def references_block(retrievals: Sequence[Retrieval], rag: RagSwitch | None = No
     return [*lines, "", "</details>"]
 
 
-def _read_rules(found: Found) -> list[str]:
+def _read_rules(found: Found, answers: Mapping[str, RunAnswer] | None = None) -> list[str]:
+    """읽은 규칙마다 출처, 범위, 확인 방법 (접는 블록 안)."""
     if not found.outcomes:
         return []
-    lines = ["", f"<details><summary>읽은 규칙 {len(found.outcomes)}개</summary>", ""]
+    lines = ["", f"읽은 규칙 {len(found.outcomes)}개:"]
     for o in found.outcomes[:MAX_LISTED_RULES]:
         rule = o.rule
         scope = ", ".join(inline_code(p, 100) for p in rule.scope) if rule.scope else "저장소 전체"
         lines += [
             f"- `{rule.id}` {_quote(rule)}",
-            f"  출처: {_source(rule)} · 범위: {scope} · 확인: {_how_checked(o)}",
+            f"  출처: {_source(rule)} · 범위: {scope} · 확인: {_how_checked(o, answers)}",
         ]
         if rule.exclude:
             globs = ", ".join(inline_code(p, 100) for p in rule.exclude)
@@ -800,7 +956,7 @@ def _read_rules(found: Found) -> list[str]:
     hidden = len(found.outcomes) - MAX_LISTED_RULES
     if hidden > 0:
         lines.append(f"- 외 {hidden}개")
-    return [*lines, "", "</details>"]
+    return lines
 
 
 def _size(lines: Sequence[str]) -> int:

@@ -17,8 +17,9 @@ from app.worker.doc_rules_pure import (
     RuleChecked,
     RuleJudged,
     RuleUnchecked,
+    RunJudged,
 )
-from app.worker.doc_rules_report import HOW_TO_CORRECT, NO_RULES, FixView, section, title
+from app.worker.doc_rules_report import NO_RULES, FixView, section, title
 from app.worker.fix.fix_decision_pure import Decided, FixDecision
 from app.worker.fix.fix_pure import MechanicalFix
 from app.worker.fix.model_fix_pure import ModelFix, Verification
@@ -75,15 +76,19 @@ def test_violation_lists_location_quote_source_and_checker() -> None:
     assert "예시: 문서 1개, 모델이 쓴 것 1개" in text
     assert "모델이 쓴 예시, 정상:\n\n```python\nlog(1)\n```" in text
     assert "print(1)" not in text  # 문서의 예시는 문서에 있으므로 다시 싣지 않는다
-    assert text.rstrip().endswith(HOW_TO_CORRECT)
+    assert "README의 그 문장" not in text and "문장을 고치" not in text
+    shown, _, folded = text.partition(doc_rules_report.DETAILS_SUMMARY)
+    assert "위반:" in shown and "읽은 규칙 1개" in folded
     assert "모델 호출 3회 / 상한 14회 (규칙 읽기와 검사기 작성) · `claude-haiku-5-5` · " \
            "저장된 결과 1건 사용 · 토큰 입력 3000, 출력 300" in text  # fmt: skip
 
 
 def test_checker_without_violation_has_no_body() -> None:
     text = _text(_found(RuleChecked(RULE, REF)), {"k1": CHECKER})
-    assert "**규칙:** ✅ 위반 없음 (규칙 1개 검사)" in text
+    assert "**규칙:** ✅ 위반 없음 · 규칙 1개를 확인함 (도구·검사기 1개)" in text
     assert "모델이 쓴 검사기" not in text and "읽은 규칙 1개" in text
+    shown, _, _ = text.partition("<details>")
+    assert shown.strip() == "**규칙:** ✅ 위반 없음 · 규칙 1개를 확인함 (도구·검사기 1개)"
 
 
 def test_untrusted_text_cannot_escape_code() -> None:
@@ -124,40 +129,43 @@ def test_inferred_exclude_is_shown_with_reason() -> None:
 def test_unchecked_rules_are_grouped_by_reason() -> None:
     outcomes = (
         RuleUnchecked(replace(RULE, id="R-1"), "no_checker", "3회 안에 예시를 통과하지 못함"),
-        RuleUnchecked(replace(RULE, id="R-2", target="human"), "human", "사람이 판단할 규칙"),
         RuleUnchecked(replace(RULE, id="R-6", target="pr"), "pr", "커밋 메시지의 규칙"),
         RuleUnchecked(replace(RULE, id="R-3"), "cap", "호출 상한: 규칙 묶음 상한 (3/3회 사용)"),
         RuleUnchecked(replace(RULE, id="R-4"), "cap", "호출 상한: 규칙 묶음 상한 (3/3회 사용)"),
         RuleUnchecked(replace(RULE, id="R-5"), "tool_unavailable", "도구를 준비하지 못함: x"),
     )
     text = _text(_found(*outcomes, disabled=2))
-    assert (
-        "**규칙:** 검사한 규칙 없음 (읽은 규칙 6개) · PR 단위 규칙 1개 · "
-        "사람이 확인하는 규칙 1개 · `rules.disabled`로 끈 규칙 2개" in text
-    )
+    assert "**규칙:** 확인한 규칙 없음 (읽은 규칙 5개)" in text
+    assert "`rules.disabled`로 끈 규칙 2개" in text.partition(doc_rules_report.DETAILS_SUMMARY)[2]
     assert (
         "읽었지만 아직 검사하지 못하는 규칙 1개 (예시를 통과하는 검사기가 없음):\n- `R-1`" in text
     )
     assert "이번 검사에서 검사하지 못한 규칙 1개 (검사하지 못함 (도구 준비 실패) 1개):" in text
     assert ("모델 호출 상한에 걸려 처리하지 못함: 검사기 작성 2개 규칙 "
             "(`호출 상한: 규칙 묶음 상한 (3/3회 사용)`). 다음 검사") in text  # fmt: skip
-    # 코드 줄로 확인하지 않는 규칙은 검사하지 못한 규칙과 따로 목록으로 보인다
-    assert ("PR 단위로 확인할 규칙 1개 (커밋 메시지, PR 본문, 브랜치, 바뀐 파일 종류. "
-            "아직 확인하지 않음):\n- `R-6`") in text  # fmt: skip
-    assert "사람이 확인하는 규칙 1개 (파이프라인이 검사하지 않음):\n- `R-2`" in text
-    assert "확인: 사람이 확인하는 규칙 (검사하지 않음)" in text
+    assert ("PR 단위 확인을 마치지 못한 규칙 1개 (커밋 메시지, PR 본문, 브랜치, 바뀐 파일 "
+            "종류. 다음 검사나 `/recheck`가 확인합니다):\n- `R-6`") in text  # fmt: skip
+    assert "검사하지 않음" not in text and "사람이 확인" not in text
 
 
-def test_title_counts_rules_outside_code_apart_from_unchecked() -> None:
+def test_title_counts_only_rules_it_confirmed() -> None:
     outcomes = (
         RuleChecked(RULE, REF),
         RuleUnchecked(replace(RULE, id="R-1"), "no_checker", "3회 안에 예시를 통과하지 못함"),
-        RuleUnchecked(replace(RULE, id="R-2", target="human"), "human", "절차"),
-        RuleUnchecked(replace(RULE, id="R-3", target="human"), "human", "절차"),
     )
-    assert (
-        "**규칙:** ✅ 위반 없음 (규칙 1개 검사) · 검사하지 못한 규칙 1개 · 사람이 확인하는 규칙 2개"
-    ) in _text(_found(*outcomes))
+    assert "**규칙:** ✅ 위반 없음 · 규칙 2개 중 1개를 확인함 (도구·검사기 1개)" in _text(
+        _found(*outcomes)
+    )
+
+
+def test_old_human_outcome_from_a_checkpoint_is_shown_as_not_confirmed() -> None:
+    """2026-11-22 전의 체크포인트에 남은 "human" 결과는 확인한 것으로 세지 않고, "검사하지 않음"이
+    아니라 다시 확인할 방법과 함께 보인다."""
+    old = RuleUnchecked(replace(RULE, id="R-2"), "human", "절차")  # type: ignore[arg-type]
+    text = _text(_found(RuleChecked(RULE, REF), old))
+    assert "규칙 2개 중 1개를 확인함" in text
+    assert f"확인하지 못한 규칙 1개:\n- `R-2` {inline_code(RULE.text)} · " in text
+    assert doc_rules_report.OLD_KIND_TEXT in text and "검사하지 않음" not in text
 
 
 def test_no_rules_explains_how_to_write_them() -> None:
@@ -189,7 +197,7 @@ def test_section_stays_within_size_limit() -> None:
     text = _text(_found(*outcomes, violations=violations), checkers)
     assert len(text) <= doc_rules_report.MAX_SECTION_CHARS
     assert doc_rules_report.OMITTED in text
-    assert text.rstrip().endswith(HOW_TO_CORRECT)
+    assert text.rstrip().endswith("</details>")
 
 
 def test_install_failure_comment_keeps_doc_rules() -> None:
@@ -300,11 +308,11 @@ def test_fixed_line_shows_the_fix_pr_that_fixed_it() -> None:
 
 def test_left_lines_are_folded_even_when_few_and_count_toward_the_fold_cap() -> None:
     violations = tuple(_violation(line=n) for n in range(1, 13))
-    decided = Decided(tuple(FixDecision(v.id, "skip", "model", reason="not_a_violation", why="w")
+    decided = Decided(tuple(FixDecision(v.id, "skip", "model", reason="changes_behavior", why="w")
                             for v in violations))  # fmt: skip
     text = "\n".join(section(_found(RuleChecked(RULE, REF), violations=violations), {}, decided))
-    assert "  직접 고쳐야 함 12건 (모델이 위반이 아니라고 봄 12건)" in text
-    assert "  - `orders/a.py:12` · 모델이 위반이 아니라고 봄: `w`" in text
+    assert "  직접 고쳐야 함 12건 (고치면 동작이 바뀜 12건)" in text
+    assert "  - `orders/a.py:12` · 고치면 동작이 바뀜: `w`" in text
     many = tuple(_violation(line=n) for n in range(1, 512))
     decided = Decided(tuple(FixDecision(v.id, "skip", "pipeline", reason="notify_only",
                                         why="알리기만 하는 규칙") for v in many))  # fmt: skip
@@ -485,4 +493,70 @@ def test_rule_documents_that_could_not_be_read_are_named_when_tool_rules_ran() -
     assert (
         "규칙 문서를 읽지 못해 도구 설정의 규칙만 검사함 (`규칙 읽기의 모델 호출이 실패함: x`)"
         in (_text(found))
+    )
+
+
+def test_what_the_model_says_is_not_a_violation_is_set_aside_not_counted() -> None:
+    """도구가 잡았어도 수정 판단의 모델이 위반이 아니라고 답한 것은 위반 수에도 "직접 고쳐야 함"에도
+    들지 않는다. 사람이 뒤집어 볼 수 있게 접는 블록에 위치와 모델의 까닭이 남는다."""
+    real, false = _violation(line=2), _violation(line=3)
+    decided = Decided((
+        FixDecision(real.id, "skip", "model", reason="changes_behavior", why="동작"),
+        FixDecision(false.id, "skip", "model", reason="not_a_violation", why="<문서의 예외>"),
+    ))  # fmt: skip
+    found = _found(RuleChecked(RULE, REF), violations=(real, false))
+    assert title(found, decisions=decided) == "**규칙:** ⚠️ 위반 1건 (규칙 1개)"
+    text = "\n".join(section(found, {}, decided))
+    shown, _, folded = text.partition(doc_rules_report.DETAILS_SUMMARY)
+    assert "`orders/a.py:3`" not in shown and "직접 고쳐야 함 1건 (고치면 동작이 바뀜 1건)" in shown
+    assert "모델이 위반이 아니라고 판단함 1건" in shown
+    assert ("도구가 잡았지만 모델이 위반이 아니라고 판단함 1건:\n"
+            "- `R-readme-1` `orders/a.py:3` · `<문서의 예외>`") in folded  # fmt: skip
+    only_false = Decided((FixDecision(false.id, "skip", "model", reason="not_a_violation"),))
+    clean = _found(RuleChecked(RULE, REF), violations=(false,))
+    assert title(clean, decisions=only_false) == (
+        "**규칙:** ✅ 위반 없음 · 규칙 1개를 확인함 (도구·검사기 1개)"
+    )
+
+
+def test_rule_the_model_could_not_judge_is_listed_with_its_reason() -> None:
+    """모델이 코드를 보고 판단하지 못한 규칙은 확인한 것으로 세지 않고, 까닭과 함께 펼쳐 보인다."""
+    judged = RuleJudged(replace(RULE, id="R-2"), "", "none", pairs=3, undecided=3,
+                        undecided_why="hunk 밖의 데이터를 봐야 함")  # fmt: skip
+    partly = RuleJudged(replace(RULE, id="R-3"), "", "none", pairs=4, undecided=1,
+                        undecided_why="x")  # fmt: skip
+    done = RuleJudged(replace(RULE, id="R-4"), "", "none", pairs=2)
+    text = _text(_found(RuleChecked(RULE, REF), judged, partly, done))
+    assert (
+        "**규칙:** ✅ 위반 없음 · 규칙 4개 중 2개를 확인함 (도구·검사기 1개, 모델 판단 1개)" in text
+    )
+    shown = text.partition("<details>")[0]
+    assert "확인하지 못한 규칙 2개:" in shown
+    assert (
+        "- `R-2` " in shown
+        and "모델이 코드를 보고 판단하지 못함: `hunk 밖의 데이터를 봐야 함`" in shown
+    )
+    assert "모델이 코드를 보고 판단하지 못함 (hunk 4개 중 1개): `x`" in shown
+
+
+def test_run_rule_shows_the_models_answer_and_the_results_it_saw() -> None:
+    """실행 결과의 규칙은 모델이 테스트·커버리지·정적 검사를 보고 정한 답으로 보인다."""
+    run_rule = replace(RULE, id="R-run", target="run", runs=("tests",))
+    facts = "테스트 통과 (6개) · 있던 테스트가 PR이 바꾼 줄 220줄 중 0줄을 실행함 · 정적 검사 x"
+    outcome = RuleUnchecked(run_rule, "run", "")
+    broken = replace(
+        _found(RuleChecked(RULE, REF), outcome),
+        runs=(RunJudged("R-run", "broken", "새 생성기를 실행하는 테스트가 없음", facts),),
+    )
+    text = _text(broken)
+    assert "**규칙:** ⚠️ 위반 1건 (규칙 1개)" in text
+    assert "테스트·정적 검사 결과로 어긴 규칙 (줄이 아니라 PR에 걸려 수정안은 만들지 않음):" in text
+    assert f"  근거: {facts}" in text
+    kept = replace(broken, runs=(RunJudged("R-run", "kept", "실행함", facts),))
+    assert "규칙 2개를 확인함 (도구·검사기 1개, 테스트·정적 검사 결과 1개)" in _text(kept)
+    assert "확인하지 못한 규칙" not in _text(kept)
+    before_tests = _text(_found(RuleChecked(RULE, REF), outcome))
+    assert "규칙 2개 중 1개를 확인함" in before_tests
+    assert (
+        "모델이 테스트·정적 검사 결과로 판단하지 못함: `테스트를 돌리기 전에 끝남`" in before_tests
     )

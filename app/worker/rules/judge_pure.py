@@ -3,14 +3,15 @@
 
 검사기를 만들지 못한 규칙을 PR이 바꾼 hunk에 대해 모델이 본다. 모델은 도구 없이 부르고 프롬프트에는
 규칙 원문과 hunk(앞뒤 20줄)만 넣는다. 답은 (규칙, hunk) 쌍마다 저장한다. 답의 줄은 그 hunk에서 PR이
-바꾼 줄이어야 하고, 인용은 그 줄의 실제 내용과 같아야 한다. 아니면 버린다.
+바꾼 줄이어야 하고, 인용은 그 줄의 실제 내용과 같아야 한다. 아니면 버린다. 모델은 이 자료로는
+판단할 수 없다고 까닭과 함께 답할 수 있다(`undecided`). 억지 판단이 틀린 위반을 만들기 때문이다.
 
 모델을 부르지 않는다. 부르고 저장하는 것은 app/worker/rules/judge.py가 한다.
 """
 
 import json
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Final
 
 from pydantic import BaseModel, ConfigDict
@@ -102,8 +103,18 @@ SYSTEM_PROMPT: Final = """\
 
 할 일: hunk마다 "볼 규칙"에 적힌 규칙을 PR이 바꾼 줄이 어겼는지 본다. 바뀐 줄은 줄 번호 뒤에 +가
 붙은 줄이다. +가 없는 줄은 문맥일 뿐이고 답하지 않는다.
-- 규칙을 어긴 바뀐 줄마다 하나씩 답한다. 어긴 줄이 없으면 빈 목록으로 답한다.
-- 규칙이 그 줄에 적용되는지 확실하지 않으면 답하지 않는다.
+- 규칙을 어긴 바뀐 줄마다 violations에 하나씩 답한다. 어긴 줄이 없으면 빈 목록으로 답한다.
+- 규칙이 실행 결과나 생성물(만든 데이터, 출력 파일)에 대한 말이어도, 그 결과를 만드는 코드가
+  hunk에 있으면 그 코드가 규칙대로 하는지로 판단한다. 예: "생성한 샘플은 검증을 통과하고 verified
+  필드를 넣는다"면 샘플을 만드는 바뀐 코드가 검증 함수를 부르고 그 필드를 넣는지 본다. 해야 할
+  일이 빠진 것이 위반이면 그것이 빠진 자리의 바뀐 줄(예: 검증 없이 샘플을 내보내는 줄)을 답한다.
+- 규칙이 이름 있는 표준이나 관례(PEP 8 등)를 가리키면 문서의 예시만이 아니라 그 표준이 허용하는
+  꼴을 모두 지킨 것으로 본다.
+- hunk의 코드가 규칙이 말하는 일과 관계없으면 그 hunk는 규칙을 어기지 않은 것이다. violations에도
+  undecided에도 넣지 않는다. 규칙이 그 줄에 적용되는지 확실하지 않으면 위반으로 답하지 않는다.
+- undecided: 볼 규칙이 hunk의 코드와 관계있는데도 이 자료로는 지켰는지 어겼는지 판단할 수 없으면
+  (코드에 드러나지 않는 사람의 절차, hunk 밖의 코드나 데이터를 봐야만 앎 등) 그 규칙마다 하나씩
+  rule_id와 까닭 한 문장(why)을 적는다. 억지로 위반을 답하지 않는다. 판단한 규칙은 적지 않는다.
 - rule_id: 그 hunk의 "볼 규칙"에 있는 규칙 id를 그대로 쓴다.
 - file: hunk의 파일 경로를 그대로 쓴다.
 - line: 그 줄의 번호.
@@ -114,7 +125,7 @@ SYSTEM_PROMPT: Final = """\
 ANSWER_SCHEMA: Final[Mapping[str, object]] = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["violations"],
+    "required": ["violations", "undecided"],
     "properties": {
         "violations": {
             "type": "array",
@@ -130,7 +141,16 @@ ANSWER_SCHEMA: Final[Mapping[str, object]] = {
                     "why": {"type": "string"},
                 },
             },
-        }
+        },
+        "undecided": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["rule_id", "why"],
+                "properties": {"rule_id": {"type": "string"}, "why": {"type": "string"}},
+            },
+        },
     },
 }
 
@@ -203,35 +223,47 @@ class AnswerItem(BaseModel):
     why: str = ""
 
 
+class AnswerUndecided(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    rule_id: str
+    why: str = ""
+
+
 class Answer(BaseModel):
     model_config = ConfigDict(extra="ignore")
     violations: list[AnswerItem]
+    undecided: list[AnswerUndecided] = []
 
 
-def parse_answer(data: Mapping[str, object]) -> tuple[AnswerItem, ...]:
+def parse_answer(data: Mapping[str, object]) -> Answer:
     """형식이 틀리면 ValueError (pydantic.ValidationError). 내용은 `verify_answer`가 본다."""
-    return tuple(Answer.model_validate(data).violations)
+    return Answer.model_validate(data)
 
 
 @dataclass(frozen=True)
 class Verified:
     """답의 결정적 확인 결과. kept는 묻은 쌍마다 (asked의 순번, 규칙 id) → 찾은 위반이다. 위반이
-    없는 쌍도 빈 목록으로 들어 있다(그 답도 저장한다)."""
+    없는 쌍도 빈 목록으로 들어 있다(그 답도 저장한다). undecided는 모델이 판단하지 못했다고 답한
+    쌍과 그 까닭이다. 그 쌍은 kept에서 빈 목록이다."""
 
     kept: Mapping[tuple[int, str], tuple[Flag, ...]]
     dropped: tuple[str, ...]  # 버린 답의 이유
+    undecided: Mapping[tuple[int, str], str] = field(default_factory=dict)
 
 
-def verify_answer(asked: Sequence[Asked], items: Sequence[AnswerItem]) -> Verified:
+def verify_answer(asked: Sequence[Asked], answer: Answer) -> Verified:
     """답마다 4.5의 결정적 확인을 한다: 파일이 물은 파일이고, 줄이 그 hunk에서 PR이 바꾼 줄이고,
     규칙이 그 hunk에 물은 규칙이고, 인용이 그 줄의 실제 내용과 같다(앞뒤 공백은 보지 않는다).
-    아니면 버린다. 같은 (규칙, 줄)의 답이 둘이면 처음 것만 쓴다."""
+    아니면 버린다. 같은 (규칙, 줄)의 답이 둘이면 처음 것만 쓴다.
+
+    판단하지 못했다는 답은 그 규칙을 물은 쌍 중 위반이 남지 않은 쌍에만 붙는다. 같은 호출에서 위반을
+    찾은 hunk는 판단한 것이다."""
     kept: dict[tuple[int, str], list[Flag]] = {
         (i, r.id): [] for i, a in enumerate(asked) for r in a.rules
     }
     dropped: list[str] = []
     seen: set[tuple[str, int]] = set()
-    for item in items:
+    for item in answer.violations:
         at = next(
             (i for i, a in enumerate(asked)
              if a.hunk.file == item.file and item.line in a.hunk.changed),
@@ -252,7 +284,13 @@ def verify_answer(asked: Sequence[Asked], items: Sequence[AnswerItem]) -> Verifi
         seen.add((item.rule_id, item.line))
         why = " ".join(item.why.split())[:MAX_WHY_CHARS]
         kept[(at, item.rule_id)].append(Flag(item.rule_id, item.line, text.strip(), why))
-    return Verified({k: tuple(v) for k, v in kept.items()}, tuple(dropped))
+    undecided: dict[tuple[int, str], str] = {}
+    for item in answer.undecided:
+        why = " ".join(item.why.split())[:MAX_WHY_CHARS]
+        for pair, flags in kept.items():
+            if pair[1] == item.rule_id and not flags:
+                undecided.setdefault(pair, why)
+    return Verified({k: tuple(v) for k, v in kept.items()}, tuple(dropped), undecided)
 
 
 def flags_to_json(hunk: Hunk, flags: Sequence[Flag]) -> str:
@@ -263,11 +301,25 @@ def flags_to_json(hunk: Hunk, flags: Sequence[Flag]) -> str:
     )
 
 
+def undecided_to_json(why: str) -> str:
+    """판단하지 못한 쌍의 저장 값. 위반 목록과 모양이 달라 섞이지 않는다."""
+    return json.dumps({"undecided": why}, ensure_ascii=False)
+
+
+def undecided_from_json(text: str) -> str | None:
+    """판단하지 못한 쌍이면 그 까닭, 판단한 쌍이면 None."""
+    data = json.loads(text)
+    return str(data.get("undecided", "")) if isinstance(data, dict) else None
+
+
 def flags_from_json(rule_id: str, hunk: Hunk, text: str) -> tuple[Flag, ...]:
     """저장한 답을 이 hunk의 줄 번호로 되돌린다. 키에 hunk 내용이 들어 있어 인용은 맞지만, 바뀐 줄이
-    아니거나 내용이 다르면 버린다(저장한 값을 믿지 않는다)."""
+    아니거나 내용이 다르면 버린다(저장한 값을 믿지 않는다). 판단하지 못한 쌍은 빈 튜플이다."""
+    data = json.loads(text)
+    if isinstance(data, dict):
+        return ()
     out = []
-    for entry in json.loads(text):
+    for entry in data:
         line = hunk.start + int(entry["offset"])
         text_at = hunk.text_at(line)
         if line in hunk.changed and text_at is not None and text_at.strip() == entry["quote"]:
