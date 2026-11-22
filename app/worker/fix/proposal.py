@@ -14,7 +14,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Final
 
-from app.shared import config
+from app.shared import config, github_auth
 from app.shared.job_pure import PRJob
 from app.worker import records, repo
 from app.worker.doc_rules_pure import Found, outcomes_by_rule
@@ -110,11 +110,15 @@ def blocked_by_history(
 
 
 def pipeline_secrets() -> list[str]:
-    """제안 diff에 들어가면 안 되는 파이프라인 비밀값. 파일이 없으면 빈 목록."""
-    try:
-        return [config.read_secret(config.WEBHOOK_SECRET)]
-    except config.ConfigError:
-        return []
+    """제안 diff에 들어가면 안 되는 파이프라인 비밀값: 웹훅 비밀값과 GitHub 토큰(토큰 방식일 때).
+    파일이 없거나 읽지 못하는 것은 뺀다."""
+    found = []
+    for name in (config.WEBHOOK_SECRET, github_auth.TOKEN_FILE):
+        try:
+            found.append(config.read_secret(name))
+        except config.ConfigError:
+            continue
+    return found
 
 
 def explanation_text(explanation: Explanation | None) -> str:

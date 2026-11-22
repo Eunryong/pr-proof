@@ -1,18 +1,21 @@
 """운영 알림의 종류와 글 (DESIGN.md 13절 6단계, 완료 기준 6-4). 외부 호출 없음.
 
 알리는 것은 사람이 해야 풀리는 환경 오류뿐이다. 종류는 워커의 시작 전 확인(preflight)이 가르는
-네 가지이고, 글은 종류마다 정한 한 줄(할 일 포함)이다. 저장소 이름, 예외 메시지, PR의 글, 저장소
-파일, 모델의 출력, 비밀값은 넣지 않는다. 같은 종류는 `WINDOW_SECONDS`에 한 번만 띄운다.
+네 가지이고(GitHub 인증은 방식에 따라 gh_login과 gh_token으로 글이 갈린다), 글은 종류마다 정한
+한 줄(할 일 포함)이다. 저장소 이름, 예외 메시지, PR의 글, 저장소 파일, 모델의 출력, 비밀값은 넣지
+않는다. 같은 종류는 `WINDOW_SECONDS`에 한 번만 띄운다.
 """
 
 from collections.abc import Mapping
 from typing import Final, Literal
 
-Kind = Literal["gh_login", "claude_login", "docker", "redis"]
+Kind = Literal["gh_login", "gh_token", "claude_login", "docker", "redis"]
 
 TEXT: Final[Mapping[Kind, str]] = {
     "gh_login": "pr-proof: GitHub 로그인 확인이 실패했습니다. "
     "터미널에서 gh auth status를 실행하세요.",
+    "gh_token": "pr-proof: GitHub 토큰이 거부됐습니다. 만료되거나 폐기됐으면 새 토큰을 만들어 "
+    "설정 폴더의 github_token 파일을 바꾸세요.",
     "claude_login": "pr-proof: Claude 로그인이 풀렸습니다. "
     "터미널에서 claude를 실행해 /login 하세요.",
     "docker": "pr-proof: Docker가 꺼져 있습니다. Docker Desktop을 실행하세요.",

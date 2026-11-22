@@ -1,13 +1,13 @@
 """GitHub 쓰기 (gh CLI): PR 코멘트 하나를 달고 진행하면서 고친다."""
 
 import json
-import os
 import re
 import subprocess
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Final
 
+from app.shared import config, github_auth
 from app.shared.comment_pure import COMMENT_MARKER, REPLY_MARKER
 from app.shared.feedback_pure import FEEDBACK_MARKER
 
@@ -143,7 +143,11 @@ class GitHubError(RuntimeError):
 
 
 def run_gh(args: list[str], stdin: str | None = None) -> str:
-    env = {k: os.environ[k] for k in _ENV_PASSTHROUGH if k in os.environ}
+    """gh를 최소 환경으로 부른다. 토큰 방식이면 토큰을 이 프로세스에만 넘긴다(`github_auth`)."""
+    try:
+        env = github_auth.gh_env(_ENV_PASSTHROUGH)
+    except config.ConfigError as e:
+        raise GitHubError(f"GitHub 토큰을 읽지 못함: {e}") from e
     try:
         proc = subprocess.run(
             ["gh", *args],
@@ -157,7 +161,8 @@ def run_gh(args: list[str], stdin: str | None = None) -> str:
     except (OSError, subprocess.TimeoutExpired) as e:
         raise GitHubError(f"gh 실행 실패: {e}") from e
     if proc.returncode != 0:
-        raise GitHubError(f"gh {' '.join(args[:2])} 실패: {proc.stderr.strip()[-500:]}")
+        detail = github_auth.redact(proc.stderr.strip(), env)[-500:]
+        raise GitHubError(f"gh {' '.join(args[:2])} 실패: {detail}")
     return proc.stdout
 
 
