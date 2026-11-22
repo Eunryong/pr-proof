@@ -46,4 +46,4 @@ model:
         - {file: orders/services/pricing.py, line: 10, quote: "# 할인을 뺀 금액을 돌려준다", why: 아래 코드는 할인을 빼지 않는다}
 expect:
   violations: ["orders/services/pricing.py:10"]
-  contains: ["모델 판단: 규칙 1개, hunk 1개"]
+  contains: ["모델 판단: 규칙 1개, 바뀐 곳 1군데"]

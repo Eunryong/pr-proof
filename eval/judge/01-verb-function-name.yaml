@@ -62,7 +62,7 @@ expect:
   violations: ["orders/services/pricing.py:8"]
   contains:
     - "모델 판단 (검사기가 예시 확인을 두 번 통과하지 못함)"
-    - "모델 판단: 규칙 1개, hunk 1개"
+    - "모델 판단: 규칙 1개, 바뀐 곳 1군데"
   fix: ready
   fix_file: orders/services/pricing.py
   pushed_contains: ["def _compute_line_amount(item) -> int:"]

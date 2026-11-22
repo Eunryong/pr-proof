@@ -374,7 +374,7 @@ def test_comment_shows_rules_violations_and_checker(doc_env, tmp_path: Path) -> 
     rid = rule_id("README.md", PRINT_RULE)
     assert f"- `{rid}` `` {PRINT_RULE} `` · 1건" in body
     assert "  - `orders/a.py:2`" in body
-    assert "  출처: `README.md > 코드 규칙 > 출력` · 검사기 `" in body
+    assert "  출처: `README.md > 코드 규칙 > 출력` · 모델이 쓴 검사기 (" in body
     assert (
         "<details><summary>모델이 쓴 검사기 <code>" in body and "```yaml\ngrep:print(\n```" in body
     )

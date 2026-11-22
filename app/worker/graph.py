@@ -52,6 +52,7 @@ from app.worker import (
     generated_tests_pure,
     mcp_pure,
     memory,
+    merged_fix_pure,
     rag_pure,
     rag_switch_pure,
     records,
@@ -82,6 +83,7 @@ from app.worker.fix.proposal_pure import ProposalResult
 from app.worker.generated_tests_pure import Suite
 from app.worker.github import GitHub
 from app.worker.lang import python
+from app.worker.merged_fix_pure import CarriedFrom
 from app.worker.rag_pure import Retrieval
 from app.worker.rag_switch_pure import RagSwitch
 from app.worker.repo import CHANGES_DIFF
@@ -136,6 +138,7 @@ _STATE_TYPES: Final = (
     *model_fix_pure.STATE_TYPES,
     *generated_tests_pure.STATE_TYPES,
     *mcp_pure.STATE_TYPES,
+    *merged_fix_pure.STATE_TYPES,
     *fix_pure.STATE_TYPES,
     *rag_pure.STATE_TYPES,
     *rag_switch_pure.STATE_TYPES,
@@ -191,6 +194,8 @@ class FlowState(TypedDict, total=False):
     commented: bool
     fix_skill: str  # 승인 대기에서 `/fix`가 고른 묶음
     proposals: dict[str, ProposalResult]  # 묶음 → 수정안 PR
+    # 수정안을 머지한 커밋이라 검사하지 않고 검증한 결과를 옮겨 적었다 (`carry_flow`)
+    carried: CarriedFrom
     stopped: Literal["stale", "cancelled"]
 
 
@@ -275,19 +280,23 @@ def open_checkpointer(data_dir: Path, stack: ExitStack) -> SqliteSaver:
     return SqliteSaver(conn, serde=JsonPlusSerializer(allowed_msgpack_modules=list(_STATE_TYPES)))
 
 
+def _enter_checkout(ctx: FlowContext, job: PRJob) -> None:
+    co = ctx.stack.enter_context(
+        repo.checkout(ctx.data_dir, job.repo, job.pr_number, job.head_sha, job.base_sha)
+    )
+    ctx.worktree = co.path
+    ctx.merge_base = co.merge_base
+    ctx.dirty = False
+    ctx.base = base_config.load(co.path, job.base_sha, ctx.max_memory_gb)
+    try:  # 테스트 전에 읽어 둔다. 테스트 뒤에는 샌드박스의 PR 코드가 바꿀 수 있다
+        ctx.changes_diff = (co.path / CHANGES_DIFF).read_bytes()
+    except OSError:
+        ctx.changes_diff = b""
+
+
 def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
     def enter_checkout(job: PRJob) -> None:
-        co = ctx.stack.enter_context(
-            repo.checkout(ctx.data_dir, job.repo, job.pr_number, job.head_sha, job.base_sha)
-        )
-        ctx.worktree = co.path
-        ctx.merge_base = co.merge_base
-        ctx.dirty = False
-        ctx.base = base_config.load(co.path, job.base_sha, ctx.max_memory_gb)
-        try:  # 테스트 전에 읽어 둔다. 테스트 뒤에는 샌드박스의 PR 코드가 바꿀 수 있다
-            ctx.changes_diff = (co.path / CHANGES_DIFF).read_bytes()
-        except OSError:
-            ctx.changes_diff = b""
+        _enter_checkout(ctx, job)
 
     def ensure_checkout(job: PRJob) -> None:
         """재개하면 새 프로세스라 worktree와 base 설정이 없다. 수정안 상태를 보려면 필요하다."""
@@ -544,6 +553,7 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
             fixes={b: v for b in BUNDLES if (v := fix_view(state, b)) is not None},
             rag=state.get("rag_switch"),
             pr=state.get("pr_checks"),
+            carried=state.get("carried"),
         )
 
     def comment(state: FlowState) -> FlowState:
@@ -771,6 +781,46 @@ def checked_values(job: PRJob, ctx: FlowContext) -> Mapping[str, Any]:
     with ExitStack() as stack:
         saver = open_checkpointer(ctx.data_dir, stack)
         return dict(build_graph(ctx, saver).get_state(thread_config(job)).values)
+
+
+def finished_values(job: PRJob, ctx: FlowContext) -> tuple[Mapping[str, Any], bool]:
+    """이 커밋의 체크포인트 상태와, 그래프가 멈춘 node 없이 코멘트까지 갔는지. 그래프를 돌리지
+    않는다. 수정안을 머지한 커밋이 검증한 커밋의 결과를 옮겨 적을 때 읽는다 (`carry_flow`)."""
+    with ExitStack() as stack:
+        snapshot = build_graph(ctx, open_checkpointer(ctx.data_dir, stack)).get_state(
+            thread_config(job)
+        )
+    values = dict(snapshot.values)
+    return values, not snapshot.next and bool(values.get("commented"))
+
+
+def carry_flow(job: PRJob, ctx: FlowContext, values: FlowState) -> FlowState:
+    """수정안을 머지한 커밋에 검증한 결과(values)를 옮겨 적는다. 규칙 검사, 테스트, 수정, 모델
+    호출은 하지 않는다 (4.9 "수정안 PR 상태 관리").
+
+    이 커밋의 체크포인트를 values로 채워 수정 판단이 끝난 것처럼 두고 코멘트 node만 돌린다. 그래서
+    결과 코멘트는 보통의 검사와 같은 길로 그려지고, 이 커밋의 체크포인트(코멘트 수정이 읽는다)와
+    위반 기록(다음 커밋의 "작성자가 고친 위반"이 읽는다)도 보통의 검사처럼 남는다. 체크아웃은 base
+    설정과 위반 기록의 앞뒤 줄을 읽으려고 한다.
+    """
+    with ctx.stack:
+        saver = open_checkpointer(ctx.data_dir, ctx.stack)
+        config = thread_config(job)
+        flow = build_graph(ctx, saver)
+        saver.delete_thread(config["configurable"]["thread_id"])
+        _enter_checkout(ctx, job)
+        found = values["doc_rules"]
+        ctx.doc_rules = found
+        if isinstance(found, Found):
+            # 수정안이 고친 위반은 작성자가 아니라 수정안이 고친 것이다 (그 채택 기록은 수정안 쪽)
+            records.after_detect(
+                ctx.store, job, found, ctx.worktree, proposal.pipeline_secrets(), merged_fix=True
+            )
+        config = flow.update_state(config, {**values, "job": job}, as_node=DECIDE)
+        result = flow.invoke(None, config)
+    if not result.get("commented"):
+        result.setdefault("stopped", "stale")
+    return result
 
 
 PendingFix = Literal["awaiting", "interrupted_fix", "rerun"]
