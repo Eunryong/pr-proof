@@ -290,7 +290,7 @@ def test_rules_case(case_path: Path, eval_repo: Path, deps_for, tmp_path: Path,
     else:
         assert "**규칙:** ✅ 위반 없음" in section, section
     if not case.get("real_only"):
-        assert "확인: 검사기 `" in section, "검사기가 예시를 통과해 채택되어야 한다"
+        assert "확인: 모델이 쓴 검사기 (" in section, "검사기가 예시를 통과해 채택되어야 한다"
     for text in expect.get("contains", ()):
         assert text in section, (text, section)
     for text in expect.get("absent", ()):

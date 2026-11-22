@@ -385,14 +385,14 @@ def _how_checked(outcome: RuleOutcome, answers: Mapping[str, RunAnswer] | None =
             codes = f" {', '.join(f'`{c}`' for c in ref.codes)}" if ref.codes else ""
             return f"도구 `{ref.kind}`{codes} (모델이 도구 목록에서 고르고 예시로 확인함)"
         saved = ", 저장된 것" if ref.cached else ""
-        return f"검사기 `{ref.id[:8]}` ({ref.kind}{saved})"
+        return f"모델이 쓴 검사기 ({ref.kind}{saved})"
     if isinstance(outcome, RuleJudged):
         why = _JUDGE_ROUTE_TEXT[outcome.route]
         if outcome.route in ("none", "part") and outcome.reason:
             why += f": {inline_code(outcome.reason, MAX_DETAIL_CHARS)}"
-        left = f", 이번에 판단하지 못한 hunk {outcome.left}개" if outcome.left else ""
+        left = f", 이번에 판단하지 못한 바뀐 곳 {outcome.left}군데" if outcome.left else ""
         if outcome.undecided:
-            left += f", 모델이 판단하지 못한 hunk {outcome.undecided}개"
+            left += f", 모델이 판단하지 못한 바뀐 곳 {outcome.undecided}군데"
         return f"모델 판단 ({why}{left})"
     answer = (answers or {}).get(outcome.rule.id)
     if answer is not None:
@@ -408,7 +408,7 @@ def _judge_usage(found: Found) -> list[str]:
     if usage is None or not any(isinstance(o, RuleJudged) for o in found.outcomes):
         return []
     line = (
-        f"모델 판단: 규칙 {usage.rules}개, hunk {usage.hunks}개 · 모델 호출 {usage.calls}회 · "
+        f"모델 판단: 규칙 {usage.rules}개, 바뀐 곳 {usage.hunks}군데 · 모델 호출 {usage.calls}회 · "
         f"저장된 판단 {usage.cached}건 사용"
     )
     if usage.models:
@@ -428,7 +428,7 @@ def _judge_gaps(found: Found) -> list[str]:
     if capped:
         why = inline_code(capped[0].left_detail, MAX_DETAIL_CHARS)
         lines += ["", f"모델 호출 상한에 걸려 처리하지 못함: 위반 판단 {len(capped)}개 규칙 "
-                  f"(hunk {sum(o.left for o in capped)}개, {why}). {RERUN_HINT}"]  # fmt: skip
+                  f"(바뀐 곳 {sum(o.left for o in capped)}군데, {why}). {RERUN_HINT}"]  # fmt: skip
     failed = [o for o in judged if o.left_kind == "model_failed"]
     if failed:
         lines += ["", f"모델 판단을 하지 못한 규칙 {len(failed)}개 (모델 호출 실패. 다음 검사가 "
@@ -788,7 +788,7 @@ def _unresolved(found: Found, answers: Mapping[str, RunAnswer], flagged: set[str
     for o in found.outcomes:
         head = f"- `{o.rule.id}` {_quote(o.rule)} · "
         if isinstance(o, RuleJudged) and _undecided(o, flagged):
-            part = f" (hunk {o.pairs}개 중 {o.undecided}개)" if o.undecided < o.pairs else ""
+            part = f" (바뀐 곳 {o.pairs}군데 중 {o.undecided}군데)" if o.undecided < o.pairs else ""
             why = inline_code(o.undecided_why, MAX_DETAIL_CHARS)
             lines.append(f"{head}모델이 코드를 보고 판단하지 못함{part}: {why}")
         elif o.rule.id in answers and answers[o.rule.id].verdict == "unknown":

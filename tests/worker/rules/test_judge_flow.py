@@ -138,7 +138,7 @@ def test_rule_without_checker_is_judged_and_fixed(fix_env, tmp_path: Path) -> No
     assert "이 규칙은 도구로 재검사하지 못함" in pull["body"]
     comment = bodies(fix_env["gh"])[-1]
     assert "모델 판단 (검사기가 예시 확인을 두 번 통과하지 못함)" in comment
-    assert "모델 판단: 규칙 1개, hunk 1개 · 모델 호출 1회 · 저장된 판단 0건 사용" in comment
+    assert "모델 판단: 규칙 1개, 바뀐 곳 1군데 · 모델 호출 1회 · 저장된 판단 0건 사용" in comment
     assert "읽었지만 아직 검사하지 못하는" not in comment
 
 
@@ -178,7 +178,7 @@ def test_judge_cap_is_shown_and_fix_continues(fix_env, tmp_path: Path) -> None: 
     assert isinstance(outcome, RuleJudged) and (outcome.left, outcome.left_kind) == (1, "cap")
     assert state["doc_rules"].violations == () and "judge" not in _kinds(model)
     comment = bodies(fix_env["gh"])[-1]
-    assert "모델 호출 상한에 걸려 처리하지 못함: 위반 판단 1개 규칙 (hunk 1개" in comment
+    assert "모델 호출 상한에 걸려 처리하지 못함: 위반 판단 1개 규칙 (바뀐 곳 1군데" in comment
     assert "`/fix`로 다시 돌릴 수 있습니다." in comment
     assert "**규칙:** 확인한 규칙 없음 (읽은 규칙 1개)" in comment
 

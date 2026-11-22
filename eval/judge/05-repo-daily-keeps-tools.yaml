@@ -67,6 +67,6 @@ expect:
   judge_calls: 0
   contains:
     - "`orders/services/pricing.py:1` · 고칠 대상 (기계적 수정) · 수정안 #900"
-    - "모델 호출 상한에 걸려 처리하지 못함: 위반 판단 1개 규칙 (hunk 1개, `호출 상한: 저장소 하루 상한 (5/5회 사용, 이 호출 1회)`)"
+    - "모델 호출 상한에 걸려 처리하지 못함: 위반 판단 1개 규칙 (바뀐 곳 1군데, `호출 상한: 저장소 하루 상한 (5/5회 사용, 이 호출 1회)`)"
   mechanical_branch: pipeline/pr-1-fix-mechanical
   fix_file: orders/services/pricing.py
