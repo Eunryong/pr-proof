@@ -27,6 +27,7 @@ from app.worker import base_config, feedback_triage, graph, repo, retry, update
 from app.worker.ai.model_backend import AskModel, fix_unavailable
 from app.worker.budget import CallBudget
 from app.worker.checker_authoring_pure import Checked
+from app.worker.core.bundle_pure import FEEDBACK_BUNDLE
 from app.worker.deps import Deps
 from app.worker.doc_rules_pure import Found
 from app.worker.feedback_pure import Item, flat_item, thread_item, unhandled
@@ -40,21 +41,15 @@ from app.worker.feedback_report_pure import (
 )
 from app.worker.feedback_triage_pure import Facts, KnownFix, Triage, excerpt, overlaps
 from app.worker.fix import model_fix, proposal
-from app.worker.fix.feedback_fix_pure import (
-    FEEDBACK_BUNDLE,
-    FIX_NOTE,
-    Accepted,
-    feedback_found,
-    fix_targets,
-)
+from app.worker.fix.feedback_fix_pure import FIX_NOTE, Accepted, feedback_found, fix_targets
 from app.worker.fix.fix_decision_pure import SafetyNet, safety_gap
 from app.worker.fix.model_fix_pure import Picked
+from app.worker.git.git_pure import REGULAR_FILE_MODES
 from app.worker.github import GitHub, PullRefs
 from app.worker.lang import python
 from app.worker.records_pure import targets_from_json
 from app.worker.repo_config_pure import RepoConfig, call_limits
 from app.worker.rule_pure import Rule
-from app.worker.rule_reading_pure import REGULAR_FILE_MODES
 from app.worker.rules import detect, doc_rules, rules
 from app.worker.rules.detect import Detection, source_lines
 from app.worker.state import Store

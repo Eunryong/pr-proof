@@ -24,8 +24,7 @@ from pathlib import Path
 from typing import Final
 
 from app.shared import config, github_auth
-from app.worker.rule_reading_pure import TreeEntry
-from app.worker.rules.pr_check_pure import RawCommit
+from app.worker.git.git_pure import RawCommit, TreeEntry
 from app.worker.sandbox.container import OUT_DIR
 
 CHANGES_DIFF: Final = f"{OUT_DIR}/changes.diff"

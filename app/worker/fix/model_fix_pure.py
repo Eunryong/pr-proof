@@ -15,7 +15,7 @@ from typing import Final, Literal
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from app.worker.cache_key_pure import model_cache_key, text_hash
+from app.worker.cache_key_pure import model_cache_key, prompt_version, text_hash
 from app.worker.diff_pure import ChangeBlock
 from app.worker.fix.fix_decision_pure import FixDecision
 from app.worker.fix.proposal_pure import MAX_CHANGED_LINES, MAX_FILES
@@ -30,11 +30,8 @@ from app.worker.mcp_pure import TOOL_NAMES, ToolUsage
 from app.worker.prompt_text_pure import load
 from app.worker.rag_pure import Retrieval
 from app.worker.rule_pure import CheckMethod, Rule, RuleSource
-from app.worker.rule_reading_pure import prompt_version
 from app.worker.violation_pure import Violation
 
-# 모델 수정 묶음 (DESIGN.md 4.9, 3.1의 C7). 브랜치는 pipeline/pr-<n>-fix-model
-MODEL_BUNDLE: Final = "model"
 MAX_SUMMARY_CHARS: Final = 1000
 MAX_WHY_CHARS: Final = 300
 MAX_CHANGES: Final = 200  # 설명의 changes 수. 넘으면 형식이 틀린 답으로 본다

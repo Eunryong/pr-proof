@@ -176,7 +176,7 @@ def test_judge_labels_model_examples() -> None:
 
 def test_prompt_version_follows_prompt_text() -> None:
     from app.worker import checker_authoring_pure
-    from app.worker.rule_reading_pure import prompt_version
+    from app.worker.cache_key_pure import prompt_version
 
     changed = prompt_version("다른 지시", checker_authoring_pure.ANSWER_SCHEMA, "")
     assert len(checker_authoring_pure.PROMPT_VERSION) == 12

@@ -31,41 +31,14 @@ from app.worker.rules.linked_issues_pure import LinkedIssues
 from app.worker.rules.pr_check_pure import PrChecks
 from app.worker.rules.pr_description_pure import PrDescription
 from app.worker.sandbox.docker_cli import MEMORY_LIMIT_GB
+from app.worker.test_lines import _gb, format_test_line
 from app.worker.test_run_pure import PytestRun
 
 MAX_LISTED_FAILURES: Final = 10
 MAX_OUTPUT_CHARS: Final = 1500
 
 
-def _gb(value: float) -> str:
-    return f"{value:g}GB"
-
-
 # --- 테스트 ---------------------------------------------------------------------
-
-
-def format_test_line(run: PytestRun, memory_gb: float = MEMORY_LIMIT_GB) -> str:
-    """'테스트:' 줄의 글자 표시. 기호를 쓰지 않는다."""
-    s = run.summary
-    match run.status:
-        case "passed":
-            if run.flaky:
-                return f"통과, 불안정한 테스트 {len(run.flaky)}개"
-            return f"통과 ({s.total}개)" if s else "통과"
-        case "failed":
-            if s is None:
-                return "실패"
-            return f"실패 ({s.total}개 중 {s.failed + s.errors}개)"
-        case "no_tests":
-            return "실행된 테스트 없음"
-        case "timeout":
-            return "시간 초과로 중단"
-        case "cancelled":
-            return "새 커밋이 올라와 중단"
-        case "unrunnable":
-            if run.memory_exceeded:
-                return f"실행 불가 (메모리 한도 {_gb(memory_gb)}를 넘어 종료됨)"
-            return f"실행 불가 ({run.unrunnable_reason})"
 
 
 def memory_hint(memory_gb: float, max_memory_gb: float) -> str:

@@ -118,7 +118,7 @@ tests/          코드와 같은 이름의 폴더 (tests/api, tests/worker, test
 
 **웹과 워커 사이의 계약 (`app/shared/`).** 웹과 워커는 메모리를 공유하지 않는다. 둘 사이에는 큐와 Redis·SQLite 상태만 오가고, 큐에 넣는 값은 작업 계약(`job_pure.py`의 `PRJob`)뿐이다. 키 형식과 큐 이름(`state_keys_pure.py`), SQLite 테이블 정의(`db_pure.py`)는 여기 두고, 읽기·쓰기 코드는 각자 자기 쪽에 둔다. 그 밖에 코멘트 표시(`comment_pure.py`), 운영 알림의 종류와 글(`ops_alert_pure.py`), 임베딩 모델 목록(`embed_models_pure.py`), 설정과 비밀값 읽기(`config.py`), macOS 알림(`notify.py`)이 있다.
 
-**순수 모듈.** 이름이 `_pure.py`로 끝나는 모듈은 바깥에 손대지 않는다: 파일, 프로세스, 네트워크, Redis, DB 연결을 쓰지 않고 받은 값으로 계산만 한다(데이터 정의, 판정, 프롬프트 만들기, 답 읽기). 대부분은 나누기 전의 `app/models/`에 있던 모듈이다. 순수 모듈은 그것을 import하는 실행 코드 중 `app/worker/` 맨 위가 아닌 것들의 가장 가까운 공통 폴더에 둔다: 한 단계만 쓰면 그 단계 폴더(`app/worker/fix/fix_decision_pure.py`), 여러 폴더가 쓰면 `app/worker/` 맨 위(`app/worker/violation_pure.py`), 웹과 워커가 같이 쓰면 `app/shared/`, 웹만 쓰면 `app/api/`.
+**순수 모듈.** 이름이 `_pure.py`로 끝나는 모듈은 바깥에 손대지 않는다: 파일, 프로세스, 네트워크, Redis, DB 연결을 쓰지 않고 받은 값으로 계산만 한다(데이터 정의, 판정, 프롬프트 만들기, 답 읽기). 대부분은 나누기 전의 `app/models/`에 있던 모듈이다. 순수 모듈은 그것이 속한 단계 폴더나 공용 폴더에 두고(`app/worker/fix/fix_decision_pure.py`, `app/worker/git/git_pure.py`), 어느 한 폴더에 속하지 않으면서 여러 단계가 쓰는 데이터 정의와 도구만 `app/worker/core/`에 둔다(`app/worker/core/bundle_pure.py`). 웹과 워커가 같이 쓰면 `app/shared/`, 웹만 쓰면 `app/api/`. 정리 중이라 아직 옮기지 않은 순수 모듈은 `app/worker/` 바로 아래에 있다(`app/worker/violation_pure.py`).
 
 같은 폴더에 같은 이름의 실행 코드 `x.py`가 있는 순수 모듈은 여덟 개다: `command_pure`, `coverage_pure`, `records_pure`, `fix/model_fix_pure`, `fix/proposal_pure`, `fix/scope_pure`, `rules/judge_pure`, `rules/pr_check_pure`. 아래는 주로 부르는 실행 코드와 이름이 다른 것이다.
 
@@ -135,7 +135,7 @@ tests/          코드와 같은 이름의 폴더 (tests/api, tests/worker, test
 
 나머지(`rule_pure`, `violation_pure`, `doc_rules_pure`, `checker_pure`, `diff_pure`, `test_run_pure`, `shared/`의 `_pure` 등)는 여러 단계가 같이 쓰는 데이터 정의와 계산이라 짝이 없다.
 
-**계층.** `app/api/`는 `app/worker/`를, `app/worker/`는 `app/api/`를 import하지 않고, `app/shared/`는 둘 다 import하지 않는다. `app/worker/sandbox/`는 sandbox와 순수 모듈만 import한다. 순수 모듈은 저장소 안에서 다른 순수 모듈만 import하고, 금지 목록의 라이브러리(파일 시스템, 프로세스, 네트워크, Redis, 큐, DB, 웹, 그래프, 벡터 저장소, 로그, 시계, 난수, 동적 import)와 내장 `open`을 쓰지 않는다. 이 규칙은 `CONTRIBUTING.md`의 「계층」·「순수 모듈」 절에 적혀 있고, pr-proof가 PR의 diff에서 검사한다.
+**계층.** `app/api/`는 `app/worker/`를, `app/worker/`는 `app/api/`를 import하지 않고, `app/shared/`는 둘 다 import하지 않는다. `app/worker/`는 세 층으로 정리하는 중이다(pr-proof#98): 뼈대(맨 위의 진입점, 작업 흐름, 작업 종류, 가드레일, 재시도)는 단계 폴더(`rules`, `feedback`, `fix`, `report`, `evaluation`)를 부르기만 하고, 단계 폴더는 뼈대를, 공용 폴더(`core`, `sandbox`, `testing`, `lang`, `git`, `config`, `store`, `model`)는 단계 폴더와 뼈대를 import하지 않는다. 끝나면 맨 위에는 뼈대만 남는다. 폴더 사이의 방향은 `CONTRIBUTING.md`의 「계층」 절에 있다. `app/worker/sandbox/`는 sandbox와 순수 모듈만 import한다. 순수 모듈은 저장소 안에서 다른 순수 모듈만 import하고, 금지 목록의 라이브러리(파일 시스템, 프로세스, 네트워크, Redis, 큐, DB, 웹, 그래프, 벡터 저장소, 로그, 시계, 난수, 동적 import)와 내장 `open`을 쓰지 않는다. 이 규칙은 `CONTRIBUTING.md`의 「계층」·「순수 모듈」 절에 적혀 있고, pr-proof가 PR의 diff에서 검사한다.
 
 **테스트.** 테스트는 `tests/` 아래 코드와 같은 이름의 폴더에 두고 `app` 단계는 두지 않는다(`app/worker/fix/decide.py` → `tests/worker/fix/test_decide.py`). 순수 모듈 `x_pure.py`의 테스트는 `test_x_pure.py`다.
 

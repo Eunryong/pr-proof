@@ -18,8 +18,6 @@ MechanicalStatus = Literal[
     "unchecked",  # 고친 뒤 규칙 재검사를 하지 못했다
     "too_big",  # 크기 상한을 넘었다
 ]
-# 기계적 수정 묶음 (3.1의 C7). 브랜치는 pipeline/pr-<n>-fix-mechanical
-MECHANICAL_BUNDLE: Final = "mechanical"
 
 
 @dataclass(frozen=True)

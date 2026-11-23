@@ -15,7 +15,8 @@ from typing import Final, Literal, get_args
 
 from pydantic import BaseModel, ConfigDict
 
-from app.worker.cache_key_pure import model_cache_key, text_hash
+from app.worker.cache_key_pure import model_cache_key, prompt_version
+from app.worker.git.git_pure import REGULAR_FILE_MODES, TreeEntry
 from app.worker.prompt_text_pure import load
 from app.worker.rule_pure import (
     CheckMethod,
@@ -36,22 +37,11 @@ READER_VERSION: Final = "3"
 MAX_DOCS_BYTES: Final = 400_000
 # 정리한 뒤 이보다 짧은 인용은 어느 문서에나 있을 수 있어 근거가 되지 못한다
 MIN_QUOTE_CHARS: Final = 6
-REGULAR_FILE_MODES: Final = frozenset({"100644", "100755"})
 SECTION_SEPARATOR: Final = " > "
 
 _HEADING: Final = re.compile(r"^ {0,3}(#{1,6})(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*$")
 _FENCE: Final = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 _GLOB_BAD_CHARS: Final = frozenset("\\\0")
-
-
-@dataclass(frozen=True)
-class TreeEntry:
-    """base 커밋의 파일 하나 (`git ls-tree -l`). size는 blob이 아니면 None."""
-
-    path: str
-    mode: str
-    sha: str
-    size: int | None
 
 
 @dataclass(frozen=True)
@@ -184,12 +174,6 @@ def build_prompt(documents: Sequence[Document]) -> str:
         for d in documents
     ]
     return head + "".join(blocks)
-
-
-def prompt_version(system_prompt: str, schema: Mapping[str, object], user_frame: str) -> str:
-    """프롬프트 글과 스키마의 해시. 손으로 올리는 번호는 고치고도 잊을 수 있어 내용에서 만든다."""
-    schema_text = json.dumps(schema, sort_keys=True, ensure_ascii=False)
-    return text_hash("\0".join((system_prompt, schema_text, user_frame)))[:12]
 
 
 # 캐시 키에 들어간다. 프롬프트나 스키마를 한 글자라도 바꾸면 달라져 규칙을 다시 읽는다

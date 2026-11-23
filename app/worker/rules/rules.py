@@ -16,6 +16,7 @@ from app.worker.ai.model_backend import AskModel
 from app.worker.budget import CallBudget
 from app.worker.call_budget_pure import CALL_BUDGET_USD, Denied, RulesetScope
 from app.worker.diff_pure import added_lines
+from app.worker.git.git_pure import REGULAR_FILE_MODES, TreeEntry
 from app.worker.repo_config_pure import RulesSettings
 from app.worker.rule_pure import Rule, RuleSet, UnreadDoc
 from app.worker.rule_reading_pure import (
@@ -23,11 +24,9 @@ from app.worker.rule_reading_pure import (
     MAX_DOCS_BYTES,
     PROMPT_VERSION,
     READER_VERSION,
-    REGULAR_FILE_MODES,
     SYSTEM_PROMPT,
     DocSelection,
     Document,
-    TreeEntry,
     apply_disabled,
     build_prompt,
     parse_answer,

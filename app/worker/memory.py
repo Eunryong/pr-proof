@@ -44,11 +44,10 @@ from app.worker.rag_switch_pure import (
     AUTO_MIN_ATTEMPTS,
     AUTO_MIN_BASELINE,
     AUTO_MIN_RECORDS,
-    RagMode,
     RagSwitch,
     decide,
 )
-from app.worker.repo_config_pure import RagSettings
+from app.worker.repo_config_pure import RagMode, RagSettings
 from app.worker.state import Store
 
 log = logging.getLogger(__name__)

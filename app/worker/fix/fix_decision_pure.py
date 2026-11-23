@@ -13,11 +13,10 @@ from typing import Final, Literal, cast
 
 from pydantic import BaseModel, ConfigDict
 
-from app.worker.cache_key_pure import model_cache_key, text_hash
+from app.worker.cache_key_pure import model_cache_key, prompt_version, text_hash
 from app.worker.prompt_text_pure import load
 from app.worker.rag_pure import Retrieval, cited
 from app.worker.rule_pure import CheckMethod, Rule, RuleSource
-from app.worker.rule_reading_pure import prompt_version
 from app.worker.test_run_pure import RunStatus
 from app.worker.violation_pure import Violation
 
