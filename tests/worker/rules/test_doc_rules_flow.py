@@ -594,9 +594,12 @@ def test_decisions_follow_tests_and_show_in_the_comment(doc_env, tmp_path: Path)
     body = _last_comment(doc_env)
     assert f"  - `orders/a.py:2` · 모델이 고치지 않기로 함: {inline_code(why)}" in body
     assert "  - `orders/a.py:3` · 모델이 답하지 않음" in body
-    assert "  직접 고쳐야 함 2건 (모델이 고치지 않기로 함 1건, 수정 판단을 하지 못함 1건)" in body
+    assert ("  직접 고쳐야 함 2건\n"
+            "  - 1건: 모델이 고치지 않기로 해 수정안을 만들지 않았습니다.\n"
+            "  - 1건: 모델이 이 위반에 답하지 않아 수정안을 만들지 않았습니다.\n"
+            ) in body  # fmt: skip
     assert ("수정 판단: 고칠 대상 0건, 직접 고쳐야 함 2건 (모델이 고치지 않기로 함 1건, "
-            "수정 판단을 하지 못함 1건) · 모델 호출 1회 · 저장된 판단 0건 사용 · "
+            "모델이 답하지 않음 1건) · 모델 호출 1회 · 저장된 판단 0건 사용 · "
             "토큰 입력 1000, 출력 100"
             ) in body  # fmt: skip
     # 모델이 모두 skip했으므로 모델 수정은 돌지 않는다

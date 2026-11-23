@@ -195,6 +195,16 @@ def describe(switch: RagSwitch) -> str:
     return text
 
 
+def comment_line(switch: RagSwitch) -> str | None:
+    """결과 코멘트(접는 블록)에 싣는 검색 줄. 켜져 있으면 늘 싣는다. 꺼져 있으면 사람이 알 만한
+    때만 싣는다: auto가 채택률이 낮아 다시 끈 때(설정으로 다시 켤 수 있다), 켜야 하는데 선택
+    의존성이 없는 때(운영자가 고칠 일). 설정으로 끈 것과 기록이 아직 적어 꺼진 것은 싣지 않는다.
+    사람이 할 일이 없는 줄이 거의 모든 코멘트에 붙었다 (2026-11-23, pr-proof#78)."""
+    if switch.on or switch.missing_extras or switch.why == "worse":
+        return describe(switch)
+    return None
+
+
 # 체크포인트에서 되살릴 수 있게 graph.py가 등록하는 타입
 STATE_TYPES: Final = (
     ("app.worker.rag_switch_pure", "RagSwitch"),

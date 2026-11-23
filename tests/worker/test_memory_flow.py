@@ -75,7 +75,7 @@ def test_search_off_touches_nothing(fix_env, tmp_path: Path) -> None:  # noqa: F
     assert all(r.embedded_at is None for r in fix_env["deps"].store.records("o/r"))
     comment = _comment(fix_env)
     assert "참고한 과거 기록" not in comment
-    assert "검색: 꺼짐 (자동, 채택·거절 기록 1/20건)" in comment
+    assert "검색:" not in comment  # 기록이 적어 꺼진 것은 알리지 않는다 (pr-proof#78)
     assert state["rag_switch"].why == "few_records"
 
 
@@ -150,12 +150,12 @@ def test_resumed_fix_uses_the_search_state_of_its_check(fix_env, tmp_path: Path)
     use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation("orders/a.py")]))
     opened = _fake_retriever(fix_env)
     run(fix_env, tmp_path)
-    assert "검색: 꺼짐 (자동, 채택·거절 기록 0/20건)" in _comment(fix_env)
+    assert "검색:" not in _comment(fix_env)
 
     _twenty_records(fix_env["deps"].store)
     assert main.handle(_command("/fix model", 71), fix_env["deps"]) == "fix:ready"
     assert opened == []
-    assert "검색: 꺼짐 (자동, 채택·거절 기록 0/20건)" in _comment(fix_env)
+    assert "검색:" not in _comment(fix_env)
 
 
 def test_off_ignores_enough_records(fix_env, tmp_path: Path) -> None:  # noqa: F811
@@ -169,7 +169,7 @@ def test_off_ignores_enough_records(fix_env, tmp_path: Path) -> None:  # noqa: F
     run(fix_env, tmp_path)
 
     assert opened == []
-    assert "검색: 꺼짐 (`rag.enabled: off`)" in _comment(fix_env)
+    assert "검색:" not in _comment(fix_env)  # 설정으로 끈 것은 알리지 않는다
 
 
 def test_first_search_check_embeds(fix_env, tmp_path: Path) -> None:  # noqa: F811

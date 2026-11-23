@@ -3,7 +3,7 @@ description: >-
   5-8. `rag.enabled`를 적지 않은(기본 auto) base에 채택 기록이 한 건(기준 20건 미만) 쌓여 있다. 검사
   동안 chromadb·onnxruntime·tokenizers를 import하면 실패하게 막아 두고 끝까지 돈다(수정안 PR까지).
   `data_dir/chroma/`와 임베딩 모델 폴더(`data_dir/models/`)가 생기지 않고, 기록은 임베딩되지 않고,
-  코멘트에 참고 기록이 없고 검색이 꺼진 이유가 숫자로 나온다.
+  코멘트에 참고 기록도 검색 줄도 없다(기록이 적어 꺼진 것은 알리지 않는다, pr-proof#78).
 pr:
   - file: orders/services/pricing.py
     find: "order.coupon_percent > MAX_COUPON_PERCENT"
@@ -67,5 +67,4 @@ expect:
   models_dir: false
   embedded: 0
   prompt_records: {decide: 0, fix: 0}
-  absent: ["참고한 과거 기록"]
-  contains: ["검색: 꺼짐 (자동, 채택·거절 기록 1/20건)"]
+  absent: ["참고한 과거 기록", "검색:"]

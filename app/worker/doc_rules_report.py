@@ -9,7 +9,7 @@
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
-from typing import Final, Literal
+from typing import Final, Literal, get_args
 
 from app.worker import pr_check_report_pure
 from app.worker.checker_authoring_pure import JudgeRoute
@@ -27,13 +27,13 @@ from app.worker.doc_rules_pure import (
     RuleUnchecked,
     outcomes_by_rule,
 )
-from app.worker.fix.fix_decision_pure import Decided, FixDecision
+from app.worker.fix.fix_decision_pure import Decided, FixDecision, SkipReason
 from app.worker.fix.fix_pure import MECHANICAL_BUNDLE, MechanicalFix
 from app.worker.fix.model_fix_pure import ModelFix
 from app.worker.fix.proposal_pure import ProposalResult
 from app.worker.markdown_pure import code_fence, inline_code
 from app.worker.rag_pure import KIND_LABEL, SITE_LABEL, Retrieval, merge_retrievals
-from app.worker.rag_switch_pure import RagSwitch, describe
+from app.worker.rag_switch_pure import RagSwitch, comment_line
 from app.worker.rule_pure import Rule
 from app.worker.rules.pr_check_pure import PrChecks
 from app.worker.test_lines import generated_lines, runs_without_new_tests, status_lines
@@ -97,25 +97,91 @@ _JUDGE_ROUTE_TEXT: Final[Mapping[JudgeRoute, str]] = {
     "examples": "검사기가 예시 확인을 두 번 통과하지 못함",
     "attempts": "예시를 통과하는 검사기를 만들지 못함",
 }
-# 수정 판단이 알리기만 하는 규칙에 적는 까닭 글 (`fix_decision_pure`). 코멘트에는 싣지 않는다
-NOTIFY_ONLY_WHY: Final = "알리기만 하는 규칙"
-# 파이프라인이 고치지 않은 위반의 이유 (4.9). 사람이 직접 고쳐야 하는 까닭으로 읽힌다
-_LEFT_LABEL: Final[Mapping[str, str]] = {
-    "rejected_before": "이전에 거절됨",
-    # 알리기만 하는 규칙(수정 방법 none)은 까닭을 적지 않는다. "직접 고쳐야 함"이 이미 그 뜻이고,
-    # 위반마다 같은 말이 붙어 읽기 어려웠다 (2026-11-23)
-    "notify_only": "",
-    "tests_failed": "테스트가 실패함",
-    "no_safety_net": "테스트로 확인할 수 없음",
-    "team_pattern": "팀이 닫은 수정과 비슷함",
-    "needs_other_file": "다른 파일이나 공개 이름을 바꿔야 함",
-    "changes_behavior": "고치면 동작이 바뀜",
-    "not_a_violation": "모델이 위반이 아니라고 봄",
-    "risky": "모델이 고치지 않기로 함",
-    "call_limit": "호출 상한",
-    "undecided": "수정 판단을 하지 못함",
+# 수정 판단이 도구 설정의 규칙 중 도구의 수정이 없는 위반에 적는 까닭 글 (`fix_decision_pure`)
+NO_AUTOFIX_WHY: Final = "도구의 자동 수정이 없음"
+# 고치지 않은 위반의 이유 (4.9): (짧은 이름, 문장). 문장은 규칙마다 한 번 "직접 고쳐야 함 N건" 옆에
+# 적고, 짧은 이름은 한 규칙에 이유가 여럿일 때 위치마다와 "수정 판단:" 줄의 이유별 건수에 쓴다.
+# 알리기만 하는 규칙(notify_only)은 위반의 모양으로 나눈다(`_left_reason`). "알리기만 하는
+# 규칙"이라는 말은 쓰지 않는다: 위반마다 붙어 읽기 어려웠고 왜 고치지 않았는지를 말하지
+# 않았다 (2026-11-23)
+_LEFT_REASON: Final[Mapping[str, tuple[str, str]]] = {
+    "rejected_before": (
+        "이전에 거절됨",
+        "같은 줄을 고친 수정안이 머지되지 않고 닫혀 다시 만들지 않았습니다.",
+    ),
+    "notify_file": (
+        "파일 이름·위치를 바꿔야 함",
+        "파일 이름이나 위치를 바꿔야 하는 위반이라 수정안을 만들지 않았습니다.",
+    ),
+    "notify_tool": (
+        NO_AUTOFIX_WHY,
+        "도구에 이 위반의 자동 수정이 없어 수정안을 만들지 않았습니다.",
+    ),
+    # 규칙 읽기의 수정 방법 `none` (4.4 "수정 방법", rule_reading_pure의 fix 설명)
+    "notify_rule": (
+        "그 파일 안에서 고칠 수 없는 규칙",
+        "규칙을 읽은 모델이 그 파일 안에서는 고칠 수 없는 규칙(다른 파일의 사용처까지 바꿔야 "
+        "하거나 코드로 고칠 수 없음)이라고 답해 수정안을 만들지 않았습니다.",
+    ),
+    "no_tests": (
+        "테스트로 확인할 수 없음",
+        "테스트가 없어 고친 것을 확인할 수 없으므로 수정안을 만들지 않았습니다.",
+    ),
+    "flaky": (
+        "테스트로 확인할 수 없음",
+        "불안정한 테스트가 있어 고친 것을 확인할 수 없으므로 수정안을 만들지 않았습니다.",
+    ),
+    "team_pattern": (
+        "팀이 닫은 수정과 비슷함",
+        "팀이 전에 닫은 수정안과 비슷하다고 모델이 보아 수정안을 만들지 않았습니다.",
+    ),
+    "needs_other_file": (
+        "다른 파일이나 공개 이름을 바꿔야 함",
+        "고치려면 그 파일 밖의 다른 파일이나 다른 파일이 쓰는 이름을 바꿔야 한다고 모델이 보아 "
+        "수정안을 만들지 않았습니다.",
+    ),
+    "changes_behavior": (
+        "고치면 동작이 바뀜",
+        "규칙을 지키는 어떤 변경도 동작을 바꾼다고 모델이 보아 수정안을 만들지 않았습니다.",
+    ),
+    "not_a_violation": (
+        "모델이 위반이 아니라고 봄",
+        "모델이 위반이 아니라고 보아 수정안을 만들지 않았습니다.",
+    ),
+    "risky": ("모델이 고치지 않기로 함", "모델이 고치지 않기로 해 수정안을 만들지 않았습니다."),
+    "call_limit": (
+        "호출 상한",
+        "모델 호출 상한에 걸려 고칠지 판단하지 못했습니다. `/fix`로 다시 돌릴 수 있습니다.",
+    ),
+    "undecided": (
+        "수정 판단을 하지 못함",
+        "모델이 고칠지 판단하지 못해 수정안을 만들지 않았습니다.",
+    ),
 }
+# 수정 판단을 하지 못한 위반(undecided)은 파이프라인이 적은 까닭으로 나눈다 (`fix/decide.py`의
+# CALL_FAILED, `fix_decision_pure.reconcile`)
+_UNDECIDED: Final[Mapping[str, tuple[str, str]]] = {
+    "모델이 답하지 않음": (
+        "모델이 답하지 않음",
+        "모델이 이 위반에 답하지 않아 수정안을 만들지 않았습니다.",
+    ),
+    "수정 판단을 하지 못함 (모델 호출 실패)": (
+        "모델 호출 실패",
+        "모델 호출이 실패해 고칠지 판단하지 못했습니다.",
+    ),
+}
+# 테스트가 통과하지 않은 위반(tests_failed)의 문장 앞부분. 키는 수정 판단이 적은 까닭이다
+# (`fix_decision_pure._TESTS_BROKEN`)
+_TESTS_BROKEN_HEAD: Final[Mapping[str, str]] = {
+    "테스트가 실패함": "테스트가 실패해",
+    "테스트가 시간 안에 끝나지 않음": "테스트가 시간 안에 끝나지 않아",
+    "테스트를 돌리지 못함": "테스트를 돌리지 못해",
+    "테스트가 중단됨": "테스트가 중단돼",
+}
+_SKIP_REASONS: Final = frozenset(get_args(SkipReason))
 LEFT: Final = "직접 고쳐야 함"
+# "무엇이 문제인가" 줄: 그 규칙의 위반들이 같은 메시지를 가질 때 규칙 블록에 한 번 싣는다
+PROBLEM: Final = "무엇이 문제인가:"
 _FIX_FAILED: Final[Mapping[str, str]] = {
     "failed": "정해진 회차 안에 검증을 통과하지 못함",
     "dropped": "수정안을 버림",
@@ -186,6 +252,14 @@ def dismissed(found: Found, decisions: Decided | None) -> tuple[Found, list[tupl
     kept = tuple(v for v in found.violations if v.id not in out)
     return replace(found, violations=kept), [(v, out[v.id]) for v in found.violations
                                              if v.id in out]  # fmt: skip
+
+
+def has_violations(result: DocRules | None, decisions: Decided | None = None) -> bool:
+    """위반 수에 드는 코드 위반이 있다 (모델이 위반이 아니라고 본 것은 빼고). 테스트가 돌지 않았을
+    때의 안내는 이때만 붙인다 (report.py)."""
+    if not isinstance(result, Found):
+        return False
+    return bool(dismissed(result, decisions)[0].violations)
 
 
 def title(
@@ -277,7 +351,7 @@ def _found(
     shown = [
         _violations(found, by_id, fixed_in(fixes)),
         _run_broken(answers),
-        _decision_summary(decisions),
+        _decision_summary(decisions, found.violations),
         *(_fix_lines(view, bundle, _test_lines(found, view)) for bundle, view in fixes.items()),
         pr_check_report_pure.violations(pr) if pr is not None else [],
         _unresolved(found, answers, flagged),
@@ -449,16 +523,19 @@ def _judge_gaps(found: Found) -> list[str]:
     return lines
 
 
-def _decision_summary(decisions: Decided | None) -> list[str]:
-    """고칠 대상과 직접 고쳐야 하는 위반의 건수, 이유별 건수, 수정 판단의 모델 호출 (4.9)."""
+def _decision_summary(decisions: Decided | None, violations: Sequence[Violation] = ()) -> list[str]:
+    """고칠 대상과 직접 고쳐야 하는 위반의 건수, 수정 판단의 모델 호출 (4.9). 이유가 여럿이면
+    이유별 건수를 붙인다(하나면 규칙마다의 문장이 이미 말한다)."""
     if not decisions or not decisions.decisions:
         return []
+    by_id = {v.id: v for v in violations}
     fixes = sum(1 for d in decisions.decisions if d.action == "fix")
     not_one = sum(1 for d in decisions.decisions if _is_dismissed(d))
-    left = Counter(_left_label(d) for d in decisions.decisions
+    left = Counter(_left_reason(d, by_id.get(d.violation_id))[0] for d in decisions.decisions
                    if d.action == "skip" and not _is_dismissed(d))  # fmt: skip
     line = f"수정 판단: 고칠 대상 {fixes}건, {LEFT} {sum(left.values())}건"
-    line += _reason_counts(left)
+    if len(left) > 1:
+        line += f" ({', '.join(f'{label} {n}건' for label, n in left.items())})"
     if not_one:
         line += f", 모델이 위반이 아니라고 판단함 {not_one}건 (아래 접힌 블록)"
     line += f" · 모델 호출 {decisions.calls}회 · 저장된 판단 {decisions.cached}건 사용"
@@ -632,19 +709,27 @@ def _fix_usage(fix: ModelFix) -> str:
     return line
 
 
-def _left_label(d: FixDecision) -> str:
-    """고치지 않은 이유의 이름. 모르는 이유(이전 체크포인트 등)는 파이프라인이 쓴 이유를 쓴다.
-    적지 않는 이유(알리기만 하는 규칙)는 빈 글이다."""
+def _left_reason(d: FixDecision, v: Violation | None) -> tuple[str, str]:
+    """고치지 않은 이유의 (짧은 이름, 문장). 알리기만 하는 규칙은 위반의 모양(파일 단위), 도구의
+    자동 수정이 없음, 규칙의 수정 방법 `none`으로 나눈다. 모르는 이유(이전 체크포인트 등)는
+    파이프라인이 쓴 이유를 쓴다."""
     reason = d.reason or "undecided"
-    if reason in _LEFT_LABEL:
-        return _LEFT_LABEL[reason]
-    return d.why or _LEFT_LABEL["undecided"]
-
-
-def _reason_counts(labels: Counter[str]) -> str:
-    """이유별 건수를 괄호로. 적을 이유가 없으면 빈 글이다."""
-    shown = [f"{label} {n}건" for label, n in labels.items() if label]
-    return f" ({', '.join(shown)})" if shown else ""
+    if reason == "notify_only":
+        if v is not None and v.unit == "file":
+            return _LEFT_REASON["notify_file"]
+        return _LEFT_REASON["notify_tool" if d.why == NO_AUTOFIX_WHY else "notify_rule"]
+    if reason == "no_safety_net":
+        return _LEFT_REASON["flaky" if "불안정한 테스트" in d.why else "no_tests"]
+    if reason == "undecided" and d.why in _UNDECIDED:
+        return _UNDECIDED[d.why]
+    if reason == "tests_failed":
+        head = _TESTS_BROKEN_HEAD.get(d.why, "테스트가 통과하지 않아")
+        sentence = f"{head} 고친 것을 확인할 수 없으므로 수정안을 만들지 않았습니다."
+        return d.why or "테스트가 실패함", sentence
+    if reason in _SKIP_REASONS and reason in _LEFT_REASON:
+        return _LEFT_REASON[reason]
+    why = d.why or _LEFT_REASON["undecided"][0]
+    return why, f"수정안을 만들지 않았습니다 ({why})."
 
 
 def _fix_note(d: FixDecision, v: Violation, number: int | None) -> str:
@@ -657,18 +742,48 @@ def _fix_note(d: FixDecision, v: Violation, number: int | None) -> str:
     return f" · 고칠 대상 ({how}){pr}"
 
 
-def _left_note(d: FixDecision) -> str:
-    """직접 고쳐야 하는 줄 끝의 이유. 모델의 이유 글은 코드 스팬 안에만 넣는다."""
-    label = _left_label(d)
-    if not label:
-        # 적지 않는 이유(알리기만 하는 규칙)다. 파이프라인이 더 구체적인 까닭을 적었으면(도구의 자동
-        # 수정이 없음 등) 그것은 보인다
-        return f" · {d.why}" if d.why and d.why != NOTIFY_ONLY_WHY else ""
-    if d.decided_by == "model" and d.why:
-        return f" · {label}: {inline_code(d.why, MAX_DETAIL_CHARS)}"
-    if d.why and d.why != label:
+def _left_note(d: FixDecision, v: Violation, *, mixed: bool) -> str:
+    """직접 고쳐야 하는 위치 끝에 붙는 글. 까닭의 문장은 규칙마다 한 번 적으므로 줄마다 되풀이하지
+    않는다. 위치마다 다른 것만 붙인다: 모델이 쓴 이유 글(코드 스팬 안), 거절된 수정안의 번호.
+    mixed면(한 규칙에 이유가 여럿) 어느 이유인지 짧은 이름을 붙인다."""
+    if d.reason == "rejected_before" and d.why:
         return f" · {d.why}"
-    return f" · {label}"
+    short = _left_reason(d, v)[0] if mixed else ""
+    model = inline_code(d.why, MAX_DETAIL_CHARS) if d.decided_by == "model" and d.why else ""
+    if short and model:
+        return f" · {short}: {model}"
+    return f" · {short or model}" if short or model else ""
+
+
+def _problem(rule: Rule, violations: Sequence[Violation]) -> list[str]:
+    """규칙 블록의 "무엇이 문제인가" 한 줄. 그 규칙의 위반들이 같은 메시지(검사기·도구의
+    메시지, 모델 판단의 까닭)를 가지면 규칙 블록에 한 번 싣는다. 메시지가 위치마다 보이는
+    규칙(도구 설정의 규칙), 메시지가 없거나 서로 다른 것, 규칙 원문과 사실상 같은 말인 것은
+    싣지 않는다."""
+    messages = {v.message.strip() for v in violations}
+    if len(messages) != 1 or any(v.rule_id == v.code for v in violations):
+        return []
+    message = messages.pop()
+    if not message or _plain(message) == _plain(rule.text):
+        return []
+    return [f"  {PROBLEM} {inline_code(message, MAX_DETAIL_CHARS)}"]
+
+
+def _plain(text: str) -> str:
+    """공백과 마침표를 빼고 대소문자를 맞춘 글. 같은 말인지 견줄 때만 쓴다."""
+    return "".join(c for c in text if not c.isspace() and c != ".").casefold()
+
+
+def _left_lines(left: Sequence[tuple[Violation, FixDecision]]) -> tuple[list[str], bool]:
+    """규칙 하나의 "직접 고쳐야 함 N건" 줄과 까닭의 문장, 이유가 여럿인지. 이유가 하나면 같은
+    줄에, 여럿이면 이유마다 건수와 함께 한 줄씩."""
+    reasons = Counter(_left_reason(d, v) for v, d in left)
+    if len(reasons) == 1:
+        ((_, sentence),) = reasons
+        return [f"  {LEFT} {len(left)}건 · {sentence}"], False
+    lines = [f"  {LEFT} {len(left)}건"]
+    lines += [f"  - {n}건: {sentence}" for (_, sentence), n in reasons.items()]
+    return lines, True
 
 
 @dataclass
@@ -689,10 +804,12 @@ class _Fold:
 def _violations(
     found: Found, decisions: Mapping[str, FixDecision], fixed_in: Mapping[str, int]
 ) -> list[str]:
-    """규칙별 건수, 고칠 대상의 위치, 직접 고쳐야 하는 위반의 이유별 건수 (4.9, 11.2 D6).
+    """규칙별 건수, 무엇이 문제인지, 고칠 대상의 위치, 직접 고쳐야 하는 위반과 수정안을 만들지
+    않은 까닭 (4.9, 11.2 D6).
 
-    고칠 대상은 규칙마다 앞 몇 건이 보이고 나머지는 접는다. 직접 고쳐야 하는 위반은 이유별 건수 한
-    줄 아래에 위치를 접는다. 수정 판단 전(테스트 전에 끝남)이면 위치만 앞 몇 건 보인다. fixed_in은
+    고칠 대상은 규칙마다 앞 몇 건이 보이고 나머지는 접는다. 직접 고쳐야 하는 위반은 건수와 까닭의
+    문장(규칙마다 한 번) 아래에 위치를 접는다. 수정 판단 전(테스트 전에 끝남)이면 위치만 앞 몇 건
+    보인다. fixed_in은
     {위반 id: 그 위반을 고친 수정안 PR 번호}다. 접은 목록은 코멘트 전체에서 상한이 있다.
     """
     if not found.violations:
@@ -710,6 +827,7 @@ def _violations(
         lines += [
             f"- `{rule_id}` {_quote(outcome.rule)} · {len(violations)}건",
             f"  출처: {_source(outcome.rule)} · {_how_checked(outcome)}",
+            *_problem(outcome.rule, violations),
         ]
         shown: list[str] = []
         left: list[tuple[Violation, FixDecision]] = []
@@ -726,10 +844,11 @@ def _violations(
             rest = shown[MAX_SHOWN_PER_RULE:]
             lines += fold.lines(f"<code>{rule_id}</code>의 나머지 {len(rest)}건", rest)
         if left:
-            reasons = Counter(_left_label(d) for _, d in left)
-            lines.append(f"  {LEFT} {len(left)}건{_reason_counts(reasons)}")
+            head, mixed = _left_lines(left)
+            lines += head
             lines += fold.lines(f"{LEFT} {len(left)}건의 위치",
-                                [f"  - {_where(v)}{_left_note(d)}" for v, d in left])  # fmt: skip
+                                [f"  - {_where(v)}{_left_note(d, v, mixed=mixed)}"
+                                 for v, d in left])  # fmt: skip
     return lines
 
 
@@ -925,8 +1044,10 @@ def _retrievals(
 def references_block(retrievals: Sequence[Retrieval], rag: RagSwitch | None = None) -> list[str]:
     """검색 상태 한 줄(rag, 6.7)과 참고한 과거 기록 (6.6 끝, 4.9). 건마다 종류, 원래 PR과 수정안
     PR의 번호, 규칙 id, 유사도, 쓰인 단계. diff는 넣지 않는다(그 PR에 있다). 기준값에 못 미쳐
-    버린 후보는 개수만 적는다. 검색을 켜지 않았으면 retrievals가 비어 상태 줄만 그린다."""
-    status = ["", describe(rag)] if rag is not None else []
+    버린 후보는 개수만 적는다. 검색을 켜지 않았으면 retrievals가 비어 상태 줄만 그리고, 그 줄도
+    알릴 만한 때만 있다(`rag_switch_pure.comment_line`)."""
+    line = comment_line(rag) if rag is not None else None
+    status = ["", line] if line is not None else []
     rows = [(r, ref) for r in retrievals for ref in r.references]
     below = [(r.site, r.below) for r in retrievals if r.below]
     errors = sorted({r.error for r in retrievals if r.error})

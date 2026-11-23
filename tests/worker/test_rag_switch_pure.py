@@ -13,6 +13,7 @@ from app.worker.rag_switch_pure import (
     FixOutcome,
     Outcomes,
     RagSwitch,
+    comment_line,
     decide,
     describe,
     outcomes,
@@ -154,3 +155,16 @@ def test_describe_says_when_the_extras_are_missing() -> None:
         "검색: 꺼짐 (`rag.enabled: on`). 켜야 하지만 선택 의존성 `pr-proof[rag]`이 설치되지 않아 "
         "검색 없이 검사함"
     )
+
+
+def test_comment_shows_the_search_line_only_when_it_tells_something() -> None:
+    """검색이 꺼져 있으면 결과 코멘트에 싣지 않는다. auto가 채택률이 낮아 다시 끈 것과 켜야 하는데
+    선택 의존성이 없는 것은 사람이 할 일이 있어 싣는다. 켜져 있으면 늘 싣는다 (pr-proof#78)."""
+    assert comment_line(_auto(Evidence(12))) is None
+    assert comment_line(decide("off", None, None, **LIMITS)) is None
+    on = decide("on", None, None, **LIMITS)
+    assert comment_line(on) == describe(on)
+    worse_ = _auto(Evidence(25, Outcomes(9, 30), Outcomes(10, 30)))
+    assert comment_line(worse_) == describe(worse_)
+    missing = RagSwitch("auto", True, "enough_records", Evidence(20), missing_extras=True)
+    assert comment_line(missing) == describe(missing)
