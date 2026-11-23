@@ -173,7 +173,8 @@ def test_no_rules_explains_how_to_write_them() -> None:
     for result in (NoRuleDocs(), NoRulesFound(dropped=2)):
         text = _text(result)
         assert f"**규칙:** {NO_RULES}" in text
-        assert "`## 코드 규칙` 같은 절을 두고 규칙을 한 문장씩 적거나 ruff 설정" in text
+        assert "`CONTRIBUTING.md`에 팀 규칙을 적어 두면 다음 PR부터" in text
+        assert "- ruff 설정이 이미 있는 저장소는 그 설정도 함께 검사합니다." in text
     unread = _text(NoRuleDocs((UnreadDoc("CONTRIBUTING.md", "400KB를 넘음"),)))
     assert "- `CONTRIBUTING.md`: `400KB를 넘음`" in unread
 
