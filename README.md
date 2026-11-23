@@ -245,8 +245,58 @@ gh 로그인 대신 토큰을 쓸 수 있다. 토큰은 설정 폴더의 `github
 
 ## 어떻게 도는가
 
+**구조.** pr-proof는 사용자의 컴퓨터에서 돈다. GitHub의 소식을 받아 큐에 넣고, 워커가 하나씩 꺼내 처리한다. PR의 코드는 샌드박스 안에서만 실행한다.
+
+```mermaid
+flowchart LR
+    subgraph GH["GitHub"]
+        PR["PR · 리뷰 코멘트"]
+        OUT["결과 코멘트<br/>수정안 PR · 답글"]
+    end
+
+    SMEE["smee.io<br/>(웹훅 받는 주소가 없을 때)"]
+
+    subgraph LOCAL["사용자의 컴퓨터 (npx pr-proof start)"]
+        API["api<br/>서명 확인 · 큐 등록<br/>5분마다 동기화"]
+        Q[("Redis 큐")]
+        W["worker<br/>PR 하나씩 처리"]
+        M["claude CLI<br/>판단 · 수정 작성"]
+        S["Docker 샌드박스<br/>테스트 · 검사기<br/>(네트워크 없음)"]
+        DB[("SQLite<br/>기록 · 저장한 판단")]
+    end
+
+    PR -- "웹훅" --> SMEE --> API
+    PR -. "직접 받는 주소가 있으면" .-> API
+    API --> Q --> W
+    W <--> M
+    W <--> S
+    W <--> DB
+    W -- "gh" --> OUT
 ```
-GitHub 웹훅 ─▶ api (서명 확인, 큐 등록, 동기화) ─▶ Redis 큐 ─▶ 워커
+
+**PR 하나의 흐름.** 프로그램이 하는 일과 모델이 하는 일이 번갈아 나온다. 모델이 쓴 변경은 프로그램의 출구 검사를 지나야 올라간다.
+
+```mermaid
+flowchart LR
+    subgraph S1["1. 읽고 찾기"]
+        direction TB
+        A1["규칙 읽기<br/>base 브랜치의 문서 · 린터 설정"] --> A2["확인 방법 정하기<br/>린터 → 검사기 → 모델의 판단"]
+        A2 --> A3["위반 찾기<br/>PR이 바꾼 줄만"]
+        A3 --> A4["PR 설명 확인<br/>PR의 글과 diff 견주기"]
+    end
+    subgraph S2["2. 고치기"]
+        direction TB
+        B1["테스트<br/>샌드박스에서 기준선"] --> B2["고칠지 정하기<br/>동작이 바뀌면 사람에게 남김"]
+        B2 --> B3["고치기<br/>모델이 검사와 테스트를 돌려 가며"]
+        B3 --> B4["출구 검사<br/>허용 범위 · 비밀값 · 규칙 · 테스트"]
+        B4 -. "통과하지 못하면 다시" .-> B3
+    end
+    subgraph S3["3. 알리기"]
+        direction TB
+        C1["수정안 PR<br/>머지는 사람이"] --> C2["결과 코멘트"]
+    end
+    S1 --> S2 --> S3
+    S1 -. "위반이 없으면" .-> S3
 ```
 
 워커가 PR 하나에 하는 일:

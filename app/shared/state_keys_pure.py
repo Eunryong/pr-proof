@@ -9,6 +9,11 @@ DELIVERY_TTL_SECONDS: Final = 24 * 60 * 60  # GitHub 재전송 웹훅을 건너�
 JOB_TTL_SECONDS: Final = 6 * 60 * 60  # 워커가 죽어 키를 못 지워도 이 시간 뒤 다시 등록할 수 있다
 
 
+# PR이 닫혔다는 최신 head 표시. 어떤 커밋 SHA와도 같지 않아서, 그 PR의 돌고 있는 작업이 자기를 낡은
+# 작업으로 보고 멈춘다
+CLOSED_HEAD: Final = "closed"
+
+
 def latest_head(repo: str, pr_number: int) -> str:
     """PR의 최신 head SHA. 웹이 쓰고 워커가 낡은 작업인지 확인할 때 읽는다."""
     return f"{PREFIX}:latest_head:{repo}#{pr_number}"
