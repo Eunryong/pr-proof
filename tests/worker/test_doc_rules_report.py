@@ -321,6 +321,23 @@ def test_left_lines_are_folded_even_when_few_and_count_toward_the_fold_cap() -> 
     assert "  - 외 211건" in text and len(text) <= doc_rules_report.MAX_SECTION_CHARS
 
 
+def test_notify_only_rule_shows_no_reason_text() -> None:
+    """알리기만 하는 규칙은 까닭을 적지 않는다. "직접 고쳐야 함"이 이미 그 뜻이고 위반마다 같은 말이
+    붙어 읽기 어려웠다. 파이프라인이 더 구체적인 까닭을 적은 것(도구의 자동 수정이 없음)은
+    보인다."""
+    a, b = _violation(line=1), _violation(line=2)
+    decided = Decided((
+        FixDecision(a.id, "skip", "pipeline", reason="notify_only", why="알리기만 하는 규칙"),
+        FixDecision(b.id, "skip", "pipeline", reason="notify_only", why="도구의 자동 수정이 없음"),
+    ))  # fmt: skip
+    text = "\n".join(section(_found(RuleChecked(RULE, REF), violations=(a, b)), {}, decided))
+    assert "알리기만 하는 규칙" not in text
+    assert "  직접 고쳐야 함 2건\n" in text + "\n"
+    assert "  - `orders/a.py:1`\n" in text + "\n"
+    assert "  - `orders/a.py:2` · 도구의 자동 수정이 없음" in text
+    assert "수정 판단: 고칠 대상 0건, 직접 고쳐야 함 2건 ·" in text
+
+
 def test_unknown_reason_from_an_old_checkpoint_shows_the_pipeline_reason() -> None:
     v = _violation()
     decided = Decided((FixDecision(v.id, "skip", "pipeline", reason="not_covered",  # type: ignore[arg-type]

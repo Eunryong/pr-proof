@@ -130,12 +130,12 @@ Copilot의 리뷰와 저장소의 OWNER·MEMBER·COLLABORATOR가 단 코멘트(�
 ```
 [Copilot]  average_quantity() divides by len(quantities) without checking for an empty list …
 [pr-proof] 반영했습니다. 수정안 #32
-           까닭 (모델의 판단): orders/stats.py의 average_quantity가 빈 목록에서 0으로 나눈다.
+           모델 분석 결과: orders/stats.py의 average_quantity가 빈 목록에서 0으로 나눈다.
            → 수정안 #32가 머지되면 스레드를 Resolved (Addressed)로 바꾼다
 
 [Copilot]  Use print() here instead of the logger so the output is visible …
 [pr-proof] 반영하지 않습니다.
-           까닭 (모델의 판단): README의 규칙이 orders/ 아래에서 print를 쓰지 않게 정한다.
+           모델 분석 결과: README의 규칙이 orders/ 아래에서 print를 쓰지 않게 정한다.
            → 스레드를 Resolved (Won't fix)로 바꾼다
 ```
 
