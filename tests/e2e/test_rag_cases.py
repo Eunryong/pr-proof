@@ -33,10 +33,10 @@ import yaml
 from app.shared.embed_models_pure import E5_SMALL, EMBED_MODELS
 from app.shared.job_pure import PRJob
 from app.worker import main
-from app.worker.ai import claude_cli
 from app.worker.cli import reindex
 from app.worker.core.rule_pure import rule_id
 from app.worker.fix import fix_decision_pure
+from app.worker.model.claude import claude_cli
 from app.worker.store import memory
 from app.worker.store.rag_pure import collection_name
 from app.worker.store.records_pure import NewRecord

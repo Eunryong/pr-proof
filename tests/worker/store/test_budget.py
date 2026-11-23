@@ -7,7 +7,7 @@ from typing import Final
 import pytest
 
 from app.worker.config.repo_config_pure import CallSettings
-from app.worker.loop import LoopPolicy, choose_tier
+from app.worker.model.loop import LoopPolicy, choose_tier
 from app.worker.store.budget import CallBudget
 from app.worker.store.call_budget_pure import Allowed, Denied, PrScope, RulesetScope
 from app.worker.store.state import Store

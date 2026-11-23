@@ -7,7 +7,7 @@ from redis import Redis
 
 from app.shared.ops_alert_pure import TEXT
 from app.worker import preflight
-from app.worker.ai.claude_backend import ClaudeCliBackend
+from app.worker.model.claude.claude_backend import ClaudeCliBackend
 
 from ..redis_stand_ins import UNREACHABLE_REDIS_URL, Pong
 

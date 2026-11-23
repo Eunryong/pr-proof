@@ -217,7 +217,7 @@ class LineRun:                             # 대상 위반 하나의 실행 상�
     why: str = ""                          # none·unknown일 때 모델이 적은 까닭 (7.5의 untested)
 
 @dataclass(frozen=True)
-class ToolUsage:                           # 수정 작성 호출들 안의 도구 호출 (`app/worker/mcp_pure.py`)
+class ToolUsage:                           # 수정 작성 호출들 안의 도구 호출 (`app/worker/model/mcp_pure.py`)
     check_rules: int = 0
     run_tests: int = 0
     seconds: float = 0.0

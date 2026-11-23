@@ -22,7 +22,7 @@ from app.worker.core.violation_pure import Violation
 from app.worker.fix.fix_decision_pure import FixDecision
 from app.worker.fix.proposal_pure import MAX_CHANGED_LINES, MAX_FILES
 from app.worker.fix.scope_pure import GENERATED_TEST_PREFIX
-from app.worker.mcp_pure import TOOL_NAMES, ToolUsage
+from app.worker.model.mcp_pure import TOOL_NAMES, ToolUsage
 from app.worker.prompt_text_pure import load
 from app.worker.store.rag_pure import Retrieval
 from app.worker.testing.generated_tests_pure import (

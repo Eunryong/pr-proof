@@ -1,5 +1,5 @@
-"""app/worker/ai/claude_backend.py: claude CLI 구현. 실제 git과 가짜 실행기로 보고 모델은 부르지
-않는다.
+"""app/worker/model/claude/claude_backend.py: claude CLI 구현. 실제 git과 가짜 실행기로 보고 모델은
+부르지 않는다.
 
 정리 전에는 호출하는 쪽이 `claude_cli.run_structured`, `workdir.reading_folder`,
 `workdir.run_in_model_folder`를 바로 불렀다. 구현을 거쳐도 claude에 넘기는 인자(명령 인자, 표준
@@ -16,10 +16,11 @@ from typing import Final
 
 import pytest
 
-from app.worker import mcp_pure
-from app.worker.ai import backends, claude_backend, claude_cli, workdir
-from app.worker.ai.claude_backend import ClaudeCliBackend
-from app.worker.ai.model_backend import (
+from app.worker.git import repo
+from app.worker.model import backends, mcp_pure
+from app.worker.model.claude import claude_backend, claude_cli, workdir
+from app.worker.model.claude.claude_backend import ClaudeCliBackend
+from app.worker.model.model_backend import (
     AIErrorKind,
     Capabilities,
     EditResult,
@@ -27,7 +28,6 @@ from app.worker.ai.model_backend import (
     StructuredResult,
     fix_unavailable,
 )
-from app.worker.git import repo
 
 FILE_TOOLS: Final = ["Read", "Grep", "Glob", "Write", "Edit"]
 SCHEMA: Final = {"type": "object", "properties": {"ok": {"type": "boolean"}}}

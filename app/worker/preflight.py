@@ -13,9 +13,10 @@ from redis.exceptions import RedisError
 from app.shared import github_auth
 from app.shared import notify as macos
 from app.shared.ops_alert_pure import Kind
-from app.worker.ai import backends, claude_backend
-from app.worker.ai.model_backend import ModelBackend
 from app.worker.git import github
+from app.worker.model import backends
+from app.worker.model.claude import claude_backend
+from app.worker.model.model_backend import ModelBackend
 from app.worker.sandbox.docker_cli import minimal_env
 
 # `app/setup/configure.py`(설치 명령의 Claude 로그인 단계)가 부르는 이름. 정의는 claude 구현에 있다

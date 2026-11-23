@@ -1,4 +1,5 @@
-"""app/worker/ai/path_hook.py: 도구가 가리키는 경로의 실제 위치가 작업 폴더 밖이면 거부한다."""
+"""app/worker/model/claude/path_hook.py: 도구가 가리키는 경로의 실제 위치가 작업 폴더 밖이면
+거부한다."""
 
 import json
 import os
@@ -8,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from app.worker.ai import path_hook
+from app.worker.model.claude import path_hook
 
 
 @pytest.fixture
@@ -135,7 +136,7 @@ def test_pipeline_tools_are_allowed_without_a_path(dirs, tool: str) -> None:
 
 
 def test_hook_knows_the_pipeline_tool_names() -> None:
-    from app.worker.mcp_pure import TOOL_NAMES
+    from app.worker.model.mcp_pure import TOOL_NAMES
 
     assert set(TOOL_NAMES) <= set(path_hook._PATH_KEYS)
     assert path_hook.problem("/x", {"tool_name": "mcp__other__x", "tool_input": {}}) is not None

@@ -7,8 +7,8 @@
 확인을 통과하지 못하면 검사기를 작성한다. 도구 선택의 결과도 `checkers` 테이블에 그 키로 둔다.
 저장소가 고정한 ruff 버전을 파이프라인이 받을 수 없으면 도구 목록을 내밀지 않는다.
 
-검사기 작성은 규칙마다 공용 틀(app/worker/loop.py)을 한 번 돈다. write는 도구 없이 모델을 부르고
-답(초안)을 `model_cache`에 저장한다. verify는 초안을 샌드박스에서 예시에 돌려 결정적으로
+검사기 작성은 규칙마다 공용 틀(app/worker/model/loop.py)을 한 번 돈다. write는 도구 없이 모델을
+부르고 답(초안)을 `model_cache`에 저장한다. verify는 초안을 샌드박스에서 예시에 돌려 결정적으로
 판정한다. 처음 두 회차는 ast-grep 규칙, 세 번째는 Python AST 스크립트다. ast-grep 회차에서
 모델이 그 형식으로 가릴 수 없다고 답하면(`unfit`) 그 초안은 돌리지 않고 다음 회차부터 Python AST
 스크립트로 쓴다. 모델은 세 회차 모두 `model.checker`다.
@@ -36,7 +36,6 @@ from typing import Final, Protocol
 from langgraph.graph.state import CompiledStateGraph
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.worker.ai.model_backend import AskModel
 from app.worker.checker_authoring_pure import (
     ENGINE_VERSION,
     MAX_ATTEMPTS,
@@ -75,7 +74,15 @@ from app.worker.core.checker_pure import TOOL_KINDS, Checker, CheckerKind, check
 from app.worker.core.rule_pure import Rule, looks_at_paths, normalize
 from app.worker.core.tools_pure import RUFF, RuffSetup, valid_codes
 from app.worker.lang import python
-from app.worker.loop import LoopPolicy, LoopState, Verdict, WriteFailed, WriteResult, build_loop
+from app.worker.model.loop import (
+    LoopPolicy,
+    LoopState,
+    Verdict,
+    WriteFailed,
+    WriteResult,
+    build_loop,
+)
+from app.worker.model.model_backend import AskModel
 from app.worker.rules import tool_choice_pure
 from app.worker.sandbox import checker_runner, docker_cli, toolcache
 from app.worker.sandbox.checker_runner import CheckerRun, Failed, Invalid

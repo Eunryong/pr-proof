@@ -6,11 +6,11 @@ from typing import Final
 
 import pytest
 
-from app.worker.ai.claude_backend import ClaudeCliBackend
-from app.worker.ai.claude_cli import AIErrorKind, StructuredResult
 from app.worker.config.repo_config_pure import CallSettings, ModelSettings
 from app.worker.core.rule_pure import CheckMethod, Rule, RuleSource
 from app.worker.doc_rules_pure import CallUsage, Found, RuleUnchecked
+from app.worker.model.claude.claude_backend import ClaudeCliBackend
+from app.worker.model.claude.claude_cli import AIErrorKind, StructuredResult
 from app.worker.rules.doc_rules import Runtime
 from app.worker.rules.run_check import judge_runs
 from app.worker.store.budget import CallBudget

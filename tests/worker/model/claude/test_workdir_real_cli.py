@@ -12,9 +12,9 @@ from typing import Final
 
 import pytest
 
-from app.worker.ai import claude_cli, workdir
-from app.worker.ai.claude_backend import ClaudeCliBackend
 from app.worker.git import repo
+from app.worker.model.claude import claude_cli, workdir
+from app.worker.model.claude.claude_backend import ClaudeCliBackend
 
 REAL_AI_ENV: Final = "PR_PROOF_REAL_AI"
 CANARY: Final = "CANARY-5d0c2e7b-outside-the-worktree"

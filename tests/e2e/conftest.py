@@ -8,9 +8,9 @@ from pathlib import Path
 
 import pytest
 
-from app.worker.ai import claude_cli
-from app.worker.ai.claude_cli import AIErrorKind, ClaudeResult, StructuredResult
 from app.worker.evaluation import MODEL_MEMO_ENV
+from app.worker.model.claude import claude_cli
+from app.worker.model.claude.claude_cli import AIErrorKind, ClaudeResult, StructuredResult
 
 from .model_memo import Memo
 

@@ -48,8 +48,7 @@ from langgraph.types import Command, interrupt
 from app.shared.config import CallMaxima
 from app.shared.embed_models_pure import E5_SMALL, EMBED_MODELS
 from app.shared.job_pure import PRJob
-from app.worker import doc_rules_pure, mcp_pure, merged_fix_pure, records, report
-from app.worker.ai.model_backend import ModelBackend, fix_unavailable
+from app.worker import doc_rules_pure, merged_fix_pure, records, report
 from app.worker.checker_authoring_pure import Checked
 from app.worker.config import base_config
 from app.worker.config.base_config import BaseConfig
@@ -75,6 +74,8 @@ from app.worker.git.github import GitHub
 from app.worker.git.repo import CHANGES_DIFF
 from app.worker.lang import python
 from app.worker.merged_fix_pure import CarriedFrom
+from app.worker.model import mcp_pure
+from app.worker.model.model_backend import ModelBackend, fix_unavailable
 from app.worker.rules import (
     detect,
     doc_rules,
@@ -223,7 +224,7 @@ class FlowContext:
     run_id: int
     comment_id: int | None
     max_memory_gb: float
-    backend: ModelBackend  # 모델 구현 (`app/worker/ai/model_backend.py`). 워커가 작업마다 넘긴다
+    backend: ModelBackend  # 모델 구현 (`app/worker/model/model_backend.py`). 워커가 작업마다 넘긴다
     call_maxima: CallMaxima = field(default_factory=CallMaxima)
     sandbox_names: docker_cli.Names = docker_cli.DEFAULT_NAMES
     started: float = field(default_factory=time.monotonic)

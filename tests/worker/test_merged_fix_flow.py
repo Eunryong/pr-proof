@@ -20,11 +20,11 @@ from app.shared import state_keys_pure, version
 from app.shared.db_pure import FixAttempt
 from app.shared.job_pure import PRJob
 from app.worker import graph, update
-from app.worker.ai import claude_cli
 from app.worker.core.violation_pure import violation_id
 from app.worker.fix.model_fix_pure import Verification
 from app.worker.fix.proposal_pure import ProposalResult
 from app.worker.merged_fix_pure import CarriedFrom
+from app.worker.model.claude import claude_cli
 from app.worker.rules.pr_check_pure import PrChecks, PrRuleResult
 
 from .helpers import PASSED, bodies, use_runner

@@ -15,9 +15,9 @@ from unittest import mock
 
 import pytest
 
-from app.worker.ai.claude_cli import AIErrorKind, StructuredResult
 from app.worker.config.repo_config_pure import CallSettings
 from app.worker.core.rule_pure import CheckMethod, Example, Rule, RuleSource
+from app.worker.model.claude.claude_cli import AIErrorKind, StructuredResult
 from app.worker.rules import pr_check, pr_check_pure
 from app.worker.rules.pr_check_pure import Commit, PrFacts
 from app.worker.sandbox import checker_runner

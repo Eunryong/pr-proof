@@ -22,12 +22,12 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Literal, Protocol
 
-from app.worker.ai.model_backend import AskModel
 from app.worker.core.rule_pure import Rule
 from app.worker.doc_rules_pure import Found, RuleUnchecked
 from app.worker.git import repo
 from app.worker.git.github import GitHub, GitHubError
 from app.worker.git.repo import GitError
+from app.worker.model.model_backend import AskModel
 from app.worker.rules.pr_check_pure import (
     JUDGE_PROMPT_VERSION,
     JUDGE_SCHEMA,

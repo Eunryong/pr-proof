@@ -11,12 +11,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from app.worker.ai.model_backend import AskModel
 from app.worker.config.repo_config_pure import RulesSettings
 from app.worker.core.diff_pure import added_lines
 from app.worker.core.rule_pure import Rule, RuleSet, UnreadDoc
 from app.worker.git import repo
 from app.worker.git.git_pure import REGULAR_FILE_MODES, TreeEntry
+from app.worker.model.model_backend import AskModel
 from app.worker.rule_reading_pure import (
     ANSWER_SCHEMA,
     MAX_DOCS_BYTES,

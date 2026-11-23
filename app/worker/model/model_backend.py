@@ -5,10 +5,10 @@
 불러라"가 아니라 "도구 없이 이 꼴로 답해라"(`ask`), "이 폴더를 읽고 이 꼴로 답해라"(`reading`),
 "이 폴더에서 고쳐라"(`fix`)의 높이로 긋는다. 안전을 지키는 방법은 구현마다 다르므로(claude CLI는
 `--tools`와 경로 감시 훅, API는 파이프라인이 만든 도구, Codex는 자체 샌드박스) 구현 안에 둔다.
-지금 구현은 claude CLI 하나다(`app/worker/ai/claude_backend.py`). 이름으로 구현을 고르는 곳은
-`app/worker/ai/backends.py`다.
+지금 구현은 claude CLI 하나다(`app/worker/model/claude/claude_backend.py`). 이름으로 구현을 고르는
+곳은 `app/worker/model/backends.py`다.
 
-구현이 지켜야 하는 조건 (계약, `tests/worker/ai/test_model_backend_contract.py`):
+구현이 지켜야 하는 조건 (계약, `tests/worker/model/test_model_backend_contract.py`):
 
 1. `ask`: 모델에게 파일·명령·웹 도구가 없다. 저장소의 파일과 설정이 보이지 않는 곳에서 돈다.
 2. `reading`: 연 폴더(`workdir.model_folder`가 worktree의 일반 파일만 복사한 것) 밖을 읽지 못한다
@@ -37,7 +37,7 @@ from pathlib import Path
 from typing import Final, Protocol
 
 from app.shared.ops_alert_pure import Kind
-from app.worker.mcp_pure import ToolUsage
+from app.worker.model.mcp_pure import ToolUsage
 
 # 파이프라인 도구가 든 수정 작성 호출의 시간 상한(초)
 # 모델 600초 + 도구 시간 상한 900초 + 여유 300초
@@ -144,7 +144,8 @@ class StartupCheck:
     alert: Kind  # 실패하면 띄우는 운영 알림의 종류 (6-4)
 
 
-# 파이프라인 도구 하나: (인자) → 모델에게 돌려줄 글 (`app/worker/ai/tool_server.py`의 Handler)
+# 파이프라인 도구 하나: (인자) → 모델에게 돌려줄 글
+# (`app/worker/model/claude/tool_server.py`의 Handler)
 PipelineTool = Callable[[Mapping[str, str]], str]
 # (사용자 메시지, *, system_prompt, schema, model, max_budget_usd) → 결과. `ModelBackend.ask`의
 # 모양이다. `reading`이 주는 함수는 여기에 max_tool_uses를 더 받는다

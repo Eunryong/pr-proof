@@ -30,11 +30,11 @@ import pytest
 import yaml
 
 from app.shared import config
-from app.worker.ai import claude_cli
 from app.worker.deps import Deps
 from app.worker.fix import fix_decision_pure
 from app.worker.git import repo
 from app.worker.git.github import GitHub
+from app.worker.model.claude import claude_cli
 from app.worker.store.state import Store
 from tests.sandbox_names import TEST_NAMES
 

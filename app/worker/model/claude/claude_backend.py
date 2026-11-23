@@ -29,8 +29,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final
 
-from app.worker.ai import claude_cli, workdir
-from app.worker.ai.model_backend import (
+from app.worker.model.claude import claude_cli, workdir
+from app.worker.model.model_backend import (
     AskModel,
     Capabilities,
     EditCode,

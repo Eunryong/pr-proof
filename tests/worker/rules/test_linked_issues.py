@@ -8,12 +8,12 @@ from typing import Final
 
 import pytest
 
-from app.worker.ai import workdir
-from app.worker.ai.claude_backend import ClaudeCliBackend
 from app.worker.config.repo_config_pure import CallSettings
 from app.worker.git import repo
 from app.worker.git.git_pure import Issue, Linked
 from app.worker.git.github import GitHub
+from app.worker.model.claude import workdir
+from app.worker.model.claude.claude_backend import ClaudeCliBackend
 from app.worker.rules import linked_issues
 from app.worker.rules.checkers import STALE
 from app.worker.rules.linked_issues_pure import (

@@ -53,7 +53,7 @@ class CallBudget:
         return decide(limits_for(self.settings, scope, grants, self.targets), spent, tier)
 
     def may_call(self, scope: Scope) -> Callable[[Tier], bool]:
-        """app/worker/loop.py의 `LoopPolicy.may_call`에 넘긴다."""
+        """app/worker/model/loop.py의 `LoopPolicy.may_call`에 넘긴다."""
         return lambda tier: isinstance(self.decide(scope, tier), Allowed)
 
     def begin(
