@@ -156,7 +156,9 @@ def read_material(deps: Deps, work: PRJob, items: Sequence[Item], ask: AskModel)
     data_dir, store = deps.settings.data_dir, deps.store
     bare = repo.ensure_bare(data_dir, work.repo)
     repo.fetch_pr(bare, work.pr_number, work.base_sha)
-    config = base_config.load_repo(data_dir, work.repo, work.base_sha)
+    config = base_config.load_repo(
+        data_dir, work.repo, work.base_sha, default_model=deps.settings.model.default
+    )
     model = config.model.rules
     saved = rules.saved_rules(bare, work.base_sha, config.rules, model=model, store=store)
     if saved is None:
@@ -244,7 +246,9 @@ def fix_accepted(
             ctx.data_dir, work.repo, work.pr_number, work.head_sha, work.base_sha
         ))  # fmt: skip
         ctx.worktree, ctx.merge_base = co.path, co.merge_base
-        ctx.base = base_config.load(co.path, work.base_sha, ctx.max_memory_gb)
+        ctx.base = base_config.load(
+            co.path, work.base_sha, ctx.max_memory_gb, default_model=ctx.default_model
+        )
         run = graph.pr_tests(ctx, work)
         if run.cancelled:
             return None

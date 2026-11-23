@@ -1,4 +1,4 @@
-"""`npx pr-proof start`가 honcho에 넘기는 것. honcho로 바꿔 타는 exec는 받는 인자로 바꿔 끼운다."""
+"""`pr-proof start`가 honcho에 넘기는 것. honcho로 바꿔 타는 exec는 받는 인자로 바꿔 끼운다."""
 
 import os
 import stat
@@ -29,13 +29,15 @@ def box(tmp_path: Path) -> dict[str, Path]:
     return {"config": config_dir, "venv": venv, "system": system, "runtime": tmp_path / "runtime"}
 
 
-def _start(box, *, node="/opt/node/bin/node", smee_js="/pkg/smee.js"):
+def _start(box, *, node="/opt/node/bin/node", smee_js="/pkg/smee.js", command=None):
     calls: list[tuple[str, list[str], dict[str, str]]] = []
     lines: list[str] = []
     environ = {
         "HOME": "/home/u", "PATH": "/usr/bin:/bin", "PR_PROOF_SYSTEM_PATH": str(box["system"]),
         "PR_PROOF_HOME": str(box["runtime"]), "GH_TOKEN": "ambient", "SECRET_THING": "x",
     }  # fmt: skip
+    if command is not None:
+        environ[files.COMMAND_ENV] = command
     cwd = os.getcwd()
     try:
         code = start.start(
@@ -88,9 +90,11 @@ def test_env_is_minimal_and_finds_node(box) -> None:
 
 def test_missing_config_says_run_configure(box) -> None:
     (box["config"] / files.CONFIG_FILE).unlink()
-    code, calls, lines = _start(box)
+    code, calls, lines = _start(box, command="pr-proof")
     assert (code, calls) == (1, [])
-    assert "npx pr-proof configure" in lines[-1]
+    assert "먼저 pr-proof configure를 실행하세요" in lines[-1]
+    # 입구가 넘긴 값이 없으면(python -m으로 직접) clone한 폴더라 `npx .`
+    assert "먼저 npx . configure를" in _start(box)[2][-1]
 
 
 def test_missing_tool_is_named(box) -> None:

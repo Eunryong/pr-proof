@@ -274,6 +274,32 @@ def test_fix_that_breaks_tests_is_retried_then_dropped(fix_env, tmp_path: Path) 
     assert fix_env["gh"].pulls == {}
 
 
+def test_same_light_and_heavy_model_does_not_escalate(fix_env, tmp_path: Path) -> None:
+    """파이프라인 쪽 `model.default` 하나로 두 단계가 같은 모델이면 무거운 단계로 올리지 않는다:
+    회차는 같고(3회), 모든 회차를 가벼운 단계로 세어 호출 수가 1씩만 든다."""
+    use_model(fix_env, FakeModel(rule_answer(print_rule()), decide=first_fix_then_skip))
+    use_config(fix_env, AUTO.model_copy(update={"model": ModelSettings(
+        light="opus", heavy="opus")}))  # fmt: skip
+    fixer = use_fixer(fix_env, FakeFixer([FIX_LINE_2], [_explanation("orders/a.py")]))
+    calls = {"n": 0}
+
+    def runner(*a, **k):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return replace(PASSED, coverage_xml=tmp_path / "coverage.xml")
+        # 회차마다 다른 실패라야 저장한 작성 결과를 다시 쓰지 않고 모델을 부른다
+        failed = (f"tests/test_a.py::test_{calls['n']}",)
+        return replace(PASSED, exit_code=1, summary=ReportSummary(
+            passed=8, failed=1, total=9, failed_tests=failed))  # fmt: skip
+
+    use_runner(fix_env, runner)
+    state = run(fix_env, tmp_path)
+    assert state["model_fix"].status == "failed" and len(fixer.calls) == 3
+    assert [c["model"] for c in fixer.calls] == ["opus"] * 3
+    fix_calls = [c for c in fix_env["deps"].store.model_calls("o/r", 1) if c.stage == "fix"]
+    assert [(c.tier, c.counted) for c in fix_calls] == [("light", 1)] * 3
+
+
 def test_change_outside_the_allowed_files_is_dropped_without_retry(fix_env, tmp_path) -> None:
     use_model(fix_env, FakeModel(rule_answer(print_rule())))
     base = {**BASE_FILES, "tests/test_a.py": "def test_a():\n    assert True\n"}

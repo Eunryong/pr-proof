@@ -97,6 +97,7 @@ def _check(name: str, ok: bool = True) -> preflight.Check:
 def env(tmp_path: Path, monkeypatch):
     directory = tmp_path / "config"
     monkeypatch.setenv(config.CONFIG_DIR_ENV, str(directory))
+    monkeypatch.delenv(files.COMMAND_ENV, raising=False)  # 입구가 넘기는 값. 테스트마다 정한다
     github = FakeGitHub()
     state = {"claude": [True], "smee_calls": 0, "compose": 0}
 
@@ -237,7 +238,8 @@ def test_rejected_token_is_not_saved(env) -> None:
 
 
 def test_interactive_token_is_asked_hidden_again_after_a_bad_one(env) -> None:
-    code, out = _configure(env, interactive=True, repos=[REPO], auth="token", answers=[""],
+    # 묻는 것: 모델(Enter), 웹훅 받는 주소(Enter)
+    code, out = _configure(env, interactive=True, repos=[REPO], auth="token", answers=["", ""],
                            secrets=["github_pat_WRONG", TOKEN])  # fmt: skip
     assert code == 0, out
     assert "Contents: Read and write" in out  # 묻기 전에 필요한 권한을 보인다
@@ -278,7 +280,9 @@ def test_claude_not_logged_in_says_how_and_stops_without_terminal(env) -> None:
 
 def test_claude_login_is_checked_again_on_enter(env) -> None:
     env["state"]["claude"] = [False, True]
-    code, out = _configure(env, interactive=True, repos=[REPO], auth="gh", answers=["", ""])
+    # 묻는 것: Claude 로그인 뒤 Enter, 모델(Enter), 웹훅 받는 주소(Enter)
+    code, out = _configure(env, interactive=True, repos=[REPO], auth="gh",
+                           answers=["", "", ""])  # fmt: skip
     assert code == 0, out
     assert "로그인한 뒤 Enter를 누르면 다시 확인합니다" in out
 
@@ -322,10 +326,23 @@ def test_repo_is_saved_as_github_spells_it(env) -> None:
     assert {tuple(sorted(env["gh"].hooks))} == {tuple(sorted([REPO, OTHER]))}
 
 
-def test_next_command_matches_how_it_was_run(env, monkeypatch) -> None:
+@pytest.mark.parametrize("command", ["pr-proof", "npx pr-proof", "npx ."])
+def test_next_command_matches_how_it_was_run(env, monkeypatch, command: str) -> None:
+    """입구(bin/pr-proof.js)가 부른 방식을 PR_PROOF_COMMAND로 넘기면 안내가 그 방식이다."""
+    monkeypatch.setenv(files.COMMAND_ENV, command)
+    code, out = _configure(env, repos=[REPO], auth="gh")
+    assert code == 0 and f"다음: {command} start\n" in out
+    # 파일에 남는 글은 부른 방식과 상관없이 `pr-proof <명령>`이다
+    text = (env["dir"] / files.CONFIG_FILE).read_text()
+    assert text.startswith("# pr-proof 설정 (configure가 만들었다). repos는 pr-proof add / rm으로")
+    assert (env["dir"] / files.RUN_ENV_FILE).read_text().startswith("# pr-proof start가")
+
+
+def test_next_command_without_the_entry_follows_the_folder(env, monkeypatch) -> None:
+    """`python -m app.setup.cli`로 직접 부르면 clone한 폴더는 `npx .`, 아니면 `pr-proof`다."""
     monkeypatch.setattr(files, "in_clone", lambda: False)
     code, out = _configure(env, repos=[REPO], auth="gh")
-    assert code == 0 and "다음: npx pr-proof start\n" in out and "npx . start" not in out
+    assert code == 0 and "다음: pr-proof start\n" in out and "npx" not in out
 
 
 def test_redis_down_is_started_with_compose(env) -> None:
@@ -375,9 +392,11 @@ def test_dry_run_writes_nothing(env) -> None:
 
 
 def test_interactive_questions(env) -> None:
-    # 인증 방식(Enter: gh 로그인) → repo(틀린 것, 맞는 것) → 웹훅 받는 주소(Enter: smee)
-    code, out = _configure(env, interactive=True, answers=["", "bad", f"{REPO} {OTHER}", ""])
+    # 인증 방식(Enter: gh 로그인) → 모델(Enter: 그대로) → repo(틀린 것, 맞는 것) →
+    # 웹훅 받는 주소(Enter: smee)
+    code, out = _configure(env, interactive=True, answers=["", "", "bad", f"{REPO} {OTHER}", ""])
     assert code == 0, out
+    assert "model" not in yaml.safe_load((env["dir"] / "config.yaml").read_text())
     assert "repo는 `계정/저장소이름` 꼴이나 GitHub 주소로 적습니다" in out
     assert yaml.safe_load((env["dir"] / "config.yaml").read_text())["repos"] == [REPO, OTHER]
     assert "pr-proof가 도는 이 컴퓨터로 들어오는" in out and "repo가 공개인지와 상관없다" in out
@@ -388,6 +407,73 @@ def test_failed_final_check_is_shown_and_fails(env) -> None:
     code, out = _configure(env, repos=[REPO], auth="gh")
     assert code == 1
     assert "Claude 로그인" in out and "실패 → 고치는 방법" in out
+
+
+def test_steps_are_numbered_out_of_nine_with_the_model_after_claude(env) -> None:
+    code, out = _configure(env, repos=[REPO], auth="gh")
+    assert code == 0, out
+    steps = [line for line in out.splitlines() if line.startswith("[")]
+    assert [s.split("]")[0] for s in steps] == [f"[{n}/9" for n in range(1, 10)]
+    assert steps[4] == "[5/9] Claude 로그인" and steps[5] == "[6/9] 모델"
+
+
+def test_without_model_option_nothing_is_asked_or_written(env) -> None:
+    code, out = _configure(env, repos=[REPO], auth="gh")
+    assert code == 0, out
+    assert "모델: 기본값 (판단 sonnet, 수정 haiku→sonnet) (바꾸려면 --model <이름>)" in out
+    assert "model" not in yaml.safe_load((env["dir"] / "config.yaml").read_text())
+    assert flow.SAVED_JUDGMENTS not in out
+
+
+def test_model_option_sets_every_stage_and_keeps_the_rest(env) -> None:
+    code, out = _configure(env, repos=[REPO], auth="gh", model="opus")
+    assert code == 0, out
+    loaded = config.load_config(env["dir"])
+    assert (loaded.model.default, loaded.repos) == ("opus", [REPO])
+    assert "모델: opus" in out and flow.SAVED_JUDGMENTS in out
+    # 다시 돌려도 같다. default를 주면 지운다
+    code, out = _configure(env, repos=[REPO], auth="gh", model="opus")
+    assert code == 0 and "모델: opus (그대로)" in out and flow.SAVED_JUDGMENTS not in out
+    code, out = _configure(env, repos=[REPO], auth="gh", model="default")
+    assert code == 0 and config.load_config(env["dir"]).model.default is None
+
+
+def test_bad_model_option_is_refused_before_anything(env) -> None:
+    code, out = _configure(env, repos=[REPO], auth="gh", model="-x")
+    assert code == 1 and "모델 이름의 꼴이 아닙니다" in out
+    assert not env["dir"].exists()
+
+
+def test_model_option_in_dry_run_writes_nothing(env) -> None:
+    code, out = _configure(env, repos=[REPO], auth="gh", model="opus", dry_run=True)
+    assert code == 0, out
+    assert not env["dir"].exists()
+    assert "(dry-run)" in out and "model.default를 opus로 적는다" in out
+
+
+@pytest.mark.parametrize(
+    ("answers", "expected"),
+    [
+        (["3"], "opus"),
+        (["9", "4"], "haiku"),  # 없는 번호는 다시 묻는다
+        (["5", "-bad", "claude-sonnet-4-5"], "claude-sonnet-4-5"),  # 직접 입력, 틀린 꼴은 다시
+    ],
+)
+def test_interactive_model_choice(env, answers: list[str], expected: str) -> None:
+    code, out = _configure(env, interactive=True, answers=["", *answers, REPO, ""])
+    assert code == 0, out
+    assert config.load_config(env["dir"]).model.default == expected
+    assert "1) 기본값 (판단 sonnet, 수정 haiku→sonnet)" in out and "5) 직접 입력" in out
+
+
+def test_interactive_model_shows_the_saved_one_and_enter_keeps_it(env) -> None:
+    _configure(env, repos=[REPO], auth="gh", model="opus")
+    code, out = _configure(env, interactive=True, answers=["", ""])
+    assert code == 0, out
+    assert "지금: opus" in out and "모델: opus (그대로)" in out
+    assert config.load_config(env["dir"]).model.default == "opus"
+    code, out = _configure(env, interactive=True, answers=["", "1"])  # 1: 기본값으로
+    assert code == 0 and config.load_config(env["dir"]).model.default is None
 
 
 # --- add ---
@@ -401,7 +487,7 @@ def _add(env, repos, **opts):
 
 def test_add_before_configure_says_run_configure(env) -> None:
     code, out = _add(env, [REPO])
-    assert code == 1 and "먼저 npx pr-proof configure" in out
+    assert code == 1 and "먼저 npx . configure" in out  # 테스트는 clone한 폴더에서 돈다
 
 
 def test_add_registers_repo_and_webhook_and_says_restart(env) -> None:
@@ -520,7 +606,7 @@ def test_list_empty_suggests_add(env) -> None:
     env["dir"].mkdir()
     (env["dir"] / "config.yaml").write_text("repos: []\n")
     code, lines = _list(env)
-    assert code == 0 and "npx pr-proof add <repo>" in lines[0]
+    assert code == 0 and "npx . add <repo>" in lines[0]
 
 
 def test_list_check_shows_hook_state_and_survives_failures(env) -> None:
@@ -550,3 +636,70 @@ def test_add_and_rm_ignore_case_and_take_addresses(env) -> None:
     assert code == 0, out
     assert yaml.safe_load((env["dir"] / "config.yaml").read_text())["repos"] == [REPO]
     assert env["gh"].hooks[OTHER] == []
+
+
+# --- model ---
+
+
+def _model(env, name=None):
+    io, lines = _io()
+    code = flow.model(name, io, env["dir"])
+    return code, "\n".join(lines)
+
+
+def test_model_before_configure_says_run_configure(env) -> None:
+    code, out = _model(env)
+    assert code == 1 and "configure를 실행하세요" in out
+
+
+def test_model_shows_sets_and_resets_keeping_other_settings(env) -> None:
+    d = env["dir"]
+    d.mkdir()
+    head = "# 내 설정\nrepos: [octocat/spoon-knife]  # 목록\n"
+    original = head + "model:\n  calls:\n    max_pr_max: 7\n"
+    (d / "config.yaml").write_text(original)
+    code, out = _model(env)
+    assert code == 0 and "파이프라인 쪽 모델: 정하지 않음" in out and "이 값보다 앞섭니다" in out
+
+    code, out = _model(env, "opus")
+    assert code == 0, out
+    assert "모든 단계의 모델을 opus로 정했습니다" in out
+    assert flow.SAVED_JUDGMENTS in out and flow.RESTART in out
+    loaded = config.load_config(d)
+    assert (loaded.model.default, loaded.model.calls.max_pr_max) == ("opus", 7)
+    assert (d / "config.yaml").read_text().startswith(head)
+
+    code, out = _model(env)
+    assert code == 0 and "파이프라인 쪽 모델: opus" in out
+    code, out = _model(env, "opus")
+    assert code == 0 and "이미 opus입니다" in out and flow.RESTART not in out
+
+    code, out = _model(env, "default")
+    assert code == 0 and "단계별 기본값(판단 sonnet, 수정 haiku→sonnet)으로 되돌렸습니다" in out
+    assert (d / "config.yaml").read_text() == original
+    code, out = _model(env, "default")
+    assert code == 0 and "이미 기본값" in out
+
+
+@pytest.mark.parametrize("name", ["-x", "opus 4", "a/b"])
+def test_model_refuses_a_bad_name_with_examples(env, name: str) -> None:
+    env["dir"].mkdir()
+    (env["dir"] / "config.yaml").write_text("repos: []\n")
+    code, out = _model(env, name)
+    assert code == 1 and "모델 이름의 꼴이 아닙니다" in out and "예: sonnet, opus" in out
+    assert (env["dir"] / "config.yaml").read_text() == "repos: []\n"
+
+
+def test_model_view_points_out_a_broken_saved_value(env) -> None:
+    env["dir"].mkdir()
+    (env["dir"] / "config.yaml").write_text("repos: []\nmodel:\n  default: '-x'\n")
+    code, out = _model(env)
+    assert code == 1 and "서버가 시작하지 못합니다" in out
+
+
+def test_model_guidance_uses_the_command_the_user_ran(env, monkeypatch) -> None:
+    monkeypatch.setenv(files.COMMAND_ENV, "pr-proof")
+    env["dir"].mkdir()
+    (env["dir"] / "config.yaml").write_text("repos: []\n")
+    code, out = _model(env)
+    assert code == 0 and "바꾸기: pr-proof model <이름>" in out and "npx" not in out

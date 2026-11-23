@@ -18,6 +18,7 @@ from pydantic import (
     model_validator,
 )
 
+from app.shared.model_names_pure import MODEL_NAME_PATTERN
 from app.worker.rag_switch_pure import DEFAULT_MODE, MODES, RagMode, parse_mode
 
 # docker가 받는 최소 메모리보다 넉넉히 크게. 너무 작으면 컨테이너가 뜨지 않아 환경 오류로 보인다
@@ -25,8 +26,8 @@ MIN_MEMORY_GB: Final = 0.5
 DEFAULT_MAX_RETRIES: Final = 3
 # 회차마다 테스트를 다시 돌리므로 리포 설정으로 무한히 늘리지 못하게. 넘는 값은 이 값으로 줄인다
 MAX_RETRIES_CAP: Final = 5
-# claude --model에 넘기는 이름. `-`로 시작하면 옵션으로 읽히므로 막는다
-MODEL_NAME_PATTERN: Final = r"^[A-Za-z0-9][A-Za-z0-9._\[\]-]*$"
+# 모델을 고르는 단계 (`ModelSettings`의 필드). 파이프라인 쪽 `model.default`가 채우는 것도 이것이다
+STAGE_MODELS: Final = ("rules", "checker", "judge", "decide", "light", "heavy")
 DEFAULT_RULE_DOCS: Final = ("README.md", "CONTRIBUTING.md")
 LINT: Final = "lint"
 # 2단계에 없앤 설정 (10절 "v1 스키마에서 바뀐 키"). 있으면 무시하고 "설정:"에 알린다
@@ -249,6 +250,22 @@ def settings_notes(text: str | None) -> list[str]:
             "`rules.disabled`에 적습니다"
         )
     return notes
+
+
+def with_default_model(config: RepoConfig, default: str | None) -> RepoConfig:
+    """파이프라인 쪽 `model.default`를 저장소가 적지 않은 단계에만 채운다 (10절 "앞서는 순서").
+
+    앞서는 순서: 저장소의 `.pipeline.yaml`이 단계별로 적은 값 → 파이프라인 쪽 값 → 코드의 기본값.
+    적었는지는 pydantic의 `model_fields_set`으로 가린다(기본값으로 채운 필드는 들지 않는다). 파일을
+    읽지 못해 기본값으로 읽은 저장소는 아무 단계도 적지 않은 것으로 본다.
+    """
+    if default is None:
+        return config
+    unset = {stage: default for stage in STAGE_MODELS if stage not in config.model.model_fields_set}
+    if not unset:
+        return config
+    # 채운 단계는 model_copy가 fields_set에 넣는다. 두 번 불러도 결과가 같다
+    return config.model_copy(update={"model": config.model.model_copy(update=unset)})
 
 
 def fix_limits(requested: FixSettings, *, max_retries: int = MAX_RETRIES_CAP) -> FixSettings:

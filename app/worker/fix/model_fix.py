@@ -75,7 +75,15 @@ from app.worker.generated_tests_pure import (
     render_now,
 )
 from app.worker.lang.python import read_sources
-from app.worker.loop import LoopPolicy, LoopState, Verdict, WriteFailed, WriteResult, build_loop
+from app.worker.loop import (
+    HEAVY_AFTER_FAILURES,
+    LoopPolicy,
+    LoopState,
+    Verdict,
+    WriteFailed,
+    WriteResult,
+    build_loop,
+)
 from app.worker.mcp_pure import ToolUsage
 from app.worker.memory import FindsRecords
 from app.worker.rag_pure import (
@@ -554,7 +562,12 @@ def fix_violations(
         passed.append(_Passed(explanation, tuple(files), verification, check.tests, untested))
         return Verdict("pass")
 
-    policy_ = LoopPolicy(max_attempts=max_attempts, may_call=budget.may_call(PrScope()))
+    # 두 단계가 같은 모델이면(파이프라인 쪽 `model.default` 하나로 정한 때) 올려도 모델이 같아
+    # 호출 수만 셋으로 센다. 올리지 않고 가벼운 단계로 회차를 채운다
+    heavy_after = None if models.heavy == models.light else HEAVY_AFTER_FAILURES
+    policy_ = LoopPolicy(
+        max_attempts=max_attempts, may_call=budget.may_call(PrScope()), heavy_after=heavy_after
+    )
     try:
         final = build_loop("fix_model", write, verify, policy_).invoke({"task": {}})
     except _Cancelled:

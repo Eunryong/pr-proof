@@ -11,9 +11,10 @@ from pathlib import Path
 from typing import Final
 
 import yaml
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from app.shared.embed_models_pure import E5_SMALL, EMBED_MODELS
+from app.shared.model_names_pure import MODEL_NAME_PATTERN
 
 DEFAULT_CONFIG_DIR: Final = Path.home() / ".config" / "pipeline"
 CONFIG_DIR_ENV: Final = "PIPELINE_CONFIG_DIR"
@@ -49,6 +50,9 @@ class CallMaxima(BaseModel):
 
 
 class ModelConfig(BaseModel):
+    # 이 컴퓨터가 처리하는 모든 저장소의 모든 단계에 쓸 모델 (DESIGN.md 10절 "파이프라인 쪽 설정").
+    # 저장소의 `.pipeline.yaml`이 단계별로 적은 값이 앞서고, 없으면 코드의 단계별 기본값이다
+    default: str | None = Field(default=None, pattern=MODEL_NAME_PATTERN)
     calls: CallMaxima = CallMaxima()
 
 

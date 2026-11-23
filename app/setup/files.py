@@ -6,7 +6,7 @@
 | `webhook_secret` | 웹훅 비밀값 | 600 |
 | `github_token` | 토큰 방식의 GitHub 토큰 (`app/shared/github_auth.py`) | 600 |
 | `webhook_url` | 웹훅 받는 주소. smee 주소면 start가 smee-client를 띄운다 | 600 |
-| `pr-proof.env` | `npx pr-proof start`의 실행 설정 (`API_PORT`). 비밀값은 넣지 않는다 | |
+| `pr-proof.env` | `pr-proof start`의 실행 설정 (`API_PORT`). 비밀값은 넣지 않는다 | |
 
 실행 환경 폴더(`PR_PROOF_HOME`, 기본 `~/.cache/pipeline/runtime`)에는 start가 만드는 Procfile과,
 npm 패키지로 깔았을 때의 venv가 있다(bin/pr-proof.js와 같은 규칙).
@@ -14,6 +14,7 @@ npm 패키지로 깔았을 때의 venv가 있다(bin/pr-proof.js와 같은 규�
 
 import os
 import tempfile
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Final
 
@@ -27,6 +28,11 @@ PORT_KEY: Final = "API_PORT"
 DEFAULT_PORT: Final = 8765
 SMEE_PREFIX: Final = "https://smee.io/"
 RUNTIME_HOME_ENV: Final = "PR_PROOF_HOME"
+# 입구(bin/pr-proof.js)가 자기가 불린 방식으로 넘기는 명령 앞부분
+# (`pr-proof`, `npx pr-proof`, `npx .`)
+COMMAND_ENV: Final = "PR_PROOF_COMMAND"
+# 파일에 남는 글(config.yaml, pr-proof.env의 주석)에 쓰는 명령. 실행한 방식과 상관없다
+FILE_COMMAND: Final = "pr-proof"
 
 
 def config_dir() -> Path:
@@ -90,15 +96,31 @@ def read_port(directory: Path | None = None) -> int:
 
 
 def in_clone() -> bool:
-    """저장소를 clone한 폴더에서 도는지(`npx . <명령>`). 아니면 npm으로 받은 패키지다
-    (`npx pr-proof <명령>`). 입구(bin/pr-proof.js)의 venv 위치와 같은 기준이다."""
+    """저장소를 clone한 폴더에서 도는지. 아니면 npm으로 받은 패키지다. 입구(bin/pr-proof.js)의
+    venv 위치와 같은 기준이다."""
     return (PACKAGE_ROOT / ".git").exists()
+
+
+def command_prefix(environ: Mapping[str, str] | None = None) -> str:
+    """화면의 안내에 쓸 명령 앞부분. 입구가 넘긴 `PR_PROOF_COMMAND`(사용자가 친 방식: 전역 설치면
+    `pr-proof`, npx면 `npx pr-proof`, clone한 폴더에서 `npx .`)를 쓴다. 없으면(`python -m
+    app.setup.cli`로 직접 부름) clone한 폴더면 `npx .`, 아니면 `pr-proof`다."""
+    source = os.environ if environ is None else environ
+    given = source.get(COMMAND_ENV, "").strip()
+    if given:
+        return given
+    return "npx ." if in_clone() else FILE_COMMAND
+
+
+def command(args: str, environ: Mapping[str, str] | None = None) -> str:
+    """안내에 쓸 명령 한 줄 (예: `command("configure")` → `pr-proof configure`)."""
+    return f"{command_prefix(environ)} {args}"
 
 
 def write_port(port: int, directory: Path | None = None) -> None:
     path = (directory or config_dir()) / RUN_ENV_FILE
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     path.write_text(
-        "# npx pr-proof start가 honcho에 넘기는 실행 설정. 비밀값은 넣지 않는다.\n"
+        f"# {FILE_COMMAND} start가 honcho에 넘기는 실행 설정. 비밀값은 넣지 않는다.\n"
         f"{PORT_KEY}={port}\n"
     )

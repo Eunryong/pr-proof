@@ -1,14 +1,14 @@
-"""`npx pr-proof configure | add | rm | list`의 흐름.
+"""`pr-proof configure | add | rm | list | model`의 흐름.
 
 configure의 단계 (docs/design/08-security.md "설치와 인증"):
 1 프로그램 확인 → 2 Docker가 켜져 있는지 → 3 설치(포트, Redis. venv는 입구가 만든다) →
-4 GitHub 인증 → 5 Claude 로그인 → 6 repo 등록과 권한 확인 → 7 웹훅(비밀값, 받는 주소, 등록) →
-8 끝 확인 표.
+4 GitHub 인증 → 5 Claude 로그인 → 6 모델 → 7 repo 등록과 권한 확인 →
+8 웹훅(비밀값, 받는 주소, 등록) → 9 끝 확인 표.
 
-묻는 것은 넷이다: repo, 인증 방식, 토큰(토큰 방식일 때), 웹훅 받는 주소. 터미널이 아니면 묻지 않고,
-필요한 값이 없으면 무엇이 없는지 말하고 실패한다. 여러 번 돌려도 같다: 목록에 없는 repo만 더하고,
-있는 비밀값과 저장한 주소는 덮어쓰지 않는다. `dry_run`이면 파일도 GitHub도 쓰지 않고 할 일만 보인다
-(GitHub 읽기는 한다).
+묻는 것은 다섯이다: 인증 방식, 토큰(토큰 방식일 때), 모델, repo, 웹훅 받는 주소. 터미널이 아니면
+묻지 않고, 필요한 값이 없으면 무엇이 없는지 말하고 실패한다. 여러 번 돌려도 같다: 목록에 없는 repo만
+더하고, 있는 비밀값과 저장한 주소는 덮어쓰지 않는다. `dry_run`이면 파일도 GitHub도 쓰지 않고 할 일만
+보인다(GitHub 읽기는 한다).
 
 바깥(프로그램 찾기, gh, Docker, Redis, smee.io, 포트, claude)은 `Deps`로 받는다. 테스트가 바꿔
 끼운다.
@@ -41,11 +41,18 @@ from app.worker.sandbox.docker_cli import minimal_env
 PROGRAMS: Final = ("docker", "git", "gh", "claude")
 OPERATIONS_URL: Final = "https://github.com/Eunryong/pr-proof/blob/main/docs/OPERATIONS.md"
 CONFIG_HEADER: Final = (
-    "# pr-proof 설정 (configure가 만들었다). repos는 npx pr-proof add / rm으로 고친다.\n"
+    f"# pr-proof 설정 (configure가 만들었다). repos는 {files.FILE_COMMAND} add / rm으로, "
+    f"model.default는 {files.FILE_COMMAND} model로 고친다.\n"
 )
+STEPS: Final = 9
 RESTART: Final = "도는 서버는 config.yaml을 시작할 때만 읽습니다. 서버가 돌고 있으면 다시 띄우세요."
 LEFT_ALONE: Final = (
     "그 repo의 PR 코멘트, 열린 수정안 PR, 데이터 폴더의 기록(DB, 캐시)은 그대로 둡니다."
+)
+MODEL_CHOICES: Final = ("sonnet", "opus", "haiku")  # configure가 번호로 보이는 이름 (2–4번)
+SAVED_JUDGMENTS: Final = (
+    "저장한 판단(규칙 읽기, 검사기, 위반 판단, 수정)은 저장 키에 모델이 들어 있어, 모델이 바뀐 "
+    "단계는 다음 검사에서 다시 묻습니다 (그만큼 사용량이 듭니다)."
 )
 
 
@@ -84,6 +91,8 @@ class Options:
     dry_run: bool = False
     manual_webhook: bool = False  # 웹훅을 API로 등록하지 않고 손으로 등록할 값만 보인다
     yes: bool = False  # rm: 확인을 묻지 않는다
+    # configure: 모든 단계에 쓸 모델. "default"면 지운다. None이면 터미널에서 묻고, 아니면 그대로
+    model: str | None = None
     check: bool = False  # list: 웹훅까지 본다
 
 
@@ -196,7 +205,7 @@ def _need_configured(directory: Path, io: Io) -> None:
         not (directory / files.CONFIG_FILE).is_file()
         or not (directory / config.WEBHOOK_SECRET).is_file()
     ):
-        io.say("설정이 없습니다. 먼저 npx pr-proof configure를 실행하세요.")
+        io.say(_need_configure())
         raise Stop
 
 
@@ -315,8 +324,12 @@ def add_to_config(directory: Path, repos: Sequence[str], io: Io, dry_run: bool) 
 # --- configure ---
 
 
+def _need_configure() -> str:
+    return f"설정이 없습니다. 먼저 {files.command('configure')}를 실행하세요."
+
+
 def _step(io: Io, number: int, title: str) -> None:
-    io.say(f"\n[{number}/8] {title}")
+    io.say(f"\n[{number}/{STEPS}] {title}")
 
 
 def _programs(io: Io, deps: Deps) -> None:
@@ -456,17 +469,90 @@ def _claude(io: Io, deps: Deps) -> None:
                "사용량으로 나갑니다.")  # fmt: skip
         io.say("  다른 터미널에서 claude를 실행해 /login 하세요.")
         if not io.interactive:
-            io.say("  로그인한 뒤 npx pr-proof configure를 다시 실행하세요.")
+            io.say(f"  로그인한 뒤 {files.command('configure')}를 다시 실행하세요.")
             raise Stop
         answer = io.ask("  로그인한 뒤 Enter를 누르면 다시 확인합니다 (그만두려면 q, 나중에 "
-                        "npx pr-proof configure를 다시 실행해도 됩니다): ")  # fmt: skip
+                        f"{files.command('configure')}를 다시 실행해도 됩니다): ")  # fmt: skip
         if answer.strip() == "q":
             raise Stop
     io.say("  로그인되어 있음")
 
 
+def _model_label(name: str | None) -> str:
+    return name if name is not None else f"기본값 ({pure.default_models_label()})"
+
+
+def current_model(directory: Path, io: Io) -> str | None:
+    """config.yaml의 `model.default`. 읽지 못하면 이유를 말하고 Stop."""
+    try:
+        return pure.config_default_model(_config_text(directory))
+    except pure.ConfigEditError as e:
+        io.say(f"  {e}")
+        raise Stop from e
+
+
+def save_model(directory: Path, name: str | None, io: Io, dry_run: bool) -> None:
+    """config.yaml의 `model.default`를 name으로 적는다(None이면 지운다). 다른 설정과 주석은 둔다.
+    파일이 없으면 configure가 만드는 머리말과 함께 만든다."""
+    text = _config_text(directory) or CONFIG_HEADER
+    try:
+        new_text = pure.set_default_model(text, name)
+    except pure.ConfigEditError as e:
+        io.say(f"  {e}")
+        raise Stop from e
+    path = directory / files.CONFIG_FILE
+    if dry_run:
+        what = f"model.default를 {name}로 적는다" if name else "model.default를 지운다"
+        io.say(f"  (dry-run) {path}의 {what}")
+    else:
+        _write_config(directory, new_text)
+
+
+def _ask_model(io: Io, current: str | None) -> str | None:
+    """터미널에서 고른 모델. Enter면 지금 값 그대로다."""
+    io.say("  모든 단계에 쓸 모델을 고릅니다. 저장소의 .pipeline.yaml에 단계별로 적은 값이 "
+           "앞섭니다.")  # fmt: skip
+    io.say(f"    1) 기본값 ({pure.default_models_label()})")
+    for number, name in enumerate(MODEL_CHOICES, start=2):
+        io.say(f"    {number}) {name}")
+    typed = len(MODEL_CHOICES) + 2
+    io.say(f"    {typed}) 직접 입력 (claude --model이 받는 이름)")
+    io.say(f"  지금: {_model_label(current)}")
+    answer = _ask_until(
+        io, "  고르기 [Enter: 그대로]: ",
+        lambda a: None if a == "" or (a.isdigit() and 1 <= int(a) <= typed)
+        else f"1에서 {typed} 사이의 번호를 적습니다",
+    )  # fmt: skip
+    if answer == "":
+        return current
+    if answer == "1":
+        return None
+    if int(answer) == typed:
+        return _ask_until(io, "  모델 이름: ", pure.model_name_problem)
+    return MODEL_CHOICES[int(answer) - 2]
+
+
+def _model_step(directory: Path, io: Io, opts: Options) -> None:
+    _step(io, 6, "모델")
+    current = current_model(directory, io)
+    if opts.model is not None:
+        wanted = None if opts.model == pure.DEFAULT_MODEL_WORD else opts.model
+    elif io.interactive:
+        wanted = _ask_model(io, current)
+    else:
+        io.say(f"  모델: {_model_label(current)} (바꾸려면 --model <이름>)")
+        return
+    if wanted == current:
+        io.say(f"  모델: {_model_label(current)} (그대로)")
+        return
+    save_model(directory, wanted, io, opts.dry_run)
+    if not opts.dry_run:
+        io.say(f"  모델: {_model_label(wanted)}")
+    io.say(f"  {SAVED_JUDGMENTS}")
+
+
 def _repos(directory: Path, io: Io, run: gh.Runner, opts: Options) -> list[str]:
-    _step(io, 6, "repo 등록과 권한 확인")
+    _step(io, 7, "repo 등록과 권한 확인")
     repos = list(dict.fromkeys(pure.repo_name(r) for r in opts.repos))
     try:
         existing = pure.config_repos(_config_text(directory))
@@ -538,7 +624,7 @@ def _webhook_url(directory: Path, io: Io, deps: Deps, opts: Options) -> str:
 
 def _webhook(directory: Path, io: Io, deps: Deps, run: gh.Runner, repos: Sequence[str],
              opts: Options) -> bool:  # fmt: skip
-    _step(io, 7, "웹훅")
+    _step(io, 8, "웹훅")
     secret_path = directory / config.WEBHOOK_SECRET
     if secret_path.exists():
         io.say(f"  비밀값: {secret_path} (있는 것을 씁니다)")
@@ -552,7 +638,7 @@ def _webhook(directory: Path, io: Io, deps: Deps, run: gh.Runner, repos: Sequenc
 
 
 def _final(io: Io, deps: Deps, redis_url: str) -> bool:
-    _step(io, 8, "끝 확인 (서버가 시작할 때 하는 확인과 같다)")
+    _step(io, 9, "끝 확인 (서버가 시작할 때 하는 확인과 같다)")
     checks = deps.checks(redis_url)
     io.say(pure.check_table([(c.name, c.ok, c.hint) for c in checks]))
     return all(c.ok for c in checks)
@@ -563,6 +649,11 @@ def configure(opts: Options, io: Io, deps: Deps, directory: Path | None = None) 
     if problem := (opts.repos and _repos_problem(opts.repos)):
         io.say(problem)
         return 1
+    if opts.model not in (None, pure.DEFAULT_MODEL_WORD) and (
+        problem := pure.model_name_problem(opts.model)
+    ):
+        io.say(problem)
+        return 1
     if opts.dry_run:
         io.say("dry-run: 파일과 GitHub에 쓰지 않고 할 일만 보입니다.")
     try:
@@ -570,6 +661,7 @@ def configure(opts: Options, io: Io, deps: Deps, directory: Path | None = None) 
         redis_url = _install(directory, io, deps, opts)
         run = _auth(directory, io, deps, opts)
         _claude(io, deps)
+        _model_step(directory, io, opts)
         repos = _repos(directory, io, run, opts)
         hooks_ok = _webhook(directory, io, deps, run, repos, opts)
     except Stop:
@@ -581,8 +673,9 @@ def configure(opts: Options, io: Io, deps: Deps, directory: Path | None = None) 
     elif not hooks_ok:
         io.say("웹훅을 모두 등록하지는 못했습니다. 위의 값으로 손으로 등록하세요.")
     if not checks_ok:
-        io.say("끝 확인에 실패한 줄이 있습니다. 고친 뒤 npx pr-proof configure를 다시 실행하세요.")
-    io.say(f"다음: {'npx . start' if files.in_clone() else 'npx pr-proof start'}")
+        io.say(f"끝 확인에 실패한 줄이 있습니다. 고친 뒤 {files.command('configure')}를 다시 "
+               "실행하세요.")  # fmt: skip
+    io.say(f"다음: {files.command('start')}")
     io.say(f"계속 띄워 두려면: {OPERATIONS_URL}")
     # 손으로 등록하라고 한 것(--manual-webhook)은 실패가 아니다
     return 0 if checks_ok and (hooks_ok or opts.manual_webhook) else 1
@@ -630,7 +723,7 @@ def remove(opts: Options, io: Io, deps: Deps, directory: Path | None = None) -> 
         return 1
     path = directory / files.CONFIG_FILE
     if not path.is_file():
-        io.say("설정이 없습니다. 먼저 npx pr-proof configure를 실행하세요.")
+        io.say(_need_configure())
         return 1
     text = path.read_text()
     current = pure.config_repos(text)
@@ -705,7 +798,7 @@ def list_repos(opts: Options, io: Io, deps: Deps, directory: Path | None = None)
     directory = directory or files.config_dir()
     path = directory / files.CONFIG_FILE
     if not path.is_file():
-        io.say("설정이 없습니다. 먼저 npx pr-proof configure를 실행하세요.")
+        io.say(_need_configure())
         return 1
     try:
         repos = pure.config_repos(path.read_text())
@@ -713,7 +806,7 @@ def list_repos(opts: Options, io: Io, deps: Deps, directory: Path | None = None)
         io.say(str(e))
         return 1
     if not repos:
-        io.say("처리하는 repo가 없습니다. 더하려면: npx pr-proof add <repo>")
+        io.say(f"처리하는 repo가 없습니다. 더하려면: {files.command('add <repo>')}")
         return 0
     if not opts.check:
         for repo in repos:
@@ -732,4 +825,49 @@ def list_repos(opts: Options, io: Io, deps: Deps, directory: Path | None = None)
         except gh.SetupGitHubError:
             status = "웹훅을 확인하지 못함 (GitHub 조회 실패)"
         io.say(f"{repo}  {status}")
+    return 0
+
+
+# --- model ---
+
+
+def model(name: str | None, io: Io, directory: Path | None = None) -> int:
+    """`model`: 보기. `model <이름>`: 모든 단계를 그 모델로. `model default`: 기본값으로.
+
+    이름은 꼴만 본다. 그 모델이 실제로 있는지는 모델을 불러야 알 수 있어(사용량이 든다) 보지
+    않는다. 틀린 이름이면 첫 검사의 모델 호출이 실패하고 결과 코멘트에 그 단계가 실패했다고 나온다.
+    """
+    directory = directory or files.config_dir()
+    if not (directory / files.CONFIG_FILE).is_file():
+        io.say(_need_configure())
+        return 1
+    try:
+        current = current_model(directory, io)
+    except Stop:
+        return 1
+    if name is None:
+        io.say(pure.model_view(current, files.command_prefix()))
+        if current is not None and (problem := pure.model_name_problem(current)):
+            io.say(f"\nconfig.yaml의 model.default가 틀려 서버가 시작하지 못합니다. {problem}")
+            return 1
+        return 0
+    wanted = None if name == pure.DEFAULT_MODEL_WORD else name
+    if wanted is not None and (problem := pure.model_name_problem(wanted)):
+        io.say(problem)
+        return 1
+    if wanted == current:
+        io.say(f"이미 {_model_label(current)}입니다. 바꾸지 않았습니다.")
+        return 0
+    try:
+        save_model(directory, wanted, io, dry_run=False)
+    except Stop:
+        return 1
+    if wanted is None:
+        io.say(f"파이프라인 쪽 모델을 지워 단계별 기본값({pure.default_models_label()})으로 "
+               "되돌렸습니다.")  # fmt: skip
+    else:
+        io.say(f"모든 단계의 모델을 {wanted}로 정했습니다 (config.yaml의 model.default). "
+               "저장소의 .pipeline.yaml에 단계별로 적은 값은 이 값보다 앞섭니다.")  # fmt: skip
+    io.say(SAVED_JUDGMENTS)
+    io.say(RESTART)
     return 0

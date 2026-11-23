@@ -6,7 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from app.worker import base_config, repo
+from app.shared import config
+from app.worker import base_config, repo, update
 from app.worker.access_pure import AccessSettings
 
 
@@ -248,3 +249,29 @@ def test_access_notes_are_shown_with_the_other_settings(repo_dir: Path) -> None:
     base = _commit(repo_dir, {".pipeline.yaml": "access:\n  bots: [alice]\n"})
     (note,) = base_config.load(repo_dir, base, max_memory_gb=4).problems
     assert "`access.bots`" in note and "alice" not in note
+
+
+def test_pipeline_default_model_fills_stages_the_base_config_leaves_out(repo_dir: Path) -> None:
+    base = _commit(repo_dir, {".pipeline.yaml": "model:\n  judge: haiku\n"})
+    config = base_config.load(repo_dir, base, max_memory_gb=4, default_model="opus")
+    assert (config.repo.model.judge, config.repo.model.rules) == ("haiku", "opus")
+    assert (config.repo.model.light, config.repo.model.heavy) == ("opus", "opus")
+    plain = base_config.load(repo_dir, base, max_memory_gb=4)
+    assert (plain.repo.model.rules, plain.repo.model.light) == ("sonnet", "haiku")
+
+
+def test_comment_path_settings_take_the_pipeline_default_model(
+    tmp_path: Path, remote: Path
+) -> None:
+    base = _commit(remote, {".pipeline.yaml": "model:\n  decide: haiku\n"})
+    config = base_config.load_repo(tmp_path / "data", "o/r", base, url=str(remote),
+                                   default_model="opus")  # fmt: skip
+    assert (config.model.decide, config.model.rules) == ("haiku", "opus")
+
+
+def test_flow_context_carries_the_pipeline_default_model(env) -> None:
+    """서버가 읽은 파이프라인 설정의 `model.default`가 base 설정을 읽는 곳까지 간다."""
+    deps = env["deps"]
+    assert update.flow_context(deps, 0, None).default_model is None
+    deps.settings = deps.settings.model_copy(update={"model": config.ModelConfig(default="opus")})
+    assert update.flow_context(deps, 0, None).default_model == "opus"

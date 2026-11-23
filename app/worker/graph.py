@@ -251,6 +251,8 @@ class FlowContext:
     changes_diff: bytes = b""  # 테스트 전에 읽은 PR의 diff (테스트 뒤에는 샌드박스가 바꿀 수 있다)
     run_tests: Callable[..., PytestRun] | None = None  # 없으면 run_pr_tests
     rag_model: str = E5_SMALL  # 파이프라인 쪽 `rag.embed_model`. 저장소가 검색을 켰을 때만 쓴다
+    # 파이프라인 쪽 `model.default`. 저장소의 `.pipeline.yaml`이 적지 않은 단계의 모델이다
+    default_model: str | None = None
 
 
 def _is_stale_for(ctx: FlowContext, job: PRJob) -> Callable[[], bool]:
@@ -315,7 +317,9 @@ def _enter_checkout(ctx: FlowContext, job: PRJob) -> None:
     ctx.worktree = co.path
     ctx.merge_base = co.merge_base
     ctx.dirty = False
-    ctx.base = base_config.load(co.path, job.base_sha, ctx.max_memory_gb)
+    ctx.base = base_config.load(
+        co.path, job.base_sha, ctx.max_memory_gb, default_model=ctx.default_model
+    )
     try:  # 테스트 전에 읽어 둔다. 테스트 뒤에는 샌드박스의 PR 코드가 바꿀 수 있다
         ctx.changes_diff = (co.path / CHANGES_DIFF).read_bytes()
     except OSError:
