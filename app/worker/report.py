@@ -153,7 +153,9 @@ def _footer(head_sha: str, seconds: float | None = None, *, from_sync: bool = Fa
     if seconds is not None:
         parts.append(f"{seconds:.0f}초")
     if from_sync:
-        parts.append("동기화로 처리됨 (웹훅 누락)")
+        # 동기화가 넣은 작업이다. 웹훅이 빠졌다고 적지 않는다: 등록하기 전에 열려 있던 PR이나
+        # 새 판으로 다시 검사하는 PR도 동기화가 넣는다 (4.1)
+        parts.append("동기화로 처리됨")
     return "<sub>" + " · ".join(parts) + "</sub>"
 
 

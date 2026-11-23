@@ -54,6 +54,13 @@ def redact(text: str, env: Mapping[str, str]) -> str:
     return text.replace(value, REDACTED) if value else text
 
 
+def failure_detail(stderr: str, stdout: str, returncode: int, env: Mapping[str, str]) -> str:
+    """gh가 실패했을 때 오류 글에 실을 까닭. stderr가 비면 stdout의 끝을 쓰고(gh api는 오류 응답을
+    stdout에 찍기도 한다), 둘 다 비어도 종료 코드는 남긴다. 토큰은 지운 뒤 자른다."""
+    text = redact(stderr.strip() or stdout.strip(), env)[-500:]
+    return f"{text} (종료 코드 {returncode})" if text else f"종료 코드 {returncode}, 출력 없음"
+
+
 def status_args(directory: Path | None = None) -> list[str]:
     """인증 확인 명령. 토큰 방식은 GH_TOKEN 계정만 본다(`--active`). 저장된 다른 계정의 상태로
     통과하거나 실패하지 않게 한다. gh 로그인 방식은 지금과 같다."""
