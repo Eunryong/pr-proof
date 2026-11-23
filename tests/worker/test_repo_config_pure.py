@@ -318,3 +318,12 @@ def test_pr_description_check_is_on_by_default_and_can_be_turned_off() -> None:
     assert problem is None and config.pr_description.enabled is False
     _, problem = parse_repo_config("pr_description:\n  enabled: maybe\n")
     assert problem is not None and "pr_description.enabled" in problem
+
+
+def test_linked_issues_check_is_on_by_default_and_can_be_turned_off() -> None:
+    assert parse_repo_config(None)[0].linked_issues.enabled is True
+    config, problem = parse_repo_config("linked_issues:\n  enabled: false\n")
+    assert problem is None and config.linked_issues.enabled is False
+    assert config.pr_description.enabled is True  # 서로 따로 끈다
+    _, problem = parse_repo_config("linked_issues:\n  enabled: maybe\n")
+    assert problem is not None and "linked_issues.enabled" in problem

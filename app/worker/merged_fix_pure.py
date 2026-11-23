@@ -17,7 +17,7 @@ from app.worker.doc_rules_pure import Found, RuleJudged
 from app.worker.fix.fix_decision_pure import Decided
 from app.worker.fix.fix_pure import MECHANICAL_BUNDLE, MechanicalFix
 from app.worker.fix.model_fix_pure import MODEL_BUNDLE, ModelFix
-from app.worker.rules import pr_check_pure, pr_description_pure
+from app.worker.rules import linked_issues_pure, pr_check_pure, pr_description_pure
 from app.worker.rules.pr_description_pure import PrDescription
 from app.worker.test_run_pure import PytestRun
 
@@ -57,6 +57,7 @@ class VerifiedCheck:
     fix: MechanicalFix | ModelFix | None  # 머지한 묶음의 수정 결과
     pr_checks: object  # PR 단위 확인의 결과. PR 규칙이 없으면 None
     pr_description: object = None  # PR 설명 확인의 결과. 끈 저장소면 None
+    linked_issues: object = None  # 이슈 확인의 결과. 끈 저장소면 None
 
 
 def merged_proposal(proposals: Sequence[Proposal], head: str) -> Proposal | str:
@@ -125,7 +126,11 @@ def state_problem(
     (`unverified_count`).
 
     PR 설명 확인의 결과도 옮겨 적는다(`carried_description`). PR 글도 사람의 커밋도 그대로이고
-    수정안의 변경은 PR의 변경으로 세지 않는다. 호출 상한으로 견주지 못했으면 처음부터 검사한다."""
+    수정안의 변경은 PR의 변경으로 세지 않는다. 호출 상한으로 견주지 못했으면 처음부터 검사한다.
+
+    이슈 확인의 결과도 그대로 옮겨 적는다. 이슈 글은 그대로이고 항목은 줄을 가리키지 않으며,
+    수정안의 변경은 사람이 보고 머지한 규칙 수정이다(다음 커밋의 검사가 그때의 코드로 다시 견준다).
+    호출 상한으로 견주지 못했으면 처음부터 검사한다."""
     if not check.finished:
         return "검증한 커밋의 검사가 끝까지 가지 않음"
     found, decisions, fix = check.found, check.decisions, check.fix
@@ -141,6 +146,8 @@ def state_problem(
         return "호출 상한으로 남은 PR 단위 판단이 있음"
     if pr_description_pure.description_left(check.pr_description):
         return "호출 상한으로 견주지 못한 PR 설명 확인이 있음"
+    if linked_issues_pure.issues_left(check.linked_issues):
+        return "호출 상한으로 견주지 못한 이슈 확인이 있음"
     if any(isinstance(o, RuleJudged) and o.left for o in found.outcomes):
         return "판단하지 못한 hunk가 남음"
     if any(d.reason == "call_limit" for d in decisions.decisions):

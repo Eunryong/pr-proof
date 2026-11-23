@@ -1,15 +1,15 @@
 """워커의 작업 흐름 (LangGraph, docs/DESIGN.md 5.1).
 
     체크아웃 → 규칙 읽기 → 검사 방법 정하기 → 위반 찾기 → 모델 판단 → PR 단위 확인 → PR 설명 확인
-        → 테스트 → 수정 판단 → 코멘트
+        → 이슈 확인 → 테스트 → 수정 판단 → 코멘트
         ─┬─ (고칠 위반 없음) → 끝
          ├─ (기본: 바로) 기계적 수정 → 수정안 PR ─┬→ 수정 코멘트 ─┬─ (남은 묶음 없음) → 끝
          ├─ (기본: 바로) 모델 수정 → 수정안 PR ───┘              └─ 다른 묶음의 대기·수정
          └─ 승인 대기(interrupt, `require_approval: true`) ─ /fix <묶음>
 
 규칙은 base의 문서와 도구 설정(ruff 설정)에서 나온다. 규칙이 하나도 없으면 규칙 검사를 하지 않고
-PR 설명 확인과 테스트로 넘어간다. 테스트 뒤에 위반마다 수정 판단(fix/skip과 이유, 4.6)을 정해
-코멘트에 보인다.
+PR 설명 확인, 이슈 확인과 테스트로 넘어간다. 테스트 뒤에 위반마다 수정 판단(fix/skip과 이유, 4.6)을
+정해 코멘트에 보인다.
 `fix`로 정한 위반은 수정 방법별 묶음(`mechanical`: 도구의 수정, `model`: 모델이 검사기와 샌드박스
 테스트를 도구로 부르며 고침, 3.1의 C7)으로 고치고 출구 검사를 통과한 것만 묶음마다 수정안 PR로
 올린다. 파이프라인이 정한 규칙의 검사와 수정은 없다 (2.2).
@@ -21,7 +21,8 @@ PR 설명 확인과 테스트로 넘어간다. 테스트 뒤에 위반마다 수
 있으면 PR 단위 확인부터 다시 돈다.
 
 PR 단위 확인(4.5 끝)의 결과는 `pr_checks`에만 있고 알리기만 한다. PR 설명 확인(PR 글과 diff 견주기,
-4.5 끝)의 결과는 `pr_description`에만 있고 역시 알리기만 한다. 수정 판단과 수정 묶음은
+4.5 끝)의 결과는 `pr_description`에, 이슈 확인(연결된 이슈가 요구한 것과 diff 견주기, 4.5 끝)의
+결과는 `linked_issues`에만 있고 역시 알리기만 한다. 수정 판단과 수정 묶음은
 `doc_rules`(코드 위반)만 읽는다 (4-13).
 
 각 단계 사이에서 이 작업의 커밋이 아직 PR의 최신 커밋인지 확인하고, 낡았으면 멈춘다.
@@ -93,6 +94,8 @@ from app.worker.repo_config_pure import call_limits
 from app.worker.rules import (
     detect,
     doc_rules,
+    linked_issues,
+    linked_issues_pure,
     pr_check,
     pr_check_pure,
     pr_description,
@@ -101,6 +104,7 @@ from app.worker.rules import (
     run_check_pure,
 )
 from app.worker.rules.doc_rules import Runtime as DocRuntime
+from app.worker.rules.linked_issues_pure import LinkedIssues
 from app.worker.rules.pr_check_pure import PrChecks, PrFacts
 from app.worker.rules.pr_description_pure import PrDescription
 from app.worker.sandbox import container, docker_cli, toolcache
@@ -119,6 +123,7 @@ DETECT: Final = "detect"
 JUDGE: Final = "judge"
 PR_CHECK: Final = "pr_check"
 PR_DESCRIPTION: Final = "pr_description"
+LINKED_ISSUES: Final = "linked_issues"
 TEST: Final = "test"
 DECIDE: Final = "decide"
 FIX_MECHANICAL: Final = "fix_mechanical"
@@ -157,6 +162,7 @@ _STATE_TYPES: Final = (
     *rag_switch_pure.STATE_TYPES,
     *pr_check_pure.STATE_TYPES,
     *pr_description_pure.STATE_TYPES,
+    *linked_issues_pure.STATE_TYPES,
 )
 
 
@@ -201,6 +207,8 @@ class FlowState(TypedDict, total=False):
     pr_checks: PrChecks
     # PR 설명 확인의 결과 (4.5 끝). `.pipeline.yaml`로 끄지 않은 검사만. 알리기만 한다
     pr_description: PrDescription
+    # 이슈 확인의 결과 (4.5 끝). `.pipeline.yaml`로 끄지 않은 검사만. 알리기만 한다
+    linked_issues: LinkedIssues
     fix_decisions: Decided  # 위반마다 수정 판단 (테스트 뒤, 4.6)
     mechanical_fix: MechanicalFix | None  # 기계적 수정 묶음의 결과. 수정안 PR은 proposals에
     mechanical_requested: bool  # 사람이 `/fix`로 이 커밋의 기계적 묶음을 승인했거나 다시 돌림
@@ -235,6 +243,7 @@ class FlowContext:
     doc_runtime: DocRuntime | None = None
     pr_checks: PrChecks | None = None  # doc_rules와 같은 까닭으로 둔다
     pr_description: PrDescription | None = None  # doc_rules와 같은 까닭으로 둔다
+    linked_issues: LinkedIssues | None = None  # doc_rules와 같은 까닭으로 둔다
     # 이 작업에서 읽은 PR 사실 (PR 단위 확인과 PR 설명 확인이 같이 쓴다. 그래프 상태에 넣지 않는다)
     pr_facts: PrFacts | str | None = None
     first_call: int = 0  # 규칙 경로를 시작하기 전 마지막 호출 기록의 id
@@ -508,6 +517,35 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
         ctx.pr_description = result
         return {"pr_description": result}
 
+    def check_issues(state: FlowState) -> FlowState:
+        """PR이 닫겠다고 한 이슈가 요구한 것과 diff를 모델이 견준다 (4.5 끝). 규칙과 따로 돌고,
+        알리기만 한다. 가드레일(8.6)이 들인 작업에서만 이 node까지 와서 이슈를 읽는다. 연결된 이슈가
+        없으면 모델을 부르지 않는다. `.pipeline.yaml`의 `linked_issues.enabled: false`면 돌지
+        않는다. `/fix`가 앞 node부터 다시 돌 때 이미 견준 결과가 있으면(호출 상한으로 남은 것이
+        아니면) 그대로 둔다."""
+        job = state["job"]
+        if not ctx.base.repo.linked_issues.enabled:
+            return {}
+        saved = state.get("linked_issues")
+        if saved is not None and not linked_issues_pure.issues_left(saved):
+            return {}
+        ensure_checkout(job)
+        linked = linked_issues.read(ctx.github, job.repo, job.pr_number)
+        # 연결된 이슈가 없으면 진행 글을 고치지 않는다 (GitHub 호출 하나를 아낀다)
+        if not isinstance(linked, str) and linked.issues:
+            progress(job, "이슈 확인")
+        rt, found = doc_runtime(state), state.get("doc_rules")
+        result = linked_issues.check(
+            linked, job.repo,
+            ctx.changes_diff.decode("utf-8", errors="replace"), ctx.worktree,
+            linked_issues.Tools(store=rt.store, budget=rt.budget, ask=rt.ask,
+                                model=rt.models.judge),
+            known=len(found.violations) if isinstance(found, Found) else 0,
+            is_stale=lambda: ctx.store.is_stale(job),
+        )  # fmt: skip
+        ctx.linked_issues = result
+        return {"linked_issues": result}
+
     def after_doc_step(state: FlowState) -> str:
         if state.get("stopped") or ctx.store.is_stale(state["job"]):
             return "stop"
@@ -608,6 +646,7 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
             pr=state.get("pr_checks"),
             carried=state.get("carried"),
             description=state.get("pr_description"),
+            issues=state.get("linked_issues"),
         )
 
     def comment(state: FlowState) -> FlowState:
@@ -772,6 +811,7 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
     graph.add_node(JUDGE, judge_rules)
     graph.add_node(PR_CHECK, pr_check_rules)
     graph.add_node(PR_DESCRIPTION, describe_pr)
+    graph.add_node(LINKED_ISSUES, check_issues)
     graph.add_node(TEST, test)
     graph.add_node(DECIDE, decide_fixes)
     graph.add_node("comment", comment)
@@ -792,7 +832,8 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
     graph.add_conditional_edges(DETECT, route, {"next": JUDGE, "stop": END})
     graph.add_conditional_edges(JUDGE, route, {"next": PR_CHECK, "stop": END})
     graph.add_conditional_edges(PR_CHECK, route, {"next": PR_DESCRIPTION, "stop": END})
-    graph.add_conditional_edges(PR_DESCRIPTION, route, {"next": TEST, "stop": END})
+    graph.add_conditional_edges(PR_DESCRIPTION, route, {"next": LINKED_ISSUES, "stop": END})
+    graph.add_conditional_edges(LINKED_ISSUES, route, {"next": TEST, "stop": END})
     graph.add_conditional_edges(TEST, route, {"next": DECIDE, "stop": END})
     graph.add_conditional_edges(DECIDE, route, {"next": "comment", "stop": END})
     graph.add_conditional_edges("comment", next_fix, fix_targets)

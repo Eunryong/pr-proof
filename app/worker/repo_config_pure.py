@@ -157,6 +157,14 @@ class PrDescriptionSettings(BaseModel):
     enabled: bool = True
 
 
+class LinkedIssuesSettings(BaseModel):
+    """이슈 확인 (DESIGN.md 4.5 끝, 10절 `linked_issues`): PR이 닫겠다고 한 이슈가 요구한 것과
+    diff를 모델이 견주어 빠진 것을 결과 코멘트에 알린다. 기본은 켬."""
+
+    model_config = ConfigDict(extra="ignore")
+    enabled: bool = True
+
+
 class RepoConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
     rules: RulesSettings = RulesSettings()
@@ -166,6 +174,7 @@ class RepoConfig(BaseModel):
     fix: FixSettings = FixSettings()
     rag: RagSettings = RagSettings()
     pr_description: PrDescriptionSettings = PrDescriptionSettings()
+    linked_issues: LinkedIssuesSettings = LinkedIssuesSettings()
 
     @model_validator(mode="before")
     @classmethod

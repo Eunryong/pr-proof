@@ -152,6 +152,7 @@ def run_admitted(job: PRJob, deps: Deps, refs: PullRefs, *, carry: bool = True) 
                 doc_rules=ctx.doc_rules,
                 checkers=doc_rules.shown_checkers(ctx.doc_rules, store), kind=e.kind,
                 packages=e.packages, pr=ctx.pr_checks, description=ctx.pr_description,
+                issues=ctx.linked_issues,
             )  # fmt: skip
             ctx.comment_id = github.upsert_comment(job.repo, job.pr_number, body, ctx.comment_id)
             store.finish_run(run_id, "done", test_status="unrunnable", comment_id=ctx.comment_id)
@@ -261,6 +262,9 @@ def carry_plan(job: PRJob, ctx: graph.FlowContext) -> Carry | str:
         if isinstance(description, str):
             return description
         out["pr_description"] = description
+    if values.get("linked_issues") is not None:
+        # 이슈 글은 그대로이고 항목은 줄을 가리키지 않으므로 검증한 커밋의 결과를 그대로 쓴다
+        out["linked_issues"] = values["linked_issues"]
     if values.get("rag_switch") is not None:
         out["rag_switch"] = values["rag_switch"]
     return Carry(out)
@@ -280,6 +284,7 @@ def _verified_check(
         fix=values.get(graph.STATE_KEYS[bundle][0]),
         pr_checks=values.get("pr_checks"),
         pr_description=values.get("pr_description"),
+        linked_issues=values.get("linked_issues"),
     ), dict(values)
 
 
