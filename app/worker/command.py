@@ -14,7 +14,8 @@ import logging
 
 from app.shared.job_pure import PRJob
 from app.worker import graph, guard, retry, update
-from app.worker.access_pure import (
+from app.worker.command_pure import FIX_TARGETS, parse_command
+from app.worker.config.access_pure import (
     BadCommit,
     Commit,
     NeedsApproval,
@@ -22,10 +23,9 @@ from app.worker.access_pure import (
     approval_arg,
     may_approve,
 )
-from app.worker.command_pure import FIX_TARGETS, parse_command
 from app.worker.deps import Deps
 from app.worker.fix import proposal
-from app.worker.github import PullRefs
+from app.worker.git.github import PullRefs
 
 log = logging.getLogger(__name__)
 

@@ -8,13 +8,13 @@ from typing import Final
 
 import pytest
 
-from app.worker import repo
 from app.worker.ai import workdir
 from app.worker.ai.claude_backend import ClaudeCliBackend
 from app.worker.budget import CallBudget
+from app.worker.config.repo_config_pure import CallSettings
+from app.worker.git import repo
 from app.worker.git.git_pure import Issue, Linked
-from app.worker.github import GitHub
-from app.worker.repo_config_pure import CallSettings
+from app.worker.git.github import GitHub
 from app.worker.rules import linked_issues
 from app.worker.rules.checkers import STALE
 from app.worker.rules.linked_issues_pure import (
@@ -28,7 +28,7 @@ from app.worker.rules.linked_issues_pure import (
 from app.worker.state import Store
 
 from ...redis_stand_ins import MemoryKeys
-from ..test_github import FakeGh
+from ..git.test_github import FakeGh
 
 MODEL: Final = "sonnet"
 HEAD_SHA: Final = "a" * 40

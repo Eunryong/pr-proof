@@ -21,7 +21,7 @@ from app.worker.call_budget_pure import (
     decide,
     limits_for,
 )
-from app.worker.repo_config_pure import CallSettings
+from app.worker.config.repo_config_pure import CallSettings
 from app.worker.state import Store
 
 

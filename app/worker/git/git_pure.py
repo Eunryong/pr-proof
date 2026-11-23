@@ -1,7 +1,7 @@
 """git과 GitHub에서 읽은 값의 데이터와 읽기 (docs/DESIGN.md 4.3, 4.5 끝). 계산만 한다.
 
 base 커밋의 파일 목록(`git ls-tree`), PR의 커밋, PR이 닫겠다고 한 이슈(`gh api graphql`)를 담는다.
-읽고 부르는 것은 app/worker/repo.py와 app/worker/github.py가 한다.
+읽고 부르는 것은 app/worker/git/repo.py와 app/worker/git/github.py가 한다.
 """
 
 from collections.abc import Mapping
@@ -72,7 +72,7 @@ class Linked:
 
 
 def parse_closing_issues(data: Mapping[str, object]) -> Linked:
-    """`gh api graphql`의 응답(`app/worker/github.py`의 CLOSING_ISSUES_QUERY)을 읽는다. 응답에
+    """`gh api graphql`의 응답(`app/worker/git/github.py`의 CLOSING_ISSUES_QUERY)을 읽는다. 응답에
     `errors`가 있어도 연결된 이슈 목록을 읽을 수 있으면 읽는다(읽지 못한 노드는 null이라
     unreadable로 센다). 목록을 읽을 수 없으면 ValueError. 이슈가 아닌 노드(PR)는 뺀다."""
     try:

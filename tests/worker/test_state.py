@@ -7,7 +7,7 @@ from sqlalchemy import create_engine, inspect, text
 from app.shared import state_keys_pure
 from app.shared.db_pure import FixAttempt, SeenViolation
 from app.shared.job_pure import PRJob
-from app.worker.access_pure import Author
+from app.worker.config.access_pure import Author
 from app.worker.rag_switch_pure import Evidence, Outcomes
 from app.worker.records_pure import NewRecord
 from app.worker.state import Store

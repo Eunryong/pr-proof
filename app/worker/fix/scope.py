@@ -9,7 +9,6 @@ git은 호스트에서 실행한다. 판정은 `app/worker/fix/scope_pure.py`가
 
 from pathlib import Path
 
-from app.worker import repo
 from app.worker.fix.scope_pure import (
     AI_POLICY,
     ScopePolicy,
@@ -18,6 +17,7 @@ from app.worker.fix.scope_pure import (
     parse_ignored,
     parse_porcelain,
 )
+from app.worker.git import repo
 
 
 def snapshot_ignored(worktree: Path) -> frozenset[str]:

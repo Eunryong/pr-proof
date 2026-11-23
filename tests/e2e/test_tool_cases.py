@@ -22,16 +22,17 @@ import yaml
 
 from app.shared import config, state_keys_pure
 from app.shared.job_pure import PRJob
-from app.worker import main, repo
+from app.worker import main
 from app.worker.ai import claude_cli
 from app.worker.deps import Deps
-from app.worker.github import GitHub
+from app.worker.git import repo
+from app.worker.git.github import GitHub
 from app.worker.sandbox import toolcache
 from app.worker.state import Store
 from tests.sandbox_names import TEST_NAMES
 
 from ..redis_stand_ins import MemoryKeys
-from ..worker.test_github import FakeGh
+from ..worker.git.test_github import FakeGh
 from .test_lint_cases import _bodies, _git, shared_venvs  # noqa: F401
 from .test_rules_cases import _remote, doc_rules_section, scripted_model
 

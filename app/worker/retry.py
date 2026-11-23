@@ -12,8 +12,8 @@ from app.shared.job_pure import PRJob
 from app.worker import graph, report
 from app.worker.ai.model_backend import AIEnvironmentError
 from app.worker.ai.workdir import WorkdirError
-from app.worker.github import GitHubError
-from app.worker.repo import GitError
+from app.worker.git.github import GitHubError
+from app.worker.git.repo import GitError
 from app.worker.sandbox.docker_cli import SandboxError
 
 log = logging.getLogger(__name__)

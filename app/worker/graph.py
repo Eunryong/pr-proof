@@ -49,7 +49,6 @@ from app.shared.config import CallMaxima
 from app.shared.embed_models_pure import E5_SMALL, EMBED_MODELS
 from app.shared.job_pure import PRJob
 from app.worker import (
-    base_config,
     doc_rules_pure,
     mcp_pure,
     memory,
@@ -57,14 +56,15 @@ from app.worker import (
     rag_pure,
     rag_switch_pure,
     records,
-    repo,
     report,
 )
 from app.worker.ai.model_backend import ModelBackend, fix_unavailable
-from app.worker.base_config import BaseConfig
 from app.worker.budget import CallBudget
 from app.worker.call_budget_pure import RulesetScope
 from app.worker.checker_authoring_pure import Checked
+from app.worker.config import base_config
+from app.worker.config.base_config import BaseConfig
+from app.worker.config.repo_config_pure import call_limits
 from app.worker.core.bundle_pure import MECHANICAL_BUNDLE, MODEL_BUNDLE
 from app.worker.doc_rules_pure import DocRules, Found, RuleOutcome, RulesRead
 from app.worker.doc_rules_report import FixView
@@ -81,13 +81,13 @@ from app.worker.fix.fix_decision_pure import Decided, SafetyNet, open_targets
 from app.worker.fix.fix_pure import MechanicalFix
 from app.worker.fix.model_fix_pure import ModelFix, Picked
 from app.worker.fix.proposal_pure import ProposalResult
-from app.worker.github import GitHub
+from app.worker.git import repo
+from app.worker.git.github import GitHub
+from app.worker.git.repo import CHANGES_DIFF
 from app.worker.lang import python
 from app.worker.merged_fix_pure import CarriedFrom
 from app.worker.rag_pure import Retrieval
 from app.worker.rag_switch_pure import RagSwitch
-from app.worker.repo import CHANGES_DIFF
-from app.worker.repo_config_pure import call_limits
 from app.worker.rules import (
     detect,
     doc_rules,

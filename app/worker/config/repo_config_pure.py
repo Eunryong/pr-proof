@@ -136,7 +136,7 @@ class ModelSettings(BaseModel):
 class SkillsSettings(BaseModel):
     """v1의 스킬 설정. 3단계에 v1 lint를 도구 규칙으로 옮겨 스킬이 없어졌다 (10절). 옛 파일을 읽기만
     한다: `enabled`에 lint가 없으면 그 저장소는 ruff를 끈 것이라 도구 설정의 규칙 묶음을 끈다
-    (app/worker/base_config.py)."""
+    (app/worker/config/base_config.py)."""
 
     model_config = ConfigDict(extra="ignore")
     enabled: list[str] | None = None

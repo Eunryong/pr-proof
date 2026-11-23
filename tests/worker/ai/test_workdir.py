@@ -7,9 +7,9 @@ from typing import Final
 
 import pytest
 
-from app.worker import repo
 from app.worker.ai import workdir
 from app.worker.ai.claude_cli import AIErrorKind, ClaudeResult, ReadFolder, StructuredResult
+from app.worker.git import repo
 
 SECRET: Final = "outside-secret\n"
 

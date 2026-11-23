@@ -16,9 +16,9 @@ import pytest
 
 from app.shared.embed_models_pure import ModelFile
 from app.worker import memory
+from app.worker.config.repo_config_pure import RagSettings
 from app.worker.rag_pure import query_text
 from app.worker.records_pure import NewRecord
-from app.worker.repo_config_pure import RagSettings
 from app.worker.state import Store
 
 from ..redis_stand_ins import MemoryKeys

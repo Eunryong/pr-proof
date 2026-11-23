@@ -16,7 +16,7 @@ from typing import Final
 
 import pytest
 
-from app.worker import mcp_pure, repo
+from app.worker import mcp_pure
 from app.worker.ai import backends, claude_backend, claude_cli, workdir
 from app.worker.ai.claude_backend import ClaudeCliBackend
 from app.worker.ai.model_backend import (
@@ -27,6 +27,7 @@ from app.worker.ai.model_backend import (
     StructuredResult,
     fix_unavailable,
 )
+from app.worker.git import repo
 
 FILE_TOOLS: Final = ["Read", "Grep", "Glob", "Write", "Edit"]
 SCHEMA: Final = {"type": "object", "properties": {"ok": {"type": "boolean"}}}

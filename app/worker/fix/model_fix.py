@@ -28,10 +28,11 @@ from typing import Final
 
 from app.shared.db_pure import FixAttempt
 from app.shared.job_pure import PRJob
-from app.worker import mcp_pure, records_pure, repo
+from app.worker import mcp_pure, records_pure
 from app.worker.ai.model_backend import FIX_TOOLS_TIMEOUT_S, AIEnvironmentError, EditCode
 from app.worker.budget import CallBudget
 from app.worker.call_budget_pure import Denied, PrScope
+from app.worker.config.repo_config_pure import ModelSettings
 from app.worker.core.bundle_pure import MODEL_BUNDLE
 from app.worker.core.cache_key_pure import text_hash
 from app.worker.core.diff_pure import ChangedLines, added_lines, change_blocks, new_files
@@ -59,6 +60,7 @@ from app.worker.fix.scope_pure import (
     is_pipeline_output,
     parse_porcelain,
 )
+from app.worker.git import repo
 from app.worker.lang.python import read_sources
 from app.worker.loop import (
     HEAVY_AFTER_FAILURES,
@@ -79,7 +81,6 @@ from app.worker.rag_pure import (
     render_records,
     retrieval,
 )
-from app.worker.repo_config_pure import ModelSettings
 from app.worker.rules.detect import Detection, source_lines
 from app.worker.sandbox.safe_read import read_regular_file
 from app.worker.state import Store

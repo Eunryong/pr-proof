@@ -28,7 +28,6 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Final
 
-from app.worker import repo
 from app.worker.ai import workdir
 from app.worker.ai.model_backend import AskModel, ReadCode, StructuredResult
 from app.worker.budget import CallBudget
@@ -37,6 +36,7 @@ from app.worker.core.diff_pure import added_lines
 from app.worker.core.rule_pure import Rule, checked_file
 from app.worker.core.violation_pure import Violation, violation_id
 from app.worker.doc_rules_pure import JudgeGap
+from app.worker.git import repo
 from app.worker.rules.checkers import STALE
 from app.worker.rules.detect import source_lines
 from app.worker.rules.judge_pure import (

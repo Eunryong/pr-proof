@@ -17,7 +17,12 @@ from typing import Any, Final, Literal
 import yaml
 
 from app.shared.model_names_pure import MODEL_NAME_PATTERN
-from app.worker.repo_config_pure import STAGE_MODELS, ModelSettings, RepoConfig, with_default_model
+from app.worker.config.repo_config_pure import (
+    STAGE_MODELS,
+    ModelSettings,
+    RepoConfig,
+    with_default_model,
+)
 
 REPO_EXAMPLE: Final = "octocat/hello-world"
 MODEL_EXAMPLES: Final = "sonnet, opus, haiku, claude-sonnet-4-5"

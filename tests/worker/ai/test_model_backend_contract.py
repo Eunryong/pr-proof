@@ -15,10 +15,10 @@ from typing import Final
 import pytest
 
 from app.shared.ops_alert_pure import TEXT
-from app.worker import repo
 from app.worker.ai import backends
 from app.worker.ai.claude_backend import ClaudeCliBackend
 from app.worker.ai.model_backend import Capabilities, ModelBackend
+from app.worker.git import repo
 
 REAL_AI_ENV: Final = "PR_PROOF_REAL_AI"
 MODEL: Final = "haiku"  # 구현마다 가장 싼 모델 이름. 새 구현은 CONTRACT에 같이 적는다

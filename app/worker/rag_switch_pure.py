@@ -21,8 +21,8 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Final, Literal
 
+from app.worker.config.repo_config_pure import RagMode
 from app.worker.core.bundle_pure import MODEL_BUNDLE
-from app.worker.repo_config_pure import RagMode
 
 # 초깃값이다. 측정한 뒤 조정한다 (6.7). 테스트는 상수를 바꾸지 않고 함수 인자로 넘긴다
 AUTO_MIN_RECORDS: Final = 20  # auto가 검색을 켜는 이 저장소의 채택·거절 기록 수

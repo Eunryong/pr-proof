@@ -7,16 +7,17 @@ from pathlib import Path
 import pytest
 
 from app.shared import config, state_keys_pure
-from app.worker import base_config, repo
-from app.worker.access_pure import AccessSettings
+from app.worker.config import base_config
+from app.worker.config.access_pure import AccessSettings
 from app.worker.deps import Deps
-from app.worker.github import GitHub
-from app.worker.repo import Checkout
+from app.worker.git import repo
+from app.worker.git.github import GitHub
+from app.worker.git.repo import Checkout
 from app.worker.state import Store
 
 from ..redis_stand_ins import MemoryKeys
+from .git.test_github import FakeGh
 from .helpers import BASE, HEAD
-from .test_github import FakeGh
 
 
 @pytest.fixture

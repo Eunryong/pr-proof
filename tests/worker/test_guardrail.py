@@ -23,16 +23,18 @@ from app.shared import state_keys_pure
 from app.shared.comment_pure import COMMENT_MARKER
 from app.shared.db_pure import Approval, Run
 from app.shared.job_pure import PRJob
-from app.worker import base_config, graph, guard, main, repo, retry
-from app.worker.access_pure import AccessSettings
+from app.worker import graph, guard, main, retry
 from app.worker.ai import claude_cli
-from app.worker.github import GitHubError
-from app.worker.repo import GitError
+from app.worker.config import base_config
+from app.worker.config.access_pure import AccessSettings
+from app.worker.git import repo
+from app.worker.git.github import GitHubError
+from app.worker.git.repo import GitError
 from app.worker.sandbox import docker_cli
 from app.worker.sandbox.docker_cli import SandboxError
 
+from .git.test_github import is_reply
 from .helpers import HEAD, PASSED, use_runner
-from .test_github import is_reply
 
 NEW_HEAD: Final = "c" * 40
 BASE_SHA: Final = "b" * 40

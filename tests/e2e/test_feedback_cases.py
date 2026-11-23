@@ -28,7 +28,7 @@ from app.shared import state_keys_pure
 from app.shared.feedback_pure import FEEDBACK_MARKER
 from app.shared.job_pure import PRJob
 from app.worker import main
-from app.worker.github import GitHub
+from app.worker.git.github import GitHub
 
 from ..worker.test_feedback import FeedbackGh
 from .test_lint_cases import _git, shared_venvs  # noqa: F401

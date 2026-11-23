@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Final, Literal
 
-from app.worker.repo_config_pure import CallSettings
+from app.worker.config.repo_config_pure import CallSettings
 
 Tier = Literal["light", "heavy"]
 # ai_calls의 단계 (7.8). 규칙 읽기, 검사기 작성, PR 패턴 작성(pr_plan)은 규칙 묶음 상한에서,

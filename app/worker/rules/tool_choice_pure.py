@@ -2,9 +2,9 @@
 
 모델을 부르지 않는다. 부르고 확인하고 저장하는 것은 app/worker/rules/checkers.py가 한다.
 
-모델은 도구 목록(app/worker/tools_pure.py의 `TOOL_LIST`) 안에서만 고른다. 고른 결과는 검사기와 같은
-예시 확인을 통과해야 채택하고(`checker_authoring.judge_examples`), 통과하지 못하면 검사기 작성으로
-넘어간다. ruff 코드가 실재하는지는 샌드박스의 `ruff rule <코드>`가 본다.
+모델은 도구 목록(app/worker/core/tools_pure.py의 `TOOL_LIST`) 안에서만 고른다. 고른 결과는 검사기와
+같은 예시 확인을 통과해야 채택하고(`checker_authoring.judge_examples`), 통과하지 못하면 검사기
+작성으로 넘어간다. ruff 코드가 실재하는지는 샌드박스의 `ruff rule <코드>`가 본다.
 """
 
 from collections.abc import Mapping

@@ -9,10 +9,10 @@ from typing import Final
 
 import pytest
 
-from app.worker import repo
 from app.worker.budget import CallBudget
 from app.worker.call_budget_pure import Denied
-from app.worker.repo_config_pure import CallSettings, RulesSettings
+from app.worker.config.repo_config_pure import CallSettings, RulesSettings
+from app.worker.git import repo
 from app.worker.rules.rules import CapReached, NoRuleDocuments, load_rules
 from app.worker.state import Store
 

@@ -5,6 +5,7 @@ from typing import Final
 
 import pytest
 
+from app.worker.config.repo_config_pure import parse_mode
 from app.worker.rag_switch_pure import (
     AUTO_MIN_ATTEMPTS,
     AUTO_MIN_BASELINE,
@@ -19,7 +20,6 @@ from app.worker.rag_switch_pure import (
     outcomes,
     worse,
 )
-from app.worker.repo_config_pure import parse_mode
 
 LIMITS: Final[Mapping[str, int]] = {"min_records": 20, "min_attempts": 30, "min_baseline": 10}
 

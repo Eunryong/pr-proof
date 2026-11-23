@@ -1,6 +1,6 @@
 import pytest
 
-from app.worker.repo_config_pure import (
+from app.worker.config.repo_config_pure import (
     DEFAULT_MIN_SIMILARITY,
     MAX_RETRIES_CAP,
     MIN_MEMORY_GB,
@@ -84,7 +84,7 @@ def test_skills_enabled_is_read_only_when_present() -> None:
 
 def test_old_skills_key_gets_a_note_and_breaks_nothing() -> None:
     """옛 이름이 있어도 설정 전체를 기본값으로 되돌리지 않고 "설정:"에 알린다 (10절). lint를 뺀
-    파일의 알림은 도구 설정의 규칙을 끄는 쪽(app/worker/base_config.py)이 한다."""
+    파일의 알림은 도구 설정의 규칙을 끄는 쪽(app/worker/config/base_config.py)이 한다."""
     text = "skills:\n  enabled: [lint, static, structure]\nsandbox: {memory_gb: 2}\n"
     config, problem = parse_repo_config(text)
     assert problem is None and config.sandbox.memory_gb == 2

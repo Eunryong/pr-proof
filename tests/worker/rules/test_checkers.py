@@ -10,8 +10,8 @@ import pytest
 
 from app.worker.budget import CallBudget
 from app.worker.checker_authoring_pure import Unchecked
+from app.worker.config.repo_config_pure import CallSettings, ModelSettings
 from app.worker.core.rule_pure import CheckMethod, Example, Rule, RuleSource
-from app.worker.repo_config_pure import CallSettings, ModelSettings
 from app.worker.rules.checkers import plan_and_author
 from app.worker.state import Store
 

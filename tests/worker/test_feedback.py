@@ -17,12 +17,12 @@ from app.shared.job_pure import PRJob
 from app.worker import feedback, main, records_pure, retry
 from app.worker.ai import claude_cli
 from app.worker.ai.claude_cli import StructuredResult
+from app.worker.config.repo_config_pure import RepoConfig
 from app.worker.feedback_triage_pure import Facts
-from app.worker.github import GitHub, GitHubError
-from app.worker.repo_config_pure import RepoConfig
+from app.worker.git.github import GitHub, GitHubError
 
+from .git.test_github import FakeGh
 from .helpers import HEAD
-from .test_github import FakeGh
 
 COPILOT: Final = "copilot-pull-request-reviewer"
 

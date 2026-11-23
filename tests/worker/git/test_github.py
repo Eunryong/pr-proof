@@ -4,7 +4,7 @@ import re
 import pytest
 
 from app.shared.comment_pure import COMMENT_MARKER, REPLY_MARKER
-from app.worker.github import GitHub, GitHubError, ReviewComment
+from app.worker.git.github import GitHub, GitHubError, ReviewComment
 
 
 class FakeGh:

@@ -6,12 +6,13 @@ from typing import Any, Final
 
 from app.shared import state_keys_pure, version
 from app.shared.job_pure import PRJob
-from app.worker import graph, guard, merged_fix_pure, records, repo, report, retry
-from app.worker.access_pure import Author, NeedsApproval
+from app.worker import graph, guard, merged_fix_pure, records, report, retry
+from app.worker.config.access_pure import Author, NeedsApproval
 from app.worker.deps import Deps
 from app.worker.doc_rules_pure import Found
 from app.worker.fix import proposal
-from app.worker.github import PullRefs
+from app.worker.git import repo
+from app.worker.git.github import PullRefs
 from app.worker.lang.install_pure import install_failure_outcome
 from app.worker.lang.python import DependencyInstallError
 from app.worker.merged_fix_pure import CarriedFrom, VerifiedCheck

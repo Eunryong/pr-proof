@@ -1,4 +1,4 @@
-"""app/worker/base_config.py: 설정은 PR head가 아니라 base 커밋에서 읽는다. 로컬 git으로
+"""app/worker/config/base_config.py: 설정은 PR head가 아니라 base 커밋에서 읽는다. 로컬 git으로
 확인한다."""
 
 import subprocess
@@ -7,8 +7,10 @@ from pathlib import Path
 import pytest
 
 from app.shared import config
-from app.worker import base_config, repo, update
-from app.worker.access_pure import AccessSettings
+from app.worker import update
+from app.worker.config import base_config
+from app.worker.config.access_pure import AccessSettings
+from app.worker.git import repo
 
 
 def _git(cwd: Path, *args: str) -> str:

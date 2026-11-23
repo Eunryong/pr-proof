@@ -9,12 +9,12 @@ import pytest
 
 from app.worker.ai.claude_cli import AIErrorKind, StructuredResult
 from app.worker.budget import CallBudget
+from app.worker.config.repo_config_pure import CallSettings
 from app.worker.core.rule_pure import CheckMethod, Rule, RuleSource
 from app.worker.core.violation_pure import Violation
 from app.worker.doc_rules_pure import CallUsage, CheckerRef, Found, RuleChecked
 from app.worker.fix.decide import decide
 from app.worker.fix.fix_decision_pure import Decided, SafetyNet
-from app.worker.repo_config_pure import CallSettings
 from app.worker.state import Store
 
 from ...redis_stand_ins import MemoryKeys
@@ -88,7 +88,7 @@ def _rag_run(store: Store, ask: _Asked, found: Found, retriever) -> Decided:
 
 def _settings():
     pytest.importorskip("chromadb")
-    from app.worker.repo_config_pure import RagSettings
+    from app.worker.config.repo_config_pure import RagSettings
 
     return RagSettings(enabled=True, min_similarity=0.9, max_records=3)
 

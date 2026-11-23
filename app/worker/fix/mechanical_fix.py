@@ -19,7 +19,7 @@ from typing import Final
 
 from app.shared.db_pure import FixAttempt
 from app.shared.job_pure import PRJob
-from app.worker import records_pure, repo
+from app.worker import records_pure
 from app.worker.checker_authoring_pure import Checked, RuleCheck
 from app.worker.core.bundle_pure import MECHANICAL_BUNDLE
 from app.worker.core.diff_pure import added_lines_except_moved, added_texts, new_files
@@ -33,6 +33,7 @@ from app.worker.fix.model_fix import file_hashes
 from app.worker.fix.model_fix_pure import Picked
 from app.worker.fix.proposal_pure import SECRET_BLOCKED, changed_line_count, find_secret
 from app.worker.fix.scope_pure import MECHANICAL_POLICY, is_pipeline_output, parse_porcelain
+from app.worker.git import repo
 from app.worker.lang import python
 from app.worker.rules import detect
 from app.worker.rules.checkers import FormatsFiles
