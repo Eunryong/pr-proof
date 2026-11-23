@@ -77,10 +77,12 @@ class FakeGitHub:
             if not self.hook_admin:
                 raise gh.NoPermission("gh api --paginate 실패: HTTP 404")
             return "".join(json.dumps(h) + "\n" for h in self.hooks.get(repo, []))
-        if repo not in self.perms:
+        # GitHub은 이름의 대소문자를 가리지 않고 찾아, 적혀 있는 정식 이름을 돌려준다
+        name = next((r for r in self.perms if r.casefold() == repo.casefold()), None)
+        if name is None:
             raise gh.NoPermission("gh api repos 실패: HTTP 404")
-        read, write = self.perms[repo]
-        return f"{str(read).lower()}\t{str(write).lower()}\n"
+        read, write = self.perms[name]
+        return f"{str(read).lower()}\t{str(write).lower()}\t{name}\n"
 
     def hook(self, repo: str, url: str, hook_id: int = 1, events=pure.HOOK_EVENTS) -> None:
         self.hooks[repo].append({"id": hook_id, "url": url, "events": list(events),
@@ -161,7 +163,8 @@ def test_configure_without_questions_sets_everything_up(env) -> None:
     assert "PR 소식이 smee.io를 거쳐" in out
     for name in ("GitHub 인증", "Claude 로그인", "Docker", "Redis"):
         assert name in out
-    assert "npx pr-proof start" in out and "OPERATIONS.md" in out
+    # 끝 안내는 실행한 방식에 맞는 명령 하나다 (테스트는 clone한 폴더에서 돈다)
+    assert "다음: npx . start\n" in out and "OPERATIONS.md" in out
     assert "fake-secret-0001" not in out
 
 
@@ -206,7 +209,7 @@ def test_non_interactive_without_repo_says_what_is_missing(env) -> None:
 
 def test_bad_repo_name_is_explained(env) -> None:
     code, out = _configure(env, repos=["hello-world"], auth="gh")
-    assert code == 1 and "repo는 `계정/저장소이름` 꼴로 적습니다" in out
+    assert code == 1 and "repo는 `계정/저장소이름` 꼴이나 GitHub 주소로 적습니다" in out
 
 
 def test_unreadable_repo_is_not_added(env) -> None:
@@ -289,11 +292,40 @@ def test_busy_port_needs_another_number_without_terminal(env) -> None:
     assert files.read_port(env["dir"]) == 8799
 
 
-def test_busy_port_by_pr_proof_itself_is_fine(env) -> None:
+def test_busy_port_by_this_setups_own_server_is_fine(env) -> None:
+    """이 설정이 이미 쓰던 포트에서 pr-proof가 돌고 있으면 다시 돌린 configure의 자기 서버다."""
+    files.write_port(8765, env["dir"])
     env["deps"].port_busy = lambda port: True
     env["deps"].pr_proof_on = lambda port: True
     code, _ = _configure(env, repos=[REPO], auth="gh")
     assert code == 0
+
+
+def test_another_pr_proof_on_the_port_is_busy(env) -> None:
+    """저장한 적 없는 포트에서 도는 pr-proof는 다른 설정의 서버다. 자기 것으로 보지 않는다."""
+    env["deps"].port_busy = lambda port: port == 8765
+    env["deps"].pr_proof_on = lambda port: port == 8765
+    code, out = _configure(env, repos=[REPO], auth="gh")
+    assert code == 1 and "포트 8765를 다른 pr-proof 서버가 쓰고 있습니다" in out
+    code, out = _configure(env, repos=[REPO], auth="gh", port=8799)
+    assert code == 0, out
+    assert files.read_port(env["dir"]) == 8799
+
+
+def test_repo_is_saved_as_github_spells_it(env) -> None:
+    """소문자로 적거나 주소를 붙여 넣어도 GitHub에 적힌 이름으로 넣는다. 웹훅 소식에는 그 이름이
+    오고, 다르면 서버가 허용 목록에 없다고 버린다."""
+    code, out = _configure(env, repos=[REPO.upper(), f"https://github.com/{OTHER}.git"], auth="gh")
+    assert code == 0, out
+    assert yaml.safe_load((env["dir"] / "config.yaml").read_text())["repos"] == [REPO, OTHER]
+    assert f"{REPO.upper()} → {REPO}" in out
+    assert {tuple(sorted(env["gh"].hooks))} == {tuple(sorted([REPO, OTHER]))}
+
+
+def test_next_command_matches_how_it_was_run(env, monkeypatch) -> None:
+    monkeypatch.setattr(files, "in_clone", lambda: False)
+    code, out = _configure(env, repos=[REPO], auth="gh")
+    assert code == 0 and "다음: npx pr-proof start\n" in out and "npx . start" not in out
 
 
 def test_redis_down_is_started_with_compose(env) -> None:
@@ -346,7 +378,7 @@ def test_interactive_questions(env) -> None:
     # 인증 방식(Enter: gh 로그인) → repo(틀린 것, 맞는 것) → 웹훅 받는 주소(Enter: smee)
     code, out = _configure(env, interactive=True, answers=["", "bad", f"{REPO} {OTHER}", ""])
     assert code == 0, out
-    assert "repo는 `계정/저장소이름` 꼴로 적습니다" in out
+    assert "repo는 `계정/저장소이름` 꼴이나 GitHub 주소로 적습니다" in out
     assert yaml.safe_load((env["dir"] / "config.yaml").read_text())["repos"] == [REPO, OTHER]
     assert "pr-proof가 도는 이 컴퓨터로 들어오는" in out and "repo가 공개인지와 상관없다" in out
 
@@ -502,3 +534,19 @@ def test_list_check_shows_hook_state_and_survives_failures(env) -> None:
     env["gh"].hook_admin = False
     code, lines = _list(env, check=True)
     assert code == 0 and all("권한 없음" in line for line in lines)
+
+
+def test_add_and_rm_ignore_case_and_take_addresses(env) -> None:
+    """add는 GitHub에 적힌 이름으로 넣고, rm은 대소문자를 다르게 적거나 주소를 붙여 넣어도 뺀다."""
+    assert _configure(env, repos=[REPO], auth="gh")[0] == 0
+    code, out = _add(env, [f"https://github.com/{OTHER.upper()}"])
+    assert code == 0, out
+    assert yaml.safe_load((env["dir"] / "config.yaml").read_text())["repos"] == [REPO, OTHER]
+    assert [h["url"] for h in env["gh"].hooks[OTHER]] == [SMEE]
+    # 이미 있는 repo를 다른 대소문자로 더해도 줄이 늘지 않는다
+    assert _add(env, [REPO.upper()])[0] == 0
+    assert yaml.safe_load((env["dir"] / "config.yaml").read_text())["repos"] == [REPO, OTHER]
+    code, out = _rm(env, [f"git@github.com:{OTHER.upper()}.git"], yes=True)
+    assert code == 0, out
+    assert yaml.safe_load((env["dir"] / "config.yaml").read_text())["repos"] == [REPO]
+    assert env["gh"].hooks[OTHER] == []

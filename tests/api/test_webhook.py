@@ -12,6 +12,7 @@ from app.api.webhook import Ignored, parse_event
 from app.shared import state_keys_pure
 from app.shared.comment_pure import COMMENT_MARKER, REPLY_MARKER
 from app.shared.feedback_pure import FEEDBACK_MARKER
+from app.shared.job_pure import PRJob
 
 FIXTURES: Final = Path(__file__).resolve().parent.parent / "fixtures" / "webhooks"
 ALLOWED: Final = frozenset({"Eunryong/eval"})
@@ -309,3 +310,12 @@ def test_ignored_event_is_202(redis, pr_opened: dict) -> None:
     pr_opened["action"] = "labeled"
     response = _handle(redis, pr_opened)
     assert response.status_code == 202 and response.body["status"] == "ignored"
+
+
+def test_allowlist_ignores_case_and_job_uses_the_configured_name(pr_opened) -> None:
+    """GitHub의 이름은 대소문자를 가리지 않는다. 설정에 다른 대소문자로 적혀 있어도 같은 저장소로
+    받고, 작업에는 설정에 적힌 이름을 쓴다(동기화가 만드는 작업과 같은 이름)."""
+    job = parse_event("pull_request", pr_opened, "d-1", frozenset({"eunryong/EVAL"}))
+    assert isinstance(job, PRJob) and job.repo == "eunryong/EVAL"
+    other = parse_event("pull_request", pr_opened, "d-1", frozenset({"eunryong/evaluate"}))
+    assert isinstance(other, Ignored) and "허용 목록에 없는 리포: Eunryong/eval" in other.reason
