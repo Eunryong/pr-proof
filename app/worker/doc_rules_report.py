@@ -97,10 +97,14 @@ _JUDGE_ROUTE_TEXT: Final[Mapping[JudgeRoute, str]] = {
     "examples": "검사기가 예시 확인을 두 번 통과하지 못함",
     "attempts": "예시를 통과하는 검사기를 만들지 못함",
 }
+# 수정 판단이 알리기만 하는 규칙에 적는 까닭 글 (`fix_decision_pure`). 코멘트에는 싣지 않는다
+NOTIFY_ONLY_WHY: Final = "알리기만 하는 규칙"
 # 파이프라인이 고치지 않은 위반의 이유 (4.9). 사람이 직접 고쳐야 하는 까닭으로 읽힌다
 _LEFT_LABEL: Final[Mapping[str, str]] = {
     "rejected_before": "이전에 거절됨",
-    "notify_only": "알리기만 하는 규칙",
+    # 알리기만 하는 규칙(수정 방법 none)은 까닭을 적지 않는다. "직접 고쳐야 함"이 이미 그 뜻이고,
+    # 위반마다 같은 말이 붙어 읽기 어려웠다 (2026-11-23)
+    "notify_only": "",
     "tests_failed": "테스트가 실패함",
     "no_safety_net": "테스트로 확인할 수 없음",
     "team_pattern": "팀이 닫은 수정과 비슷함",
@@ -454,8 +458,7 @@ def _decision_summary(decisions: Decided | None) -> list[str]:
     left = Counter(_left_label(d) for d in decisions.decisions
                    if d.action == "skip" and not _is_dismissed(d))  # fmt: skip
     line = f"수정 판단: 고칠 대상 {fixes}건, {LEFT} {sum(left.values())}건"
-    if left:
-        line += f" ({', '.join(f'{label} {n}건' for label, n in left.items())})"
+    line += _reason_counts(left)
     if not_one:
         line += f", 모델이 위반이 아니라고 판단함 {not_one}건 (아래 접힌 블록)"
     line += f" · 모델 호출 {decisions.calls}회 · 저장된 판단 {decisions.cached}건 사용"
@@ -630,8 +633,18 @@ def _fix_usage(fix: ModelFix) -> str:
 
 
 def _left_label(d: FixDecision) -> str:
-    """고치지 않은 이유의 이름. 모르는 이유(이전 체크포인트 등)는 파이프라인이 쓴 이유를 쓴다."""
-    return _LEFT_LABEL.get(d.reason or "undecided") or d.why or _LEFT_LABEL["undecided"]
+    """고치지 않은 이유의 이름. 모르는 이유(이전 체크포인트 등)는 파이프라인이 쓴 이유를 쓴다.
+    적지 않는 이유(알리기만 하는 규칙)는 빈 글이다."""
+    reason = d.reason or "undecided"
+    if reason in _LEFT_LABEL:
+        return _LEFT_LABEL[reason]
+    return d.why or _LEFT_LABEL["undecided"]
+
+
+def _reason_counts(labels: Counter[str]) -> str:
+    """이유별 건수를 괄호로. 적을 이유가 없으면 빈 글이다."""
+    shown = [f"{label} {n}건" for label, n in labels.items() if label]
+    return f" ({', '.join(shown)})" if shown else ""
 
 
 def _fix_note(d: FixDecision, v: Violation, number: int | None) -> str:
@@ -647,6 +660,10 @@ def _fix_note(d: FixDecision, v: Violation, number: int | None) -> str:
 def _left_note(d: FixDecision) -> str:
     """직접 고쳐야 하는 줄 끝의 이유. 모델의 이유 글은 코드 스팬 안에만 넣는다."""
     label = _left_label(d)
+    if not label:
+        # 적지 않는 이유(알리기만 하는 규칙)다. 파이프라인이 더 구체적인 까닭을 적었으면(도구의 자동
+        # 수정이 없음 등) 그것은 보인다
+        return f" · {d.why}" if d.why and d.why != NOTIFY_ONLY_WHY else ""
     if d.decided_by == "model" and d.why:
         return f" · {label}: {inline_code(d.why, MAX_DETAIL_CHARS)}"
     if d.why and d.why != label:
@@ -710,8 +727,7 @@ def _violations(
             lines += fold.lines(f"<code>{rule_id}</code>의 나머지 {len(rest)}건", rest)
         if left:
             reasons = Counter(_left_label(d) for _, d in left)
-            why = ", ".join(f"{label} {n}건" for label, n in reasons.items())
-            lines.append(f"  {LEFT} {len(left)}건 ({why})")
+            lines.append(f"  {LEFT} {len(left)}건{_reason_counts(reasons)}")
             lines += fold.lines(f"{LEFT} {len(left)}건의 위치",
                                 [f"  - {_where(v)}{_left_note(d)}" for v, d in left])  # fmt: skip
     return lines
