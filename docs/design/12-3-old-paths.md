@@ -50,7 +50,7 @@
 
 - 웹 코드(`api.py`, `controllers/`, `services/`, `views/`)는 `app/api/` 한 폴더다. 합쳐 500줄 안팎이라 세 폴더를 두지 않는다. `api.py`는 `app/api/main.py`다.
 - `app/shared/`에는 웹 코드와 워커 코드가 둘 다 직접 import하는 것과, 그것이 import하는 것만 둔다(import 그래프로 쟀다). 웹만 쓰는 것은 `app/api/`로 간다.
-- 순수 모듈은 이름이 `_pure`로 끝나고 외부 호출이 없는 모듈이다. 옛 `app/models/`의 모듈이 모두 이것이 되었다. `_pure` 모듈은 저장소 안에서 다른 `_pure` 모듈만 import하고 금지 목록의 라이브러리를 import하지 않는다(`tests/test_layers.py`). 같은 폴더에 같은 이름의 실행 코드가 있는 것은 일부이고, 실행 코드와 이름이 다른 것은 `docs/CLAUDE.md` "코드 구조"의 표에 있다.
+- 순수 모듈은 이름이 `_pure`로 끝나고 외부 호출이 없는 모듈이다. 옛 `app/models/`의 모듈이 모두 이것이 되었다. `_pure` 모듈은 저장소 안에서 다른 `_pure` 모듈만 import하고 금지 목록의 라이브러리를 import하지 않는다(`CONTRIBUTING.md`의 「순수 모듈」 절). 같은 폴더에 같은 이름의 실행 코드가 있는 것은 일부이고, 실행 코드와 이름이 다른 것은 `docs/CLAUDE.md` "코드 구조"의 표에 있다.
 - 워커의 단계 실행 코드는 단계 폴더에 둔다. `app/worker/rules/`: 규칙 경로(`doc_rules.py`), 규칙 읽기(`rules.py`), 검사 방법 정하기(`checkers.py`), 위반 찾기(`detect.py`), 모델 판단(`judge.py`), PR 단위 확인(`pr_check.py`). `app/worker/fix/`: 수정 판단(`decide.py`), 기계적 수정(`mechanical_fix.py`), 모델 수정(`model_fix.py`), 출구 검사의 허용 범위(`scope.py`), 수정안 PR(`proposal.py`). 그 밖의 실행 코드(흐름, 진입점, 상태, 기록, 결과 코멘트, 검색, 평가)는 `app/worker/` 맨 위다. `sandbox/`는 `app/worker/sandbox/`다.
 - 워커만 쓰는 순수 모듈은 그것을 import하는 실행 코드 중 `app/worker/` 맨 위가 아닌 것들이 있는 폴더의 가장 가까운 공통 폴더에 둔다. 한 단계만 쓰면 그 단계 폴더(`app/worker/fix/fix_decision_pure.py`), 여러 폴더가 쓰면 `app/worker/` 맨 위(`app/worker/violation_pure.py`)다. 맨 위의 흐름·코멘트 코드가 단계의 타입을 import하는 것은 자리를 정하지 않는다.
 - 수동 명령은 웹 쪽(`python -m app.api.cli sync`)과 워커 쪽(`python -m app.worker.cli reindex`, `eval`)으로 나눴다. 한 파일이 웹과 워커를 같이 import하면 어느 폴더에도 둘 수 없다.

@@ -707,7 +707,7 @@ echo "$PROMPT" | claude -p \
 | `worker/` | 워커: 진입점, 작업 흐름(LangGraph), PR 코멘트, 처리 기록 쓰기, git·GitHub 쓰기 | models, sandbox |
 | `sandbox/` | 워커가 쓰는 docker 도구. PR 코드는 여기를 거쳐서만 실행한다 | models |
 
-웹 쪽(controllers·services·views)은 `worker/`와 `sandbox/`를, 워커는 웹 쪽을 import하지 않는다. 의존 방향은 `tests/test_layers.py`가 검사한다.
+웹 쪽(controllers·services·views)은 `worker/`와 `sandbox/`를, 워커는 웹 쪽을 import하지 않는다. 의존 방향의 지금 규칙은 `CONTRIBUTING.md`의 「계층」 절에 있고, pr-proof가 PR의 diff에서 검사한다.
 
 ```
 pipeline/

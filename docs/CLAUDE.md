@@ -135,13 +135,13 @@ tests/          코드와 같은 이름의 폴더 (tests/api, tests/worker, test
 
 나머지(`rule_pure`, `violation_pure`, `doc_rules_pure`, `checker_pure`, `diff_pure`, `test_run_pure`, `shared/`의 `_pure` 등)는 여러 단계가 같이 쓰는 데이터 정의와 계산이라 짝이 없다.
 
-**계층.** `app/api/`는 `app/worker/`를, `app/worker/`는 `app/api/`를 import하지 않고, `app/shared/`는 둘 다 import하지 않는다. `app/worker/sandbox/`는 sandbox와 순수 모듈만 import한다. 순수 모듈은 저장소 안에서 다른 순수 모듈만 import하고, 금지 목록의 라이브러리(파일 시스템, 프로세스, 네트워크, Redis, 큐, DB, 웹, 그래프, 벡터 저장소, 로그, 시계, 난수, 동적 import)와 내장 `open`을 쓰지 않는다. `tests/test_layers.py`가 import 문과 `open(` 호출을 읽어 검사한다.
+**계층.** `app/api/`는 `app/worker/`를, `app/worker/`는 `app/api/`를 import하지 않고, `app/shared/`는 둘 다 import하지 않는다. `app/worker/sandbox/`는 sandbox와 순수 모듈만 import한다. 순수 모듈은 저장소 안에서 다른 순수 모듈만 import하고, 금지 목록의 라이브러리(파일 시스템, 프로세스, 네트워크, Redis, 큐, DB, 웹, 그래프, 벡터 저장소, 로그, 시계, 난수, 동적 import)와 내장 `open`을 쓰지 않는다. 이 규칙은 `CONTRIBUTING.md`의 「계층」·「순수 모듈」 절에 적혀 있고, pr-proof가 PR의 diff에서 검사한다.
 
 **테스트.** 테스트는 `tests/` 아래 코드와 같은 이름의 폴더에 두고 `app` 단계는 두지 않는다(`app/worker/fix/decide.py` → `tests/worker/fix/test_decide.py`). 순수 모듈 `x_pure.py`의 테스트는 `test_x_pure.py`다.
 
 ## 코드 스타일
 
 - Python 3.11+, 타입 힌트 필수, ruff로 포맷·린트
-- 모듈 수준 상수(대문자 이름)는 `typing.Final`로 선언한다. dict 같은 가변 값은 `Final[Mapping[...]]`로 읽기 전용 타입을 준다. `tests/test_conventions.py`가 검사한다
+- 모듈 수준 상수(대문자 이름)는 `typing.Final`로 선언한다. dict 같은 가변 값은 `Final[Mapping[...]]`로 읽기 전용 타입을 준다. `CONTRIBUTING.md`의 「상수」 절에 적혀 있고, pr-proof가 PR의 diff에서 검사한다
 - 테스트에서 바꿔야 하는 값은 상수를 monkeypatch하지 말고 함수 인자로 받는다
 - 새 기능에는 단위 테스트를 같이 작성한다. 테스트는 경계값과 실패 경로를 포함한다.
