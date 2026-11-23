@@ -65,9 +65,9 @@ BACKLOG.md 형식:
 - 확인은 실제 모델로 한다. 가짜 모델은 없애는 중이고(2026-11-22, DESIGN 11.1) 남은 곳은 DESIGN 12.2에 있다. 새 테스트에 가짜 모델을 만들지 않는다.
 - 대상 저장소: 예제 `Eunryong/eval`, 저장소 주인이 쓰는 `Eunryong/MathLLM`(둘 다 비공개). 이 리포(`pr-proof`)는 자기 PR을 검사하지 않는다. 실제 모델 확인은 `PR_PROOF_REAL_AI=1`(CLI)과 `PR_PROOF_REAL_MODEL=1`(평가 케이스)로 켠다.
 - 열려 있는 완료 기준은 `docs/DESIGN.md` 13절, 문서와 코드가 다른 곳은 12.2, 주인에게 물은 것은 11.3에 있다. 코드 주석의 "DESIGN.md F7" 같은 번호는 v1의 절이고 12.3으로 읽는다.
-- 지나간 작업의 기록은 `docs/HISTORY.md`와 `docs/JOURNAL.md`에 있다. 지금의 지시가 아니다.
+- 지나간 작업의 기록(지난 기록 `HISTORY.md`, 날짜별 문제 해결 일지 `JOURNAL.md`와 `journal/`)은 저장소에 두지 않는다(2026-11-23에 공개 저장소에서 뺐다). 저장소 주인의 작업 폴더 `.audit/records/`에 있고 git에 올리지 않는다. 설계 문서가 `docs/JOURNAL.md`나 `docs/HISTORY.md`를 가리키면 그곳의 파일이다. 지금의 지시가 아니다.
 - 작업은 기능 단위 브랜치와 PR로 진행한다.
-- 이 절에 날짜가 붙은 작업 이력을 다시 쌓지 않는다. 이력은 `docs/HISTORY.md`·`docs/JOURNAL.md`, 결정은 DESIGN 11.1에 적고, 이 절은 지금의 방향이 바뀔 때만 고친다.
+- 이 절에 날짜가 붙은 작업 이력을 다시 쌓지 않는다. 이력은 저장소 밖의 작업 기록(`.audit/records/`), 결정은 DESIGN 11.1에 적고, 이 절은 지금의 방향이 바뀔 때만 고친다.
 
 ## 실행
 
