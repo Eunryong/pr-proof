@@ -4,27 +4,27 @@
 확인을 했으면 "PR 설명:" 줄이, 이슈 확인을 했으면 그 아래 "이슈:" 줄이 더 붙는다. 테스트는 글자로만
 쓰고, ⚠️/✅는 규칙 줄에만 쓰며 ⚠️는 "위반 있음"이라는 뜻으로만 쓴다
 (docs/DESIGN.md 4.9). 그 아래에는 위반과 할 일만 펼쳐 두고, 규칙별 확인 방법, 사용량, 테스트 수,
-바뀐 줄 커버리지는 접는 블록 하나에 넣는다. 규칙 줄과 규칙 절은 app/worker/doc_rules_report.py가
-그린다.
+바뀐 줄 커버리지는 접는 블록 하나에 넣는다. 규칙 줄과 규칙 절은
+app/worker/report/doc_rules_report.py가 그린다.
 """
 
 from collections.abc import Mapping, Sequence
 from typing import Final
 
-from app.worker import (
+from app.worker.config.base_config import PIPELINE_YAML, BaseConfig
+from app.worker.core.checker_pure import Checker
+from app.worker.core.markdown_pure import code_fence, inline_code
+from app.worker.fix.fix_decision_pure import Decided
+from app.worker.fix.merged_fix_pure import CarriedFrom
+from app.worker.lang.install_pure import InstallFailureKind
+from app.worker.report import (
     doc_rules_report,
     linked_issues_report_pure,
     pr_check_report_pure,
     pr_description_report_pure,
 )
-from app.worker.config.base_config import PIPELINE_YAML, BaseConfig
-from app.worker.core.checker_pure import Checker
-from app.worker.core.markdown_pure import code_fence, inline_code
-from app.worker.doc_rules_pure import DocRules, Found
-from app.worker.doc_rules_report import FixView
-from app.worker.fix.fix_decision_pure import Decided
-from app.worker.lang.install_pure import InstallFailureKind
-from app.worker.merged_fix_pure import CarriedFrom
+from app.worker.report.doc_rules_report import FixView
+from app.worker.rules.doc_rules_pure import DocRules, Found
 from app.worker.rules.linked_issues_pure import LinkedIssues
 from app.worker.rules.pr_check_pure import PrChecks
 from app.worker.rules.pr_description_pure import PrDescription

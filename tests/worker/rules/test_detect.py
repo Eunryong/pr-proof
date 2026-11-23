@@ -8,11 +8,11 @@ from typing import Final
 
 import pytest
 
-from app.worker.checker_authoring_pure import Checked, Unchecked
 from app.worker.core.checker_pure import Checker, CheckerKind, tool_codes
 from app.worker.core.diff_pure import added_lines
 from app.worker.core.rule_pure import CheckMethod, Rule, RuleSource
 from app.worker.core.violation_pure import violation_id
+from app.worker.rules.checker_authoring_pure import Checked, Unchecked
 from app.worker.rules.detect import detect
 from app.worker.sandbox.checker_runner import CheckerRun, Failed, Match, Ran
 

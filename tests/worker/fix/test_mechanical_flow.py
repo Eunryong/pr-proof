@@ -21,12 +21,12 @@ from app.worker.config import base_config
 from app.worker.config.repo_config_pure import PrDescriptionSettings
 from app.worker.core.checker_pure import CheckerKind, tool_codes
 from app.worker.core.text_edit_pure import TextEdit
-from app.worker.doc_rules_pure import Found, NoRuleDocs, RuleChecked
 from app.worker.fix import proposal
 from app.worker.git import repo
 from app.worker.git.github import GitHubError
 from app.worker.model.claude import claude_cli
 from app.worker.rules import doc_rules
+from app.worker.rules.doc_rules_pure import Found, NoRuleDocs, RuleChecked
 from app.worker.sandbox.checker_runner import CheckerRun, Match, Ran
 from app.worker.testing.test_run_pure import PytestRun, ReportSummary
 

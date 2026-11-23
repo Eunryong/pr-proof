@@ -21,7 +21,7 @@ from typing import Final
 from sqlalchemy import Engine
 
 from app.shared.db_pure import EvalRun
-from app.worker import eval_run_pure
+from app.worker.evaluation import eval_run_pure
 from app.worker.store import state
 
 # 하위 프로세스에 넘기는 환경. 있을 때만 넘긴다

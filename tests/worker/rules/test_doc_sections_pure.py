@@ -2,7 +2,6 @@ from datetime import UTC, datetime
 from typing import Final
 
 from app.worker.core.rule_pure import CheckMethod, Rule, RuleSet, RuleSource
-from app.worker.rule_reading_pure import Document, sections
 from app.worker.rules.doc_sections_pure import (
     always_read,
     chunk_of,
@@ -13,6 +12,7 @@ from app.worker.rules.doc_sections_pure import (
     scoped_to,
     section_key,
 )
+from app.worker.rules.rule_reading_pure import Document, sections
 
 DOC: Final = Document(
     "README.md", "b" * 40,

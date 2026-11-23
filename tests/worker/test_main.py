@@ -12,10 +12,10 @@ from app.shared.db_pure import Run
 from app.shared.job_pure import PRJob
 from app.shared.ops_alert_pure import TEXT
 from app.worker import main, preflight, retry, update
-from app.worker.doc_rules_pure import NoRuleDocs
 from app.worker.git.github import GitHubError
 from app.worker.lang.python import DependencyInstallError
 from app.worker.rules import doc_rules
+from app.worker.rules.doc_rules_pure import NoRuleDocs
 from app.worker.sandbox.docker_cli import SandboxError
 
 from ..redis_stand_ins import UNREACHABLE_REDIS_URL

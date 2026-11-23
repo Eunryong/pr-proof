@@ -109,16 +109,18 @@ tests/          코드와 같은 이름의 폴더 (tests/api, tests/worker, test
 
 **워커 (`app/worker/`).**
 
-- 맨 위: 진입점(`main.py`), 작업 흐름(`graph.py`, LangGraph), 작업 종류(`update.py`, `command.py`), 가드레일(`guard.py`), 체크아웃(`repo.py`), base 설정(`base_config.py`: `.pipeline.yaml`, ruff 설정과 버전), 상태와 처리 기록 쓰기(`state.py`), GitHub 쓰기(`github.py`), 결과 코멘트(`report.py`, `doc_rules_report.py`, `pr_check_report_pure.py`, `markdown_pure.py`), 고친 위반의 테스트 표시(`test_lines.py`), 공용 서브그래프 틀(`loop.py`), 호출 상한(`budget.py`), 기록(`records.py`), 검색(`memory.py`: 임베딩, Chroma 저장과 top-k, 밀린 기록 임베딩, reindex, 큰 규칙 문서의 조각 검색), 평가(`evaluation.py`), 수동 명령(`cli.py`: reindex, eval). 여러 단계가 같이 쓰는 순수 모듈도 여기 있다
+- 맨 위: 진입점(`main.py`), 작업 흐름(`graph.py`, LangGraph), 작업 종류(`update.py`, `command.py`), 가드레일(`guard.py`), 체크아웃(`repo.py`), base 설정(`base_config.py`: `.pipeline.yaml`, ruff 설정과 버전), 상태와 처리 기록 쓰기(`state.py`), GitHub 쓰기(`github.py`), 결과 코멘트의 글(`markdown_pure.py`), 고친 위반의 테스트 표시(`test_lines.py`), 공용 서브그래프 틀(`loop.py`), 호출 상한(`budget.py`), 기록(`records.py`), 검색(`memory.py`: 임베딩, Chroma 저장과 top-k, 밀린 기록 임베딩, reindex, 큰 규칙 문서의 조각 검색), 수동 명령(`cli.py`: reindex, eval). 여러 단계가 같이 쓰는 순수 모듈도 여기 있다
 - `rules/`: 규칙 경로(`doc_rules.py`) → 규칙 읽기(`rules.py`) → 검사 방법 정하기(`checkers.py`: 도구 설정의 규칙 묶음, 문서 규칙의 도구 선택, 검사기 작성) → 위반 찾기(`detect.py`) · 모델의 직접 판단(`judge.py`) · PR 단위 확인(`pr_check.py`, 알리기만)
 - `fix/`: 수정 판단(`decide.py`) → 기계적 수정(`mechanical_fix.py`) · 모델 수정(`model_fix.py`: 수정 작성과 도구 둘의 구현, 출구 검사) · 허용 범위(`scope.py`) → 수정안 PR(`proposal.py`). 만든 테스트의 판정은 `app/worker/testing/generated_tests_pure.py`, 만든 테스트의 자리는 `scope_pure.is_generated_test`
+- `report/`: 결과 코멘트 만들기(`report.py`, `doc_rules_report.py`, `pr_check_report_pure.py`, `pr_description_report_pure.py`, `linked_issues_report_pure.py`). 다른 단계를 읽기만 하고 뼈대만 부른다
+- `evaluation/`: 평가 세트 실행(`evaluation.py`)과 결과·기준선 비교(`eval_run_pure.py`)
 - `sandbox/`: `docker_cli`, `container`, `toolcache`, `checker_runner`, `safe_read`. 도구(ast-grep, ruff)와 Python 런타임은 `toolcache.py`가 고정한 버전과 SHA256으로 받아 캐시한다. 샌드박스 이미지에는 언어가 없다 (`debian:bookworm-slim`에 curl과 인증서)
 - `ai/`: claude CLI 호출(`claude_cli.py`, 모양 넷: 수정 작성의 `file_tools`·`fix_tools`, 읽기만 하는 `read_tools`, 도구 없는 `no_tools`), 모델 전용 폴더(`workdir.py`), 경로 감시 훅(`path_hook.py`), 수정 작성의 파이프라인 도구 서버(`tool_server.py`)와 CLI가 띄우는 중계(`mcp_relay.py`). MCP 메시지와 도구 상한은 `app/worker/model/mcp_pure.py`
 - `lang/python.py`: Python 언어 프로필 (런타임 준비, `.venv` 설치, pytest 실행과 결과 읽기, 위반 줄의 커버리지 읽기, ruff). 테스트 파일의 정의(`fix/scope_pure.py`), coverage.xml 파싱(`coverage_pure.py`), ruff 설정 읽기와 도구 목록(`tools_pure.py`)은 순수 모듈에 있다. 두 번째 언어와 프로필 인터페이스는 만들지 않는다
 
 **웹과 워커 사이의 계약 (`app/shared/`).** 웹과 워커는 메모리를 공유하지 않는다. 둘 사이에는 큐와 Redis·SQLite 상태만 오가고, 큐에 넣는 값은 작업 계약(`job_pure.py`의 `PRJob`)뿐이다. 키 형식과 큐 이름(`state_keys_pure.py`), SQLite 테이블 정의(`db_pure.py`)는 여기 두고, 읽기·쓰기 코드는 각자 자기 쪽에 둔다. 그 밖에 코멘트 표시(`comment_pure.py`), 운영 알림의 종류와 글(`ops_alert_pure.py`), 임베딩 모델 목록(`embed_models_pure.py`), 설정과 비밀값 읽기(`config.py`), macOS 알림(`notify.py`)이 있다.
 
-**순수 모듈.** 이름이 `_pure.py`로 끝나는 모듈은 바깥에 손대지 않는다: 파일, 프로세스, 네트워크, Redis, DB 연결을 쓰지 않고 받은 값으로 계산만 한다(데이터 정의, 판정, 프롬프트 만들기, 답 읽기). 대부분은 나누기 전의 `app/models/`에 있던 모듈이다. 순수 모듈은 그것이 속한 단계 폴더나 공용 폴더에 두고(`app/worker/fix/fix_decision_pure.py`, `app/worker/git/git_pure.py`), 어느 한 폴더에 속하지 않으면서 여러 단계가 쓰는 데이터 정의와 도구만 `app/worker/core/`에 둔다(`app/worker/core/bundle_pure.py`). 웹과 워커가 같이 쓰면 `app/shared/`, 웹만 쓰면 `app/api/`. 정리 중이라 아직 옮기지 않은 순수 모듈은 `app/worker/` 바로 아래에 있다(`app/worker/doc_rules_pure.py`).
+**순수 모듈.** 이름이 `_pure.py`로 끝나는 모듈은 바깥에 손대지 않는다: 파일, 프로세스, 네트워크, Redis, DB 연결을 쓰지 않고 받은 값으로 계산만 한다(데이터 정의, 판정, 프롬프트 만들기, 답 읽기). 대부분은 나누기 전의 `app/models/`에 있던 모듈이다. 순수 모듈은 그것이 속한 단계 폴더나 공용 폴더에 두고(`app/worker/fix/fix_decision_pure.py`, `app/worker/git/git_pure.py`), 어느 한 폴더에 속하지 않으면서 여러 단계가 쓰는 데이터 정의와 도구만 `app/worker/core/`에 둔다(`app/worker/core/bundle_pure.py`). 웹과 워커가 같이 쓰면 `app/shared/`, 웹만 쓰면 `app/api/`. 정리 중이라 아직 옮기지 않은 순수 모듈은 `app/worker/` 바로 아래에 있다(`app/worker/feedback_pure.py`).
 
 같은 폴더에 같은 이름의 실행 코드 `x.py`가 있는 순수 모듈은 여덟 개다: `command_pure`, `coverage_pure`, `records_pure`, `fix/model_fix_pure`, `fix/proposal_pure`, `fix/scope_pure`, `rules/judge_pure`, `rules/pr_check_pure`. 아래는 주로 부르는 실행 코드와 이름이 다른 것이다.
 
@@ -127,9 +129,9 @@ tests/          코드와 같은 이름의 폴더 (tests/api, tests/worker, test
 | `app/worker/fix/decide.py` | `app/worker/fix/fix_decision_pure.py` |
 | `app/worker/store/budget.py` | `app/worker/store/call_budget_pure.py` |
 | `app/worker/store/memory.py` | `app/worker/store/rag_pure.py`, `app/worker/store/rag_switch_pure.py` |
-| `app/worker/evaluation.py` | `app/worker/eval_run_pure.py` |
-| `app/worker/rules/rules.py` | `app/worker/rule_reading_pure.py`, `app/worker/rules/doc_sections_pure.py` |
-| `app/worker/rules/checkers.py` | `app/worker/checker_authoring_pure.py`, `app/worker/rules/tool_choice_pure.py` |
+| `app/worker/evaluation/evaluation.py` | `app/worker/evaluation/eval_run_pure.py` |
+| `app/worker/rules/rules.py` | `app/worker/rules/rule_reading_pure.py`, `app/worker/rules/doc_sections_pure.py` |
+| `app/worker/rules/checkers.py` | `app/worker/rules/checker_authoring_pure.py`, `app/worker/rules/tool_choice_pure.py` |
 | `app/worker/lang/python.py` | `app/worker/lang/install_pure.py` |
 | `app/api/sync.py` | `app/api/sync_rules_pure.py` |
 

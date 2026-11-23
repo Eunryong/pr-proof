@@ -10,10 +10,10 @@ import logging
 from collections.abc import Callable
 
 from app.worker.core.diff_pure import added_lines
-from app.worker.doc_rules_pure import Found, RunJudged
 from app.worker.lang import python
 from app.worker.rules.checkers import STALE
 from app.worker.rules.doc_rules import Runtime
+from app.worker.rules.doc_rules_pure import Found, RunJudged
 from app.worker.rules.run_check_pure import (
     ANSWER_SCHEMA,
     PROMPT_VERSION,

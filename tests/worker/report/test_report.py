@@ -2,13 +2,13 @@ from typing import Final
 
 import pytest
 
-from app.worker import report
 from app.worker.config.base_config import BaseConfig
 from app.worker.config.repo_config_pure import RepoConfig
 from app.worker.core.tools_pure import RuffConfig, RuffSetup, config_rule
 from app.worker.core.violation_pure import Violation, violation_id
-from app.worker.doc_rules_pure import CallUsage, CheckerRef, Found, RuleChecked
-from app.worker.report import render_result
+from app.worker.report import report
+from app.worker.report.report import render_result
+from app.worker.rules.doc_rules_pure import CallUsage, CheckerRef, Found, RuleChecked
 from app.worker.testing.test_lines import format_test_line
 from app.worker.testing.test_run_pure import PytestRun, ReportSummary
 
@@ -241,7 +241,7 @@ def test_diff_coverage_line() -> None:
 
 def test_clean_pr_comment_is_short_and_keeps_coverage_folded() -> None:
     """위반이 없으면 결론 두 줄 뒤에 펼친 것이 없다. 테스트 수와 커버리지는 접는 블록 안에 있다."""
-    from app.worker.doc_rules_report import DETAILS_SUMMARY
+    from app.worker.report.doc_rules_report import DETAILS_SUMMARY
     from app.worker.testing.coverage import DiffCoverage
 
     text = report.render_result(PASSED, "a" * 40, 1.0, doc_rules=_found(),

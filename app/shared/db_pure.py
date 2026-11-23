@@ -138,7 +138,7 @@ class Approval(SQLModel, table=True):
 
 class EvalRun(SQLModel, table=True):
     """평가 세트 한 번의 결과 (DESIGN.md 7.8의 `eval_runs`, 13절 6단계). `baseline`인 가장 최근 줄이
-    비교의 기준선이다. 내용의 모양은 app/worker/eval_run_pure.py에 있다."""
+    비교의 기준선이다. 내용의 모양은 app/worker/evaluation/eval_run_pure.py에 있다."""
 
     __tablename__ = "eval_runs"
 
@@ -221,7 +221,7 @@ class CheckerEntry(SQLModel, table=True):
     """규칙별 검사기 작성 결과 (DESIGN.md 4.4, 7.8): 채택한 검사기, 모델 판단으로 보낸 기록(그
     까닭), 또는 끝내 통과하지 못한 경로 규칙의 기록.
 
-    키는 app/worker/checker_authoring_pure.py의 `checker_key`다. 회차마다의 답(초안)은
+    키는 app/worker/rules/checker_authoring_pure.py의 `checker_key`다. 회차마다의 답(초안)은
     `model_cache`에 있고, attempts_json의 각 회차 `artifact`가 그 키다. 호출 상한·모델 호출 실패로
     끝난 작성은 저장하지 않으므로 다음 검사가 이어 한다.
     """
@@ -235,7 +235,8 @@ class CheckerEntry(SQLModel, table=True):
     detail: str = ""  # 실패한 이유 (마지막 회차)
     attempts_json: str  # app/worker/model/loop.py의 Attempt 목록
     created_at: datetime
-    # 채택하지 않고 모델 판단으로 보낸 까닭 (app/worker/checker_authoring_pure.py의 `JudgeRoute`).
+    # 채택하지 않고 모델 판단으로 보낸 까닭
+    # (app/worker/rules/checker_authoring_pure.py의 `JudgeRoute`).
     # 경로 규칙과 도구 선택의 줄은 없다
     judge_route: str | None = None
 

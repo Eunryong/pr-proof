@@ -19,11 +19,11 @@ from app.worker.config import base_config
 from app.worker.config.repo_config_pure import CallSettings, ModelSettings, RepoConfig
 from app.worker.core.checker_pure import CheckerKind
 from app.worker.core.rule_pure import CheckMethod, Rule, RuleSource
-from app.worker.doc_rules_pure import CallUsage, Found, NoRuleDocs, NotRun, RuleUnchecked
 from app.worker.fix.fix_decision_pure import Decided, FixDecision
 from app.worker.git import repo
 from app.worker.model.claude import claude_cli
 from app.worker.rules import doc_rules
+from app.worker.rules.doc_rules_pure import CallUsage, Found, NoRuleDocs, NotRun, RuleUnchecked
 from app.worker.sandbox import checker_runner, toolcache
 from app.worker.sandbox.checker_runner import CheckerRun, Match, Ran
 

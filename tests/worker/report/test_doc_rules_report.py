@@ -5,12 +5,17 @@ import re
 from dataclasses import replace
 from typing import Final
 
-from app.worker import doc_rules_report, report
 from app.worker.core.checker_pure import Checker
 from app.worker.core.markdown_pure import inline_code
 from app.worker.core.rule_pure import CheckMethod, Example, Rule, RuleSource, UnreadDoc
 from app.worker.core.violation_pure import Violation
-from app.worker.doc_rules_pure import (
+from app.worker.fix.fix_decision_pure import Decided, FixDecision
+from app.worker.fix.fix_pure import MechanicalFix
+from app.worker.fix.model_fix_pure import ModelFix, Verification
+from app.worker.fix.proposal_pure import ProposalResult
+from app.worker.report import doc_rules_report, report
+from app.worker.report.doc_rules_report import NO_RULES, FixView, section, title
+from app.worker.rules.doc_rules_pure import (
     CallUsage,
     CheckerRef,
     Found,
@@ -22,11 +27,6 @@ from app.worker.doc_rules_pure import (
     RuleUnchecked,
     RunJudged,
 )
-from app.worker.doc_rules_report import NO_RULES, FixView, section, title
-from app.worker.fix.fix_decision_pure import Decided, FixDecision
-from app.worker.fix.fix_pure import MechanicalFix
-from app.worker.fix.model_fix_pure import ModelFix, Verification
-from app.worker.fix.proposal_pure import ProposalResult
 from app.worker.rules.judge_pure import JudgeUsage
 from app.worker.testing.test_run_pure import PytestRun, ReportSummary
 

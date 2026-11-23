@@ -14,11 +14,11 @@ from typing import Final
 from app.shared.db_pure import FixAttempt, Proposal, Run
 from app.worker.core.bundle_pure import MECHANICAL_BUNDLE, MODEL_BUNDLE
 from app.worker.core.diff_pure import line_after
-from app.worker.doc_rules_pure import Found, RuleJudged
 from app.worker.fix.fix_decision_pure import Decided
 from app.worker.fix.fix_pure import MechanicalFix
 from app.worker.fix.model_fix_pure import ModelFix
 from app.worker.rules import linked_issues_pure, pr_check_pure, pr_description_pure
+from app.worker.rules.doc_rules_pure import Found, RuleJudged
 from app.worker.rules.pr_description_pure import PrDescription
 from app.worker.testing.test_run_pure import PytestRun
 
@@ -43,7 +43,7 @@ class CarriedFrom:
 
 
 # 체크포인트에서 되살릴 수 있게 graph.py가 등록하는 타입
-STATE_TYPES: Final = (("app.worker.merged_fix_pure", "CarriedFrom"),)
+STATE_TYPES: Final = (("app.worker.fix.merged_fix_pure", "CarriedFrom"),)
 
 
 @dataclass(frozen=True)

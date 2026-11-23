@@ -41,19 +41,18 @@ from typing import Final, Literal
 import pytest
 import yaml
 
-from app.worker import rule_reading_pure
 from app.worker.config import base_config
 from app.worker.config.repo_config_pure import CallSettings, ModelSettings, RulesSettings
 from app.worker.core.checker_pure import TOOL_KINDS
 from app.worker.core.diff_pure import ChangedLines, added_lines
 from app.worker.core.rule_pure import Rule, in_scope
-from app.worker.doc_rules_pure import Found, RuleChecked, RuleJudged, RuleOutcome, RulesRead
 from app.worker.git import repo
 from app.worker.model.claude import claude_cli
 from app.worker.model.claude.claude_backend import ClaudeCliBackend
 from app.worker.model.claude.claude_cli import StructuredResult
-from app.worker.rules import checkers, doc_rules, judge_pure, tool_choice_pure
+from app.worker.rules import checkers, doc_rules, judge_pure, rule_reading_pure, tool_choice_pure
 from app.worker.rules import judge as model_judge
+from app.worker.rules.doc_rules_pure import Found, RuleChecked, RuleJudged, RuleOutcome, RulesRead
 from app.worker.sandbox import checker_runner
 from app.worker.store.budget import CallBudget
 from app.worker.store.state import Store

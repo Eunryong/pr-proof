@@ -9,11 +9,12 @@ import logging
 from rq import get_current_job
 
 from app.shared.job_pure import PRJob
-from app.worker import graph, report
+from app.worker import graph
 from app.worker.git.github import GitHubError
 from app.worker.git.repo import GitError
 from app.worker.model.claude.workdir import WorkdirError
 from app.worker.model.model_backend import AIEnvironmentError
+from app.worker.report import report
 from app.worker.sandbox.docker_cli import SandboxError
 
 log = logging.getLogger(__name__)

@@ -11,14 +11,18 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Final, Literal, get_args
 
-from app.worker import pr_check_report_pure
-from app.worker.checker_authoring_pure import JudgeRoute
 from app.worker.core.bundle_pure import MECHANICAL_BUNDLE
 from app.worker.core.checker_pure import TOOL_KINDS, Checker
 from app.worker.core.markdown_pure import code_fence, inline_code
 from app.worker.core.rule_pure import Rule
 from app.worker.core.violation_pure import Violation
-from app.worker.doc_rules_pure import (
+from app.worker.fix.fix_decision_pure import Decided, FixDecision, SkipReason
+from app.worker.fix.fix_pure import MechanicalFix
+from app.worker.fix.model_fix_pure import ModelFix
+from app.worker.fix.proposal_pure import ProposalResult
+from app.worker.report import pr_check_report_pure
+from app.worker.rules.checker_authoring_pure import JudgeRoute
+from app.worker.rules.doc_rules_pure import (
     CallUsage,
     DocRules,
     Found,
@@ -31,10 +35,6 @@ from app.worker.doc_rules_pure import (
     RuleUnchecked,
     outcomes_by_rule,
 )
-from app.worker.fix.fix_decision_pure import Decided, FixDecision, SkipReason
-from app.worker.fix.fix_pure import MechanicalFix
-from app.worker.fix.model_fix_pure import ModelFix
-from app.worker.fix.proposal_pure import ProposalResult
 from app.worker.rules.pr_check_pure import PrChecks
 from app.worker.store.rag_pure import KIND_LABEL, SITE_LABEL, Retrieval, merge_retrievals
 from app.worker.store.rag_switch_pure import RagSwitch, comment_line

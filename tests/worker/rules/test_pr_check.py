@@ -406,7 +406,7 @@ def test_document_examples_reach_the_plan_prompt(store) -> None:
 
 
 def test_pr_rules_come_only_from_unchecked_pr_outcomes() -> None:
-    from app.worker.doc_rules_pure import CallUsage, Found, RuleUnchecked
+    from app.worker.rules.doc_rules_pure import CallUsage, Found, RuleUnchecked
 
     usage = CallUsage(0, 0, 0, (), 0, 0)
     human = _rule("R-h", "리뷰어 승인을 받는다.")

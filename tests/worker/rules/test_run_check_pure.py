@@ -6,7 +6,7 @@ import pytest
 
 from app.worker.core.rule_pure import CheckMethod, Rule, RuleSource
 from app.worker.core.violation_pure import Violation
-from app.worker.doc_rules_pure import CallUsage, CheckerRef, Found, RuleChecked, RuleUnchecked
+from app.worker.rules.doc_rules_pure import CallUsage, CheckerRef, Found, RuleChecked, RuleUnchecked
 from app.worker.rules.run_check_pure import (
     FileRun,
     RunFacts,

@@ -11,11 +11,9 @@ from app.shared.db_pure import FixAttempt, Proposal, Run
 from app.worker.core.checker_pure import CheckerKind
 from app.worker.core.rule_pure import CheckMethod, Rule, RuleSource
 from app.worker.core.violation_pure import Violation
-from app.worker.doc_rules_pure import CallUsage, CheckerRef, Found, RuleChecked, RuleJudged
 from app.worker.fix.fix_decision_pure import Decided, FixDecision
 from app.worker.fix.fix_pure import MechanicalFix
-from app.worker.fix.model_fix_pure import ModelFix, Verification
-from app.worker.merged_fix_pure import (
+from app.worker.fix.merged_fix_pure import (
     NOT_MERGE_COMMIT,
     VerifiedCheck,
     attempt_problem,
@@ -28,6 +26,8 @@ from app.worker.merged_fix_pure import (
     state_problem,
     unverified_count,
 )
+from app.worker.fix.model_fix_pure import ModelFix, Verification
+from app.worker.rules.doc_rules_pure import CallUsage, CheckerRef, Found, RuleChecked, RuleJudged
 from app.worker.rules.linked_issues_pure import IssueGap, LinkedIssues
 from app.worker.rules.pr_check_pure import PrChecks, PrRuleResult
 from app.worker.rules.pr_description_pure import Mismatch, PrDescription

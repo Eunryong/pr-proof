@@ -24,13 +24,11 @@ from typing import Final, Literal
 from app.shared.feedback_pure import handled, resolution_reason
 from app.shared.job_pure import PRJob
 from app.worker import feedback_triage, graph, retry, update
-from app.worker.checker_authoring_pure import Checked
 from app.worker.config import base_config
 from app.worker.config.repo_config_pure import RepoConfig, call_limits
 from app.worker.core.bundle_pure import FEEDBACK_BUNDLE
 from app.worker.core.rule_pure import Rule
 from app.worker.deps import Deps
-from app.worker.doc_rules_pure import Found
 from app.worker.feedback_pure import Item, flat_item, thread_item, unhandled
 from app.worker.feedback_report_pure import (
     RESOLVES,
@@ -51,7 +49,9 @@ from app.worker.git.github import GitHub, PullRefs
 from app.worker.lang import python
 from app.worker.model.model_backend import AskModel, fix_unavailable
 from app.worker.rules import detect, doc_rules, rules
+from app.worker.rules.checker_authoring_pure import Checked
 from app.worker.rules.detect import Detection, source_lines
+from app.worker.rules.doc_rules_pure import Found
 from app.worker.store.budget import CallBudget
 from app.worker.store.records_pure import targets_from_json
 from app.worker.store.state import Store

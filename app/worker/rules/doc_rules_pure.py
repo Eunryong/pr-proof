@@ -10,10 +10,10 @@ from dataclasses import dataclass
 from typing import Final, Literal
 
 from app.shared.db_pure import ModelCall
-from app.worker.checker_authoring_pure import JudgeRoute, UncheckedKind
 from app.worker.core.checker_pure import CheckerKind
 from app.worker.core.rule_pure import Rule, UnreadDoc
 from app.worker.core.violation_pure import Violation
+from app.worker.rules.checker_authoring_pure import JudgeRoute, UncheckedKind
 from app.worker.rules.judge_pure import JudgeUsage
 from app.worker.store.rag_pure import Retrieval
 
@@ -146,18 +146,18 @@ DocRules = NotRun | NoRuleDocs | NoRulesFound | Found
 
 # 체크포인트에서 되살릴 수 있게 graph.py가 등록하는 타입
 STATE_TYPES: Final = (
-    ("app.worker.doc_rules_pure", "CheckerRef"),
-    ("app.worker.doc_rules_pure", "RuleChecked"),
-    ("app.worker.doc_rules_pure", "RuleUnchecked"),
-    ("app.worker.doc_rules_pure", "RuleJudged"),
-    ("app.worker.doc_rules_pure", "RunJudged"),
+    ("app.worker.rules.doc_rules_pure", "CheckerRef"),
+    ("app.worker.rules.doc_rules_pure", "RuleChecked"),
+    ("app.worker.rules.doc_rules_pure", "RuleUnchecked"),
+    ("app.worker.rules.doc_rules_pure", "RuleJudged"),
+    ("app.worker.rules.doc_rules_pure", "RunJudged"),
     ("app.worker.rules.judge_pure", "JudgeUsage"),
-    ("app.worker.doc_rules_pure", "RulesRead"),
-    ("app.worker.doc_rules_pure", "CallUsage"),
-    ("app.worker.doc_rules_pure", "NotRun"),
-    ("app.worker.doc_rules_pure", "NoRuleDocs"),
-    ("app.worker.doc_rules_pure", "NoRulesFound"),
-    ("app.worker.doc_rules_pure", "Found"),
+    ("app.worker.rules.doc_rules_pure", "RulesRead"),
+    ("app.worker.rules.doc_rules_pure", "CallUsage"),
+    ("app.worker.rules.doc_rules_pure", "NotRun"),
+    ("app.worker.rules.doc_rules_pure", "NoRuleDocs"),
+    ("app.worker.rules.doc_rules_pure", "NoRulesFound"),
+    ("app.worker.rules.doc_rules_pure", "Found"),
     ("app.worker.core.rule_pure", "Rule"),
     ("app.worker.core.rule_pure", "RuleSource"),
     ("app.worker.core.rule_pure", "CheckMethod"),

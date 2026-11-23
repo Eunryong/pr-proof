@@ -3,7 +3,13 @@
 from app.worker.core.rule_pure import CheckMethod, Rule, RuleSource
 from app.worker.core.tools_pure import RuffConfig, config_rule
 from app.worker.core.violation_pure import Violation
-from app.worker.doc_rules_pure import CallUsage, CheckerRef, Found, RuleChecked, outcomes_by_rule
+from app.worker.rules.doc_rules_pure import (
+    CallUsage,
+    CheckerRef,
+    Found,
+    RuleChecked,
+    outcomes_by_rule,
+)
 
 
 def test_tool_settings_violations_point_at_the_rule_set() -> None:

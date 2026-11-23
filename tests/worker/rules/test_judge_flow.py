@@ -5,11 +5,11 @@ from typing import Final
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 
 from app.worker import graph
-from app.worker.checker_authoring_pure import ToJudge, Unchecked
 from app.worker.config.repo_config_pure import ModelSettings
 from app.worker.core.rule_pure import CheckMethod, Rule, RuleSource, rule_id
-from app.worker.doc_rules_pure import CallUsage, Found, RuleJudged, RuleUnchecked
 from app.worker.rules import doc_rules
+from app.worker.rules.checker_authoring_pure import ToJudge, Unchecked
+from app.worker.rules.doc_rules_pure import CallUsage, Found, RuleJudged, RuleUnchecked
 from app.worker.rules.judge_pure import JudgeUsage
 
 NAME_RULE: Final = "함수 이름은 하는 일을 동사로 시작한다."

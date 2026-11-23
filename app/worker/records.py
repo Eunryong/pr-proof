@@ -20,11 +20,11 @@ from app.shared.db_pure import SeenViolation
 from app.shared.job_pure import PRJob
 from app.worker.core.tools_pure import CONFIG_RULE_ID, RUFF_CODE
 from app.worker.core.violation_pure import Violation
-from app.worker.doc_rules_pure import Found, RuleChecked
 from app.worker.fix.fix_pure import MechanicalFix
 from app.worker.fix.model_fix_pure import ModelFix
 from app.worker.git import repo
 from app.worker.git.repo import GitError
+from app.worker.rules.doc_rules_pure import Found, RuleChecked
 from app.worker.sandbox.safe_read import read_regular_file
 from app.worker.store import records_pure
 from app.worker.store.records import _RECORD_ERRORS, save
