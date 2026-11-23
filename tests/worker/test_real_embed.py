@@ -18,7 +18,6 @@ import tempfile
 from pathlib import Path
 from typing import Final
 
-import fakeredis
 import pytest
 import yaml
 
@@ -28,6 +27,8 @@ from app.worker.rag_pure import record_text
 from app.worker.records_pure import NewRecord
 from app.worker.repo_config_pure import DEFAULT_MIN_SIMILARITY, RagSettings
 from app.worker.state import Store
+
+from ..redis_stand_ins import MemoryKeys
 
 SPEC_FILE: Final = Path(__file__).resolve().parents[2] / "eval" / "rag_recall.yaml"
 REAL_EMBED_ENV: Final = "PR_PROOF_REAL_EMBED"
@@ -65,7 +66,7 @@ class _NoPrefix:
 def measure(encoder, spec: dict, tmp: Path) -> dict:
     import numpy as np
 
-    store = Store(tmp / "db.sqlite", fakeredis.FakeRedis())
+    store = Store(tmp / "db.sqlite", MemoryKeys())
     ids: dict[str, int] = {}
     for r in spec["records"]:
         store.add_record(NewRecord(

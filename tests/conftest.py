@@ -1,11 +1,54 @@
+import os
 import shutil
 import subprocess
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Final
 
 import pytest
+from redis import Redis, RedisError
 
 EVAL_REPO: Final = "Eunryong/eval"
+TEST_REDIS_URL_ENV: Final = "PR_PROOF_TEST_REDIS_URL"
+DEFAULT_TEST_REDIS_URL: Final = "redis://127.0.0.1:6379/15"
+# 운영 서버(0번)와 다른 서버(1번)가 쓰는 DB. 테스트는 여기에 붙지 않는다
+RESERVED_REDIS_DBS: Final = frozenset({0, 1})
+
+
+@pytest.fixture(scope="session")
+def test_redis_url() -> str:
+    """Redis의 동작을 보는 테스트가 쓸 주소. 붙을 수 없거나 쓰면 안 되는 DB면 건너뛴다.
+    세션에서 처음 한 번만 확인한다."""
+    url = os.environ.get(TEST_REDIS_URL_ENV) or DEFAULT_TEST_REDIS_URL
+    try:
+        client = Redis.from_url(url, socket_connect_timeout=2, socket_timeout=2)
+    except ValueError as e:
+        pytest.skip(f"{TEST_REDIS_URL_ENV}의 주소({url})를 읽지 못해 건너뜀: {e}")
+    db = int(client.connection_pool.connection_kwargs.get("db") or 0)  # 주소에 없으면 0번
+    if db in RESERVED_REDIS_DBS:
+        pytest.skip(f"테스트용 Redis 주소({url})가 DB {db}번을 가리켜 건너뜀. 0번과 1번은 운영과 "
+                    f"다른 서버가 쓴다. {TEST_REDIS_URL_ENV}로 다른 DB를 주세요")  # fmt: skip
+    try:
+        keys = client.dbsize()
+    except RedisError as e:
+        pytest.skip(f"테스트용 Redis({url})에 붙지 못해 건너뜀: {e}")
+    finally:
+        client.close()
+    if keys:
+        pytest.skip(f"테스트용 Redis DB({url})에 키가 이미 {keys}개 있어 지우지 않고 건너뜀. "
+                    f"빈 DB를 {TEST_REDIS_URL_ENV}로 주세요")  # fmt: skip
+    return url
+
+
+@pytest.fixture
+def real_redis(test_redis_url: str) -> Iterator[Redis]:
+    """실제 Redis. 테스트가 끝나면 그 DB만 비운다(flushdb)."""
+    client = Redis.from_url(test_redis_url)
+    try:
+        yield client
+    finally:
+        client.flushdb()
+        client.close()
 
 
 def _docker_available() -> bool:

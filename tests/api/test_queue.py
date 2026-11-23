@@ -1,4 +1,3 @@
-import fakeredis
 import pytest
 from rq import Queue
 
@@ -8,8 +7,9 @@ from app.shared.job_pure import PRJob
 
 
 @pytest.fixture
-def redis():
-    return fakeredis.FakeStrictRedis()
+def redis(real_redis):
+    """큐 등록과 중복 방지 키는 실제 Redis로 본다 (tests/conftest.py)."""
+    return real_redis
 
 
 def _job(head: str = "abc", kind: str = "update") -> PRJob:

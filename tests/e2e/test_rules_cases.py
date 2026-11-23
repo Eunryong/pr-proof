@@ -27,7 +27,6 @@ import shutil
 from pathlib import Path
 from typing import Final
 
-import fakeredis
 import pytest
 import yaml
 
@@ -44,6 +43,7 @@ from app.worker.rules import judge_pure, tool_choice_pure
 from app.worker.state import Store
 from tests.sandbox_names import TEST_NAMES
 
+from ..redis_stand_ins import MemoryKeys
 from ..worker.test_github import FakeGh
 from .test_lint_cases import _bodies, _git, shared_venvs  # noqa: F401
 
@@ -230,9 +230,9 @@ def deps_for(tmp_path: Path, shared_venvs: Path, tool_cache: Path, monkeypatch):
     (data / "venvs").symlink_to(shared_venvs, target_is_directory=True)
     (data / "tools").symlink_to(tool_cache, target_is_directory=True)
 
-    def make(remote: dict) -> tuple[Deps, FakeGh, fakeredis.FakeStrictRedis]:
+    def make(remote: dict) -> tuple[Deps, FakeGh, MemoryKeys]:
         monkeypatch.setattr(repo, "remote_url", lambda name: str(remote["path"]))
-        redis = fakeredis.FakeStrictRedis()
+        redis = MemoryKeys()
         gh = FakeGh(head=remote["head"], base=remote["base"])
         settings = config.PipelineConfig(
             repos=[REPO], data_dir=data,

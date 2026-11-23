@@ -5,7 +5,6 @@ import re
 from pathlib import Path
 from typing import Final
 
-import fakeredis
 import pytest
 
 from app.worker.ai.claude_cli import AIErrorKind, StructuredResult
@@ -17,6 +16,8 @@ from app.worker.repo_config_pure import CallSettings
 from app.worker.rule_pure import CheckMethod, Rule, RuleSource
 from app.worker.state import Store
 from app.worker.violation_pure import Violation
+
+from ...redis_stand_ins import MemoryKeys
 
 HEAD: Final = "a" * 40
 RULE: Final = Rule(
@@ -61,7 +62,7 @@ class _Asked:
 
 @pytest.fixture
 def store(tmp_path: Path) -> Store:
-    return Store(tmp_path / "pipeline.db", fakeredis.FakeStrictRedis())
+    return Store(tmp_path / "pipeline.db", MemoryKeys())
 
 
 def test_nothing_left_for_the_model_makes_no_call(store: Store) -> None:

@@ -22,7 +22,6 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Final
 
-import fakeredis
 import pytest
 
 from app.shared.embed_models_pure import E5_SMALL, EMBED_MODELS
@@ -37,6 +36,7 @@ from app.worker.rules import checkers, doc_rules
 from app.worker.state import Store
 from tests.sandbox_names import TEST_NAMES
 
+from ..redis_stand_ins import MemoryKeys
 from ..worker.rag_helpers import FAKE_SPEC, FakeEncoder
 from .test_rag_cases import EMBED_DIR_ENV, real_embed
 from .test_rules_cases import REAL_MODEL_ENV
@@ -81,7 +81,7 @@ def _attempts(store: Store, rule) -> int:
 def run_once(target: Target, ask: Callable, data: Path, tool_cache: Path) -> dict:
     calls = Calls(ask)
     sandbox = checkers.Sandbox(tool_cache, image=TEST_NAMES.image)
-    off_store = Store(data / "off.db", fakeredis.FakeStrictRedis())
+    off_store = Store(data / "off.db", MemoryKeys())
     off = _runtime(off_store, target, calls, sandbox)
     read = doc_rules.read(target.base_root, target.base_sha, RulesSettings(), off)
     assert isinstance(read, RulesRead), read
@@ -97,7 +97,7 @@ def run_once(target: Target, ask: Callable, data: Path, tool_cache: Path) -> dic
     calls.arm = "on"
     on = {"found": set(), "outcomes": (), "attempts": {}, "records": {}}
     for n, rule in enumerate(wanted):
-        store = Store(data / f"on-{n}.db", fakeredis.FakeStrictRedis())
+        store = Store(data / f"on-{n}.db", MemoryKeys())
         for r in history:
             if r.rule_id != rule.id:
                 store.add_record(NewRecord(

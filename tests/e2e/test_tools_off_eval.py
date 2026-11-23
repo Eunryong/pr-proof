@@ -38,7 +38,6 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Final, Literal
 
-import fakeredis
 import pytest
 import yaml
 
@@ -57,6 +56,7 @@ from app.worker.sandbox import checker_runner
 from app.worker.state import Store
 from tests.sandbox_names import TEST_NAMES
 
+from ..redis_stand_ins import MemoryKeys
 from .test_lint_cases import _apply as apply_lint_edits
 from .test_lint_cases import _git
 from .test_rules_cases import REAL_MODEL_ENV, _apply, scripted_model
@@ -284,7 +284,7 @@ def run_once(
     target: Target, ask: Callable[..., StructuredResult], data: Path, tool_cache: Path
 ) -> dict:
     """빈 DB로 규칙을 한 번 읽고 조건들을 돌린다. 개념·조건·확인 방법마다 점수와 근거를 돌려준다."""
-    store = Store(data / "pipeline.db", fakeredis.FakeStrictRedis())
+    store = Store(data / "pipeline.db", MemoryKeys())
     budget = CallBudget(store, f"local/{target.name}", 1, target.base_sha, EVAL_CALLS)
     models = ModelSettings()
     calls = Calls(ask)

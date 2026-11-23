@@ -48,6 +48,12 @@ UNTRUSTED: Final = [
 ]
 
 
+@pytest.fixture
+def env(redis_env):
+    """이 파일은 큐 등록·동기화·RQ를 거치므로 실제 Redis를 쓴다 (tests/conftest.py)."""
+    return redis_env
+
+
 def _update(head: str = HEAD, **extra) -> str:
     return PRJob(
         repo="o/r", pr_number=1, kind="update", head_sha=head, base_sha=BASE_SHA,
@@ -283,7 +289,7 @@ def test_blocked_head_is_not_requeued_every_sync(env) -> None:
     env["gh"].head, env["gh"].author_association = NEW_HEAD, "NONE"
     _forbid_everything(env)
     main.handle(_update(NEW_HEAD), env["deps"])
-    env["redis"].flushall()
+    env["redis"].flushdb()
     assert _sync_once(env).enqueued == []
 
 

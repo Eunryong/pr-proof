@@ -7,7 +7,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final
 
-import fakeredis
 import pytest
 
 from app.worker import repo
@@ -16,6 +15,8 @@ from app.worker.call_budget_pure import Denied
 from app.worker.repo_config_pure import CallSettings, RulesSettings
 from app.worker.rules.rules import CapReached, NoRuleDocuments, load_rules
 from app.worker.state import Store
+
+from ...redis_stand_ins import MemoryKeys
 
 README: Final = (Path(__file__).parents[2] / "fixtures" / "rules" / "README.md").read_text()
 NOW: Final = datetime(2026, 11, 18, 12, tzinfo=UTC)
@@ -56,7 +57,7 @@ def worktree(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def store(tmp_path: Path) -> Store:
-    return Store(tmp_path / "pipeline.db", fakeredis.FakeStrictRedis())
+    return Store(tmp_path / "pipeline.db", MemoryKeys())
 
 
 def _load(worktree: Path, base: str, store: Store, *, pr: int = 1,

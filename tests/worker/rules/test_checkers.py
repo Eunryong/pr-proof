@@ -6,7 +6,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final
 
-import fakeredis
 import pytest
 
 from app.worker.budget import CallBudget
@@ -15,6 +14,8 @@ from app.worker.repo_config_pure import CallSettings, ModelSettings
 from app.worker.rule_pure import CheckMethod, Example, Rule, RuleSource
 from app.worker.rules.checkers import plan_and_author
 from app.worker.state import Store
+
+from ...redis_stand_ins import MemoryKeys
 
 RULESET: Final = "ruleset-key"
 MODELS: Final = ModelSettings(checker="sonnet", heavy="opus")
@@ -42,7 +43,7 @@ class _NoSandbox:
 
 @pytest.fixture
 def store(tmp_path: Path) -> Store:
-    return Store(tmp_path / "pipeline.db", fakeredis.FakeStrictRedis())
+    return Store(tmp_path / "pipeline.db", MemoryKeys())
 
 
 def test_rules_code_cannot_show_get_no_calls(store: Store) -> None:

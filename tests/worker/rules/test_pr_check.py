@@ -13,7 +13,6 @@ import sys
 from typing import Final
 from unittest import mock
 
-import fakeredis
 import pytest
 
 from app.worker.ai.claude_cli import AIErrorKind, StructuredResult
@@ -27,6 +26,8 @@ from app.worker.sandbox import checker_runner
 from app.worker.sandbox.checker_runner import Failed, PrRan
 from app.worker.sandbox.toolcache import ToolUnavailable
 from app.worker.state import Store
+
+from ...redis_stand_ins import MemoryKeys
 
 HEAD: Final = "f" * 40
 SHA_A: Final = "a" * 40
@@ -141,7 +142,7 @@ class ScriptSandbox:
 
 @pytest.fixture
 def store(tmp_path) -> Store:
-    return Store(tmp_path / "pipeline.db", fakeredis.FakeStrictRedis())
+    return Store(tmp_path / "pipeline.db", MemoryKeys())
 
 
 def _tools(store: Store, model: Model, sandbox=None, calls: CallSettings | None = None):

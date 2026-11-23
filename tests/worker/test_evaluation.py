@@ -4,13 +4,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final
 
-import fakeredis
 import pytest
 from sqlalchemy import create_engine, inspect, text
 
 from app.worker import cli, evaluation, state
 from app.worker.eval_run_pure import RunSummary
 from app.worker.state import Store
+
+from ..redis_stand_ins import MemoryKeys
 
 JUNIT_OK: Final = (
     '<testsuite><testcase classname="tests.e2e.test_rules_cases" '
@@ -144,7 +145,7 @@ def test_existing_database_gets_eval_runs_and_keeps_its_rows(tmp_path: Path) -> 
     """6단계 전의 데이터베이스(`eval_runs` 없음)를 그대로 연다. 있던 줄은 남고 새 테이블이
     생긴다."""
     path = tmp_path / "pipeline.db"
-    Store(path, fakeredis.FakeStrictRedis())  # 지금의 테이블을 만든 뒤 eval_runs만 지운다
+    Store(path, MemoryKeys())  # 지금의 테이블을 만든 뒤 eval_runs만 지운다
     old = create_engine(f"sqlite:///{path}")
     with old.begin() as conn:
         conn.execute(text("DROP TABLE eval_runs"))
@@ -156,7 +157,7 @@ def test_existing_database_gets_eval_runs_and_keeps_its_rows(tmp_path: Path) -> 
         )
     old.dispose()
 
-    store = Store(path, fakeredis.FakeStrictRedis())
+    store = Store(path, MemoryKeys())
     assert "eval_runs" in inspect(store.engine).get_table_names()
     assert store.command_handled(5)
     now = datetime(2026, 11, 20, tzinfo=UTC)

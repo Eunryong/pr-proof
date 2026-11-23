@@ -7,7 +7,6 @@ import subprocess
 from pathlib import Path
 from typing import Final
 
-import fakeredis
 import pytest
 
 from app.worker import repo
@@ -28,6 +27,8 @@ from app.worker.rules.judge_pure import (
     origin_from_json,
 )
 from app.worker.state import Store
+
+from ...redis_stand_ins import MemoryKeys
 
 HEAD: Final = "a" * 40
 NAMES: Final = Rule(
@@ -70,7 +71,7 @@ DIFF: Final = (
 
 @pytest.fixture
 def store(tmp_path: Path) -> Store:
-    return Store(tmp_path / "pipeline.db", fakeredis.FakeStrictRedis())
+    return Store(tmp_path / "pipeline.db", MemoryKeys())
 
 
 class _Asked:

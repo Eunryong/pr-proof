@@ -4,7 +4,6 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Final
 
-import fakeredis
 import pytest
 
 from app.worker.budget import CallBudget
@@ -12,6 +11,8 @@ from app.worker.call_budget_pure import Allowed, Denied, PrScope, RulesetScope
 from app.worker.loop import LoopPolicy, choose_tier
 from app.worker.repo_config_pure import CallSettings
 from app.worker.state import Store
+
+from ..redis_stand_ins import MemoryKeys
 
 T0: Final = datetime(2026, 11, 18, 12, 0, tzinfo=UTC)
 
@@ -26,7 +27,7 @@ class Clock:
 
 @pytest.fixture
 def store(tmp_path: Path) -> Store:
-    return Store(tmp_path / "pipeline.db", fakeredis.FakeStrictRedis())
+    return Store(tmp_path / "pipeline.db", MemoryKeys())
 
 
 def _budget(store: Store, *, pr: int = 1, head: str = "h1", clock: Clock | None = None,

@@ -8,13 +8,13 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Final
 
-import fakeredis
 import pytest
 
 from app.worker import memory
 from app.worker.rag_switch_pure import Evidence, Outcomes
 from app.worker.state import Store
 
+from ..redis_stand_ins import MemoryKeys
 from .rag_helpers import fix_outcomes, record
 
 REPO: Final = "o/r"
@@ -23,7 +23,7 @@ LIMITS: Final[Mapping[str, int]] = {"min_records": 20, "min_attempts": 30, "min_
 
 
 def _store(path: Path) -> Store:
-    return Store(path / "pipeline.db", fakeredis.FakeStrictRedis())
+    return Store(path / "pipeline.db", MemoryKeys())
 
 
 def _records(store: Store, count: int, repo: str = REPO) -> None:

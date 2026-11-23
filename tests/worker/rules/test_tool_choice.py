@@ -6,7 +6,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final
 
-import fakeredis
 import pytest
 
 from app.worker.budget import CallBudget
@@ -18,6 +17,8 @@ from app.worker.rules import tool_choice_pure
 from app.worker.rules.checkers import plan_and_author
 from app.worker.state import Store
 from app.worker.tools_pure import RuffConfig, RuffSetup, config_rule
+
+from ...redis_stand_ins import MemoryKeys
 
 NOW: Final = datetime(2026, 11, 20, 12, tzinfo=UTC)
 UNUSED: Final = Rule(
@@ -44,7 +45,7 @@ class _NoSandbox:
 
 @pytest.fixture
 def store(tmp_path: Path) -> Store:
-    return Store(tmp_path / "pipeline.db", fakeredis.FakeStrictRedis())
+    return Store(tmp_path / "pipeline.db", MemoryKeys())
 
 
 def _plan(store: Store, rules, ruff: RuffSetup):

@@ -2,7 +2,6 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Final
 
-import fakeredis
 import pytest
 from rq import Queue
 
@@ -19,8 +18,9 @@ HEAD: Final = "h" * 40
 
 
 @pytest.fixture
-def env(tmp_path: Path):
-    redis = fakeredis.FakeStrictRedis()
+def env(tmp_path: Path, real_redis):
+    """동기화의 큐 등록과 작업 키는 실제 Redis로 본다 (tests/conftest.py)."""
+    redis = real_redis
     settings = config.PipelineConfig(repos=["o/r"], data_dir=tmp_path)
     return {
         "redis": redis,

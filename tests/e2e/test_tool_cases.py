@@ -17,7 +17,6 @@ ruff·ast-grep(케이스마다 빈 도구 캐시에 받는다), GitHub만 가짜
 from pathlib import Path
 from typing import Final
 
-import fakeredis
 import pytest
 import yaml
 
@@ -31,6 +30,7 @@ from app.worker.sandbox import toolcache
 from app.worker.state import Store
 from tests.sandbox_names import TEST_NAMES
 
+from ..redis_stand_ins import MemoryKeys
 from ..worker.test_github import FakeGh
 from .test_lint_cases import _bodies, _git, shared_venvs  # noqa: F401
 from .test_rules_cases import _remote, doc_rules_section, scripted_model
@@ -79,7 +79,7 @@ def test_tool_case(case_path: Path, eval_repo: Path, shared_venvs: Path,  # noqa
     data = tmp_path / "data"
     data.mkdir()
     (data / "venvs").symlink_to(shared_venvs, target_is_directory=True)
-    redis = fakeredis.FakeStrictRedis()
+    redis = MemoryKeys()
     gh = FakeGh(head=remote["head"], base=remote["base"])
     settings = config.PipelineConfig(
         repos=[REPO], data_dir=data,

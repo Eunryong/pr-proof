@@ -19,7 +19,6 @@ import subprocess
 from pathlib import Path
 from typing import Final
 
-import fakeredis
 import pytest
 import yaml
 
@@ -31,6 +30,7 @@ from app.worker.github import GitHub
 from app.worker.state import Store
 from tests.sandbox_names import TEST_NAMES
 
+from ..redis_stand_ins import MemoryKeys
 from ..worker.test_github import FakeGh
 
 CASES_DIR: Final = Path(__file__).resolve().parents[2] / "eval" / "lint"
@@ -121,7 +121,7 @@ def test_lint_case(case_path: Path, eval_repo: Path, shared_venvs: Path, tmp_pat
     data = tmp_path / "data"
     data.mkdir()
     (data / "venvs").symlink_to(shared_venvs, target_is_directory=True)
-    redis = fakeredis.FakeStrictRedis()
+    redis = MemoryKeys()
     gh = FakeGh(head=remote["head"], base=remote["base"])
     deps = Deps(
         store=Store(data / "pipeline.db", redis),
