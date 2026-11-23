@@ -21,7 +21,8 @@ _PATH_KEYS: Final[Mapping[str, Mapping[str, bool]]] = {
     "Edit": {"file_path": True},
     "Grep": {"path": False},
     "Glob": {"path": False},
-    # 파이프라인 도구(`app/worker/mcp_pure.TOOL_NAMES`). 경로를 받지 않고 파이프라인의 코드가 돈다
+    # 파이프라인 도구(`app/worker/model/mcp_pure.TOOL_NAMES`).
+    # 경로를 받지 않고 파이프라인의 코드가 돈다
     "mcp__proof__check_rules": {},
     "mcp__proof__run_tests": {},
     # 위반 판단(`read_tools`)의 구조화 출력. `--json-schema`를 주면 CLI가 더하는 답 받는 도구다

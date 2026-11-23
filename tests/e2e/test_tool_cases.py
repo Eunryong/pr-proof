@@ -23,10 +23,10 @@ import yaml
 from app.shared import config, state_keys_pure
 from app.shared.job_pure import PRJob
 from app.worker import main
-from app.worker.ai import claude_cli
 from app.worker.deps import Deps
 from app.worker.git import repo
 from app.worker.git.github import GitHub
+from app.worker.model.claude import claude_cli
 from app.worker.sandbox import toolcache
 from app.worker.store.state import Store
 from tests.sandbox_names import TEST_NAMES

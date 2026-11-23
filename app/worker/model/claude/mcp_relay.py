@@ -1,8 +1,8 @@
 """claude CLI가 띄우는 stdio MCP 서버: 줄을 워커의 Unix 소켓으로 넘기고 답을 돌려준다.
 
 파이프라인이 `python -I mcp_relay.py <소켓>`으로 `--mcp-config`에 적는다 (docs/DESIGN.md 4.7, 8.4).
-도구의 뜻과 실행은 모두 워커(`app/worker/ai/tool_server.py`)에 있고, 이 파일은 메시지를 읽지 않는다.
-CLI가 따로 실행하므로 표준 라이브러리만 쓴다.
+도구의 뜻과 실행은 모두 워커(`app/worker/model/claude/tool_server.py`)에 있고, 이 파일은 메시지를
+읽지 않는다. CLI가 따로 실행하므로 표준 라이브러리만 쓴다.
 """
 
 import socket

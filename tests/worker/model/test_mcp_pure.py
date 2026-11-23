@@ -4,8 +4,8 @@ import json
 
 import pytest
 
-from app.worker import mcp_pure
-from app.worker.mcp_pure import ToolLimits, limit_reason, respond, tool_arguments
+from app.worker.model import mcp_pure
+from app.worker.model.mcp_pure import ToolLimits, limit_reason, respond, tool_arguments
 
 
 def _ask(method: str, params: object = None, mid: int = 1) -> str:

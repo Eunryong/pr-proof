@@ -8,9 +8,9 @@
 from collections.abc import Callable, Mapping
 from typing import Final
 
-from app.worker.ai.claude_backend import NAME as CLAUDE_CLI
-from app.worker.ai.claude_backend import ClaudeCliBackend
-from app.worker.ai.model_backend import ModelBackend
+from app.worker.model.claude.claude_backend import NAME as CLAUDE_CLI
+from app.worker.model.claude.claude_backend import ClaudeCliBackend
+from app.worker.model.model_backend import ModelBackend
 
 # 이름 → 구현을 만드는 함수
 BACKENDS: Final[Mapping[str, Callable[[], ModelBackend]]] = {CLAUDE_CLI: ClaudeCliBackend}

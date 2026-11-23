@@ -24,12 +24,12 @@ from app.shared.comment_pure import COMMENT_MARKER
 from app.shared.db_pure import Approval, Run
 from app.shared.job_pure import PRJob
 from app.worker import graph, guard, main, retry
-from app.worker.ai import claude_cli
 from app.worker.config import base_config
 from app.worker.config.access_pure import AccessSettings
 from app.worker.git import repo
 from app.worker.git.github import GitHubError
 from app.worker.git.repo import GitError
+from app.worker.model.claude import claude_cli
 from app.worker.sandbox import docker_cli
 from app.worker.sandbox.docker_cli import SandboxError
 

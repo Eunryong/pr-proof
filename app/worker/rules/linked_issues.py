@@ -20,10 +20,10 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Final
 
-from app.worker.ai.model_backend import ReadCode
 from app.worker.git import repo
 from app.worker.git.git_pure import Linked
 from app.worker.git.github import GitHub, GitHubError
+from app.worker.model.model_backend import ReadCode
 from app.worker.rules.checkers import STALE
 from app.worker.rules.judge import CodeReader
 from app.worker.rules.judge_pure import pr_label, reads_from_json

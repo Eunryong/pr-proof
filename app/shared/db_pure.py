@@ -233,7 +233,7 @@ class CheckerEntry(SQLModel, table=True):
     accepted: bool
     checker_json: str | None = None  # 채택한 Checker. 실패했으면 None
     detail: str = ""  # 실패한 이유 (마지막 회차)
-    attempts_json: str  # app/worker/loop.py의 Attempt 목록
+    attempts_json: str  # app/worker/model/loop.py의 Attempt 목록
     created_at: datetime
     # 채택하지 않고 모델 판단으로 보낸 까닭 (app/worker/checker_authoring_pure.py의 `JudgeRoute`).
     # 경로 규칙과 도구 선택의 줄은 없다

@@ -19,8 +19,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final
 
-from app.worker import mcp_pure
-from app.worker.mcp_pure import ToolLimits, ToolUsage
+from app.worker.model import mcp_pure
+from app.worker.model.mcp_pure import ToolLimits, ToolUsage
 
 RELAY: Final = Path(__file__).with_name("mcp_relay.py")
 # 도구 하나의 결과 글을 만드는 함수. 인자는 `mcp_pure.tool_arguments`가 좁힌 것이다

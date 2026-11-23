@@ -12,10 +12,10 @@ import pytest
 from app.api import github as api_github
 from app.shared import config, github_auth
 from app.worker import preflight
-from app.worker.ai.claude_backend import ClaudeCliBackend
-from app.worker.ai.claude_cli import claude_env
 from app.worker.fix import proposal
 from app.worker.git import github, repo
+from app.worker.model.claude.claude_backend import ClaudeCliBackend
+from app.worker.model.claude.claude_cli import claude_env
 from app.worker.sandbox.docker_cli import minimal_env
 
 TOKEN: Final = "github_pat_FAKE1111111111111111111111"

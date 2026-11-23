@@ -28,8 +28,8 @@ import yaml
 
 from app.shared.job_pure import PRJob
 from app.worker import checker_authoring_pure, main
-from app.worker.ai import claude_cli
 from app.worker.deps import Deps
+from app.worker.model.claude import claude_cli
 
 from .test_lint_cases import _bodies, _git, shared_venvs  # noqa: F401
 from .test_rules_cases import (

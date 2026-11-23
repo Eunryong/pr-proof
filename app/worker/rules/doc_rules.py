@@ -12,7 +12,6 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from app.worker.ai.model_backend import ModelBackend
 from app.worker.checker_authoring_pure import (
     Checked,
     RuleCheck,
@@ -43,6 +42,7 @@ from app.worker.doc_rules_pure import (
 )
 from app.worker.git import repo
 from app.worker.git.repo import GitError
+from app.worker.model.model_backend import ModelBackend
 from app.worker.rule_reading_pure import apply_disabled
 from app.worker.rules import checkers, detect, rules
 from app.worker.rules import judge as model_judge
@@ -63,7 +63,7 @@ class Runtime:
     store: Store
     budget: CallBudget
     models: ModelSettings
-    backend: ModelBackend  # 모델 구현 (`app/worker/ai/model_backend.py`)
+    backend: ModelBackend  # 모델 구현 (`app/worker/model/model_backend.py`)
     sandbox: checkers.FormatsFiles
     ruff: RuffSetup | None = None  # 이 저장소의 ruff (base 설정, 버전)
     disabled: frozenset[str] = frozenset()  # `rules.disabled`. 도구 설정 규칙의 ruff 코드를 끈다

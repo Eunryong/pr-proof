@@ -2,8 +2,8 @@
 
 claude CLI가 띄우는 stdio MCP 서버(`mcp_relay.py`)는 줄을 워커로 넘기기만 하고, 메시지의 뜻은 여기서
 정한다. 도구는 둘이고 인자는 없거나 좁다. 도구를 실제로 돌리는 함수는 부르는 쪽이 넘긴다
-(`app/worker/ai/tool_server.py`). 외부 호출이 없다. 수정 작성(`app/worker/fix/`)과 claude 호출
-(`app/worker/ai/`)이 같이 쓴다.
+(`app/worker/model/claude/tool_server.py`). 외부 호출이 없다. 수정 작성(`app/worker/fix/`)과 claude
+호출 (`app/worker/model/`)이 같이 쓴다.
 """
 
 import json
@@ -16,7 +16,7 @@ CHECK_RULES: Final = "check_rules"
 RUN_TESTS: Final = "run_tests"
 # claude가 MCP 도구에 붙이는 이름. 도구 목록 확인(T25)과 경로 감시 훅이 이 이름을 안다
 TOOL_NAMES: Final = (f"mcp__{SERVER}__{CHECK_RULES}", f"mcp__{SERVER}__{RUN_TESTS}")
-STATE_TYPES: Final = (("app.worker.mcp_pure", "ToolUsage"),)
+STATE_TYPES: Final = (("app.worker.model.mcp_pure", "ToolUsage"),)
 # 호출 하나(claude 한 번) 안의 상한 (9.2). 넘으면 도구를 돌리지 않고 "상한에 닿음"을 돌려준다
 MAX_TOOL_CALLS: Final = 24
 MAX_TOOL_SECONDS: Final = 900.0

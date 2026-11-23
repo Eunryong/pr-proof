@@ -1,5 +1,5 @@
-"""문서 규칙 위반의 모델 수정: 공용 틀(app/worker/loop.py)의 작성과 출구 검사 (docs/DESIGN.md 4.7,
-4.8, 5.3 (b)).
+"""문서 규칙 위반의 모델 수정: 공용 틀(app/worker/model/loop.py)의 작성과 출구 검사 (docs/DESIGN.md
+4.7, 4.8, 5.3 (b)).
 
 write는 모델 전용 폴더에서 고치는 호출(`ModelBackend.fix`)에 파이프라인 도구 둘(규칙 검사, 테스트)을
 준다. 모델이 한 호출 안에서 테스트를 쓰고, 돌려 보고, 고치고, 다시 돌려 본다.
@@ -28,8 +28,6 @@ from typing import Final
 
 from app.shared.db_pure import FixAttempt
 from app.shared.job_pure import PRJob
-from app.worker import mcp_pure
-from app.worker.ai.model_backend import FIX_TOOLS_TIMEOUT_S, AIEnvironmentError, EditCode
 from app.worker.config.repo_config_pure import ModelSettings
 from app.worker.core.bundle_pure import MODEL_BUNDLE
 from app.worker.core.cache_key_pure import text_hash
@@ -56,7 +54,8 @@ from app.worker.fix.scope_pure import (
 )
 from app.worker.git import repo
 from app.worker.lang.python import read_sources
-from app.worker.loop import (
+from app.worker.model import mcp_pure
+from app.worker.model.loop import (
     HEAVY_AFTER_FAILURES,
     LoopPolicy,
     LoopState,
@@ -65,7 +64,8 @@ from app.worker.loop import (
     WriteResult,
     build_loop,
 )
-from app.worker.mcp_pure import ToolUsage
+from app.worker.model.mcp_pure import ToolUsage
+from app.worker.model.model_backend import FIX_TOOLS_TIMEOUT_S, AIEnvironmentError, EditCode
 from app.worker.rules.detect import Detection, source_lines
 from app.worker.sandbox.safe_read import read_regular_file
 from app.worker.store import records_pure

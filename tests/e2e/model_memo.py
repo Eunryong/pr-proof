@@ -19,8 +19,8 @@ from pathlib import Path
 from typing import Final, Literal
 
 from app.worker import checker_authoring_pure, rule_reading_pure
-from app.worker.ai.claude_cli import AIErrorKind, ClaudeResult, StructuredResult
 from app.worker.fix import fix_decision_pure
+from app.worker.model.claude.claude_cli import AIErrorKind, ClaudeResult, StructuredResult
 from app.worker.rules import judge_pure, pr_check_pure, tool_choice_pure
 
 Kind = Literal["call", "hit", "fix"]

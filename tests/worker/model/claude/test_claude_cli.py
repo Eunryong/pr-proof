@@ -8,8 +8,8 @@ from typing import Final
 
 import pytest
 
-from app.worker.ai import claude_cli as ai
-from app.worker.ai.claude_cli import AIErrorKind
+from app.worker.model.claude import claude_cli as ai
+from app.worker.model.claude.claude_cli import AIErrorKind
 
 FILE_TOOLS: Final = ["Edit", "Glob", "Grep", "Read", "Write"]
 

@@ -22,12 +22,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Literal
 
+from app.worker.model.mcp_pure import TOOL_NAMES
+
 # FIX_TOOLS_TIMEOUT_S, AIEnvironmentError는 이 모듈에서 import하던 이름이라 다시 내보낸다
 # (정의는 구현에 묶이지 않은 `model_backend`로 옮겼다)
-from app.worker.ai.model_backend import FIX_TOOLS_TIMEOUT_S as FIX_TOOLS_TIMEOUT_S
-from app.worker.ai.model_backend import AIEnvironmentError as AIEnvironmentError
-from app.worker.ai.model_backend import AIErrorKind, EditResult, PermissionDenial, StructuredResult
-from app.worker.mcp_pure import TOOL_NAMES
+from app.worker.model.model_backend import FIX_TOOLS_TIMEOUT_S as FIX_TOOLS_TIMEOUT_S
+from app.worker.model.model_backend import AIEnvironmentError as AIEnvironmentError
+from app.worker.model.model_backend import (
+    AIErrorKind,
+    EditResult,
+    PermissionDenial,
+    StructuredResult,
+)
 
 # 호출 한 번의 시간 상한(초). 넘으면 프로세스를 죽이고 TIMEOUT으로 돌려준다
 DEFAULT_TIMEOUT_S: Final = 600.0
@@ -132,7 +138,7 @@ class ToolCapReached(Exception):
 
 @dataclass(frozen=True)
 class ReadFolder:
-    """읽기 도구를 주는 호출의 폴더 (`app/worker/ai/workdir.py`의 모델 폴더)."""
+    """읽기 도구를 주는 호출의 폴더 (`app/worker/model/claude/workdir.py`의 모델 폴더)."""
 
     work: Path  # cwd. worktree의 일반 파일만 복사한 폴더
     settings: Path  # 경로 감시 훅을 건 설정 파일. work 밖에 있다

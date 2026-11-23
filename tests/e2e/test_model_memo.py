@@ -2,8 +2,8 @@ import json
 from pathlib import Path
 
 from app.worker import rule_reading_pure
-from app.worker.ai.claude_cli import AIErrorKind, ClaudeResult, StructuredResult
 from app.worker.fix import fix_decision_pure
+from app.worker.model.claude.claude_cli import AIErrorKind, ClaudeResult, StructuredResult
 
 from .model_memo import Memo, memo_key, stage_of
 

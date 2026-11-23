@@ -1,4 +1,4 @@
-"""모델 구현이 지켜야 하는 조건(계약, `app/worker/ai/model_backend.py`의 설명과 DESIGN 8.4)을
+"""모델 구현이 지켜야 하는 조건(계약, `app/worker/model/model_backend.py`의 설명과 DESIGN 8.4)을
 구현마다 같은 시험으로 본다.
 
 시험은 구현을 인자로 받고(`backend`), 인터페이스의 말(`ask`, `reading`, `fix`)만 쓴다. 새 구현은
@@ -15,10 +15,10 @@ from typing import Final
 import pytest
 
 from app.shared.ops_alert_pure import TEXT
-from app.worker.ai import backends
-from app.worker.ai.claude_backend import ClaudeCliBackend
-from app.worker.ai.model_backend import Capabilities, ModelBackend
 from app.worker.git import repo
+from app.worker.model import backends
+from app.worker.model.claude.claude_backend import ClaudeCliBackend
+from app.worker.model.model_backend import Capabilities, ModelBackend
 
 REAL_AI_ENV: Final = "PR_PROOF_REAL_AI"
 MODEL: Final = "haiku"  # 구현마다 가장 싼 모델 이름. 새 구현은 CONTRACT에 같이 적는다

@@ -7,7 +7,7 @@ from typing import Final
 import pytest
 
 from app.worker.core.violation_pure import Violation
-from app.worker.mcp_pure import ToolUsage
+from app.worker.model.mcp_pure import ToolUsage
 from app.worker.testing.generated_tests_pure import (
     LINE_LABEL,
     MAX_TEST_FILES,

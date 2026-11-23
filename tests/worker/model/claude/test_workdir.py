@@ -1,4 +1,5 @@
-"""app/worker/ai/workdir.py: 모델 전용 작업 폴더. 실제 git으로 확인하고, 모델은 가짜로 바꾼다."""
+"""app/worker/model/claude/workdir.py: 모델 전용 작업 폴더. 실제 git으로 확인하고, 모델은 가짜로
+바꾼다."""
 
 import os
 import subprocess
@@ -7,9 +8,14 @@ from typing import Final
 
 import pytest
 
-from app.worker.ai import workdir
-from app.worker.ai.claude_cli import AIErrorKind, ClaudeResult, ReadFolder, StructuredResult
 from app.worker.git import repo
+from app.worker.model.claude import workdir
+from app.worker.model.claude.claude_cli import (
+    AIErrorKind,
+    ClaudeResult,
+    ReadFolder,
+    StructuredResult,
+)
 
 SECRET: Final = "outside-secret\n"
 
