@@ -10,6 +10,8 @@ from typing import Final
 from app.shared import config, github_auth
 from app.shared.comment_pure import COMMENT_MARKER, REPLY_MARKER
 from app.shared.feedback_pure import FEEDBACK_MARKER
+from app.worker.rules import linked_issues_pure
+from app.worker.rules.linked_issues_pure import Linked
 
 GH_TIMEOUT: Final = 60
 _ENV_PASSTHROUGH: Final = ("PATH", "HOME", "GH_CONFIG_DIR")
@@ -120,6 +122,25 @@ query($owner: String!, $name: String!, $number: Int!) {
   }
 }
 """
+# PR이 닫겠다고 한 이슈 (본문의 `Closes #N`·`Fixes #N`과 PR 화면에서 연결한 것을 GitHub이 모은다).
+# 이슈는 10개, 이슈마다 댓글은 최근 50개까지 읽는다 (`linked_issues_pure`의 상한)
+CLOSING_ISSUES_QUERY: Final = f"""
+query($owner: String!, $name: String!, $number: Int!) {{
+  repository(owner: $owner, name: $name) {{
+    pullRequest(number: $number) {{
+      closingIssuesReferences(first: {linked_issues_pure.MAX_FETCHED_ISSUES}) {{
+        totalCount
+        nodes {{
+          __typename number title body repository {{ nameWithOwner }}
+          comments(last: {linked_issues_pure.MAX_FETCHED_COMMENTS}) {{
+            totalCount nodes {{ authorAssociation body }}
+          }}
+        }}
+      }}
+    }}
+  }}
+}}
+"""
 RESOLVE_MUTATION: Final = """
 mutation($id: ID!) {
   resolveReviewThread(input: {threadId: $id}) { thread { id isResolved } }
@@ -206,6 +227,23 @@ class GitHub:
             return PullText(str(item["title"]), str(item["body"]), str(item["branch"]))
         except (ValueError, KeyError, TypeError) as e:
             raise GitHubError(f"PR 글 조회 응답을 읽지 못함: {repo}#{pr_number}") from e
+
+    def linked_issues(self, repo: str, pr_number: int) -> Linked:
+        """PR이 닫겠다고 한 이슈와 그 제목·본문·최근 댓글 (GraphQL `closingIssuesReferences`).
+        모두 믿지 않는 글이다. 가드레일(8.6)이 작업을 들인 뒤 이슈 확인만 부른다."""
+        owner, _, name = repo.partition("/")
+        out = self._run(
+            ["api", "graphql", "-f", f"query={CLOSING_ISSUES_QUERY}", "-F", f"owner={owner}",
+             "-F", f"name={name}", "-F", f"number={pr_number}"],
+            None,
+        )  # fmt: skip
+        try:
+            data = json.loads(out)
+            if not isinstance(data, dict):
+                raise ValueError("응답이 객체가 아님")
+            return linked_issues_pure.parse_closing_issues(data)
+        except ValueError as e:
+            raise GitHubError(f"연결된 이슈 조회 응답을 읽지 못함: {repo}#{pr_number}: {e}") from e
 
     def issue_comment(self, repo: str, comment_id: int) -> IssueComment:
         """코멘트 하나의 지금 작성자, 관계, 본문, 달린 PR. 승인자 확인에 쓴다 (8.6)."""

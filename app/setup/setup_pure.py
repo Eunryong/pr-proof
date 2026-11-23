@@ -34,7 +34,7 @@ TOKEN_PERMISSIONS: Final = """토큰에 필요한 권한 (처리할 repo마다):
   fine-grained 토큰의 Repository permissions
     - Contents: Read and write   (clone·fetch, 수정안 브랜치 push와 지우기)
     - Pull requests: Read and write   (PR 조회, 수정안 PR 열기·닫기, 리뷰·줄 코멘트, 스레드 해결)
-    - Issues: Read and write   (PR의 일반 코멘트 읽기·달기·고치기)
+    - Issues: Read and write   (PR의 일반 코멘트 읽기·달기·고치기, PR이 닫는 이슈 읽기)
     - Metadata: Read-only   (자동으로 붙는다)
     - Webhooks: Read and write   (configure·add·rm이 웹훅을 등록·지울 때만)
   classic 토큰의 scope

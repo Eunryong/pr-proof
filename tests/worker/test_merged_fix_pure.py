@@ -27,6 +27,7 @@ from app.worker.merged_fix_pure import (
     unverified_count,
 )
 from app.worker.rule_pure import CheckMethod, Rule, RuleSource
+from app.worker.rules.linked_issues_pure import IssueGap, LinkedIssues
 from app.worker.rules.pr_check_pure import PrChecks, PrRuleResult
 from app.worker.rules.pr_description_pure import Mismatch, PrDescription
 from app.worker.test_run_pure import PytestRun, ReportSummary
@@ -331,3 +332,17 @@ def test_description_on_a_line_the_patch_changed_means_a_full_check() -> None:
     touched = Mismatch("unrelated", "s", file="orders/a.py", side="new", line=2, code="print(x)")
     out = carried_description(PrDescription("checked", (touched,)), PATCH)
     assert out == "수정안이 PR 설명 확인이 가리킨 줄을 바꿈 (orders/a.py:2)"
+
+
+# --- 이슈 확인 (4.5 끝) ---
+
+
+def test_issue_check_left_by_the_call_cap_means_a_full_check() -> None:
+    left = LinkedIssues("unchecked", issues=(7,), gap="cap", detail="PR 상한")
+    why = state_problem(check(linked_issues=left), bundle="model", attempt_id=3, base_sha="base")
+    assert why == "호출 상한으로 견주지 못한 이슈 확인이 있음"
+    gap = IssueGap(7, "missing", "s", "q")
+    for value in (LinkedIssues("unchecked", gap="model_failed"), LinkedIssues("none"),
+                  LinkedIssues("checked", issues=(7,), items=(gap,)), None):  # fmt: skip
+        assert state_problem(check(linked_issues=value), bundle="model", attempt_id=3,
+                             base_sha="base") is None  # fmt: skip

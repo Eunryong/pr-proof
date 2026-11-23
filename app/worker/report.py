@@ -1,8 +1,8 @@
 """결과를 PR 코멘트용 마크다운으로 바꾼다. 판정을 새로 내지 않고 모델 값만 보여준다.
 
 코멘트 맨 위는 "테스트:" 줄과 결론인 "규칙:" 줄이고, PR 단위 위반이 있으면 "PR 단위:" 줄이, PR 설명
-확인을 했으면 "PR 설명:" 줄이 더 붙는다. 테스트는 글자로만 쓰고, ⚠️/✅는 규칙 줄에만 쓰며 ⚠️는
-"위반 있음"이라는 뜻으로만 쓴다
+확인을 했으면 "PR 설명:" 줄이, 이슈 확인을 했으면 그 아래 "이슈:" 줄이 더 붙는다. 테스트는 글자로만
+쓰고, ⚠️/✅는 규칙 줄에만 쓰며 ⚠️는 "위반 있음"이라는 뜻으로만 쓴다
 (docs/DESIGN.md 4.9). 그 아래에는 위반과 할 일만 펼쳐 두고, 규칙별 확인 방법, 사용량, 테스트 수,
 바뀐 줄 커버리지는 접는 블록 하나에 넣는다. 규칙 줄과 규칙 절은 app/worker/doc_rules_report.py가
 그린다.
@@ -11,7 +11,12 @@
 from collections.abc import Mapping, Sequence
 from typing import Final
 
-from app.worker import doc_rules_report, pr_check_report_pure, pr_description_report_pure
+from app.worker import (
+    doc_rules_report,
+    linked_issues_report_pure,
+    pr_check_report_pure,
+    pr_description_report_pure,
+)
 from app.worker.base_config import PIPELINE_YAML, BaseConfig
 from app.worker.checker_pure import Checker
 from app.worker.coverage import DiffCoverage
@@ -22,6 +27,7 @@ from app.worker.lang.install_pure import InstallFailureKind
 from app.worker.markdown_pure import code_fence, inline_code
 from app.worker.merged_fix_pure import CarriedFrom
 from app.worker.rag_switch_pure import RagSwitch
+from app.worker.rules.linked_issues_pure import LinkedIssues
 from app.worker.rules.pr_check_pure import PrChecks
 from app.worker.rules.pr_description_pure import PrDescription
 from app.worker.sandbox.docker_cli import MEMORY_LIMIT_GB
@@ -140,6 +146,7 @@ def _compose(
     rag: RagSwitch | None = None,
     pr: PrChecks | None = None,
     description: PrDescription | None = None,
+    issues: LinkedIssues | None = None,
 ) -> str:
     lines = [HEADER, "", f"**테스트:** {test_line}"]
     rules_line = doc_rules_report.title(doc_rules, fixes, pr, decisions)
@@ -151,9 +158,17 @@ def _compose(
     description_line = pr_description_report_pure.title(description)
     if description_line is not None:
         lines.append(description_line)
+    issues_line = linked_issues_report_pure.title(issues)
+    if issues_line is not None:
+        lines.append(issues_line)
     lines += details
     lines += pr_description_report_pure.expanded(description)
-    more = (folded or []) + pr_description_report_pure.folded(description)
+    lines += linked_issues_report_pure.expanded(issues)
+    more = (
+        (folded or [])
+        + pr_description_report_pure.folded(description)
+        + linked_issues_report_pure.folded(issues)
+    )
     lines += doc_rules_report.section(
         doc_rules, checkers or {}, decisions, fixes, rag, pr, more=more
     )
@@ -223,11 +238,13 @@ def render_result(
     pr: PrChecks | None = None,
     carried: CarriedFrom | None = None,
     description: PrDescription | None = None,
+    issues: LinkedIssues | None = None,
 ) -> str:
     """결과 코멘트. fixes는 묶음마다 수정했으면 그 결과, 아니면 상태(대기, 진행 중 등)다. rag는 이
     검사의 검색 상태다(규칙 절에 한 줄로 보인다). pr은 PR 단위 확인의 결과다. carried는 수정안을
     머지한 커밋이라 결과를 옮겨 적었을 때 그 출처다(테스트 줄 아래에 안내가 붙는다). description은
-    PR 설명 확인의 결과다(이 확인을 끈 저장소는 None)."""
+    PR 설명 확인의 결과다(이 확인을 끈 저장소는 None). issues는 이슈 확인의 결과다(끈 저장소는
+    None)."""
     memory_gb = base.memory_gb if base else MEMORY_LIMIT_GB
     max_memory_gb = base.max_memory_gb if base else MEMORY_LIMIT_GB
     return _compose(
@@ -245,6 +262,7 @@ def render_result(
         rag=rag,
         pr=pr,
         description=description,
+        issues=issues,
     )
 
 
@@ -259,6 +277,7 @@ def render_install_failure(
     packages: Sequence[str] = (),
     pr: PrChecks | None = None,
     description: PrDescription | None = None,
+    issues: LinkedIssues | None = None,
 ) -> str:
     """의존성 설치 실패. 규칙 검사는 설치와 따로 돌므로 결과가 있으면 같이 보여준다."""
     return _compose(
@@ -270,6 +289,7 @@ def render_install_failure(
         checkers=checkers,
         pr=pr,
         description=description,
+        issues=issues,
     )
 
 

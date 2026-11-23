@@ -20,10 +20,10 @@ Tier = Literal["light", "heavy"]
 # ai_calls의 단계 (7.8). 규칙 읽기, 검사기 작성, PR 패턴 작성(pr_plan)은 규칙 묶음 상한에서,
 # 나머지는 PR 상한에서 센다. pr_judge는 PR 단위 확인의 모델 판단(4.5 끝), run_judge는 실행 결과의
 # 규칙의 모델 판단이다 (4.5). feedback은 PR 코멘트의 판단이다 (4.11). pr_description은 PR 설명과
-# diff 견주기다 (4.5 끝)
+# diff 견주기, linked_issues는 연결된 이슈가 요구한 것과 diff 견주기다 (4.5 끝)
 Stage = Literal[
     "rules", "checker", "pr_plan", "judge", "pr_judge", "run_judge", "decide", "fix", "feedback",
-    "pr_description",
+    "pr_description", "linked_issues",
 ]  # fmt: skip
 Cap = Literal["pr", "ruleset", "repo_daily"]
 

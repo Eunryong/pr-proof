@@ -131,6 +131,6 @@ def test_summary_counts_case_files_apart_from_other_tests() -> None:
 def test_every_model_stage_has_a_prompt_version() -> None:
     versions = prompt_versions()
     assert set(versions) == {"rules", "tool_choice", "checker", "checker_path", "judge",
-                             "pr_plan", "pr_judge", "run_judge", "pr_description", "decide",
-                             "fix"}  # fmt: skip
+                             "pr_plan", "pr_judge", "run_judge", "pr_description", "linked_issues",
+                             "decide", "fix"}  # fmt: skip
     assert all(versions.values())

@@ -40,6 +40,12 @@ class FakeGh:
         self.title = "PR 제목"
         self.body = ""
         self.text_lookups = 0
+        # 원본 PR이 닫겠다고 한 이슈 (이슈 확인의 GraphQL 조회). 기본은 없음이라 모델을 부르지
+        # 않는다.
+        # 노드 모양은 GitHub의 응답 그대로다 (`linked_node`)
+        self.linked: list[dict | None] = []
+        self.linked_error: str | None = None
+        self.linked_lookups = 0
 
     def __call__(self, args: list[str], stdin: str | None) -> str:
         self.calls.append((args, stdin))
@@ -56,6 +62,13 @@ class FakeGh:
                 f"{self.head}\t{self.base}\t{self.state}\t{self.head_ref}\t{self.head_repo}"
                 f"\t{self.author_association}\t{self.author_login}\n"
             )
+        if args[:2] == ["api", "graphql"] and any("closingIssuesReferences" in x for x in args):
+            self.linked_lookups += 1
+            if self.linked_error:
+                raise GitHubError(self.linked_error)
+            refs = {"totalCount": len(self.linked), "nodes": self.linked}
+            return json.dumps({"data": {"repository": {"pullRequest": {
+                "closingIssuesReferences": refs}}}}) + "\n"  # fmt: skip
         if _is_text_lookup(args):
             self.text_lookups += 1
             return (
@@ -125,6 +138,19 @@ class FakeGh:
                 continue
             out.append("patch" if "PATCH" in a else "find" if "--paginate" in a else "create")
         return out
+
+
+def linked_node(
+    number: int, title: str, body: str = "", comments: tuple[tuple[str, str], ...] = (),
+    repo: str = "o/r",
+) -> dict:  # fmt: skip
+    """`closingIssuesReferences`의 이슈 노드 하나. comments는 (작성자의 관계, 본문)이다."""
+    return {
+        "__typename": "Issue", "number": number, "title": title, "body": body,
+        "repository": {"nameWithOwner": repo},
+        "comments": {"totalCount": len(comments),
+                     "nodes": [{"authorAssociation": a, "body": b} for a, b in comments]},
+    }  # fmt: skip
 
 
 def _is_text_lookup(args: list[str]) -> bool:
@@ -274,3 +300,24 @@ def test_review_errors_other_than_422_propagate() -> None:
     gh.review_error = "gh api 실패: HTTP 502"
     with pytest.raises(GitHubError):
         proposal.post_review(GitHub(gh), "o/r", 900, [ReviewComment("a.py", 1, "b")], "p", ())
+
+
+def test_linked_issues_reads_the_closing_issues_with_typed_variables() -> None:
+    """PR이 닫겠다고 한 이슈 (이슈 확인, 4.5 끝). 응답 모양은 공개 저장소의 읽기 조회로 확인했다."""
+    gh = FakeGh()
+    gh.linked = [linked_node(7, "제목", "본문", (("MEMBER", "범위를 줄입니다"),)), None]
+    linked = GitHub(gh).linked_issues("o/r", 1)
+    ((args, stdin),) = gh.calls
+    assert args[:2] == ["api", "graphql"] and stdin is None
+    assert {"owner=o", "name=r", "number=1"} <= set(args) and args.count("-F") == 3
+    assert "closingIssuesReferences(first: 10)" in args[3] and "comments(last: 50)" in args[3]
+    (issue,) = linked.issues
+    assert (issue.number, issue.repo, issue.title, issue.body) == (7, "o/r", "제목", "본문")
+    assert [(c.association, c.body) for c in issue.comments] == [("MEMBER", "범위를 줄입니다")]
+    assert (linked.total, linked.fetched, linked.unreadable) == (2, 2, 1)
+
+
+@pytest.mark.parametrize("out", ["", "not json", "[]", json.dumps({"errors": [{"message": "x"}]})])
+def test_unreadable_linked_issues_lookup_is_a_failure(out: str) -> None:
+    with pytest.raises(GitHubError):
+        GitHub(lambda args, stdin: out).linked_issues("o/r", 1)
