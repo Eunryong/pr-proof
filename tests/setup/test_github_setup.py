@@ -33,7 +33,7 @@ def _env(stub: Path) -> dict[str, str]:
 
 
 def test_candidate_token_goes_to_gh(stub) -> None:
-    assert gh.repo_access(gh.make_runner(TOKEN), "octocat/hello-world") == (True, True)
+    assert gh.repo_access(gh.make_runner(TOKEN), "octocat/hello-world")[:2] == (True, True)
     assert _env(stub)["GH_TOKEN"] == TOKEN
 
 

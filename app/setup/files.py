@@ -70,18 +70,29 @@ def read_private(name: str, directory: Path | None = None) -> str | None:
     return config.read_secret(name, directory)
 
 
-def read_port(directory: Path | None = None) -> int:
-    """`pr-proof.env`의 API_PORT. 없거나 읽지 못하면 기본값."""
+def saved_port(directory: Path | None = None) -> int | None:
+    """`pr-proof.env`에 적어 둔 API_PORT. 파일이 없거나 값이 없으면 None."""
     path = (directory or config_dir()) / RUN_ENV_FILE
     try:
         lines = path.read_text().splitlines()
     except OSError:
-        return DEFAULT_PORT
+        return None
     for line in lines:
         key, _, value = line.partition("=")
         if key.strip() == PORT_KEY and value.strip().isdigit():
             return int(value.strip())
-    return DEFAULT_PORT
+    return None
+
+
+def read_port(directory: Path | None = None) -> int:
+    """`pr-proof.env`의 API_PORT. 없거나 읽지 못하면 기본값."""
+    return saved_port(directory) or DEFAULT_PORT
+
+
+def in_clone() -> bool:
+    """저장소를 clone한 폴더에서 도는지(`npx . <명령>`). 아니면 npm으로 받은 패키지다
+    (`npx pr-proof <명령>`). 입구(bin/pr-proof.js)의 venv 위치와 같은 기준이다."""
+    return (PACKAGE_ROOT / ".git").exists()
 
 
 def write_port(port: int, directory: Path | None = None) -> None:

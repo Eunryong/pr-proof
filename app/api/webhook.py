@@ -23,9 +23,15 @@ def parse_event(
     event: str, payload: dict[str, Any], delivery_id: str | None, allowed_repos: frozenset[str]
 ) -> PRJob | Ignored:
     """GitHub 이벤트를 작업으로 바꾼다. 처리하지 않을 이벤트는 Ignored와 이유를 돌려준다."""
-    repo = (payload.get("repository") or {}).get("full_name")
-    if repo not in allowed_repos:
-        return Ignored(f"허용 목록에 없는 리포: {repo}")
+    sent = (payload.get("repository") or {}).get("full_name")
+    # GitHub의 계정·저장소 이름은 대소문자를 가리지 않는다. 설정에 다른 대소문자로 적혀 있어도 같은
+    # 저장소이고, 작업에는 설정에 적힌 철자를 쓴다(동기화가 만드는 작업과 같은 이름이 되게)
+    repo = next(
+        (r for r in allowed_repos if isinstance(sent, str) and r.casefold() == sent.casefold()),
+        None,
+    )
+    if repo is None:
+        return Ignored(f"허용 목록에 없는 리포: {sent}")
     action = payload.get("action")
 
     if event == "pull_request":

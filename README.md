@@ -118,7 +118,7 @@ npx . start                      # 서버 실행 (api, worker, smee에서 받아
 
 configure가 묻는 것은 넷이다.
 
-1. 처리할 repo. 예: `octocat/hello-world`. 여럿이면 띄어 쓴다
+1. 처리할 repo. 예: `octocat/hello-world`. GitHub 주소를 붙여 넣어도 된다. 여럿이면 띄어 쓴다. 대소문자는 GitHub에 적힌 대로 맞춰 넣는다
 2. GitHub 인증 방식: gh 로그인(`gh auth login`을 해 둔 계정) 또는 토큰
 3. 토큰. 토큰 방식일 때만 묻고, 화면에 보이지 않게 입력한다
 4. 웹훅 받는 주소. 없으면 Enter

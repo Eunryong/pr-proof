@@ -72,16 +72,20 @@ def login(run: Runner) -> str:
     return run(["api", "user", "--jq", ".login"], None).strip()
 
 
-def repo_access(run: Runner, repo: str) -> tuple[bool, bool]:
-    """(읽기, 쓰기). 저장소가 보이지 않으면 NoPermission.
+def repo_access(run: Runner, repo: str) -> tuple[bool, bool, str]:
+    """(읽기, 쓰기, GitHub이 적는 정식 이름). 저장소가 보이지 않으면 NoPermission.
+
+    정식 이름(`full_name`)은 대소문자가 사용자가 적은 것과 다를 수 있다. GitHub은 웹훅 소식에 정식
+    이름을 적어 보내므로 허용 목록에는 이 이름을 넣는다.
 
     GitHub이 주는 것은 계정의 저장소 권한(`permissions.push`)이다. fine-grained 토큰에서 그 토큰에
     준 권한이 모자란지는 실제로 쓰기 전에는 알 수 없다(README의 권한 목록을 본다).
     """
-    out = run(["api", f"repos/{repo}", "--jq", "[.permissions.pull, .permissions.push] | @tsv"],
-              None)  # fmt: skip
-    pull, _, push = out.strip().partition("\t")
-    return pull == "true", push == "true"
+    jq = "[.permissions.pull, .permissions.push, .full_name] | @tsv"
+    out = run(["api", f"repos/{repo}", "--jq", jq], None)
+    pull, push, name = [*out.strip().split("\t"), "", "", ""][:3]
+    # 이름을 바꾼 저장소는 옛 이름으로 물어도 새 이름이 온다. 그 이름이 웹훅 소식에 적힌다
+    return pull == "true", push == "true", name.strip() or repo
 
 
 def list_hooks(run: Runner, repo: str) -> list[Hook]:

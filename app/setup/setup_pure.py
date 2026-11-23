@@ -46,11 +46,39 @@ class ConfigEditError(ValueError):
     """config.yaml의 repos를 줄 단위로 고칠 수 없다. 손으로 고쳐야 한다."""
 
 
+# 브라우저나 git에서 복사한 GitHub 주소: https://github.com/a/b, github.com/a/b.git,
+# git@github.com:a/b.git
+_GITHUB_URL: Final = re.compile(
+    r"(?:(?:https?://)?(?:www\.)?github\.com/|git@github\.com:)([^/\s]+)/([^/\s?#]+)(?:[/?#].*)?",
+    re.IGNORECASE,
+)
+
+
+def repo_name(text: str) -> str:
+    """사용자가 적은 repo를 `계정/저장소이름`으로. GitHub 주소를 붙여 넣은 것도 받는다(끝의 `.git`과
+    뒤의 경로는 뗀다). 주소가 아니면 앞뒤 공백만 뗀 그대로다(꼴은 `repo_problem`이 본다)."""
+    text = text.strip()
+    if found := _GITHUB_URL.fullmatch(text):
+        return f"{found.group(1)}/{found.group(2).removesuffix('.git')}"
+    return text
+
+
 def repo_problem(text: str) -> str | None:
-    """repo 이름이 `계정/저장소이름` 꼴이 아니면 그 안내."""
-    if _REPO.fullmatch(text) and text.split("/")[1] not in (".", ".."):
+    """repo가 `계정/저장소이름` 꼴도 GitHub 주소도 아니면 그 안내."""
+    name = repo_name(text)
+    if _REPO.fullmatch(name) and name.split("/")[1] not in (".", ".."):
         return None
-    return f"repo는 `계정/저장소이름` 꼴로 적습니다 (예: {REPO_EXAMPLE}): {text!r}"
+    return (
+        f"repo는 `계정/저장소이름` 꼴이나 GitHub 주소로 적습니다 (예: {REPO_EXAMPLE}). "
+        f"받은 값: {text!r}"
+    )
+
+
+def spelled_as(name: str, known: Sequence[str]) -> str | None:
+    """known 중 name과 대소문자만 다른(또는 같은) 것. GitHub의 계정과 저장소 이름은 대소문자를
+    가리지 않는다."""
+    wanted = name.casefold()
+    return next((k for k in known if k.casefold() == wanted), None)
 
 
 # --- config.yaml ---
@@ -129,7 +157,10 @@ def add_repos(text: str, repos: Sequence[str]) -> tuple[str, list[str]]:
     돌려준다."""
     before = _load(text)
     current = list(before.get("repos") or [])
-    new = [r for r in dict.fromkeys(repos) if r not in current]
+    new = []
+    for r in dict.fromkeys(repos):  # 대소문자만 다른 것은 이미 있는 것이다
+        if spelled_as(r, [*current, *new]) is None:
+            new.append(r)
     if not new:
         return text, []
     lines = text.splitlines(keepends=True)
@@ -159,7 +190,8 @@ def remove_repos(text: str, repos: Sequence[str]) -> tuple[str, list[str]]:
     읽힌다. `repos:`만 남으면 null이라 서버가 시작하지 못한다)."""
     before = _load(text)
     current = list(before.get("repos") or [])
-    gone = [r for r in dict.fromkeys(repos) if r in current]
+    # 목록에 적힌 철자로 찾는다(대소문자만 다르게 적어도 뺀다)
+    gone = list(dict.fromkeys(s for r in repos if (s := spelled_as(r, current)) is not None))
     if not gone:
         return text, []
     left = [r for r in current if r not in gone]

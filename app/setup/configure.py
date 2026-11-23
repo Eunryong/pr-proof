@@ -216,11 +216,13 @@ def _secret(directory: Path) -> str | None:
 
 
 def check_access(run: gh.Runner, repos: Sequence[str], io: Io) -> list[str]:
-    """읽을 수 있는 repo만 돌려준다. 못 읽는 것과 쓸 수 없는 것을 말한다."""
+    """읽을 수 있는 repo만, GitHub이 적는 정식 이름으로 돌려준다(대소문자가 사용자가 적은 것과 다를
+    수 있다. 웹훅 소식에는 정식 이름이 온다). 못 읽는 것과 쓸 수 없는 것을 말한다."""
     readable = []
-    for repo in repos:
+    for given in repos:
+        repo = given
         try:
-            read, write = gh.repo_access(run, repo)
+            read, write, repo = gh.repo_access(run, given)
         except gh.NoPermission:
             io.say(f"  {repo}: 찾지 못했거나 읽을 권한이 없습니다")
             continue
@@ -231,6 +233,8 @@ def check_access(run: gh.Runner, repos: Sequence[str], io: Io) -> list[str]:
             io.say(f"  {repo}: 읽을 권한이 없습니다")
             continue
         readable.append(repo)
+        if repo != given:
+            io.say(f"  {given} → {repo} (GitHub에 적힌 이름으로 넣습니다)")
         if write:
             io.say(f"  {repo}: 읽기·쓰기 권한 있음")
         else:
@@ -332,12 +336,16 @@ def _programs(io: Io, deps: Deps) -> None:
 
 def _install(directory: Path, io: Io, deps: Deps, opts: Options) -> str:
     _step(io, 3, "설치 (포트, Redis)")
-    port = opts.port or files.read_port(directory)
-    while deps.port_busy(port) and not deps.pr_proof_on(port):
+    saved = files.saved_port(directory)
+    port = opts.port or saved or files.DEFAULT_PORT
+    # 이 설정이 이미 쓰던 포트에서 pr-proof가 돌고 있으면 다시 돌린 configure의 자기 서버다. 저장한
+    # 적 없는 포트에서 도는 pr-proof는 다른 설정의 서버라 겹친다
+    while deps.port_busy(port) and not (port == saved and deps.pr_proof_on(port)):
+        who = "다른 pr-proof 서버가" if deps.pr_proof_on(port) else "다른 프로그램이"
         if not io.interactive:
-            io.say(f"  포트 {port}를 다른 프로그램이 쓰고 있습니다. --port로 다른 번호를 주세요.")
+            io.say(f"  포트 {port}를 {who} 쓰고 있습니다. --port로 다른 번호를 주세요.")
             raise Stop
-        answer = _ask_until(io, f"  포트 {port}를 다른 프로그램이 쓰고 있습니다. 쓸 번호: ",
+        answer = _ask_until(io, f"  포트 {port}를 {who} 쓰고 있습니다. 쓸 번호: ",
                             lambda a: None if a.isdigit() and 0 < int(a) < 65536
                             else "1에서 65535 사이의 번호를 적습니다")  # fmt: skip
         port = int(answer)
@@ -459,7 +467,7 @@ def _claude(io: Io, deps: Deps) -> None:
 
 def _repos(directory: Path, io: Io, run: gh.Runner, opts: Options) -> list[str]:
     _step(io, 6, "repo 등록과 권한 확인")
-    repos = list(dict.fromkeys(opts.repos))
+    repos = list(dict.fromkeys(pure.repo_name(r) for r in opts.repos))
     try:
         existing = pure.config_repos(_config_text(directory))
     except pure.ConfigEditError as e:
@@ -473,7 +481,7 @@ def _repos(directory: Path, io: Io, run: gh.Runner, opts: Options) -> list[str]:
             io, f"  처리할 repo (예: {pure.REPO_EXAMPLE}, 여럿이면 띄어 쓴다): ",
             lambda a: _repos_problem(a.split()),
         )  # fmt: skip
-        repos = answer.split()
+        repos = list(dict.fromkeys(pure.repo_name(r) for r in answer.split()))
     if problem := _repos_problem(repos or existing):
         io.say(f"  {problem}")
         raise Stop
@@ -481,10 +489,15 @@ def _repos(directory: Path, io: Io, run: gh.Runner, opts: Options) -> list[str]:
     if len(readable) < len(repos):
         io.say("  읽을 수 없는 repo는 허용 목록에 더하지 않았습니다. 이름과 권한을 확인하세요.")
         raise Stop
+    repos = readable  # 정식 이름
     add_to_config(directory, repos, io, opts.dry_run)
-    if existing:
-        check_access(run, [r for r in existing if r not in repos], io)
-    return list(dict.fromkeys(existing + repos))
+    others = [r for r in existing if pure.spelled_as(r, repos) is None]
+    if others:
+        check_access(run, others, io)
+    # 목록에 대소문자만 다르게 적혀 있던 것은 그 철자를 둔다(서버는 대소문자를 가리지 않고 맞춘다)
+    return list(
+        dict.fromkeys(existing + [r for r in repos if pure.spelled_as(r, existing) is None])
+    )
 
 
 def _webhook_url(directory: Path, io: Io, deps: Deps, opts: Options) -> str:
@@ -569,7 +582,7 @@ def configure(opts: Options, io: Io, deps: Deps, directory: Path | None = None) 
         io.say("웹훅을 모두 등록하지는 못했습니다. 위의 값으로 손으로 등록하세요.")
     if not checks_ok:
         io.say("끝 확인에 실패한 줄이 있습니다. 고친 뒤 npx pr-proof configure를 다시 실행하세요.")
-    io.say("다음: npx pr-proof start   (clone한 폴더에서는 npx . start)")
+    io.say(f"다음: {'npx . start' if files.in_clone() else 'npx pr-proof start'}")
     io.say(f"계속 띄워 두려면: {OPERATIONS_URL}")
     # 손으로 등록하라고 한 것(--manual-webhook)은 실패가 아니다
     return 0 if checks_ok and (hooks_ok or opts.manual_webhook) else 1
@@ -594,14 +607,15 @@ def add(opts: Options, io: Io, deps: Deps, directory: Path | None = None) -> int
         if not gh.auth_ok(run, token_mode=github_auth.uses_token(directory)):
             io.say(f"GitHub 인증이 되지 않습니다 → {github_auth.hint(directory)}")
             return 1
-        readable = check_access(run, opts.repos, io)
-        if len(readable) < len(opts.repos):
+        wanted = list(dict.fromkeys(pure.repo_name(r) for r in opts.repos))
+        readable = check_access(run, wanted, io)
+        if len(readable) < len(wanted):
             io.say("읽을 수 없는 repo가 있어 아무것도 더하지 않았습니다.")
             return 1
-        added = add_to_config(directory, opts.repos, io, opts.dry_run)
+        added = add_to_config(directory, readable, io, opts.dry_run)
         if opts.webhook_url and opts.webhook_url != saved and not opts.dry_run:
             files.write_private(directory / files.WEBHOOK_URL_FILE, opts.webhook_url, replace=True)
-        hooks_ok = ensure_hooks(run, opts.repos, url, directory, io, opts)
+        hooks_ok = ensure_hooks(run, readable, url, directory, io, opts)
     except Stop:
         return 1
     if added and not opts.dry_run:
@@ -620,9 +634,10 @@ def remove(opts: Options, io: Io, deps: Deps, directory: Path | None = None) -> 
         return 1
     text = path.read_text()
     current = pure.config_repos(text)
-    targets = [r for r in dict.fromkeys(opts.repos) if r in current]
-    for repo in opts.repos:
-        if repo not in current:
+    names = list(dict.fromkeys(pure.repo_name(r) for r in opts.repos))
+    targets = list(dict.fromkeys(s for r in names if (s := pure.spelled_as(r, current))))
+    for repo in names:
+        if pure.spelled_as(repo, current) is None:
             io.say(f"  {repo}: 허용 목록에 없습니다. 아무것도 하지 않습니다.")
     if not targets:
         return 0

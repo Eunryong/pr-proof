@@ -18,12 +18,15 @@ def test_valid_repo(repo: str) -> None:
 
 
 @pytest.mark.parametrize(
-    "repo", ["", "hello-world", "a/b/c", "https://github.com/a/b", "-a/b", "a/..", "a /b", "a/"]
+    "repo", ["", "hello-world", "a/b/c", "https://example.com/a/b", "-a/b", "a/..", "a /b", "a/"]
 )
 def test_bad_repo_explains_with_example(repo: str) -> None:
     problem = pure.repo_problem(repo)
     assert problem is not None
-    assert "repo는 `계정/저장소이름` 꼴로 적습니다 (예: octocat/hello-world)" in problem
+    assert (
+        "repo는 `계정/저장소이름` 꼴이나 GitHub 주소로 적습니다 (예: octocat/hello-world)"
+        in problem
+    )
     assert "owner/name" not in problem
 
 
@@ -218,3 +221,32 @@ def test_token_permissions_name_both_token_kinds() -> None:
     text = pure.TOKEN_PERMISSIONS
     for word in ("Contents", "Pull requests", "Issues", "Webhooks", "repo", "admin:repo_hook"):
         assert word in text
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "https://github.com/octocat/hello-world",
+        "https://github.com/octocat/hello-world.git",
+        "https://github.com/octocat/hello-world/pull/3",
+        "http://www.github.com/octocat/hello-world/",
+        "github.com/octocat/hello-world",
+        "git@github.com:octocat/hello-world.git",
+        "  octocat/hello-world  ",
+    ],
+)
+def test_pasted_github_address_becomes_repo_name(text: str) -> None:
+    """브라우저나 git에서 복사한 주소를 붙여 넣어도 받는다."""
+    assert pure.repo_problem(text) is None
+    assert pure.repo_name(text) == "octocat/hello-world"
+
+
+def test_repo_names_differing_only_in_case_are_the_same_repo() -> None:
+    text = "repos:\n  - Octocat/Hello-World\n"
+    assert pure.add_repos(text, ["octocat/hello-world"]) == (text, [])
+    out, gone = pure.remove_repos(text, ["OCTOCAT/hello-world"])
+    assert gone == ["Octocat/Hello-World"] and yaml.safe_load(out)["repos"] == []
+    assert pure.spelled_as("octocat/HELLO-world", ["a/b", "Octocat/Hello-World"]) == (
+        "Octocat/Hello-World"
+    )
+    assert pure.spelled_as("octocat/other", ["Octocat/Hello-World"]) is None

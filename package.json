@@ -1,6 +1,6 @@
 {
   "name": "pr-proof",
-  "version": "0.1.0",
+  "version": "0.1.1-beta.0",
   "description": "PR의 팀 규칙 위반과 리뷰 코멘트를 판단해, 테스트로 확인한 수정안을 별도 PR로 올리는 로컬 파이프라인",
   "license": "MIT",
   "repository": {
