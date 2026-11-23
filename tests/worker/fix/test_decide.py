@@ -10,10 +10,10 @@ import pytest
 from app.worker.config.repo_config_pure import CallSettings
 from app.worker.core.rule_pure import CheckMethod, Rule, RuleSource
 from app.worker.core.violation_pure import Violation
-from app.worker.doc_rules_pure import CallUsage, CheckerRef, Found, RuleChecked
 from app.worker.fix.decide import decide
 from app.worker.fix.fix_decision_pure import Decided, SafetyNet
 from app.worker.model.claude.claude_cli import AIErrorKind, StructuredResult
+from app.worker.rules.doc_rules_pure import CallUsage, CheckerRef, Found, RuleChecked
 from app.worker.store.budget import CallBudget
 from app.worker.store.state import Store
 

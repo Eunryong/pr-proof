@@ -45,7 +45,7 @@ def main(argv: list[str] | None = None) -> int:
 def evaluate(db: Path, *, baseline: bool, real_model: bool, label: str, out: Path | None = None,
              runner=subprocess.run) -> int:  # noqa: ANN001  # fmt: skip
     """runner(`subprocess.run`과 같은 꼴)는 테스트가 바꾼다."""
-    from app.worker import eval_run_pure, evaluation
+    from app.worker.evaluation import eval_run_pure, evaluation
     from app.worker.store import state
 
     engine = state.open_engine(db)

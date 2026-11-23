@@ -14,7 +14,6 @@ from typing import Final
 
 from app.worker.core.diff_pure import hunk_around
 from app.worker.core.violation_pure import Violation
-from app.worker.doc_rules_pure import Found, outcomes_by_rule
 from app.worker.fix.fix_decision_pure import (
     ANSWER_SCHEMA,
     HUNK_RADIUS,
@@ -38,6 +37,7 @@ from app.worker.fix.fix_decision_pure import (
     with_records,
 )
 from app.worker.model.model_backend import AskModel
+from app.worker.rules.doc_rules_pure import Found, outcomes_by_rule
 from app.worker.store.budget import CallBudget
 from app.worker.store.call_budget_pure import CALL_BUDGET_USD, Denied, PrScope
 from app.worker.store.memory import FindsRecords

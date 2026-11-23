@@ -17,7 +17,8 @@ from app.worker.core.rule_pure import Rule, RuleSet, UnreadDoc
 from app.worker.git import repo
 from app.worker.git.git_pure import REGULAR_FILE_MODES, TreeEntry
 from app.worker.model.model_backend import AskModel
-from app.worker.rule_reading_pure import (
+from app.worker.rules import doc_sections_pure
+from app.worker.rules.rule_reading_pure import (
     ANSWER_SCHEMA,
     MAX_DOCS_BYTES,
     PROMPT_VERSION,
@@ -32,7 +33,6 @@ from app.worker.rule_reading_pure import (
     select_documents,
     verify_rules,
 )
-from app.worker.rules import doc_sections_pure
 from app.worker.store.budget import CallBudget
 from app.worker.store.call_budget_pure import CALL_BUDGET_USD, Denied, RulesetScope
 from app.worker.store.state import Store

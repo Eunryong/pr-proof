@@ -562,7 +562,7 @@ def prior_from_json(rule_id: str, hunk: Hunk, text: str, pr: str) -> Prior | Non
 @dataclass(frozen=True)
 class JudgeUsage:
     """이번 검사의 모델 판단 (결과 코멘트, 9.4). 그래프 상태에 들어간다
-    (app/worker/doc_rules_pure.py가 체크포인트 타입으로 등록한다)."""
+    (app/worker/rules/doc_rules_pure.py가 체크포인트 타입으로 등록한다)."""
 
     rules: int  # 모델 판단으로 본 규칙 수
     hunks: int  # 본 hunk 수

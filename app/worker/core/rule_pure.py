@@ -94,7 +94,7 @@ class DroppedRule:
 class RuleSet:
     rules: tuple[Rule, ...]
     sources: tuple[tuple[str, str], ...]  # 읽은 문서의 (경로, blob 해시)
-    pipeline_version: str  # 문서 고르기와 원문 확인의 버전 (app/worker/rule_reading_pure.py)
+    pipeline_version: str  # 문서 고르기와 원문 확인의 버전 (app/worker/rules/rule_reading_pure.py)
     prompt_version: str
     model: str  # 답한 모델의 전체 id
     unread: tuple[UnreadDoc, ...] = ()

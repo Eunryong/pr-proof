@@ -36,7 +36,23 @@ from typing import Final, Protocol
 from langgraph.graph.state import CompiledStateGraph
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.worker.checker_authoring_pure import (
+from app.worker.config.repo_config_pure import ModelSettings
+from app.worker.core.cache_key_pure import text_hash
+from app.worker.core.checker_pure import TOOL_KINDS, Checker, CheckerKind, checker_id, tool_codes
+from app.worker.core.rule_pure import Rule, looks_at_paths, normalize
+from app.worker.core.tools_pure import RUFF, RuffSetup, valid_codes
+from app.worker.lang import python
+from app.worker.model.loop import (
+    LoopPolicy,
+    LoopState,
+    Verdict,
+    WriteFailed,
+    WriteResult,
+    build_loop,
+)
+from app.worker.model.model_backend import AskModel
+from app.worker.rules import tool_choice_pure
+from app.worker.rules.checker_authoring_pure import (
     ENGINE_VERSION,
     MAX_ATTEMPTS,
     RECORDS_NOTE,
@@ -68,22 +84,6 @@ from app.worker.checker_authoring_pure import (
     shortfall,
     system_prompt,
 )
-from app.worker.config.repo_config_pure import ModelSettings
-from app.worker.core.cache_key_pure import text_hash
-from app.worker.core.checker_pure import TOOL_KINDS, Checker, CheckerKind, checker_id, tool_codes
-from app.worker.core.rule_pure import Rule, looks_at_paths, normalize
-from app.worker.core.tools_pure import RUFF, RuffSetup, valid_codes
-from app.worker.lang import python
-from app.worker.model.loop import (
-    LoopPolicy,
-    LoopState,
-    Verdict,
-    WriteFailed,
-    WriteResult,
-    build_loop,
-)
-from app.worker.model.model_backend import AskModel
-from app.worker.rules import tool_choice_pure
 from app.worker.sandbox import checker_runner, docker_cli, toolcache
 from app.worker.sandbox.checker_runner import CheckerRun, Failed, Invalid
 from app.worker.store import records, records_pure

@@ -2,7 +2,7 @@ from typing import Final
 
 import pytest
 
-from app.worker.eval_run_pure import (
+from app.worker.evaluation.eval_run_pure import (
     CaseResult,
     RunSummary,
     compare,

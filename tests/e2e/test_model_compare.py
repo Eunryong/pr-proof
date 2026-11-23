@@ -39,7 +39,7 @@ from sqlmodel import Session, select
 from app.shared import config
 from app.shared.db_pure import FixAttempt
 from app.worker.deps import Deps
-from app.worker.evaluation import TOOLS_OFF_OUT_ENV
+from app.worker.evaluation.evaluation import TOOLS_OFF_OUT_ENV
 from app.worker.git import repo
 from app.worker.git.github import GitHub
 from app.worker.model.claude import claude_cli

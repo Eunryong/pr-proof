@@ -21,17 +21,17 @@ from app.shared.db_pure import FixAttempt
 from app.shared.job_pure import PRJob
 from app.worker import graph, update
 from app.worker.core.violation_pure import violation_id
+from app.worker.fix.merged_fix_pure import CarriedFrom
 from app.worker.fix.model_fix_pure import Verification
 from app.worker.fix.proposal_pure import ProposalResult
-from app.worker.merged_fix_pure import CarriedFrom
 from app.worker.model.claude import claude_cli
 from app.worker.rules.pr_check_pure import PrChecks, PrRuleResult
 
+from .fix.test_merged_fix_pure import FIX_IT, MODEL_FIX, RULE, SKIP_IT, decided, found
+from .fix.test_merged_fix_pure import FIXED as FIXED_SAMPLE
+from .fix.test_merged_fix_pure import LEFT as LEFT_SAMPLE
 from .helpers import PASSED, bodies, use_runner
 from .rules.test_doc_rules_flow import BASE_FILES, _commit, _git, doc_env, make_remote  # noqa: F401
-from .test_merged_fix_pure import FIX_IT, MODEL_FIX, RULE, SKIP_IT, decided, found
-from .test_merged_fix_pure import FIXED as FIXED_SAMPLE
-from .test_merged_fix_pure import LEFT as LEFT_SAMPLE
 
 V_FILE: Final = "x = 1\nprint(x)\nz = 3\n\nprint(y)\n"
 FIXED_FILE: Final = "x = 1\nimport logging\nlogging.info(x)\nz = 3\n\nprint(y)\n"

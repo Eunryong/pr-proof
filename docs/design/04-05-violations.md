@@ -81,7 +81,7 @@
 - **구현 단계.** 4단계(모델의 직접 판단)에 넣는다 (저장소 주인이 2026-11-19에 정함. 11.1). 패턴으로 안 되는 PR 규칙이 4단계의 `judge`를 쓰고, 그때 PR의 글을 모델에 주는 위협(T27)을 한 번에 다룬다. 그때까지 `pr` 규칙은 목록으로만 보여 틀린 결과가 없다. 결정적인 PR 패턴만 먼저 넣는 안은 택하지 않았다: `edited` 웹훅과 PR 단위 위반의 표시를 2단계의 큰 개편 전에 만들게 된다.
 
 
-**PR 설명과 diff 견주기 (2026-11-22. `app/worker/rules/pr_description_pure.py`, `app/worker/rules/pr_description.py`, 그래프의 `pr_description` node, 결과 코멘트는 `app/worker/pr_description_report_pure.py`)**
+**PR 설명과 diff 견주기 (2026-11-22. `app/worker/rules/pr_description_pure.py`, `app/worker/rules/pr_description.py`, 그래프의 `pr_description` node, 결과 코멘트는 `app/worker/report/pr_description_report_pure.py`)**
 
 PR이 글로 말한 것(제목, 본문, 커밋 메시지)과 실제로 바뀐 것(diff)이 맞는지 모델이 견주고 어긋난 곳을 결과 코멘트에 알린다. 팀 문서의 규칙과 따로 된 확인이라 규칙이 없어도 돈다. 고치지 않고, 테스트를 만들거나 돌리지 않는다. 연결된 이슈가 처리됐는지는 아래 "연결된 이슈 확인"이 따로 본다.
 
@@ -102,7 +102,7 @@ PR이 글로 말한 것(제목, 본문, 커밋 메시지)과 실제로 바뀐 �
 - **실제 모델 확인 (2026-11-22, `tests/worker/rules/test_pr_description_real_cli.py`, `PR_PROOF_REAL_AI=1`).** 작은 저장소에서 sonnet으로 다섯 경우를 한 번씩 돌렸다(호출 5회). (가) 설명과 맞는 변경: 어긋난 곳 없음(입력 7877, 출력 55토큰, 도구 0회), 같은 입력의 두 번째는 저장한 답을 썼다. (나) 설명에 없는 타임아웃 변경과 import 순서·공백만 바꾼 파일이 섞임: 「PR과 관련 없는 수정」 하나(`config.py:1`), 포맷만 바꾼 파일은 답하지 않았다(8071/179, 도구 0). (다) 설명한 오류 메시지 변경이 없음: 「설명에는 있는데 코드에 없음」 하나, `errors.py`를 한 번 읽고 답했다(15984/315, 도구 1). (라) 3회라고 했는데 5회: 「설명과 다름」 하나(`config.py:2`, 7618/177, 도구 0). (마) 파이프라인 수정안 커밋의 동작 변경이 섞임: 어긋난 곳 없음(8299/121). 버린 답은 없었다. 한계: 한 저장소, 경우마다 한 회라 비율이 아니라 사례다. (바) (나)의 PR에 `notes.txt`만 더한 커밋(호출 2회): 첫 커밋 8522/187토큰, 도구 0회. 다음 커밋은 바로 앞 결과를 받아 타임아웃 어긋남을 같은 번호로 유지했고 코멘트의 글이 첫 커밋과 같았다(8957/318, 도구 0).
 
 
-**연결된 이슈 확인 (2026-11-23, pr-proof#75. `app/worker/rules/linked_issues_pure.py`, `app/worker/rules/linked_issues.py`, 그래프의 `linked_issues` node, 결과 코멘트는 `app/worker/linked_issues_report_pure.py`)**
+**연결된 이슈 확인 (2026-11-23, pr-proof#75. `app/worker/rules/linked_issues_pure.py`, `app/worker/rules/linked_issues.py`, 그래프의 `linked_issues` node, 결과 코멘트는 `app/worker/report/linked_issues_report_pure.py`)**
 
 PR이 닫겠다고 한 이슈를 읽고, 이슈가 요구한 것을 PR의 변경이 해결했는지 모델이 견주어 결과 코멘트에 알린다. PR 설명 확인과 같은 모양이고 규칙과 따로 돈다. 고치지 않는다.
 

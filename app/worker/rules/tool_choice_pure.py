@@ -12,11 +12,11 @@ from typing import Final, Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from app.worker.checker_authoring_pure import Shortfall, example_parts
 from app.worker.core.cache_key_pure import model_cache_key, prompt_version, text_hash
 from app.worker.core.rule_pure import CheckMethod, Example, Rule, RuleSource, normalize
 from app.worker.core.tools_pure import TOOL_LIST, TOOLS_VERSION
 from app.worker.prompt_text_pure import load
+from app.worker.rules.checker_authoring_pure import Shortfall, example_parts
 
 # 예시 확인과 답 확인의 규칙을 바꾸면 올린다 (캐시 키에 들어간다)
 CHOICE_VERSION: Final = "1"

@@ -6,7 +6,7 @@ import pytest
 
 from app.worker.core.rule_pure import RuleSource, applies_to, rule_id
 from app.worker.git.git_pure import TreeEntry
-from app.worker.rule_reading_pure import (
+from app.worker.rules.rule_reading_pure import (
     ANSWER_SCHEMA,
     SYSTEM_PROMPT,
     Answer,
@@ -19,7 +19,9 @@ from app.worker.rule_reading_pure import (
     verify_rules,
 )
 
-README: Final = (Path(__file__).parent.parent / "fixtures" / "rules" / "README.md").read_text()
+README: Final = (
+    Path(__file__).parent.parent.parent / "fixtures" / "rules" / "README.md"
+).read_text()
 DOC: Final = Document("README.md", "a" * 40, README)
 FROZEN_RULE: Final = "`orders/models`의 데이터 클래스는 `@dataclass(frozen=True)`로 선언한다."
 PRINT_RULE: Final = (

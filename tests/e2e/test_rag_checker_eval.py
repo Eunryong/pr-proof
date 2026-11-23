@@ -25,12 +25,12 @@ from typing import Final
 import pytest
 
 from app.shared.embed_models_pure import E5_SMALL, EMBED_MODELS
-from app.worker.checker_authoring_pure import checker_key
 from app.worker.config.repo_config_pure import ModelSettings, RagSettings, RulesSettings
-from app.worker.doc_rules_pure import Found, RuleChecked, RulesRead
 from app.worker.model.claude import claude_cli
 from app.worker.model.claude.claude_backend import ClaudeCliBackend
 from app.worker.rules import checkers, doc_rules
+from app.worker.rules.checker_authoring_pure import checker_key
+from app.worker.rules.doc_rules_pure import Found, RuleChecked, RulesRead
 from app.worker.store import memory
 from app.worker.store.budget import CallBudget
 from app.worker.store.records_pure import NewRecord

@@ -2,8 +2,8 @@
 
 from typing import Final
 
-from app.worker import report
-from app.worker.pr_description_report_pure import (
+from app.worker.report import report
+from app.worker.report.pr_description_report_pure import (
     EMPTY,
     MATCHED,
     RECHECK_HINT,

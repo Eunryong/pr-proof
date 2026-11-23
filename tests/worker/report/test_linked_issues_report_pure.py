@@ -3,8 +3,8 @@
 
 from typing import Final
 
-from app.worker import report
-from app.worker.linked_issues_report_pure import NONE, RECHECK_HINT, expanded, folded, title
+from app.worker.report import report
+from app.worker.report.linked_issues_report_pure import NONE, RECHECK_HINT, expanded, folded, title
 from app.worker.rules.linked_issues_pure import IssueGap, LinkedIssues
 from app.worker.rules.pr_description_pure import DescriptionUsage, PrDescription
 from app.worker.testing.test_run_pure import PytestRun, ReportSummary

@@ -7,9 +7,9 @@
 
 | 단계 | 파일 | 읽는 모듈 |
 | --- | --- | --- |
-| 규칙 문서 읽기 | `rule_reading.md` | `app/worker/rule_reading_pure.py` |
+| 규칙 문서 읽기 | `rule_reading.md` | `app/worker/rules/rule_reading_pure.py` |
 | 검사 도구 고르기 | `tool_choice.md` | `app/worker/rules/tool_choice_pure.py` |
-| 검사기 작성 (ast-grep) | `checker_authoring.common.md` + `checker_authoring.ast_grep.md` | `app/worker/checker_authoring_pure.py` |
+| 검사기 작성 (ast-grep) | `checker_authoring.common.md` + `checker_authoring.ast_grep.md` | `app/worker/rules/checker_authoring_pure.py` |
 | 검사기 작성 (Python ast) | `checker_authoring.common.md` + `checker_authoring.python_ast.md` | 위와 같음 |
 | 검사기 작성 (경로 패턴) | `checker_authoring.path.md` | 위와 같음 |
 | 위반 판단 | `judge.md` | `app/worker/rules/judge_pure.py` |

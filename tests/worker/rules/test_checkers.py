@@ -8,9 +8,9 @@ from typing import Final
 
 import pytest
 
-from app.worker.checker_authoring_pure import Unchecked
 from app.worker.config.repo_config_pure import CallSettings, ModelSettings
 from app.worker.core.rule_pure import CheckMethod, Example, Rule, RuleSource
+from app.worker.rules.checker_authoring_pure import Unchecked
 from app.worker.rules.checkers import plan_and_author
 from app.worker.store.budget import CallBudget
 from app.worker.store.state import Store

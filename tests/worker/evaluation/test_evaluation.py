@@ -7,12 +7,13 @@ from typing import Final
 import pytest
 from sqlalchemy import create_engine, inspect, text
 
-from app.worker import cli, evaluation
-from app.worker.eval_run_pure import RunSummary
+from app.worker import cli
+from app.worker.evaluation import evaluation
+from app.worker.evaluation.eval_run_pure import RunSummary
 from app.worker.store import state
 from app.worker.store.state import Store
 
-from ..redis_stand_ins import MemoryKeys
+from ...redis_stand_ins import MemoryKeys
 
 JUNIT_OK: Final = (
     '<testsuite><testcase classname="tests.e2e.test_rules_cases" '

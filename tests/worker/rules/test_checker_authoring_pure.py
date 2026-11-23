@@ -5,7 +5,9 @@ from typing import Final
 
 import pytest
 
-from app.worker.checker_authoring_pure import (
+from app.worker.core.checker_pure import CheckerKind
+from app.worker.core.rule_pure import CheckMethod, Example, Rule, RuleSource
+from app.worker.rules.checker_authoring_pure import (
     ANSWER_SCHEMA,
     EXAMPLE_FAILURES_TO_JUDGE,
     MAX_MODEL_EXAMPLES,
@@ -31,8 +33,6 @@ from app.worker.checker_authoring_pure import (
     shortfall,
     system_prompt,
 )
-from app.worker.core.checker_pure import CheckerKind
-from app.worker.core.rule_pure import CheckMethod, Example, Rule, RuleSource
 
 BAD: Final = Example("def f(o):\n    print(o)\n", (2,), "document")
 GOOD: Final = Example("logger.info('x')\n", (), "document")
@@ -175,8 +175,8 @@ def test_judge_labels_model_examples() -> None:
 
 
 def test_prompt_version_follows_prompt_text() -> None:
-    from app.worker import checker_authoring_pure
     from app.worker.core.cache_key_pure import prompt_version
+    from app.worker.rules import checker_authoring_pure
 
     changed = prompt_version("다른 지시", checker_authoring_pure.ANSWER_SCHEMA, "")
     assert len(checker_authoring_pure.PROMPT_VERSION) == 12
