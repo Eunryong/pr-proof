@@ -30,7 +30,7 @@
 | 번호 | 들어오는 곳 | 공격자 | 위협 | 지킬 것 | 막는 장치 | 시점 | 상태 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | T1 | PR 코드 | 팀원·외부 | 테스트로 도는 PR 코드가 호스트 파일을 읽거나 밖으로 보낸다 | 파일·비밀 | 샌드박스: `--network none`, `--cap-drop ALL`, `no-new-privileges`, 자원 제한, 비루트. 호스트에서 대상 저장소의 테스트를 돌리지 않는다 (8.1) | 지금 | 있음 |
-| T2 | PR 코드 | 외부 | 승인 없이 외부 PR의 코드가 실행되고 모델 호출을 쓴다 | 파일·호출 | 정식 가드레일: 워커가 `update`·`command` 작업의 시작에서 체크아웃 전에 GitHub의 PR 조회 한 번으로 head와 작성자의 `author_association`·로그인을 읽고, base `.pipeline.yaml`의 `access`(bare 캐시에서 blob만)와 `approvals`의 승인 기록을 더해 `app/worker/access_pure.may_run`으로 정한다. 통과하지 못하면 체크아웃·샌드박스·모델 없이 승인 안내 한 줄만 달고 `runs`에 `blocked`로 남긴다. `PRJob`에 실린 값은 기록용이다 (8.6) | 지금 | 있음 (6단계, 2026-11-20. 임시 가드레일은 2026-11-19). 모든 경로: `test_untrusted_pr_from_every_path_leaves_only_the_guide`, `test_resumed_job_after_trust_was_lost_is_blocked`. 조회 값: `test_job_value_owner_does_not_override_lookup_none`, `test_failed_lookup_runs_nothing` |
+| T2 | PR 코드 | 외부 | 승인 없이 외부 PR의 코드가 실행되고 모델 호출을 쓴다 | 파일·호출 | 정식 가드레일: 워커가 `update`·`command` 작업의 시작에서 체크아웃 전에 GitHub의 PR 조회 한 번으로 head와 작성자의 `author_association`·로그인을 읽고, base `.pipeline.yaml`의 `access`(bare 캐시에서 blob만)와 `approvals`의 승인 기록을 더해 `app/worker/config/access_pure.may_run`으로 정한다. 통과하지 못하면 체크아웃·샌드박스·모델 없이 승인 안내 한 줄만 달고 `runs`에 `blocked`로 남긴다. `PRJob`에 실린 값은 기록용이다 (8.6) | 지금 | 있음 (6단계, 2026-11-20. 임시 가드레일은 2026-11-19). 모든 경로: `test_untrusted_pr_from_every_path_leaves_only_the_guide`, `test_resumed_job_after_trust_was_lost_is_blocked`. 조회 값: `test_job_value_owner_does_not_override_lookup_none`, `test_failed_lookup_runs_nothing` |
 | T3 | PR 코드 | 팀원·외부 | 의존성 설치가 PR의 `setup.py`·빌드 스크립트를 네트워크가 되는 컨테이너에서 실행한다 | 파일·비밀 | 바이너리 배포본만 설치, 설치 컨테이너에 호스트의 것을 마운트하지 않음 (8.1) | 지금 | 1단계 |
 | T4 | PR 코드 | 팀원·외부 | 샌드박스가 돈 뒤의 worktree에 심볼릭 링크·특수 파일을 남겨 호스트가 밖의 파일을 읽게 한다 | 파일 | worktree 파일 불신: `--git-dir` 고정, 심볼릭 링크 거부, 일반 파일만, 크기 상한 (8.1) | 지금 | 있음 |
 | T5 | PR 코드 | 팀원·외부 | PR이 넣은 설정(`.claude/`, `CLAUDE.md`, `sgconfig.yml`, `.ast-grep/`, 무시 파일)이 모델이나 검사기의 동작을 바꾼다 | 저장소·파일 | claude는 `--restricted`로 저장소의 설정을 읽지 않음. 검사기는 검사기 폴더를 작업 폴더로 실행. ruff는 base 설정 사본을 `--config`로 받아(설정 찾기가 꺼진다) PR이 넣은 `ruff.toml`·`pyproject.toml`을 읽지 않음. 규칙·설정은 base에서만 (8.3, 8.4) | 지금 | 있음. ruff는 2026-11-20(`test_pr_cannot_change_the_ruff_settings_for_itself`) |
@@ -175,7 +175,7 @@
 
 신뢰되지 않은 사람이 연 PR에는 신뢰된 사람이 승인할 때까지 아무것도 돌리지 않는다. 테스트(PR의 코드를 샌드박스에서 실행), 규칙 읽기, 검사기, 모델 호출, 수정이 모두 여기에 든다. 샌드박스와 호출 상한은 피해를 줄이는 장치이고, 이 가드레일은 실행 자체를 사람의 확인 뒤로 미루는 장치다.
 
-**지금 있는 것은 정식 가드레일이다 (6단계, 2026-11-20).** 2026-11-19에 공개 저장소를 붙이기 전에 넣은 임시 가드레일(OWNER·MEMBER·COLLABORATOR가 아니면 코멘트도 기록도 없이 끝냄, 승인과 저장소 설정 없음)을 아래 설계로 바꿨다. 코드는 판단이 `app/worker/access_pure.py`, 워커의 확인과 안내가 `app/worker/guard.py`, 승인 명령이 `app/worker/command.py`의 `_approve`, base의 `access` 읽기가 `app/worker/base_config.load_access`다. 설계가 열어 둔 곳은 6단계 작업이 더 엄격한 쪽으로 정했고 아래 "6단계 작업이 정한 것"과 11.1에 있다.
+**지금 있는 것은 정식 가드레일이다 (6단계, 2026-11-20).** 2026-11-19에 공개 저장소를 붙이기 전에 넣은 임시 가드레일(OWNER·MEMBER·COLLABORATOR가 아니면 코멘트도 기록도 없이 끝냄, 승인과 저장소 설정 없음)을 아래 설계로 바꿨다. 코드는 판단이 `app/worker/config/access_pure.py`, 워커의 확인과 안내가 `app/worker/guard.py`, 승인 명령이 `app/worker/command.py`의 `_approve`, base의 `access` 읽기가 `app/worker/config/base_config.load_access`다. 설계가 열어 둔 곳은 6단계 작업이 더 엄격한 쪽으로 정했고 아래 "6단계 작업이 정한 것"과 11.1에 있다.
 
 **누가 신뢰되는가**
 
@@ -197,7 +197,7 @@
 **판단은 워커 한 곳, 함수 하나**
 
 ```python
-# app/worker/access_pure.py. 외부 호출 없음
+# app/worker/config/access_pure.py. 외부 호출 없음
 def may_run(
     author_association: str | None,    # 워커가 GitHub의 PR 조회 응답에서 읽은 값. 없으면 신뢰되지 않음
     author_login: str | None,          # 같은 응답에서 읽는다

@@ -1,12 +1,13 @@
-"""app/worker/repo.py의 PR 사실 읽기 (4.5 끝): 커밋과 메시지, 바뀐 파일. 로컬 git 저장소로 본다."""
+"""app/worker/git/repo.py의 PR 사실 읽기 (4.5 끝): 커밋과 메시지, 바뀐 파일. 로컬 git 저장소로
+본다."""
 
 import subprocess
 from pathlib import Path
 
 import pytest
 
-from app.worker import repo
-from app.worker.repo import GitError
+from app.worker.git import repo
+from app.worker.git.repo import GitError
 
 
 def _git(cwd: Path, *args: str) -> str:

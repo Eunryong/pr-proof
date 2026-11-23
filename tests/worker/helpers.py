@@ -4,12 +4,12 @@ import json
 from typing import Final
 
 from app.worker import graph
-from app.worker.base_config import BaseConfig
+from app.worker.config.base_config import BaseConfig
+from app.worker.config.repo_config_pure import FixSettings, PrDescriptionSettings, RepoConfig
 from app.worker.core.tools_pure import RuffSetup
-from app.worker.repo_config_pure import FixSettings, PrDescriptionSettings, RepoConfig
 from app.worker.testing.test_run_pure import PytestRun, ReportSummary
 
-from .test_github import FakeGh
+from .git.test_github import FakeGh
 
 HEAD: Final = "a" * 40
 PASSED: Final = PytestRun(exit_code=0, summary=ReportSummary(passed=9, total=9))

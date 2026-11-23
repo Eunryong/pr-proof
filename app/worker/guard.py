@@ -11,10 +11,10 @@ from dataclasses import dataclass
 from typing import Final
 
 from app.shared.job_pure import PRJob
-from app.worker import base_config
-from app.worker.access_pure import AccessSettings, Author, Decision, may_run
+from app.worker.config import base_config
+from app.worker.config.access_pure import AccessSettings, Author, Decision, may_run
 from app.worker.deps import Deps
-from app.worker.github import PullRefs
+from app.worker.git.github import PullRefs
 
 NEEDS_APPROVAL: Final = "needs_approval"
 

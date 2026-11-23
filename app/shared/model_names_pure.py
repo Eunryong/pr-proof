@@ -1,7 +1,7 @@
 """claude --model에 넘기는 모델 이름의 꼴.
 
-저장소의 `.pipeline.yaml`(app/worker/repo_config_pure.py)과 파이프라인 쪽 설정의 `model.default`
-(app/shared/config.py), 설정 명령(app/setup/setup_pure.py)이 같이 쓴다.
+저장소의 `.pipeline.yaml`(app/worker/config/repo_config_pure.py)과 파이프라인 쪽 설정의
+`model.default`(app/shared/config.py), 설정 명령(app/setup/setup_pure.py)이 같이 쓴다.
 """
 
 from typing import Final

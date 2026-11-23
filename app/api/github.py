@@ -1,4 +1,4 @@
-"""GitHub 조회 (gh CLI). 웹 쪽 동기화가 쓴다. 쓰기는 워커가 한다 (app/worker/github.py)."""
+"""GitHub 조회 (gh CLI). 웹 쪽 동기화가 쓴다. 쓰기는 워커가 한다 (app/worker/git/github.py)."""
 
 import json
 import subprocess

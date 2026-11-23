@@ -13,8 +13,8 @@ from dataclasses import asdict, dataclass, field
 from typing import Final, Literal
 
 from app.worker import checker_authoring_pure, rule_reading_pure
+from app.worker.config.repo_config_pure import ModelSettings
 from app.worker.fix import fix_decision_pure, model_fix_pure
-from app.worker.repo_config_pure import ModelSettings
 from app.worker.rules import (
     judge_pure,
     linked_issues_pure,

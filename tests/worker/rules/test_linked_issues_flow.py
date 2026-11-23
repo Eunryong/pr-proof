@@ -14,9 +14,10 @@ import pytest
 
 from app.shared import state_keys_pure
 from app.shared.job_pure import PRJob
-from app.worker import base_config, graph, update
+from app.worker import graph, update
 from app.worker.ai import claude_cli
-from app.worker.repo_config_pure import (
+from app.worker.config import base_config
+from app.worker.config.repo_config_pure import (
     CallSettings,
     LinkedIssuesSettings,
     ModelSettings,
@@ -24,8 +25,8 @@ from app.worker.repo_config_pure import (
     RepoConfig,
 )
 
+from ..git.test_github import linked_node
 from ..helpers import BASE, bodies
-from ..test_github import linked_node
 from .test_doc_rules_flow import doc_env, make_remote  # noqa: F401
 
 NO_DESCRIPTION: Final = PrDescriptionSettings(enabled=False)

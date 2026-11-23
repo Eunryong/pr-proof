@@ -30,9 +30,9 @@ from app.worker.ai import claude_cli
 from app.worker.ai.claude_backend import ClaudeCliBackend
 from app.worker.budget import CallBudget
 from app.worker.checker_authoring_pure import checker_key
+from app.worker.config.repo_config_pure import ModelSettings, RagSettings, RulesSettings
 from app.worker.doc_rules_pure import Found, RuleChecked, RulesRead
 from app.worker.records_pure import NewRecord
-from app.worker.repo_config_pure import ModelSettings, RagSettings, RulesSettings
 from app.worker.rules import checkers, doc_rules
 from app.worker.state import Store
 from tests.sandbox_names import TEST_NAMES

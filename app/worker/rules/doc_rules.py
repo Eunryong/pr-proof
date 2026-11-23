@@ -12,7 +12,6 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from app.worker import repo
 from app.worker.ai.model_backend import ModelBackend
 from app.worker.budget import CallBudget
 from app.worker.call_budget_pure import RulesetScope, limits_for
@@ -24,6 +23,7 @@ from app.worker.checker_authoring_pure import (
     checker_from_json,
     checker_key,
 )
+from app.worker.config.repo_config_pure import ModelSettings, RulesSettings
 from app.worker.core.checker_pure import TOOL_KINDS, Checker, tool_codes
 from app.worker.core.diff_pure import added_lines, new_files
 from app.worker.core.rule_pure import checked_exclude
@@ -43,10 +43,10 @@ from app.worker.doc_rules_pure import (
     call_usage,
     with_run_failures,
 )
+from app.worker.git import repo
+from app.worker.git.repo import GitError
 from app.worker.memory import FindsRecords
 from app.worker.rag_pure import Retrieval, merge_retrievals
-from app.worker.repo import GitError
-from app.worker.repo_config_pure import ModelSettings, RulesSettings
 from app.worker.rule_reading_pure import apply_disabled
 from app.worker.rules import checkers, detect, rules
 from app.worker.rules import judge as model_judge

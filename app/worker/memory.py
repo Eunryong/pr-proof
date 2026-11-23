@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any, Final, Protocol
 
 from app.shared.embed_models_pure import EmbedModel, ModelFile
+from app.worker.config.repo_config_pure import RagMode, RagSettings
 from app.worker.rag_pure import (
     EMPTY,
     SITE_KINDS,
@@ -47,7 +48,6 @@ from app.worker.rag_switch_pure import (
     RagSwitch,
     decide,
 )
-from app.worker.repo_config_pure import RagMode, RagSettings
 from app.worker.state import Store
 
 log = logging.getLogger(__name__)

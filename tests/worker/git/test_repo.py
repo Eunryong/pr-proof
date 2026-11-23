@@ -1,4 +1,4 @@
-"""app/worker/repo.py: 로컬 git 원격으로 GitHub 없이 확인한다."""
+"""app/worker/git/repo.py: 로컬 git 원격으로 GitHub 없이 확인한다."""
 
 import subprocess
 from pathlib import Path
@@ -6,8 +6,8 @@ from typing import Final
 
 import pytest
 
-from app.worker import repo
-from app.worker.repo import GitError
+from app.worker.git import repo
+from app.worker.git.repo import GitError
 
 
 def _git(cwd: Path, *args: str) -> str:

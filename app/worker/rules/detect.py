@@ -14,13 +14,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final
 
-from app.worker import repo
 from app.worker.checker_authoring_pure import Checked, RuleCheck, Unchecked
 from app.worker.core.checker_pure import TOOL_KINDS
 from app.worker.core.diff_pure import ChangedLines, touches
 from app.worker.core.rule_pure import checked_file, looks_at_paths
 from app.worker.core.text_edit_pure import TextEdit
 from app.worker.core.violation_pure import Violation, violation_id
+from app.worker.git import repo
 from app.worker.rules.checkers import RunsCheckers, Sandbox
 from app.worker.sandbox import toolcache
 from app.worker.sandbox.checker_runner import Failed, Invalid, Match

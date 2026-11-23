@@ -24,14 +24,15 @@ import yaml
 
 from app.shared import config, state_keys_pure
 from app.shared.job_pure import PRJob
-from app.worker import main, repo
+from app.worker import main
 from app.worker.deps import Deps
-from app.worker.github import GitHub
+from app.worker.git import repo
+from app.worker.git.github import GitHub
 from app.worker.state import Store
 from tests.sandbox_names import TEST_NAMES
 
 from ..redis_stand_ins import MemoryKeys
-from ..worker.test_github import FakeGh
+from ..worker.git.test_github import FakeGh
 
 CASES_DIR: Final = Path(__file__).resolve().parents[2] / "eval" / "lint"
 CASES: Final = sorted(CASES_DIR.glob("*.yaml"))

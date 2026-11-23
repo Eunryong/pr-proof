@@ -8,12 +8,12 @@ from typing import Final
 
 import pytest
 
-from app.worker import repo
 from app.worker.ai import workdir
 from app.worker.ai.claude_backend import ClaudeCliBackend
 from app.worker.ai.claude_cli import AIErrorKind, StructuredResult
 from app.worker.budget import CallBudget
-from app.worker.repo_config_pure import CallSettings
+from app.worker.config.repo_config_pure import CallSettings
+from app.worker.git import repo
 from app.worker.rules import pr_description
 from app.worker.rules.checkers import STALE
 from app.worker.rules.pr_check_pure import Commit, PrFacts

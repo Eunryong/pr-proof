@@ -32,18 +32,19 @@ from sqlmodel import Session, select
 
 from app.shared import config
 from app.shared.db_pure import ModelCacheEntry
-from app.worker import repo, rule_reading_pure
+from app.worker import rule_reading_pure
 from app.worker.ai import claude_cli
 from app.worker.deps import Deps
 from app.worker.fix import fix_decision_pure
-from app.worker.github import GitHub
+from app.worker.git import repo
+from app.worker.git.github import GitHub
 from app.worker.rules import judge_pure, pr_check_pure
 from app.worker.state import Store
 from tests.sandbox_names import TEST_NAMES
 
 from ..redis_stand_ins import MemoryKeys
+from ..worker.git.test_github import FakeGh
 from ..worker.rules.test_pr_check import _agree
-from ..worker.test_github import FakeGh
 from .test_lint_cases import _bodies, _git, shared_venvs  # noqa: F401
 from .test_rules_cases import (
     BRANCH,

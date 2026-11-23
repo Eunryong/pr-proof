@@ -7,10 +7,10 @@ import pytest
 from app.shared.job_pure import PRJob
 from app.worker import command, retry
 from app.worker.command_pure import parse_command
-from app.worker.github import GitHubError
+from app.worker.git.github import GitHubError
 
+from .git.test_github import is_reply
 from .helpers import PASSED, bodies, use_runner
-from .test_github import is_reply
 
 
 def _command(text: str, comment_id: int = 9) -> str:

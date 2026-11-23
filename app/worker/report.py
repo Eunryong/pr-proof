@@ -17,7 +17,7 @@ from app.worker import (
     pr_check_report_pure,
     pr_description_report_pure,
 )
-from app.worker.base_config import PIPELINE_YAML, BaseConfig
+from app.worker.config.base_config import PIPELINE_YAML, BaseConfig
 from app.worker.core.checker_pure import Checker
 from app.worker.core.markdown_pure import code_fence, inline_code
 from app.worker.doc_rules_pure import DocRules, Found

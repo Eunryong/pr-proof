@@ -7,7 +7,7 @@ from redis import Redis
 from app.shared import config
 from app.worker.ai import backends
 from app.worker.ai.model_backend import ModelBackend
-from app.worker.github import GitHub
+from app.worker.git.github import GitHub
 from app.worker.state import Store
 
 

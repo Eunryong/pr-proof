@@ -38,10 +38,10 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Final
 
-from app.worker import repo
 from app.worker.ai import claude_cli, tool_server
 from app.worker.ai.model_backend import AIErrorKind, AskModel, EditResult, StructuredResult
 from app.worker.ai.tool_server import Handler
+from app.worker.git import repo
 from app.worker.sandbox.container import OUT_DIR
 
 # 이보다 큰 파일은 복사하지 않는다. 모델이 볼 일이 없고, 없는 파일은 diff에도 나오지 않는다

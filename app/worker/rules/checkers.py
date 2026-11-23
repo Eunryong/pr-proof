@@ -72,6 +72,7 @@ from app.worker.checker_authoring_pure import (
     shortfall,
     system_prompt,
 )
+from app.worker.config.repo_config_pure import ModelSettings
 from app.worker.core.cache_key_pure import text_hash
 from app.worker.core.checker_pure import TOOL_KINDS, Checker, CheckerKind, checker_id, tool_codes
 from app.worker.core.rule_pure import Rule, looks_at_paths, normalize
@@ -80,7 +81,6 @@ from app.worker.lang import python
 from app.worker.loop import LoopPolicy, LoopState, Verdict, WriteFailed, WriteResult, build_loop
 from app.worker.memory import FindsRecords
 from app.worker.rag_pure import EMPTY, Retrieval, Selection, query_text, render_records, retrieval
-from app.worker.repo_config_pure import ModelSettings
 from app.worker.rules import tool_choice_pure
 from app.worker.sandbox import checker_runner, docker_cli, toolcache
 from app.worker.sandbox.checker_runner import CheckerRun, Failed, Invalid

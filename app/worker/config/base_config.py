@@ -10,8 +10,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
-from app.worker import repo
-from app.worker.access_pure import AccessSettings, parse_access
+from app.worker.config.access_pure import AccessSettings, parse_access
+from app.worker.config.repo_config_pure import (
+    LINT,
+    RepoConfig,
+    fix_limits,
+    memory_limit,
+    parse_repo_config,
+    settings_notes,
+    with_default_model,
+)
 from app.worker.core.tools_pure import (
     CONFIG_RULE_ID,
     REQUIREMENTS,
@@ -22,16 +30,8 @@ from app.worker.core.tools_pure import (
     pinned_version,
     ruff_config_name,
 )
+from app.worker.git import repo
 from app.worker.git.git_pure import REGULAR_FILE_MODES
-from app.worker.repo_config_pure import (
-    LINT,
-    RepoConfig,
-    fix_limits,
-    memory_limit,
-    parse_repo_config,
-    settings_notes,
-    with_default_model,
-)
 from app.worker.sandbox import toolcache
 
 PIPELINE_YAML: Final = ".pipeline.yaml"

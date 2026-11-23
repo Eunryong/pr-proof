@@ -23,9 +23,9 @@ import yaml
 
 from app.shared.embed_models_pure import E5_SMALL, EMBED_MODELS, EmbedModel
 from app.worker import memory
+from app.worker.config.repo_config_pure import DEFAULT_MIN_SIMILARITY, RagSettings
 from app.worker.rag_pure import record_text
 from app.worker.records_pure import NewRecord
-from app.worker.repo_config_pure import DEFAULT_MIN_SIMILARITY, RagSettings
 from app.worker.state import Store
 
 from ..redis_stand_ins import MemoryKeys

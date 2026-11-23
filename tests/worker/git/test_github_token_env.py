@@ -11,10 +11,11 @@ import pytest
 
 from app.api import github as api_github
 from app.shared import config, github_auth
-from app.worker import github, preflight, repo
+from app.worker import preflight
 from app.worker.ai.claude_backend import ClaudeCliBackend
 from app.worker.ai.claude_cli import claude_env
 from app.worker.fix import proposal
+from app.worker.git import github, repo
 from app.worker.sandbox.docker_cli import minimal_env
 
 TOKEN: Final = "github_pat_FAKE1111111111111111111111"
@@ -114,7 +115,7 @@ def test_token_is_a_pipeline_secret_for_the_diff_check(token_dir) -> None:
 
 
 def test_preflight_in_token_mode_says_to_replace_token(token_dir, tmp_path) -> None:
-    from ..redis_stand_ins import Pong
+    from ...redis_stand_ins import Pong
 
     claude = ClaudeCliBackend(auth_status=lambda: '{"loggedIn": true, "loginExpiresAt": null}')
     checks = preflight.run_checks(

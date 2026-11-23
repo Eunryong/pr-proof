@@ -160,7 +160,7 @@ class EvalRun(SQLModel, table=True):
 class ModelCacheEntry(SQLModel, table=True):
     """해시 키 → 모델 결과 (DESIGN.md 5.6, 9.1). thread·PR과 무관하게 키가 같으면 같은 결과를 쓴다.
 
-    키는 app/worker/cache_key_pure.py가 만든다.
+    키는 app/worker/core/cache_key_pure.py가 만든다.
     """
 
     __tablename__ = "model_cache"

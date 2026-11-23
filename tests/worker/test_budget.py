@@ -8,8 +8,8 @@ import pytest
 
 from app.worker.budget import CallBudget
 from app.worker.call_budget_pure import Allowed, Denied, PrScope, RulesetScope
+from app.worker.config.repo_config_pure import CallSettings
 from app.worker.loop import LoopPolicy, choose_tier
-from app.worker.repo_config_pure import CallSettings
 from app.worker.state import Store
 
 from ..redis_stand_ins import MemoryKeys

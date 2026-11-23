@@ -6,7 +6,7 @@ from typing import Final
 import pytest
 
 from app.shared.feedback_pure import FEEDBACK_MARKER
-from app.worker.github import GitHub, GitHubError, ReviewBody, ReviewThread, ThreadComment
+from app.worker.git.github import GitHub, GitHubError, ReviewBody, ReviewThread, ThreadComment
 
 
 class Recorder:

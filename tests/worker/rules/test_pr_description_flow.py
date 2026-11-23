@@ -12,9 +12,10 @@ import pytest
 
 from app.shared import state_keys_pure
 from app.shared.job_pure import PRJob
-from app.worker import base_config, graph, update
+from app.worker import graph, update
 from app.worker.ai import claude_cli
-from app.worker.repo_config_pure import (
+from app.worker.config import base_config
+from app.worker.config.repo_config_pure import (
     CallSettings,
     ModelSettings,
     PrDescriptionSettings,
