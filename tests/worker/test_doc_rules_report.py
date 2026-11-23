@@ -28,7 +28,7 @@ from app.worker.fix.fix_pure import MechanicalFix
 from app.worker.fix.model_fix_pure import ModelFix, Verification
 from app.worker.fix.proposal_pure import ProposalResult
 from app.worker.rules.judge_pure import JudgeUsage
-from app.worker.test_run_pure import PytestRun, ReportSummary
+from app.worker.testing.test_run_pure import PytestRun, ReportSummary
 
 USAGE: Final = CallUsage(calls=3, limit=14, cache_hits=1, models=("claude-haiku-5-5",),
                          input_tokens=3000, output_tokens=300)  # fmt: skip

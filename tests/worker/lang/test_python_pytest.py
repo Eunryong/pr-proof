@@ -10,7 +10,7 @@ from app.worker.lang import python
 from app.worker.sandbox import docker_cli
 from app.worker.sandbox.container import ExecResult
 from app.worker.sandbox.docker_cli import SandboxError
-from app.worker.test_run_pure import ReportSummary
+from app.worker.testing.test_run_pure import ReportSummary
 
 
 def test_pythonpath_for_src_layout(tmp_path: Path) -> None:

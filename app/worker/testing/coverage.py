@@ -14,8 +14,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
-from app.worker.coverage_pure import MAX_COVERAGE_XML_BYTES, parse_coverage_xml
 from app.worker.sandbox.safe_read import read_regular_file
+from app.worker.testing.coverage_pure import MAX_COVERAGE_XML_BYTES, parse_coverage_xml
 
 DIFF_COVER_TIMEOUT: Final = 60
 MAX_DIFF_BYTES: Final = 20 * 1024 * 1024

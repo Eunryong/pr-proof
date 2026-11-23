@@ -27,7 +27,7 @@ from app.worker.rules.run_check_pure import (
     run_key,
     run_rules,
 )
-from app.worker.test_run_pure import PytestRun
+from app.worker.testing.test_run_pure import PytestRun
 
 log = logging.getLogger(__name__)
 

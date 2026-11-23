@@ -7,9 +7,9 @@ from typing import Final
 import pytest
 
 from app.worker.core.violation_pure import Violation
-from app.worker.coverage import DiffCoverage, diff_coverage
 from app.worker.lang.python import annotate_coverage, read_coverage, read_sources
 from app.worker.sandbox.safe_read import read_regular_file
+from app.worker.testing.coverage import DiffCoverage, diff_coverage
 
 COVERAGE_XML: Final = b"""<?xml version="1.0" ?>
 <coverage version="7.6">

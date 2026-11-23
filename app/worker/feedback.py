@@ -53,7 +53,7 @@ from app.worker.repo_config_pure import RepoConfig, call_limits
 from app.worker.rules import detect, doc_rules, rules
 from app.worker.rules.detect import Detection, source_lines
 from app.worker.state import Store
-from app.worker.test_run_pure import PytestRun
+from app.worker.testing.test_run_pure import PytestRun
 
 log = logging.getLogger(__name__)
 

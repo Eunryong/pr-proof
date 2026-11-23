@@ -37,8 +37,8 @@ from app.worker.lang import python
 from app.worker.rules import detect
 from app.worker.rules.checkers import FormatsFiles
 from app.worker.state import Store
-from app.worker.test_lines import format_test_line
-from app.worker.test_run_pure import PytestRun
+from app.worker.testing.test_lines import format_test_line
+from app.worker.testing.test_run_pure import PytestRun
 
 log = logging.getLogger(__name__)
 

@@ -31,7 +31,7 @@ from app.worker.merged_fix_pure import (
 from app.worker.rules.linked_issues_pure import IssueGap, LinkedIssues
 from app.worker.rules.pr_check_pure import PrChecks, PrRuleResult
 from app.worker.rules.pr_description_pure import Mismatch, PrDescription
-from app.worker.test_run_pure import PytestRun, ReportSummary
+from app.worker.testing.test_run_pure import PytestRun, ReportSummary
 
 NOW: Final = datetime(2026, 11, 22, tzinfo=UTC)
 V: Final = "v" * 40  # 수정안을 검증한 커밋

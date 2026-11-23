@@ -11,7 +11,8 @@ from typing import Final
 
 from app.worker.core.markdown_pure import inline_code
 from app.worker.core.violation_pure import Violation
-from app.worker.generated_tests_pure import (
+from app.worker.sandbox.docker_cli import MEMORY_LIMIT_GB
+from app.worker.testing.generated_tests_pure import (
     LINE_LABEL,
     REJECTION_LABEL,
     GeneratedTest,
@@ -19,8 +20,7 @@ from app.worker.generated_tests_pure import (
     group_lines,
     line_runs,
 )
-from app.worker.sandbox.docker_cli import MEMORY_LIMIT_GB
-from app.worker.test_run_pure import PytestRun
+from app.worker.testing.test_run_pure import PytestRun
 
 MAX_LINES_SHOWN: Final = 30
 MAX_WHY_CHARS: Final = 300

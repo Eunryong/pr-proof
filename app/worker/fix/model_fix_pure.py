@@ -22,15 +22,15 @@ from app.worker.core.violation_pure import Violation
 from app.worker.fix.fix_decision_pure import FixDecision
 from app.worker.fix.proposal_pure import MAX_CHANGED_LINES, MAX_FILES
 from app.worker.fix.scope_pure import GENERATED_TEST_PREFIX
-from app.worker.generated_tests_pure import (
+from app.worker.mcp_pure import TOOL_NAMES, ToolUsage
+from app.worker.prompt_text_pure import load
+from app.worker.rag_pure import Retrieval
+from app.worker.testing.generated_tests_pure import (
     MAX_TEST_FILES,
     MAX_TEST_LINES,
     GeneratedTest,
     LineRun,
 )
-from app.worker.mcp_pure import TOOL_NAMES, ToolUsage
-from app.worker.prompt_text_pure import load
-from app.worker.rag_pure import Retrieval
 
 MAX_SUMMARY_CHARS: Final = 1000
 MAX_WHY_CHARS: Final = 300

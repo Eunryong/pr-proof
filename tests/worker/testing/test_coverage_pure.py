@@ -3,7 +3,7 @@ from typing import Final
 import pytest
 
 from app.worker.core.violation_pure import Violation
-from app.worker.coverage_pure import (
+from app.worker.testing.coverage_pure import (
     CoverageData,
     FileCoverage,
     mark_covered,

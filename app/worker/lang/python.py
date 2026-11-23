@@ -4,7 +4,7 @@
 읽기(pytest, report.json), 커버리지 읽기(coverage.xml), 도구(ruff, ruff-format).
 3단계에서는 흩어져 있던 코드를 옮기기만 했다. 두 번째 언어를 붙일 때 그 차이를 보고 인터페이스를
 정한다. coverage.xml과 문장 범위 읽기, 테스트 파일의 정의, ruff 설정과 버전 읽기, 도구 목록은
-외부 호출이 없는 순수 모듈(`app/worker/coverage_pure.py`, `app/worker/fix/scope_pure.py`의
+외부 호출이 없는 순수 모듈(`app/worker/testing/coverage_pure.py`, `app/worker/fix/scope_pure.py`의
 `is_test_file`, `app/worker/core/tools_pure.py`)에 남는다. 그것을 쓰는 판정(허용 범위, 도구
 선택)도 순수 모듈이고, 순수 모듈은 실행 코드인 이 모듈을 import하지 않기 때문이다.
 
@@ -45,13 +45,6 @@ from typing import Final
 from app.worker.core.text_edit_pure import TextEdit
 from app.worker.core.tools_pure import RUFF_CODE, RuffConfig
 from app.worker.core.violation_pure import Violation
-from app.worker.coverage_pure import (
-    MAX_COVERAGE_XML_BYTES,
-    CoverageData,
-    mark_covered,
-    parse_coverage_xml,
-)
-from app.worker.generated_tests_pure import Suite, parse_contexts, parse_report
 from app.worker.lang.install_pure import InstallFailureKind
 from app.worker.sandbox import docker_cli, toolcache
 from app.worker.sandbox.checker_runner import (
@@ -74,7 +67,19 @@ from app.worker.sandbox.container import (
 )
 from app.worker.sandbox.docker_cli import Image
 from app.worker.sandbox.safe_read import read_regular_file
-from app.worker.test_run_pure import KILLED_EXIT, PYTEST_TESTS_FAILED, PytestRun, ReportSummary
+from app.worker.testing.coverage_pure import (
+    MAX_COVERAGE_XML_BYTES,
+    CoverageData,
+    mark_covered,
+    parse_coverage_xml,
+)
+from app.worker.testing.generated_tests_pure import Suite, parse_contexts, parse_report
+from app.worker.testing.test_run_pure import (
+    KILLED_EXIT,
+    PYTEST_TESTS_FAILED,
+    PytestRun,
+    ReportSummary,
+)
 
 # ---- 런타임 ----
 

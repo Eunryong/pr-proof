@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Final, Literal
 
 from app.worker.fix.scope_pure import MECHANICAL_POLICY, StatusEntry, judge_scope
-from app.worker.test_run_pure import PytestRun
+from app.worker.testing.test_run_pure import PytestRun
 
 MechanicalStatus = Literal[
     "ready",  # 검증 통과. 수정안 PR로 올린다

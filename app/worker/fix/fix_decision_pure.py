@@ -18,7 +18,7 @@ from app.worker.core.rule_pure import CheckMethod, Rule, RuleSource
 from app.worker.core.violation_pure import Violation
 from app.worker.prompt_text_pure import load
 from app.worker.rag_pure import Retrieval, cited
-from app.worker.test_run_pure import RunStatus
+from app.worker.testing.test_run_pure import RunStatus
 
 # needs_other_file·changes_behavior·not_a_violation은 모델이 고르는 skip 이유다. risky는 모델이
 # 이유를 고르지 않은 skip이다

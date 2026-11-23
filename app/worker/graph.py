@@ -50,9 +50,7 @@ from app.shared.embed_models_pure import E5_SMALL, EMBED_MODELS
 from app.shared.job_pure import PRJob
 from app.worker import (
     base_config,
-    coverage,
     doc_rules_pure,
-    generated_tests_pure,
     mcp_pure,
     memory,
     merged_fix_pure,
@@ -68,7 +66,6 @@ from app.worker.budget import CallBudget
 from app.worker.call_budget_pure import RulesetScope
 from app.worker.checker_authoring_pure import Checked
 from app.worker.core.bundle_pure import MECHANICAL_BUNDLE, MODEL_BUNDLE
-from app.worker.coverage import DiffCoverage
 from app.worker.doc_rules_pure import DocRules, Found, RuleOutcome, RulesRead
 from app.worker.doc_rules_report import FixView
 from app.worker.fix import (
@@ -84,7 +81,6 @@ from app.worker.fix.fix_decision_pure import Decided, SafetyNet, open_targets
 from app.worker.fix.fix_pure import MechanicalFix
 from app.worker.fix.model_fix_pure import ModelFix, Picked
 from app.worker.fix.proposal_pure import ProposalResult
-from app.worker.generated_tests_pure import Suite
 from app.worker.github import GitHub
 from app.worker.lang import python
 from app.worker.merged_fix_pure import CarriedFrom
@@ -110,7 +106,10 @@ from app.worker.rules.pr_check_pure import PrChecks, PrFacts
 from app.worker.rules.pr_description_pure import PrDescription
 from app.worker.sandbox import container, docker_cli, toolcache
 from app.worker.state import Store
-from app.worker.test_run_pure import PytestRun
+from app.worker.testing import coverage, generated_tests_pure
+from app.worker.testing.coverage import DiffCoverage
+from app.worker.testing.generated_tests_pure import Suite
+from app.worker.testing.test_run_pure import PytestRun
 
 log = logging.getLogger(__name__)
 
@@ -148,10 +147,10 @@ TOOL_DIR: Final = "tools"  # 도구 캐시 (data_dir 아래, venvs와 같은 자
 # 체크포인트에서 되살릴 수 있는 상태 타입 (나머지는 langgraph가 막는다)
 _STATE_TYPES: Final = (
     ("app.shared.job_pure", "PRJob"),
-    ("app.worker.test_run_pure", "PytestRun"),
-    ("app.worker.test_run_pure", "ReportSummary"),
+    ("app.worker.testing.test_run_pure", "PytestRun"),
+    ("app.worker.testing.test_run_pure", "ReportSummary"),
     ("app.worker.fix.proposal_pure", "ProposalResult"),
-    ("app.worker.coverage", "DiffCoverage"),
+    ("app.worker.testing.coverage", "DiffCoverage"),
     *doc_rules_pure.STATE_TYPES,
     *fix_decision_pure.STATE_TYPES,
     *model_fix_pure.STATE_TYPES,

@@ -26,7 +26,7 @@ from app.worker.github import GitHubError
 from app.worker.repo_config_pure import PrDescriptionSettings
 from app.worker.rules import doc_rules
 from app.worker.sandbox.checker_runner import CheckerRun, Match, Ran
-from app.worker.test_run_pure import PytestRun, ReportSummary
+from app.worker.testing.test_run_pure import PytestRun, ReportSummary
 
 from ..helpers import PASSED, bodies, use_runner
 from ..rules.test_doc_rules_flow import make_remote

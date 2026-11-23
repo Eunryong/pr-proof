@@ -15,7 +15,7 @@ from app.worker.repo_config_pure import CallSettings, ModelSettings
 from app.worker.rules.doc_rules import Runtime
 from app.worker.rules.run_check import judge_runs
 from app.worker.state import Store
-from app.worker.test_run_pure import PytestRun, ReportSummary
+from app.worker.testing.test_run_pure import PytestRun, ReportSummary
 
 from ...redis_stand_ins import MemoryKeys
 

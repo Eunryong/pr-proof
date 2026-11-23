@@ -2,7 +2,7 @@ from typing import Final
 
 import pytest
 
-from app.worker.test_run_pure import PytestRun, ReportSummary
+from app.worker.testing.test_run_pure import PytestRun, ReportSummary
 
 
 def test_summary_counts_failures_and_collection_errors() -> None:

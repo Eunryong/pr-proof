@@ -20,7 +20,7 @@ from app.worker.fix.fix_pure import MechanicalFix
 from app.worker.fix.model_fix_pure import ModelFix
 from app.worker.rules import linked_issues_pure, pr_check_pure, pr_description_pure
 from app.worker.rules.pr_description_pure import PrDescription
-from app.worker.test_run_pure import PytestRun
+from app.worker.testing.test_run_pure import PytestRun
 
 # 규칙 수정안의 묶음. 코멘트 수정안(feedback)은 규칙 검사의 결과를 고친 것이 아니라 넣지 않는다
 RULE_BUNDLES: Final = frozenset({MECHANICAL_BUNDLE, MODEL_BUNDLE})

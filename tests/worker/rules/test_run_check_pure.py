@@ -6,7 +6,6 @@ import pytest
 
 from app.worker.core.rule_pure import CheckMethod, Rule, RuleSource
 from app.worker.core.violation_pure import Violation
-from app.worker.coverage_pure import CoverageData, FileCoverage
 from app.worker.doc_rules_pure import CallUsage, CheckerRef, Found, RuleChecked, RuleUnchecked
 from app.worker.rules.run_check_pure import (
     FileRun,
@@ -21,7 +20,8 @@ from app.worker.rules.run_check_pure import (
     run_rules,
     summarize_tests,
 )
-from app.worker.test_run_pure import PytestRun, ReportSummary
+from app.worker.testing.coverage_pure import CoverageData, FileCoverage
+from app.worker.testing.test_run_pure import PytestRun, ReportSummary
 
 RULE: Final = Rule(
     id="R-readme-run", text="문법/정적 검사 및 데이터 생성기 테스트 통과",
