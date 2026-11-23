@@ -1,7 +1,8 @@
 """결과 코멘트의 PR 단위 확인 부분 (docs/DESIGN.md 4.5 끝, 4.9). 판정을 새로 내지 않는다.
 
 `PrChecks` 하나만 받는다. 규칙의 인용, 커밋 제목, PR 글의 인용, 모델의 이유, 패턴, 실패 이유는 모두
-믿지 않는 글이라 코드 스팬 안에만 넣는다 (app/worker/markdown_pure.py). 커밋은 짧은 해시로 보인다.
+믿지 않는 글이라 코드 스팬 안에만 넣는다 (app/worker/core/markdown_pure.py). 커밋은 짧은 해시로
+보인다.
 코드 위반과 따로 된 목록이고, 수정안을 만들지 않는다는 것을 머리줄에 적는다 (4-13).
 """
 
@@ -10,8 +11,8 @@ from collections.abc import Mapping
 from dataclasses import replace
 from typing import Final
 
-from app.worker.markdown_pure import inline_code
-from app.worker.rule_pure import Rule
+from app.worker.core.markdown_pure import inline_code
+from app.worker.core.rule_pure import Rule
 from app.worker.rules.pr_check_pure import (
     FACT_LABEL,
     WHERE_LABEL,

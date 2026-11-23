@@ -35,10 +35,10 @@ from app.shared.job_pure import PRJob
 from app.worker import main, repo, retry, rule_reading_pure
 from app.worker.ai import claude_cli
 from app.worker.ai.claude_cli import ClaudeResult, StructuredResult
+from app.worker.core.rule_pure import rule_id
 from app.worker.deps import Deps
 from app.worker.fix import fix_decision_pure
 from app.worker.github import GitHub
-from app.worker.rule_pure import rule_id
 from app.worker.rules import judge_pure, tool_choice_pure
 from app.worker.state import Store
 from tests.sandbox_names import TEST_NAMES

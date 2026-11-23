@@ -16,15 +16,15 @@ from typing import Final
 
 from app.worker import repo
 from app.worker.checker_authoring_pure import Checked, RuleCheck, Unchecked
-from app.worker.checker_pure import TOOL_KINDS
-from app.worker.diff_pure import ChangedLines, touches
-from app.worker.rule_pure import checked_file, looks_at_paths
+from app.worker.core.checker_pure import TOOL_KINDS
+from app.worker.core.diff_pure import ChangedLines, touches
+from app.worker.core.rule_pure import checked_file, looks_at_paths
+from app.worker.core.text_edit_pure import TextEdit
+from app.worker.core.violation_pure import Violation, violation_id
 from app.worker.rules.checkers import RunsCheckers, Sandbox
 from app.worker.sandbox import toolcache
 from app.worker.sandbox.checker_runner import Failed, Invalid, Match
 from app.worker.sandbox.safe_read import read_regular_file
-from app.worker.text_edit_pure import TextEdit
-from app.worker.violation_pure import Violation, violation_id
 
 MAX_SOURCE_BYTES: Final = 5 * 1024 * 1024
 

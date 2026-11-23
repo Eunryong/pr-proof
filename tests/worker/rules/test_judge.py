@@ -14,9 +14,9 @@ from app.worker.ai import workdir
 from app.worker.ai.claude_backend import ClaudeCliBackend
 from app.worker.ai.claude_cli import AIErrorKind, StructuredResult
 from app.worker.budget import CallBudget
-from app.worker.diff_pure import added_lines
+from app.worker.core.diff_pure import added_lines
+from app.worker.core.rule_pure import CheckMethod, Rule, RuleSource
 from app.worker.repo_config_pure import CallSettings
-from app.worker.rule_pure import CheckMethod, Rule, RuleSource
 from app.worker.rules.detect import source_lines
 from app.worker.rules.judge import Judged, judge
 from app.worker.rules.judge_pure import (

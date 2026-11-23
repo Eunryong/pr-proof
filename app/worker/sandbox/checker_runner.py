@@ -20,9 +20,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
-from app.worker.checker_pure import CheckerKind, is_repo_path, validate_body
+from app.worker.core.checker_pure import CheckerKind, is_repo_path, validate_body
+from app.worker.core.text_edit_pure import TextEdit
 from app.worker.sandbox import docker_cli, toolcache
-from app.worker.text_edit_pure import TextEdit
 
 WORK: Final = "/work"
 CHECKER_DIR: Final = "/checker"

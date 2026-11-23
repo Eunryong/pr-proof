@@ -1,8 +1,8 @@
 """고친 위반의 테스트 표시를 상태와 파일마다 묶는다 (docs/DESIGN.md 4.9)."""
 
+from app.worker.core.violation_pure import Violation
 from app.worker.generated_tests_pure import GeneratedTest, LineRun
 from app.worker.test_lines import MAX_LINES_SHOWN, generated_lines, status_lines
-from app.worker.violation_pure import Violation
 
 
 def _v(file: str, line: int) -> Violation:

@@ -17,8 +17,8 @@ from typing import Final, Literal
 
 import yaml
 
-from app.worker.rule_pure import Example
-from app.worker.tools_pure import RUFF_CODE
+from app.worker.core.rule_pure import Example
+from app.worker.core.tools_pure import RUFF_CODE
 
 # path-pattern은 코드가 아니라 선언(JSON)이다: 경로에 거는 정규식 조건. 파이프라인이 쓴 고정
 # 스크립트가 샌드박스에서 맞춘다 (app/worker/sandbox/checker_runner.py).

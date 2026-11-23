@@ -13,7 +13,7 @@ from typing import Final
 
 from app.shared.db_pure import FixAttempt, Proposal, Run
 from app.worker.core.bundle_pure import MECHANICAL_BUNDLE, MODEL_BUNDLE
-from app.worker.diff_pure import line_after
+from app.worker.core.diff_pure import line_after
 from app.worker.doc_rules_pure import Found, RuleJudged
 from app.worker.fix.fix_decision_pure import Decided
 from app.worker.fix.fix_pure import MechanicalFix

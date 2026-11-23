@@ -4,7 +4,7 @@ from typing import Final
 
 import pytest
 
-from app.worker.diff_pure import (
+from app.worker.core.diff_pure import (
     ChangeBlock,
     added_lines,
     change_blocks,

@@ -9,12 +9,12 @@ from typing import Final
 import pytest
 
 from app.worker.checker_authoring_pure import Checked, Unchecked
-from app.worker.checker_pure import Checker, CheckerKind, tool_codes
-from app.worker.diff_pure import added_lines
-from app.worker.rule_pure import CheckMethod, Rule, RuleSource
+from app.worker.core.checker_pure import Checker, CheckerKind, tool_codes
+from app.worker.core.diff_pure import added_lines
+from app.worker.core.rule_pure import CheckMethod, Rule, RuleSource
+from app.worker.core.violation_pure import violation_id
 from app.worker.rules.detect import detect
 from app.worker.sandbox.checker_runner import CheckerRun, Failed, Match, Ran
-from app.worker.violation_pure import violation_id
 
 RULE: Final = Rule(
     id="R-readme-1", text="`orders/` 아래 모듈은 `print`를 쓰지 않는다.",
@@ -195,8 +195,8 @@ def test_tool_settings_violations_use_the_ruff_code_as_rule_id(worktree: Path) -
     """도구 설정의 규칙 묶음이 찾은 위반은 ruff 코드가 규칙 id다 (4.3). 안전한 수정의 편집은 위반
     id로 따로 돌려준다. 문서 규칙이 같은 코드로 같은 줄을 잡으면 문서 규칙의 위반만 남는다.
     `rules.disabled`에 적은 코드의 위반은 남지 않는다."""
-    from app.worker.text_edit_pure import TextEdit
-    from app.worker.tools_pure import RuffConfig, config_rule
+    from app.worker.core.text_edit_pure import TextEdit
+    from app.worker.core.tools_pure import RuffConfig, config_rule
 
     edit = TextEdit(3, 1, 4, 1, "")
     matches = (

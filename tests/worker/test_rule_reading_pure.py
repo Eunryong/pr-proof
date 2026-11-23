@@ -4,8 +4,8 @@ from typing import Final
 
 import pytest
 
+from app.worker.core.rule_pure import RuleSource, applies_to, rule_id
 from app.worker.git.git_pure import TreeEntry
-from app.worker.rule_pure import RuleSource, applies_to, rule_id
 from app.worker.rule_reading_pure import (
     ANSWER_SCHEMA,
     SYSTEM_PROMPT,

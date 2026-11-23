@@ -17,10 +17,10 @@ from typing import Final, Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from app.worker.cache_key_pure import model_cache_key, prompt_version, text_hash
+from app.worker.core.cache_key_pure import model_cache_key, prompt_version, text_hash
+from app.worker.core.rule_pure import Rule
 from app.worker.feedback_pure import Item, line_at
 from app.worker.prompt_text_pure import load
-from app.worker.rule_pure import Rule
 
 MAX_WHY_CHARS: Final = 300
 MAX_REQUEST_CHARS: Final = 300

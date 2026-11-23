@@ -6,7 +6,7 @@ from typing import Final
 
 import pytest
 
-from app.worker.rule_pure import CheckMethod, Rule, RuleSource
+from app.worker.core.rule_pure import CheckMethod, Rule, RuleSource
 from app.worker.rules.judge_pure import (
     ANSWER_SCHEMA,
     MAX_BASIS_CHARS,

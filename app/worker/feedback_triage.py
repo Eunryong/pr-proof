@@ -12,6 +12,7 @@ from collections.abc import Mapping, Sequence
 from app.worker.ai.model_backend import AskModel
 from app.worker.budget import CallBudget
 from app.worker.call_budget_pure import CALL_BUDGET_USD, Denied, PrScope
+from app.worker.core.rule_pure import Rule
 from app.worker.feedback_pure import Item
 from app.worker.feedback_triage_pure import (
     ANSWER_SCHEMA,
@@ -26,7 +27,6 @@ from app.worker.feedback_triage_pure import (
     parse_answer,
     triage_key,
 )
-from app.worker.rule_pure import Rule
 from app.worker.state import Store
 
 log = logging.getLogger(__name__)

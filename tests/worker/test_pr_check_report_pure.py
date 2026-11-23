@@ -3,8 +3,8 @@
 from typing import Final
 
 from app.worker import doc_rules_report, pr_check_report_pure
+from app.worker.core.rule_pure import CheckMethod, Rule, RuleSource
 from app.worker.doc_rules_pure import CallUsage, Found, RuleUnchecked
-from app.worker.rule_pure import CheckMethod, Rule, RuleSource
 from app.worker.rules.pr_check_pure import PrChecks, PrPattern, PrRuleResult, PrUsage, PrViolation
 
 SHA: Final = "a" * 40

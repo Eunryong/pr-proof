@@ -2,7 +2,8 @@ from datetime import UTC, datetime
 from typing import Final
 
 from app.shared.db_pure import Record, SeenViolation
-from app.worker.diff_pure import hunk_removing
+from app.worker.core.diff_pure import hunk_removing
+from app.worker.core.violation_pure import Violation
 from app.worker.records_pure import (
     Target,
     author_fixed,
@@ -16,7 +17,6 @@ from app.worker.records_pure import (
     targets_to_json,
     text_of,
 )
-from app.worker.violation_pure import Violation
 
 PATCH: Final = (
     "diff --git a/orders/a.py b/orders/a.py\n--- a/orders/a.py\n+++ b/orders/a.py\n"

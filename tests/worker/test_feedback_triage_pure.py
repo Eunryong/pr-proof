@@ -4,6 +4,7 @@ from typing import Final
 
 import pytest
 
+from app.worker.core.rule_pure import CheckMethod, Rule, RuleSource
 from app.worker.feedback_pure import Item, line_at
 from app.worker.feedback_triage_pure import (
     Facts,
@@ -15,7 +16,6 @@ from app.worker.feedback_triage_pure import (
     parse_answer,
     triage_key,
 )
-from app.worker.rule_pure import CheckMethod, Rule, RuleSource
 
 HEAD: Final = "h" * 40
 OLD: Final = "o" * 40

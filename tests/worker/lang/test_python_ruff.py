@@ -6,11 +6,11 @@ from typing import Final
 
 import pytest
 
+from app.worker.core.text_edit_pure import TextEdit
+from app.worker.core.tools_pure import RuffConfig
 from app.worker.lang import python
 from app.worker.sandbox.checker_runner import Failed, Match, Ran, RawRun
 from app.worker.sandbox.docker_cli import SandboxError
-from app.worker.text_edit_pure import TextEdit
-from app.worker.tools_pure import RuffConfig
 
 CONFIG: Final = RuffConfig("ruff.toml", "line-length = 90\n", "b" * 40)
 

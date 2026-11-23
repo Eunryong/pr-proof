@@ -11,11 +11,11 @@ from typing import Final, Literal
 
 from app.shared.db_pure import ModelCall
 from app.worker.checker_authoring_pure import JudgeRoute, UncheckedKind
-from app.worker.checker_pure import CheckerKind
+from app.worker.core.checker_pure import CheckerKind
+from app.worker.core.rule_pure import Rule, UnreadDoc
+from app.worker.core.violation_pure import Violation
 from app.worker.rag_pure import Retrieval
-from app.worker.rule_pure import Rule, UnreadDoc
 from app.worker.rules.judge_pure import JudgeUsage
-from app.worker.violation_pure import Violation
 
 # 규칙 읽기와 검사기 작성 (규칙 묶음 상한에서 세는 단계)
 DOC_RULE_STAGES: Final = frozenset({"rules", "checker"})
@@ -158,12 +158,12 @@ STATE_TYPES: Final = (
     ("app.worker.doc_rules_pure", "NoRuleDocs"),
     ("app.worker.doc_rules_pure", "NoRulesFound"),
     ("app.worker.doc_rules_pure", "Found"),
-    ("app.worker.rule_pure", "Rule"),
-    ("app.worker.rule_pure", "RuleSource"),
-    ("app.worker.rule_pure", "CheckMethod"),
-    ("app.worker.rule_pure", "Example"),
-    ("app.worker.rule_pure", "UnreadDoc"),
-    ("app.worker.violation_pure", "Violation"),
+    ("app.worker.core.rule_pure", "Rule"),
+    ("app.worker.core.rule_pure", "RuleSource"),
+    ("app.worker.core.rule_pure", "CheckMethod"),
+    ("app.worker.core.rule_pure", "Example"),
+    ("app.worker.core.rule_pure", "UnreadDoc"),
+    ("app.worker.core.violation_pure", "Violation"),
 )
 
 

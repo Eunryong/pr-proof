@@ -46,11 +46,11 @@ from app.worker.ai import claude_cli
 from app.worker.ai.claude_backend import ClaudeCliBackend
 from app.worker.ai.claude_cli import StructuredResult
 from app.worker.budget import CallBudget
-from app.worker.checker_pure import TOOL_KINDS
-from app.worker.diff_pure import ChangedLines, added_lines
+from app.worker.core.checker_pure import TOOL_KINDS
+from app.worker.core.diff_pure import ChangedLines, added_lines
+from app.worker.core.rule_pure import Rule, in_scope
 from app.worker.doc_rules_pure import Found, RuleChecked, RuleJudged, RuleOutcome, RulesRead
 from app.worker.repo_config_pure import CallSettings, ModelSettings, RulesSettings
-from app.worker.rule_pure import Rule, in_scope
 from app.worker.rules import checkers, doc_rules, judge_pure, tool_choice_pure
 from app.worker.rules import judge as model_judge
 from app.worker.sandbox import checker_runner

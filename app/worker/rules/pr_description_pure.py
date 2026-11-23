@@ -22,7 +22,7 @@ from typing import Final, Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from app.worker.cache_key_pure import model_cache_key, prompt_version, text_hash
+from app.worker.core.cache_key_pure import model_cache_key, prompt_version, text_hash
 from app.worker.prompt_text_pure import load
 from app.worker.rules.judge_pure import CALL_BUDGET_USD as JUDGE_CALL_BUDGET_USD
 from app.worker.rules.judge_pure import MAX_CHANGED_SHOWN as JUDGE_MAX_CHANGED_SHOWN

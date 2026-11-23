@@ -5,7 +5,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import Final
 
-from app.worker.cache_key_pure import text_hash
+from app.worker.core.cache_key_pure import text_hash
 
 BRANCH_PREFIX: Final = "pipeline/"
 MAX_FILES: Final = 20

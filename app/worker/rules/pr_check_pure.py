@@ -24,11 +24,11 @@ from typing import Final, Literal, get_args
 
 from pydantic import BaseModel, ConfigDict
 
-from app.worker.cache_key_pure import model_cache_key, prompt_version, text_hash
-from app.worker.checker_pure import is_repo_path
+from app.worker.core.cache_key_pure import model_cache_key, prompt_version, text_hash
+from app.worker.core.checker_pure import is_repo_path
+from app.worker.core.rule_pure import CheckMethod, Example, Rule, RuleSource, normalize
 from app.worker.git.git_pure import RawCommit
 from app.worker.prompt_text_pure import load
-from app.worker.rule_pure import CheckMethod, Example, Rule, RuleSource, normalize
 
 # --- 사실의 상한 (4.5 표). 넘으면 그 사실을 보는 규칙은 "일부만 확인함"으로 보인다 ---
 MAX_COMMITS: Final = 250

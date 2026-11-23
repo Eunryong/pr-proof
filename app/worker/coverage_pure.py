@@ -15,7 +15,7 @@ from xml.etree.ElementTree import Element, ParseError
 from defusedxml import DefusedXmlException
 from defusedxml.ElementTree import fromstring
 
-from app.worker.violation_pure import Violation
+from app.worker.core.violation_pure import Violation
 
 # 이보다 큰 coverage.xml은 읽지 않는다 (모름으로 본다)
 MAX_COVERAGE_XML_BYTES: Final = 20 * 1024 * 1024
