@@ -14,9 +14,9 @@ from typing import Final, Literal, cast
 from pydantic import BaseModel, ConfigDict
 
 from app.worker.core.cache_key_pure import model_cache_key, prompt_version, text_hash
+from app.worker.core.prompt_text_pure import load
 from app.worker.core.rule_pure import CheckMethod, Rule, RuleSource
 from app.worker.core.violation_pure import Violation
-from app.worker.prompt_text_pure import load
 from app.worker.store.rag_pure import Retrieval, cited
 from app.worker.testing.test_run_pure import RunStatus
 
@@ -197,7 +197,7 @@ class Question:
     hunk: str  # diff.hunk_around. 못 찾았으면 ""
 
 
-SYSTEM_PROMPT: Final = load("fix_decision")
+SYSTEM_PROMPT: Final = load(__file__, "fix_decision")
 
 MODEL_SKIP_REASONS: Final = ("needs_other_file", "changes_behavior", "not_a_violation")
 
@@ -226,7 +226,7 @@ ANSWER_SCHEMA: Final[Mapping[str, object]] = {
 
 # 검색으로 과거 기록을 넣은 호출에만 시스템 프롬프트 뒤에 붙인다 (6.2). 기록이 없는 호출의
 # 프롬프트와 저장 키는 검색을 켜기 전과 같다
-RECORDS_NOTE: Final = "\n\n" + load("fix_decision.records")
+RECORDS_NOTE: Final = "\n\n" + load(__file__, "fix_decision.records")
 RECORDS_VERSION: Final = text_hash(RECORDS_NOTE)[:12]
 
 

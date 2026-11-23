@@ -18,9 +18,9 @@ from typing import Final, Literal
 from pydantic import BaseModel, ConfigDict
 
 from app.worker.core.cache_key_pure import model_cache_key, prompt_version, text_hash
+from app.worker.core.prompt_text_pure import load
 from app.worker.core.rule_pure import Rule
 from app.worker.feedback.feedback_pure import Item, line_at
-from app.worker.prompt_text_pure import load
 
 MAX_WHY_CHARS: Final = 300
 MAX_REQUEST_CHARS: Final = 300
@@ -118,7 +118,7 @@ class Triage:
     incorrect: bool = False  # reject만: 코멘트의 말이 사실이 아니다(나머지 거절은 "하지 않음")
 
 
-SYSTEM_PROMPT: Final = load("feedback_triage")
+SYSTEM_PROMPT: Final = load(__file__, "feedback_triage")
 
 ANSWER_SCHEMA: Final[Mapping[str, object]] = {
     "type": "object",

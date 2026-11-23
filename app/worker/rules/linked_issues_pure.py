@@ -20,8 +20,8 @@ from typing import Final, Literal
 from pydantic import BaseModel, ConfigDict
 
 from app.worker.core.cache_key_pure import model_cache_key, prompt_version, text_hash
+from app.worker.core.prompt_text_pure import load
 from app.worker.git.git_pure import Issue, Linked
-from app.worker.prompt_text_pure import load
 from app.worker.rules.pr_check_pure import cut
 from app.worker.rules.pr_description_pure import (
     CALL_BUDGET_USD as DESCRIPTION_CALL_BUDGET_USD,
@@ -142,7 +142,7 @@ def select(linked: Linked, repo: str) -> Shown:
 
 # --- 프롬프트 ---
 
-SYSTEM_PROMPT: Final = load("linked_issues")
+SYSTEM_PROMPT: Final = load(__file__, "linked_issues")
 
 ANSWER_SCHEMA: Final[Mapping[str, object]] = {
     "type": "object",

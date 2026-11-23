@@ -23,8 +23,8 @@ from typing import Final
 from pydantic import BaseModel, ConfigDict
 
 from app.worker.core.cache_key_pure import model_cache_key, prompt_version, text_hash
+from app.worker.core.prompt_text_pure import load
 from app.worker.core.rule_pure import CheckMethod, Rule, RuleSource
-from app.worker.prompt_text_pure import load
 
 # 바뀐 줄 앞뒤로 보이는 줄 수 (4.5)
 HUNK_RADIUS: Final = 20
@@ -133,7 +133,7 @@ class Asked:
     priors: Mapping[str, Prior] = field(default_factory=dict)
 
 
-SYSTEM_PROMPT: Final = load("judge")
+SYSTEM_PROMPT: Final = load(__file__, "judge")
 
 ANSWER_SCHEMA: Final[Mapping[str, object]] = {
     "type": "object",

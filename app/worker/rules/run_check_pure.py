@@ -17,8 +17,8 @@ from typing import Final, Literal
 from pydantic import BaseModel, ConfigDict
 
 from app.worker.core.cache_key_pure import model_cache_key, prompt_version, text_hash
+from app.worker.core.prompt_text_pure import load
 from app.worker.core.rule_pure import PYTHON_SUFFIXES, CheckMethod, Rule, RuleSource
-from app.worker.prompt_text_pure import load
 from app.worker.rules.doc_rules_pure import Found, RuleChecked, RuleUnchecked
 from app.worker.testing.coverage_pure import CoverageData
 from app.worker.testing.test_run_pure import PytestRun
@@ -103,7 +103,7 @@ def file_runs(
     return tuple(out)
 
 
-SYSTEM_PROMPT: Final = load("run_check")
+SYSTEM_PROMPT: Final = load(__file__, "run_check")
 
 ANSWER_SCHEMA: Final[Mapping[str, object]] = {
     "type": "object",

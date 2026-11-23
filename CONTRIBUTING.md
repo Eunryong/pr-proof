@@ -79,7 +79,7 @@ from app.worker.core.checker_pure import CheckerKind
 
 순수 모듈은 내장 함수 `open(...)`을 부르지 않는다.
 
-순수 모듈은 파일을 읽지 않는다. 모델에게 주는 지시문의 글(`app/worker/prompts/` 아래의 파일)만 예외이고, `app/worker/prompt_text_pure.py`의 `load`로 읽는다.
+순수 모듈은 파일을 읽지 않는다. 모델에게 주는 지시문의 글(각 단계 폴더의 `prompts/` 아래의 파일)만 예외이고, `app/worker/core/prompt_text_pure.py`의 `load`로 같은 폴더의 `prompts/`만 읽는다.
 
 ```python
 # app/worker/fix/decide_pure.py

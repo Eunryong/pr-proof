@@ -13,12 +13,12 @@ from typing import Final
 
 from app.worker.core.cache_key_pure import text_hash
 from app.worker.core.markdown_pure import inline_code
+from app.worker.core.prompt_text_pure import load
 from app.worker.core.rule_pure import CheckMethod, Rule, RuleSource
 from app.worker.core.violation_pure import Violation, violation_id
 from app.worker.feedback.feedback_pure import Item
 from app.worker.feedback.feedback_triage_pure import Triage
 from app.worker.fix.model_fix_pure import ModelFix
-from app.worker.prompt_text_pure import load
 from app.worker.rules.doc_rules_pure import CallUsage, Found, RuleUnchecked
 
 RULE_PREFIX: Final = "feedback-"
@@ -26,7 +26,7 @@ SOURCE_FILE: Final = "PR 코멘트"
 MAX_MESSAGE_CHARS: Final = 600
 
 # 수정 작성의 시스템 프롬프트 뒤에 붙인다. 저장 키에도 들어간다
-FIX_NOTE: Final = "\n\n" + load("model_fix.feedback")
+FIX_NOTE: Final = "\n\n" + load(__file__, "model_fix.feedback")
 
 
 @dataclass(frozen=True)

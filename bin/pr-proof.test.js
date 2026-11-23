@@ -351,12 +351,15 @@ test("update는 python 없이 입구에서 끝난다", () => {
 test("npm 패키지에 프롬프트 파일이 모두 실린다", () => {
   // 빠지면 개발 폴더에서는 되고 설치한 곳에서만 워커가 시작하지 못한다
   const root = path.join(__dirname, "..");
-  const dir = path.join(root, "app", "worker", "prompts");
-  const prompts = fs.readdirSync(dir).filter((name) => name.endsWith(".md"));
+  const worker = path.join(root, "app", "worker");
+  const prompts = fs
+    .readdirSync(worker, { recursive: true })
+    .map((name) => String(name).split(path.sep).join("/"))
+    .filter((name) => /(^|\/)prompts\/[^/]+\.md$/.test(name))
+    .map((name) => `app/worker/${name}`);
   assert.ok(prompts.length > 10);
   const packed = spawnSync("npm", ["pack", "--dry-run", "--json"], { cwd: root, encoding: "utf8" });
   assert.equal(packed.status, 0, packed.stderr);
   const files = new Set(JSON.parse(packed.stdout)[0].files.map((f) => f.path));
-  const missing = prompts.filter((name) => !files.has(`app/worker/prompts/${name}`));
-  assert.deepEqual(missing, []);
+  assert.deepEqual(prompts.filter((name) => !files.has(name)), []);
 });

@@ -26,9 +26,9 @@ from pydantic import BaseModel, ConfigDict
 
 from app.worker.core.cache_key_pure import model_cache_key, prompt_version, text_hash
 from app.worker.core.checker_pure import is_repo_path
+from app.worker.core.prompt_text_pure import load
 from app.worker.core.rule_pure import CheckMethod, Example, Rule, RuleSource, normalize
 from app.worker.git.git_pure import RawCommit
-from app.worker.prompt_text_pure import load
 
 # --- 사실의 상한 (4.5 표). 넘으면 그 사실을 보는 규칙은 "일부만 확인함"으로 보인다 ---
 MAX_COMMITS: Final = 250
@@ -349,7 +349,7 @@ def gate_ok(examples: Sequence[PrExample], results: Sequence[CaseResult], decl: 
 
 # --- 계획 작성 (모델, 규칙 묶음 상한) ---
 
-PLAN_SYSTEM_PROMPT: Final = load("pr_check.plan")
+PLAN_SYSTEM_PROMPT: Final = load(__file__, "pr_check.plan")
 
 PLAN_SCHEMA: Final[Mapping[str, object]] = {
     "type": "object",
@@ -562,7 +562,7 @@ def plan_from_json(text: str) -> PrPlan:
 
 # --- 모델 판단 (PR 상한) ---
 
-JUDGE_SYSTEM_PROMPT: Final = load("pr_check.judge")
+JUDGE_SYSTEM_PROMPT: Final = load(__file__, "pr_check.judge")
 
 JUDGE_SCHEMA: Final[Mapping[str, object]] = {
     "type": "object",
