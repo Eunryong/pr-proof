@@ -153,3 +153,87 @@
 | `app/sandbox/safe_read.py` | `app/worker/sandbox/safe_read.py` |
 | `app/sandbox/toolcache.py` | `app/worker/sandbox/toolcache.py` |
 
+
+### 12.6 2026-11-24에 바뀐 `app/worker/` 아래의 경로 (pr-proof#98~#117)
+
+`app/worker/` 맨 위에는 뼈대(`main`, `graph`, `update`, `command`, `command_pure`, `feedback_job`, `guard`, `retry`, `deps`, `cli`, `preflight`, `records`)만 남기고 나머지를 단계 폴더(`rules`, `fix`, `feedback`, `report`, `evaluation`)와 공용 폴더(`core`, `config`, `git`, `store`, `model`, `testing`, `sandbox`, `lang`)로 옮겼다. 프롬프트 파일은 `app/worker/prompts/`에서 쓰는 단계의 `prompts/`로 옮겼다. 동작은 바뀌지 않았다. 폴더 사이의 방향은 `CONTRIBUTING.md`의 「계층」에 있다. 테스트(`tests/worker/`)도 같은 모양의 폴더로 옮겼다.
+
+체크포인트(SQLite)에 저장된 모듈 경로 문자열(`STATE_TYPES`)도 새 경로가 되었다. 이 정리 전에 저장한 체크포인트는 새 코드에서 풀리지 않는다.
+
+아래 표의 옛 경로는 `3352e28`(pr-proof#97)의 것이다. 12.5의 표에 있는 옛 경로는 12.5의 "지금 경로"를 이 표의 "옛 경로"로 이어서 읽는다. 옮기지 않은 파일은 적지 않았다.
+
+새로 생긴 파일은 `app/worker/core/bundle_pure.py`, `app/worker/core/secret_pure.py`, `app/worker/git/git_pure.py`, `app/worker/store/records.py`다. 다른 모듈에서 떼어 냈고 옛 경로가 없다. `app/worker/prompts/README.md`는 `app/worker/rules/prompts/README.md`, `app/worker/fix/prompts/README.md`, `app/worker/feedback/prompts/README.md` 셋으로 나뉘었다. `app/worker/ai/__init__.py`는 없어졌고 `app/worker/model/__init__.py`가 대신한다.
+
+| 옛 경로 | 지금 경로 |
+| --- | --- |
+| `app/worker/access_pure.py` | `app/worker/config/access_pure.py` |
+| `app/worker/ai/backends.py` | `app/worker/model/backends.py` |
+| `app/worker/ai/claude_backend.py` | `app/worker/model/claude/claude_backend.py` |
+| `app/worker/ai/claude_cli.py` | `app/worker/model/claude/claude_cli.py` |
+| `app/worker/ai/mcp_relay.py` | `app/worker/model/claude/mcp_relay.py` |
+| `app/worker/ai/model_backend.py` | `app/worker/model/model_backend.py` |
+| `app/worker/ai/path_hook.py` | `app/worker/model/claude/path_hook.py` |
+| `app/worker/ai/tool_server.py` | `app/worker/model/claude/tool_server.py` |
+| `app/worker/ai/workdir.py` | `app/worker/model/claude/workdir.py` |
+| `app/worker/base_config.py` | `app/worker/config/base_config.py` |
+| `app/worker/budget.py` | `app/worker/store/budget.py` |
+| `app/worker/cache_key_pure.py` | `app/worker/core/cache_key_pure.py` |
+| `app/worker/call_budget_pure.py` | `app/worker/store/call_budget_pure.py` |
+| `app/worker/checker_authoring_pure.py` | `app/worker/rules/checker_authoring_pure.py` |
+| `app/worker/checker_pure.py` | `app/worker/core/checker_pure.py` |
+| `app/worker/coverage_pure.py` | `app/worker/testing/coverage_pure.py` |
+| `app/worker/coverage.py` | `app/worker/testing/coverage.py` |
+| `app/worker/diff_pure.py` | `app/worker/core/diff_pure.py` |
+| `app/worker/doc_rules_pure.py` | `app/worker/rules/doc_rules_pure.py` |
+| `app/worker/doc_rules_report.py` | `app/worker/report/doc_rules_report.py` |
+| `app/worker/eval_run_pure.py` | `app/worker/evaluation/eval_run_pure.py` |
+| `app/worker/evaluation.py` | `app/worker/evaluation/evaluation.py` |
+| `app/worker/feedback_pure.py` | `app/worker/feedback/feedback_pure.py` |
+| `app/worker/feedback_report_pure.py` | `app/worker/feedback/feedback_report_pure.py` |
+| `app/worker/feedback_triage_pure.py` | `app/worker/feedback/feedback_triage_pure.py` |
+| `app/worker/feedback_triage.py` | `app/worker/feedback/feedback_triage.py` |
+| `app/worker/feedback.py` | `app/worker/feedback_job.py` |
+| `app/worker/generated_tests_pure.py` | `app/worker/testing/generated_tests_pure.py` |
+| `app/worker/github.py` | `app/worker/git/github.py` |
+| `app/worker/linked_issues_report_pure.py` | `app/worker/report/linked_issues_report_pure.py` |
+| `app/worker/loop.py` | `app/worker/model/loop.py` |
+| `app/worker/markdown_pure.py` | `app/worker/core/markdown_pure.py` |
+| `app/worker/mcp_pure.py` | `app/worker/model/mcp_pure.py` |
+| `app/worker/memory.py` | `app/worker/store/memory.py` |
+| `app/worker/merged_fix_pure.py` | `app/worker/fix/merged_fix_pure.py` |
+| `app/worker/pr_check_report_pure.py` | `app/worker/report/pr_check_report_pure.py` |
+| `app/worker/pr_description_report_pure.py` | `app/worker/report/pr_description_report_pure.py` |
+| `app/worker/prompt_text_pure.py` | `app/worker/core/prompt_text_pure.py` |
+| `app/worker/prompts/checker_authoring.ast_grep.md` | `app/worker/rules/prompts/checker_authoring.ast_grep.md` |
+| `app/worker/prompts/checker_authoring.common.md` | `app/worker/rules/prompts/checker_authoring.common.md` |
+| `app/worker/prompts/checker_authoring.path.md` | `app/worker/rules/prompts/checker_authoring.path.md` |
+| `app/worker/prompts/checker_authoring.python_ast.md` | `app/worker/rules/prompts/checker_authoring.python_ast.md` |
+| `app/worker/prompts/checker_authoring.records.md` | `app/worker/rules/prompts/checker_authoring.records.md` |
+| `app/worker/prompts/feedback_triage.md` | `app/worker/feedback/prompts/feedback_triage.md` |
+| `app/worker/prompts/fix_decision.md` | `app/worker/fix/prompts/fix_decision.md` |
+| `app/worker/prompts/fix_decision.records.md` | `app/worker/fix/prompts/fix_decision.records.md` |
+| `app/worker/prompts/judge.md` | `app/worker/rules/prompts/judge.md` |
+| `app/worker/prompts/linked_issues.md` | `app/worker/rules/prompts/linked_issues.md` |
+| `app/worker/prompts/model_fix.feedback.md` | `app/worker/fix/prompts/model_fix.feedback.md` |
+| `app/worker/prompts/model_fix.md` | `app/worker/fix/prompts/model_fix.md` |
+| `app/worker/prompts/model_fix.records.md` | `app/worker/fix/prompts/model_fix.records.md` |
+| `app/worker/prompts/pr_check.judge.md` | `app/worker/rules/prompts/pr_check.judge.md` |
+| `app/worker/prompts/pr_check.plan.md` | `app/worker/rules/prompts/pr_check.plan.md` |
+| `app/worker/prompts/pr_description.md` | `app/worker/rules/prompts/pr_description.md` |
+| `app/worker/prompts/rule_reading.md` | `app/worker/rules/prompts/rule_reading.md` |
+| `app/worker/prompts/run_check.md` | `app/worker/rules/prompts/run_check.md` |
+| `app/worker/prompts/tool_choice.md` | `app/worker/rules/prompts/tool_choice.md` |
+| `app/worker/rag_pure.py` | `app/worker/store/rag_pure.py` |
+| `app/worker/rag_switch_pure.py` | `app/worker/store/rag_switch_pure.py` |
+| `app/worker/records_pure.py` | `app/worker/store/records_pure.py` |
+| `app/worker/repo_config_pure.py` | `app/worker/config/repo_config_pure.py` |
+| `app/worker/repo.py` | `app/worker/git/repo.py` |
+| `app/worker/report.py` | `app/worker/report/report.py` |
+| `app/worker/rule_pure.py` | `app/worker/core/rule_pure.py` |
+| `app/worker/rule_reading_pure.py` | `app/worker/rules/rule_reading_pure.py` |
+| `app/worker/state.py` | `app/worker/store/state.py` |
+| `app/worker/test_lines.py` | `app/worker/testing/test_lines.py` |
+| `app/worker/test_run_pure.py` | `app/worker/testing/test_run_pure.py` |
+| `app/worker/text_edit_pure.py` | `app/worker/core/text_edit_pure.py` |
+| `app/worker/tools_pure.py` | `app/worker/core/tools_pure.py` |
+| `app/worker/violation_pure.py` | `app/worker/core/violation_pure.py` |

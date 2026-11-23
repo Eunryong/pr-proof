@@ -41,7 +41,7 @@ LIMITS: typing.Final[Mapping[str, int]] = {"pr": 14}
 
 `app/setup/` 아래 모듈은 `app` 안에서 `app.setup`, `app.shared`, `app.worker`만 import한다. 서버의 시작 확인(`app.worker.preflight`)을 그대로 다시 쓰기 때문이고, 거꾸로 `app.api`·`app.worker`·`app.shared`는 `app.setup`을 import하지 않는다.
 
-`app/worker/`는 세 층으로 정리하는 중이다(pr-proof#98). 끝나면 아래 구조가 되고, 그때까지 아직 옮기지 않은 공용·단계 모듈은 `app/worker/` 바로 아래에 남아 있다.
+`app/worker/`는 세 층이다(pr-proof#98). 맨 위에는 뼈대만 있고, 나머지는 단계 폴더와 공용 폴더에 있다.
 
 - 뼈대: `app/worker/` 바로 아래의 `main`, `graph`, `update`, `command`, `command_pure`, `feedback_job`, `guard`, `retry`, `deps`, `cli`, `preflight`, `records`. 단계를 부르기만 한다.
 - 단계 폴더: `rules`, `feedback`, `fix`, `report`, `evaluation`. 한 단계가 하는 일 전부를 둔다.
