@@ -142,6 +142,32 @@ def test_commit_that_goes_stale_during_tests_leaves_no_result(env) -> None:
     assert not any("통과" in b for b in bodies(env["gh"]))  # 새 커밋의 작업이 코멘트를 고친다
 
 
+def test_pr_closed_during_the_check_stops_it_without_running_tests(env) -> None:
+    """검사가 도는 중에 PR이 닫혔다. api가 닫힘 소식을 받는 즉시 닫힘 표시를 적고(`queue.enqueue`),
+    돌던 검사는 다음 확인에서 멈춘다. 테스트까지 가지 않고 결과도 남기지 않는다."""
+    from app.api import queue
+
+    def closed_while_reading_rules(*a, **k):
+        closing = PRJob(repo="o/r", pr_number=1, kind="close", source="webhook")
+        assert queue.enqueue(env["redis"], closing) == "queued"
+        return NoRuleDocs()
+
+    env["monkeypatch"].setattr(doc_rules, "read", closed_while_reading_rules)
+    use_runner(env, lambda *a, **k: pytest.fail("닫힌 PR의 테스트를 돌리면 안 된다"))
+    assert main.handle(_payload(), env["deps"]) == "stale"
+    assert _states(env) == ["cancelled"]
+    assert not any("통과" in b for b in bodies(env["gh"]))
+
+
+def test_close_job_for_a_pr_that_is_open_puts_the_head_back(env) -> None:
+    """닫힘 소식이 다시 열림보다 늦게 왔다. api가 적은 닫힘 표시를 GitHub의 지금 head로 되돌려,
+    다음 검사가 멈추지 않게 한다."""
+    env["redis"].set(state_keys_pure.latest_head("o/r", 1), state_keys_pure.CLOSED_HEAD)
+    payload = PRJob(repo="o/r", pr_number=1, kind="close", source="webhook").model_dump_json()
+    assert main.handle(payload, env["deps"]) == "still_open"
+    assert env["redis"].get(state_keys_pure.latest_head("o/r", 1)).decode() == env["gh"].head
+
+
 def test_environment_error_shows_wait_and_raises_for_retry(env) -> None:
     def broken(*args, **kwargs):
         raise SandboxError("docker 중단")

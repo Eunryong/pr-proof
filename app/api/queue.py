@@ -1,4 +1,4 @@
-"""작업 등록: 최신 head 기록, delivery·작업 키 중복 방지, RQ 큐 등록."""
+"""작업 등록: 최신 head 기록(닫힘 소식이면 닫힘 표시), delivery·작업 키 중복 방지, RQ 큐 등록."""
 
 from typing import Final, Literal
 
@@ -32,6 +32,12 @@ def enqueue(redis: Redis, job: PRJob) -> EnqueueResult:
     if job.kind == "update" and job.head_sha:
         # 낡은 작업 확인용. 같은 작업이 이미 있어도 최신 head는 갱신한다
         redis.set(state_keys_pure.latest_head(job.repo, job.pr_number), job.head_sha)
+    elif job.kind == "close" and job.source == "webhook":
+        # PR이 닫혔다는 소식이다. 워커는 하나라 닫힘 작업은 돌고 있는 검사가 끝난 뒤에야 돈다.
+        # 그래서 여기서 바로 표시해, 돌고 있는 검사가 다음 확인에서 멈추게 한다(테스트와 모델
+        # 호출을 더 쓰지 않는다). 동기화가 넣은 닫힘 작업은 표시하지 않는다: 열린 PR 목록이 잘려
+        # 열린 PR이 빠졌을 수 있고, 워커가 GitHub에서 확인한 뒤에 표시한다
+        redis.set(state_keys_pure.latest_head(job.repo, job.pr_number), state_keys_pure.CLOSED_HEAD)
     if not redis.set(
         state_keys_pure.job(job.dedup_key), "1", nx=True, ex=state_keys_pure.JOB_TTL_SECONDS
     ):

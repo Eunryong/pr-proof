@@ -39,10 +39,28 @@ def test_new_head_is_queued_and_moves_latest_head(redis) -> None:
     assert _queued(redis) == 2
 
 
-def test_close_does_not_move_latest_head(redis) -> None:
+def test_close_webhook_marks_the_pr_closed_at_once(redis) -> None:
+    """닫힘 소식을 받으면 바로 닫힘 표시를 적는다. 워커는 하나라 닫힘 작업은 돌고 있는 검사가 끝난
+    뒤에야 돌고, 표시가 그때 적히면 돌던 검사가 끝까지 간다. 닫힘 작업의 커밋으로 덮지는 않는다."""
     queue.enqueue(redis, _job("abc"))
-    queue.enqueue(redis, _job("zzz", kind="close"))
+    assert queue.enqueue(redis, _job("zzz", kind="close")) == "queued"
+    latest = redis.get(state_keys_pure.latest_head("o/r", 1))
+    assert latest == state_keys_pure.CLOSED_HEAD.encode() and latest not in (b"abc", b"zzz")
+
+
+def test_close_job_from_sync_does_not_mark_closed(redis) -> None:
+    """동기화가 넣은 닫힘 작업은 표시하지 않는다. 열린 PR 목록이 잘려 열린 PR이 빠졌을 수 있어,
+    워커가 GitHub에서 확인한 뒤에 표시한다."""
+    queue.enqueue(redis, _job("abc"))
+    queue.enqueue(redis, PRJob(repo="o/r", pr_number=1, kind="close", source="sync"))
     assert redis.get(state_keys_pure.latest_head("o/r", 1)) == b"abc"
+
+
+def test_reopen_after_close_moves_latest_head_back(redis) -> None:
+    queue.enqueue(redis, _job("abc"))
+    queue.enqueue(redis, _job("abc", kind="close"))
+    queue.enqueue(redis, _job("def"))  # reopened나 새 커밋의 소식
+    assert redis.get(state_keys_pure.latest_head("o/r", 1)) == b"def"
 
 
 def test_queued_job_has_bounded_retry(redis) -> None:

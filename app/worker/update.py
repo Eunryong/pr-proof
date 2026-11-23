@@ -4,7 +4,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Final
 
-from app.shared import version
+from app.shared import state_keys_pure, version
 from app.shared.job_pure import PRJob
 from app.worker import graph, guard, merged_fix_pure, records, repo, report, retry
 from app.worker.access_pure import Author, NeedsApproval
@@ -18,7 +18,7 @@ from app.worker.merged_fix_pure import CarriedFrom, VerifiedCheck
 from app.worker.rules import doc_rules
 from app.worker.sandbox import docker_cli
 
-CLOSED_HEAD: Final = "closed"  # PR이 닫혔다는 Redis 최신 head 표시. 어떤 커밋 SHA와도 같지 않다
+CLOSED_HEAD: Final = state_keys_pure.CLOSED_HEAD  # PR이 닫혔다는 Redis 최신 head 표시
 
 log = logging.getLogger(__name__)
 
@@ -286,15 +286,21 @@ def _verified_check(
 def process_close(job: PRJob, deps: Deps) -> str:
     """원본 PR이 닫혔다: 진행 중인 검사를 멈추고, 남은 제안 PR을 닫고 브랜치를 지운다 (F10).
 
-    최신 head를 닫힘 표시로 바꾸면 실행 중인 작업이 10초 안에 낡은 작업으로 보고 멈춘다.
+    돌고 있는 검사를 멈추는 것은 이 작업이 아니라 웹훅을 받은 api다(`app/api/queue.py`): 닫힘
+    소식을 받는 즉시 최신 head를 닫힘 표시로 바꾸고, 돌던 작업이 다음 확인(단계 사이, 테스트 중에는
+    10초마다)에서 낡은 작업으로 보고 멈춘다. 워커는 하나라 이 작업은 돌던 검사가 끝난 뒤에야 돈다.
+    여기서는 표시를 한 번 더 적고(동기화가 넣은 닫힘 작업은 api가 표시하지 않는다) 수정안을 닫는다.
     다시 열리면(reopened) 웹훅이 최신 head를 새로 적는다.
 
     먼저 GitHub에서 PR이 정말 닫혔는지 본다. closed 웹훅이 reopened보다 늦게 오거나, 동기화의
-    열린 PR 목록이 잘려 열린 PR이 빠지면, 열린 PR의 제안을 닫게 된다.
+    열린 PR 목록이 잘려 열린 PR이 빠지면, 열린 PR의 제안을 닫게 된다. 열려 있으면 api가 적은 닫힘
+    표시를 GitHub의 지금 head로 되돌린다(그 사이 멈춘 검사는 동기화가 다시 넣는다).
     """
     _, final = retry.attempt()
     try:
-        if deps.github.pr_refs(job.repo, job.pr_number).open:
+        refs = deps.github.pr_refs(job.repo, job.pr_number)
+        if refs.open:
+            deps.store.set_latest_head(job.repo, job.pr_number, refs.head_sha)
             return "still_open"
         deps.store.set_latest_head(job.repo, job.pr_number, CLOSED_HEAD)
         closed = proposal.close_all(deps.store, deps.github, job.repo, job.pr_number)
