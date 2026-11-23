@@ -183,8 +183,9 @@ def test_ruff_settings_become_a_rule_set_and_fixable_violations_go_to_a_fix_pr(m
     assert "출처: `ruff.toml` · 도구 `ruff` (`ruff.toml`의 설정)" in body
     fixed = "`a.py:1` `` `sys` imported but unused `` · 고칠 대상 (기계적 수정) · 수정안 #900\n"
     assert fixed in body
-    unfixable = "  - `a.py:3` `` Ambiguous variable name: `l` `` · 도구의 자동 수정이 없음"
-    assert unfixable in body
+    assert "  - `a.py:3` `` Ambiguous variable name: `l` ``\n" in body
+    assert ("  직접 고쳐야 함 1건 · 도구에 이 위반의 자동 수정이 없어 수정안을 만들지 "
+            "않았습니다.") in body  # fmt: skip
     assert "**기계적 수정안:** 위반 1건을 고쳤습니다" in body
     assert "수정안 PR #900을 열었습니다." in body
     (push,) = mech_env["pushes"]
@@ -301,7 +302,8 @@ def test_failing_tests_block_the_fix(mech_env) -> None:
     use_runner(mech_env, lambda *a, **k: failed)
     assert _update(mech_env) == "failed"
     body = _comment(mech_env)
-    assert "  직접 고쳐야 함 1건 (테스트가 실패함 1건)" in body and "**기계적 수정안:**" not in body
+    assert ("  직접 고쳐야 함 1건 · 테스트가 실패해 고친 것을 확인할 수 없으므로 수정안을 만들지 "
+            "않았습니다.") in body and "**기계적 수정안:**" not in body  # fmt: skip
     assert mech_env["pushes"] == []
 
 

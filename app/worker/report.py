@@ -81,6 +81,33 @@ def memory_hint(memory_gb: float, max_memory_gb: float) -> str:
     )
 
 
+# 테스트가 돌지 않아 수정안을 만들지 않는다는 안내 (4.6 표의 tests_failed·no_safety_net, 4.9).
+# 위반이 있을 때만 "테스트:" 줄 아래에 붙인다. 테스트가 없으면(no_tests) 동작을 바꾸지 않는 기계적
+# 수정은 하므로 모델 수정안만 말한다. 시간 초과·실행 불가는 기계적 수정도 하지 않는다
+_UNTESTED_NOTE: Final[Mapping[str, str]] = {
+    "no_tests": (
+        "pytest가 테스트를 하나도 찾지 못해 고친 것을 확인할 수 없으므로 모델 수정안을 만들지 "
+        "않습니다. 지금 테스트를 돌릴 수 있는 것은 Python(pytest) 테스트뿐입니다."
+    ),
+    "timeout": (
+        "테스트가 시간 안에 끝나지 않아 고친 것을 확인할 수 없으므로 수정안을 만들지 않습니다."
+    ),
+    "unrunnable": "테스트 결과를 얻지 못해 고친 것을 확인할 수 없으므로 수정안을 만들지 않습니다.",
+}
+# 의존성 설치가 실패하면 테스트도 수정 판단도 하지 않고 끝난다 (update.py)
+INSTALL_FAILED_NOTE: Final = (
+    "의존성을 설치하지 못해 테스트를 돌리지 못했으므로 고칠지 판단하지 않았고 수정안도 만들지 "
+    "않았습니다."
+)
+
+
+def untested_note(run: PytestRun, violations: bool) -> list[str]:
+    """테스트가 돌지 않아 수정안을 만들지 않는다는 한두 문장. 위반이 없으면 할 일이 없어 붙이지
+    않는다. 테스트가 돌았으면(통과·실패) 없다. 새 커밋으로 멈춘 것도 없다(그 커밋이 다시 쓴다)."""
+    note = _UNTESTED_NOTE.get(run.status) if violations else None
+    return ["", note] if note else []
+
+
 def format_test_counts(run: PytestRun) -> list[str]:
     """테스트 수의 상세 (접는 블록 안). 통과·실패는 '테스트:' 줄에 이미 보인다."""
     s = run.summary
@@ -247,9 +274,10 @@ def render_result(
     None)."""
     memory_gb = base.memory_gb if base else MEMORY_LIMIT_GB
     max_memory_gb = base.max_memory_gb if base else MEMORY_LIMIT_GB
+    note = untested_note(run, doc_rules_report.has_violations(doc_rules, decisions))
     return _compose(
         format_test_line(run, memory_gb),
-        carried_lines(carried) + format_test_details(run, memory_gb, max_memory_gb),
+        carried_lines(carried) + note + format_test_details(run, memory_gb, max_memory_gb),
         head_sha,
         base=base,
         seconds=seconds,
@@ -279,10 +307,12 @@ def render_install_failure(
     description: PrDescription | None = None,
     issues: LinkedIssues | None = None,
 ) -> str:
-    """의존성 설치 실패. 규칙 검사는 설치와 따로 돌므로 결과가 있으면 같이 보여준다."""
+    """의존성 설치 실패. 규칙 검사는 설치와 따로 돌므로 결과가 있으면 같이 보여준다. 위반이 있으면
+    수정안을 만들지 않은 까닭을 테스트 줄 아래에 적는다."""
+    note = ["", INSTALL_FAILED_NOTE] if doc_rules_report.has_violations(doc_rules) else []
     return _compose(
         f"실행 불가 ({install_failure_reason(kind, packages)})",
-        _details("pip 출력", detail[-MAX_OUTPUT_CHARS:]),
+        note + _details("pip 출력", detail[-MAX_OUTPUT_CHARS:]),
         head_sha,
         base=base,
         doc_rules=doc_rules,
