@@ -15,3 +15,9 @@ mutants/
 .DS_Store
 *.egg-info/
 node_modules/
+
+# 작업 기록: 지난 기록과 날짜별 일지는 저장소에 올리지 않는다 (.audit/records/에 둔다)
+.audit/
+docs/journal/
+docs/JOURNAL.md
+docs/HISTORY.md
