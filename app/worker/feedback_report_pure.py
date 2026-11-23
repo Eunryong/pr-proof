@@ -53,7 +53,7 @@ def _quoted(label: str, text: str) -> str:
 
 def reply_body(item: Item, h: Handled) -> str | None:
     """답글 본문. 답글을 달지 않으면 None (no_action, 판단하지 못함)."""
-    why = _quoted("까닭 (모델의 판단)", h.why)
+    why = _quoted("모델 분석 결과", h.why)
     reason = _quoted("이유", h.reason)
     match h.outcome:
         case "fixed":
