@@ -9,7 +9,6 @@
 import logging
 from collections.abc import Callable
 
-from app.worker.call_budget_pure import CALL_BUDGET_USD, Denied, PrScope
 from app.worker.core.diff_pure import added_lines
 from app.worker.doc_rules_pure import Found, RunJudged
 from app.worker.lang import python
@@ -27,6 +26,7 @@ from app.worker.rules.run_check_pure import (
     run_key,
     run_rules,
 )
+from app.worker.store.call_budget_pure import CALL_BUDGET_USD, Denied, PrScope
 from app.worker.testing.test_run_pure import PytestRun
 
 log = logging.getLogger(__name__)

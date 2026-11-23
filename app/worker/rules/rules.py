@@ -12,8 +12,6 @@ from pathlib import Path
 from typing import Protocol
 
 from app.worker.ai.model_backend import AskModel
-from app.worker.budget import CallBudget
-from app.worker.call_budget_pure import CALL_BUDGET_USD, Denied, RulesetScope
 from app.worker.config.repo_config_pure import RulesSettings
 from app.worker.core.diff_pure import added_lines
 from app.worker.core.rule_pure import Rule, RuleSet, UnreadDoc
@@ -35,7 +33,9 @@ from app.worker.rule_reading_pure import (
     verify_rules,
 )
 from app.worker.rules import doc_sections_pure
-from app.worker.state import Store
+from app.worker.store.budget import CallBudget
+from app.worker.store.call_budget_pure import CALL_BUDGET_USD, Denied, RulesetScope
+from app.worker.store.state import Store
 
 log = logging.getLogger(__name__)
 
@@ -82,7 +82,7 @@ RulesResult = RulesFound | NoRuleDocuments | NoRules | ModelFailed | CapReached
 
 class FindsSections(Protocol):
     """큰 규칙 문서의 조각을 찾는 검색 (6.3). 검색을 켠 저장소만 있다
-    (app/worker/memory.Retriever)."""
+    (app/worker/store/memory.Retriever)."""
 
     def find_sections(
         self, chunks: Sequence[tuple[str, str]], query: str

@@ -20,7 +20,8 @@ from pydantic import (
 
 from app.shared.model_names_pure import MODEL_NAME_PATTERN
 
-# `rag.enabled`의 값 (10절, 6.7 "검색을 켜는 조건"). 켜고 끄는 판단은 app/worker/rag_switch_pure.py
+# `rag.enabled`의 값 (10절, 6.7 "검색을 켜는 조건").
+# 켜고 끄는 판단은 app/worker/store/rag_switch_pure.py
 RagMode = Literal["auto", "on", "off"]
 MODES: Final = ("auto", "on", "off")
 DEFAULT_MODE: Final = "auto"
@@ -105,7 +106,7 @@ class FixSettings(BaseModel):
 
 class CallSettings(BaseModel):
     """모델 호출 수 상한 (docs/DESIGN.md 9.2, 10절 `model.calls`). 판단은
-    app/worker/call_budget_pure.py."""
+    app/worker/store/call_budget_pure.py."""
 
     model_config = ConfigDict(extra="ignore")
     pr_base: int = Field(default=20, ge=0)
@@ -147,7 +148,7 @@ class RagSettings(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
     # 검색 결과를 프롬프트에 넣을지. auto는 기록 수와 채택률로 정한다
-    # (app/worker/rag_switch_pure.py)
+    # (app/worker/store/rag_switch_pure.py)
     enabled: RagMode = DEFAULT_MODE
     top_k: int = Field(default=20, ge=1, le=200)  # 검색이 가져오는 후보 수
     # 이 유사도 미만의 기록은 넣지 않는다. recall@k와 관련 없는 짝의 분포로 정한 값 (6.7)

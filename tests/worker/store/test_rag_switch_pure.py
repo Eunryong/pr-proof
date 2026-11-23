@@ -6,7 +6,7 @@ from typing import Final
 import pytest
 
 from app.worker.config.repo_config_pure import parse_mode
-from app.worker.rag_switch_pure import (
+from app.worker.store.rag_switch_pure import (
     AUTO_MIN_ATTEMPTS,
     AUTO_MIN_BASELINE,
     AUTO_MIN_RECORDS,

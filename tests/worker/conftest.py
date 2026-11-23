@@ -13,7 +13,7 @@ from app.worker.deps import Deps
 from app.worker.git import repo
 from app.worker.git.github import GitHub
 from app.worker.git.repo import Checkout
-from app.worker.state import Store
+from app.worker.store.state import Store
 
 from ..redis_stand_ins import MemoryKeys
 from .git.test_github import FakeGh

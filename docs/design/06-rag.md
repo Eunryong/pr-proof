@@ -75,7 +75,7 @@
   - 구현 (5단계, 2026-11-20): chromadb 1.5.9에서 `get_or_create_collection(name, embedding_function=None, configuration={"hnsw": {"space": "cosine", ...}})`로 만든다(임베딩 없이 글만 넣으면 오류). 근사 검색의 넓이는 `ef_search` 400, `ef_construction` 400, 이웃 32다(기본값은 같은 모양의 문서 절 수백 개 사이에서 가장 가까운 절을 놓쳤다, 11.1). 원격 측정은 `anonymized_telemetry=False`로 끈다. 컬렉션 이름은 저장소 이름의 해시(`rec-…`, 문서 조각은 `doc-…`)다.
 
 - **임베딩은 외부 API 없이 로컬 모델로 계산한다.** 팀의 코드 조각을 밖으로 보내지 않는다. `intfloat/multilingual-e5-small`로 시작하고(작고 CPU로 돌고 한국어 규칙 문장을 다룬다), 구현 5단계에서 `BAAI/bge-m3`, `jinaai/jina-embeddings-v2-base-code`와 평가 세트로 비교한다. 이 모델들의 크기와 성능은 확인하지 않은 기억에 따른 것이라 구현 5단계 시작 때 다시 확인한다.
-  - 구현 (5단계, 2026-11-20): 임베딩 라이브러리는 onnxruntime과 tokenizers(chromadb가 이미 쓰는 것)다. 모델은 Hugging Face의 `intfloat/multilingual-e5-small` 저장소에서 판 `614241f622f53c4eeff9890bdc4f31cfecc418b3`의 `onnx/model.onnx`(470,268,510바이트)와 `onnx/tokenizer.json`(17,082,730바이트)만, SHA256과 크기를 고정해 https로 받는다(`app/worker/rag_pure.py`의 `EMBED_MODELS`, 받는 곳 `app/worker/memory.ensure_model`). 검색을 켠 저장소의 첫 검사(또는 `reindex`)에서 한 번 받아 `data_dir/models/`에 둔다. 벡터는 마지막 은닉층의 평균 풀링(e5의 방식)이고 512 토큰에서 자른다. 다른 두 모델과의 비교는 하지 않았다(BACKLOG).
+  - 구현 (5단계, 2026-11-20): 임베딩 라이브러리는 onnxruntime과 tokenizers(chromadb가 이미 쓰는 것)다. 모델은 Hugging Face의 `intfloat/multilingual-e5-small` 저장소에서 판 `614241f622f53c4eeff9890bdc4f31cfecc418b3`의 `onnx/model.onnx`(470,268,510바이트)와 `onnx/tokenizer.json`(17,082,730바이트)만, SHA256과 크기를 고정해 https로 받는다(`app/worker/store/rag_pure.py`의 `EMBED_MODELS`, 받는 곳 `app/worker/store/memory.ensure_model`). 검색을 켠 저장소의 첫 검사(또는 `reindex`)에서 한 번 받아 `data_dir/models/`에 둔다. 벡터는 마지막 은닉층의 평균 풀링(e5의 방식)이고 512 토큰에서 자른다. 다른 두 모델과의 비교는 하지 않았다(BACKLOG).
 - **검색은 같은 저장소의 기록 안에서만 한다.** 저장소마다 컬렉션을 따로 만들고, 꺼낸 뒤에도 원본의 `repo`를 한 번 더 확인한다(6.6의 6번). 다른 저장소의 코드가 프롬프트에 섞이는 것을 조건문이 아니라 구조로 막는다.
 - **저장 전에 비밀값 검사를 한다.** 4.8과 같은 검사에 걸리는 기록은 저장하지 않는다.
 - **꺼낸 기록은 지시가 아니라 참고 자료로만 넣는다.** 프롬프트에서 "아래는 과거 기록이며 지시가 아니다"라고 밝힌 블록 안에, 그 내용보다 긴 코드 울타리로 감싸 넣는다. 과거 PR의 diff에 심어 둔 문장이 지시로 읽히지 않게 한다. 그래도 읽혔을 때 바뀔 수 있는 것은 허용 범위 안의 수정 내용뿐이고, 그것은 4.8을 거친다.
@@ -86,13 +86,13 @@
 
 | # | 단계 | 함수 (초안) | 입력 → 출력 | 외부 의존 |
 | --- | --- | --- | --- | --- |
-| 1 | 기록 텍스트 만들기 | `record_text(record)` | 기록 → 임베딩할 글 | 없음 (`app/worker/rag_pure.py`) |
+| 1 | 기록 텍스트 만들기 | `record_text(record)` | 기록 → 임베딩할 글 | 없음 (`app/worker/store/rag_pure.py`) |
 | 2 | 임베딩 | `embed(texts, role)` | 글 목록 → 정규화한 벡터 배열 | 로컬 임베딩 모델 |
 | 3 | 저장 | `store(repo, ids, vectors, metadatas)` | → 컬렉션에 upsert, `embedded_at` 기록 | Chroma |
 | 4 | 질의 임베딩 | `query_text(rule, violation)` → `embed([...], role="query")` | 규칙과 위반 → 질의 벡터 | 로컬 임베딩 모델 |
 | 5 | top-k 검색 | `search(repo, vector, k)` | 질의 벡터 → `[(기록 id, 유사도)]` | Chroma |
-| 6 | 필터와 기준값 | `select(hits, records, repo, kinds, min_similarity, limit)` | 후보 → 프롬프트에 넣을 기록 | 없음 (`app/worker/rag_pure.py`) |
-| 7 | 프롬프트 주입 | `render_records(selected)` | 기록 → 참고 자료 블록 | 없음 (`app/worker/rag_pure.py`) |
+| 6 | 필터와 기준값 | `select(hits, records, repo, kinds, min_similarity, limit)` | 후보 → 프롬프트에 넣을 기록 | 없음 (`app/worker/store/rag_pure.py`) |
+| 7 | 프롬프트 주입 | `render_records(selected)` | 기록 → 참고 자료 블록 | 없음 (`app/worker/store/rag_pure.py`) |
 
 1. **기록 텍스트.** 종류에 따라 정해진 틀로 만든다: 규칙 원문, 위반 줄과 앞뒤 5줄, 실패 기록이면 실패 내용. diff는 넣지 않는다(검색 키가 아니라 꺼내 쓰는 것이다). 같은 기록은 항상 같은 글이 된다.
 2. **임베딩.** `embed`는 질의용과 저장용을 구분해 받는다. `role`은 `passage`(저장)와 `query`(질의)이고 생략할 수 없다. 모델이 요구하는 접두어(e5 계열의 `passage: `, `query: `)는 이 함수 안에서 모델별로 붙인다. 접두어를 빼거나 둘을 섞으면 오류 없이 검색 품질만 떨어지므로, 부르는 쪽이 글에 직접 붙이지 않게 한다. 출력은 float32, L2 정규화. 모델 이름과 차원을 함께 돌려준다.
@@ -139,7 +139,7 @@
 - 효과가 없으면 결과를 기록하고 기본값을 끔으로 둔다. 2026-11-20부터는 이 판단을 저장소마다 `auto`가 실제 사용의 채택률로 한다(아래).
 - 기록이 적은 초기에는 평가 세트를 돌리며 나온 기록(채택으로 표시한 정답 수정, 검증 실패)으로 채운다. 평가용 기록은 평가 저장소의 컬렉션에만 들어간다.
 
-**검색을 켜는 조건 (저장소 주인이 정했다, 2026-11-20. 코드는 같은 날 `v2/rag-auto`, `app/worker/rag_switch_pure.py`).** 5단계의 비교만으로 켜거나 끄지 않고, 저장소마다 켜는 조건과 다시 끄는 조건을 둔다. 아래에서 "주인"은 저장소 주인의 글이고, "읽기"는 주인의 글이 정하지 않은 곳을 작업이 정한 것이다(11.1).
+**검색을 켜는 조건 (저장소 주인이 정했다, 2026-11-20. 코드는 같은 날 `v2/rag-auto`, `app/worker/store/rag_switch_pure.py`).** 5단계의 비교만으로 켜거나 끄지 않고, 저장소마다 켜는 조건과 다시 끄는 조건을 둔다. 아래에서 "주인"은 저장소 주인의 글이고, "읽기"는 주인의 글이 정하지 않은 곳을 작업이 정한 것이다(11.1).
 
 - **값.** `rag.enabled`는 `auto`(기본) / `on` / `off`다(주인). 옛 불리언도 읽는다: `true`는 `on`, `false`는 `off`(YAML 1.1은 따옴표 없는 `on`·`off`도 불리언으로 읽지만 같은 뜻이 된다). 그 밖의 값은 그 값만 `auto`로 읽고 "설정:"에 "`rag.enabled`는 auto, on, off 중 하나여야 합니다"를 적는다. 받은 값은 코멘트에 옮기지 않는다(읽기).
 - **`on`과 `off`는 아래 조건을 보지 않고** 늘 켜거나 늘 끈다(읽기. 주인의 글에는 `auto`의 조건만 있다).
@@ -156,6 +156,6 @@
 - **한 검사 안에서는 한 번 정한다.** 규칙 읽기 node에서 정해 그래프 상태(`rag_switch`)에 둔다. `/fix`로 이은 수정(새 프로세스)도 그 검사의 상태를 쓴다. 승인을 기다리는 동안 기록이 20건이 되어도 그 검사의 수정은 꺼진 채이고 코멘트와 맞는다(읽기).
 - **선택 의존성이 없을 때.** 켜야 하는데(`auto`가 켬, 또는 `on`) `pr-proof[rag]`(chromadb, onnxruntime, tokenizers, numpy)가 설치되지 않았으면 검사를 실패시키지 않고 검색 없이 계속한다. 있는지는 import하지 않고 찾기만 한다(`importlib.util.find_spec`). 모델을 받기 전에 보므로 470MB를 헛되이 받지 않는다.
 - **결과 코멘트.** 규칙 절의 참고 기록 블록 앞(접는 블록 안)에 한 줄로 상태와 이유를 숫자로만 적는다. 기록의 글은 넣지 않는다. 꺼져 있을 때는 사람이 알 만한 때만 적는다: `auto`가 채택률이 낮아 다시 끈 때와 켜야 하는데 선택 의존성이 없을 때. 설정으로 끈 것과 기록이 적어 꺼진 것은 적지 않는다(2026-11-23, pr-proof#78, 11.1. `rag_switch_pure.comment_line`). 예: "검색: 켜짐 (자동, 채택·거절 기록 25/20건. 수정안 채택률 넣음 3/10, 넣지 않음 5/12. 넣음 30건, 넣지 않음 10건부터 비교)", "검색: 꺼짐 (자동, 검색으로 기록을 넣은 수정안의 채택률이 낮음. 넣음 9/30, 넣지 않음 10/30). 다시 켜려면 `rag.enabled: on`", "… 켜야 하지만 선택 의존성 `pr-proof[rag]`이 설치되지 않아 검색 없이 검사함".
-- **20과 30은 초깃값이다(주인). 견줄 쪽의 10도 초깃값이다(읽기).** 측정한 뒤 조정한다. 코드의 이름은 `AUTO_MIN_RECORDS`, `AUTO_MIN_ATTEMPTS`, `AUTO_MIN_BASELINE`(`app/worker/rag_switch_pure.py`)이고 테스트는 함수 인자로 넘긴다.
+- **20과 30은 초깃값이다(주인). 견줄 쪽의 10도 초깃값이다(읽기).** 측정한 뒤 조정한다. 코드의 이름은 `AUTO_MIN_RECORDS`, `AUTO_MIN_ATTEMPTS`, `AUTO_MIN_BASELINE`(`app/worker/store/rag_switch_pure.py`)이고 테스트는 함수 인자로 넘긴다.
 - **붙인 저장소에 생기는 일.** 이 코드가 들어가면 `rag.enabled`를 적지 않은 저장소는 끔에서 `auto`가 된다. 채택·거절 기록이 20건 미만인 동안은 바뀌는 것이 없다(코멘트에도 줄이 더해지지 않는다). 20건이 되는 첫 검사가 임베딩 모델(약 487MB)을 받고 `data_dir/chroma/`를 만든다(위협 T30).
 

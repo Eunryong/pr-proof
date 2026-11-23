@@ -14,8 +14,8 @@ from app.worker.checker_authoring_pure import JudgeRoute, UncheckedKind
 from app.worker.core.checker_pure import CheckerKind
 from app.worker.core.rule_pure import Rule, UnreadDoc
 from app.worker.core.violation_pure import Violation
-from app.worker.rag_pure import Retrieval
 from app.worker.rules.judge_pure import JudgeUsage
+from app.worker.store.rag_pure import Retrieval
 
 # 규칙 읽기와 검사기 작성 (규칙 묶음 상한에서 세는 단계)
 DOC_RULE_STAGES: Final = frozenset({"rules", "checker"})

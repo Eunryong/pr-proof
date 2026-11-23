@@ -10,11 +10,11 @@ from typing import Final
 
 import pytest
 
-from app.worker import memory
-from app.worker.rag_switch_pure import Evidence, Outcomes
-from app.worker.state import Store
+from app.worker.store import memory
+from app.worker.store.rag_switch_pure import Evidence, Outcomes
+from app.worker.store.state import Store
 
-from ..redis_stand_ins import MemoryKeys
+from ...redis_stand_ins import MemoryKeys
 from .rag_helpers import fix_outcomes, record
 
 REPO: Final = "o/r"

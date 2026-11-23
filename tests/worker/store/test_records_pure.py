@@ -4,7 +4,7 @@ from typing import Final
 from app.shared.db_pure import Record, SeenViolation
 from app.worker.core.diff_pure import hunk_removing
 from app.worker.core.violation_pure import Violation
-from app.worker.records_pure import (
+from app.worker.store.records_pure import (
     Target,
     author_fixed,
     author_records,

@@ -1,4 +1,4 @@
-"""app/worker/budget.py: 호출 상한을 실제 SQLite의 ai_calls 기록으로 센다."""
+"""app/worker/store/budget.py: 호출 상한을 실제 SQLite의 ai_calls 기록으로 센다."""
 
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -6,13 +6,13 @@ from typing import Final
 
 import pytest
 
-from app.worker.budget import CallBudget
-from app.worker.call_budget_pure import Allowed, Denied, PrScope, RulesetScope
 from app.worker.config.repo_config_pure import CallSettings
 from app.worker.loop import LoopPolicy, choose_tier
-from app.worker.state import Store
+from app.worker.store.budget import CallBudget
+from app.worker.store.call_budget_pure import Allowed, Denied, PrScope, RulesetScope
+from app.worker.store.state import Store
 
-from ..redis_stand_ins import MemoryKeys
+from ...redis_stand_ins import MemoryKeys
 
 T0: Final = datetime(2026, 11, 18, 12, 0, tzinfo=UTC)
 

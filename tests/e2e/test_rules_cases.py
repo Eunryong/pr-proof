@@ -41,7 +41,7 @@ from app.worker.fix import fix_decision_pure
 from app.worker.git import repo
 from app.worker.git.github import GitHub
 from app.worker.rules import judge_pure, tool_choice_pure
-from app.worker.state import Store
+from app.worker.store.state import Store
 from tests.sandbox_names import TEST_NAMES
 
 from ..redis_stand_ins import MemoryKeys

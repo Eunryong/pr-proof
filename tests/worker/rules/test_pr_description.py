@@ -11,7 +11,6 @@ import pytest
 from app.worker.ai import workdir
 from app.worker.ai.claude_backend import ClaudeCliBackend
 from app.worker.ai.claude_cli import AIErrorKind, StructuredResult
-from app.worker.budget import CallBudget
 from app.worker.config.repo_config_pure import CallSettings
 from app.worker.git import repo
 from app.worker.rules import pr_description
@@ -24,7 +23,8 @@ from app.worker.rules.pr_description_pure import (
     items_to_json,
     pipeline_text,
 )
-from app.worker.state import Store
+from app.worker.store.budget import CallBudget
+from app.worker.store.state import Store
 
 from ...redis_stand_ins import MemoryKeys
 

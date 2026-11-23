@@ -9,12 +9,12 @@ from typing import Final
 
 import pytest
 
-from app.worker.budget import CallBudget
-from app.worker.call_budget_pure import Denied
 from app.worker.config.repo_config_pure import CallSettings, RulesSettings
 from app.worker.git import repo
 from app.worker.rules.rules import CapReached, NoRuleDocuments, load_rules
-from app.worker.state import Store
+from app.worker.store.budget import CallBudget
+from app.worker.store.call_budget_pure import Denied
+from app.worker.store.state import Store
 
 from ...redis_stand_ins import MemoryKeys
 

@@ -19,10 +19,10 @@ from typing import Final
 
 from app.shared.db_pure import FixAttempt
 from app.shared.job_pure import PRJob
-from app.worker import records_pure
 from app.worker.checker_authoring_pure import Checked, RuleCheck
 from app.worker.core.bundle_pure import MECHANICAL_BUNDLE
 from app.worker.core.diff_pure import added_lines_except_moved, added_texts, new_files
+from app.worker.core.secret_pure import find_secret
 from app.worker.core.text_edit_pure import TextEdit, apply_edits
 from app.worker.core.violation_pure import Violation
 from app.worker.doc_rules_pure import Found
@@ -31,13 +31,14 @@ from app.worker.fix.fix_decision_pure import FixDecision
 from app.worker.fix.fix_pure import MechanicalFix, MechanicalStatus, same_test_result
 from app.worker.fix.model_fix import file_hashes
 from app.worker.fix.model_fix_pure import Picked
-from app.worker.fix.proposal_pure import SECRET_BLOCKED, changed_line_count, find_secret
+from app.worker.fix.proposal_pure import SECRET_BLOCKED, changed_line_count
 from app.worker.fix.scope_pure import MECHANICAL_POLICY, is_pipeline_output, parse_porcelain
 from app.worker.git import repo
 from app.worker.lang import python
 from app.worker.rules import detect
 from app.worker.rules.checkers import FormatsFiles
-from app.worker.state import Store
+from app.worker.store import records_pure
+from app.worker.store.state import Store
 from app.worker.testing.test_lines import format_test_line
 from app.worker.testing.test_run_pure import PytestRun
 

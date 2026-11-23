@@ -4,7 +4,7 @@ from pathlib import Path
 
 from app.api.history import History
 from app.shared.job_pure import PRJob
-from app.worker.state import Store
+from app.worker.store.state import Store
 
 from ..redis_stand_ins import MemoryKeys
 

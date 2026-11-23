@@ -16,9 +16,9 @@ from typing import Final
 
 from app.shared import config, github_auth
 from app.shared.job_pure import PRJob
-from app.worker import records
 from app.worker.core.bundle_pure import FEEDBACK_BUNDLE, MECHANICAL_BUNDLE, MODEL_BUNDLE
 from app.worker.core.markdown_pure import code_fence, inline_code
+from app.worker.core.secret_pure import find_secret_in_text
 from app.worker.doc_rules_pure import Found, outcomes_by_rule
 from app.worker.fix import proposal_pure
 from app.worker.fix.feedback_fix_pure import Accepted, comment_lines, proposal_title
@@ -27,7 +27,8 @@ from app.worker.fix.model_fix_pure import Explanation, ModelFix
 from app.worker.fix.proposal_pure import ProposalResult
 from app.worker.git import repo
 from app.worker.git.github import GitHub, GitHubError, ReviewComment
-from app.worker.state import Store
+from app.worker.store import records
+from app.worker.store.state import Store
 from app.worker.testing.test_lines import generated_lines, runs_without_new_tests, status_lines
 
 # v1의 lint 수정안 기록. 기계적 수정 묶음의 기록으로 본다 (머지로 생긴 커밋, 열린 수정안)
@@ -302,7 +303,7 @@ def post_review(
     marker = proposal_pure.review_marker(patch)
     if github.has_review(repo_name, number, marker):
         return
-    if proposal_pure.find_secret_in_text("\n".join(c.body for c in comments), secrets) is not None:
+    if find_secret_in_text("\n".join(c.body for c in comments), secrets) is not None:
         log.warning("줄 리뷰 코멘트를 달지 않음 %s#%s: 비밀값", repo_name, number)
         return
     try:
@@ -342,7 +343,7 @@ def open_model_proposal(
         log.warning("수정안 PR을 만들지 않음 %s#%s: %s", job.repo, job.pr_number, blocker)
         return ProposalResult(reason=blocker)
     # 모델의 설명도 푸시하기 전에 한 번 더 본다 (4.8의 3번 "전달 직전에 한 번 더")
-    if proposal_pure.find_secret_in_text(explanation_text(fix.explanation), secrets) is not None:
+    if find_secret_in_text(explanation_text(fix.explanation), secrets) is not None:
         log.warning("수정안 PR을 만들지 않음 %s#%s: 모델의 설명", job.repo, job.pr_number)
         return ProposalResult(reason=f"{proposal_pure.SECRET_BLOCKED} (모델의 설명)")
 
@@ -457,7 +458,7 @@ def open_feedback_proposal(
         log.warning("코멘트 수정안 PR을 만들지 않음 %s#%s: %s", job.repo, job.pr_number, blocker)
         return ProposalResult(reason=blocker)
     body = feedback_fix_body(job, fix, found, accepted)
-    if proposal_pure.find_secret_in_text(body, secrets) is not None:
+    if find_secret_in_text(body, secrets) is not None:
         log.warning("코멘트 수정안 PR을 만들지 않음 %s#%s: 본문", job.repo, job.pr_number)
         return ProposalResult(reason=f"{proposal_pure.SECRET_BLOCKED} (수정안 본문)")
     branch = proposal_pure.branch_name(job.pr_number, FEEDBACK_BUNDLE)

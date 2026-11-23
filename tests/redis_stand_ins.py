@@ -11,7 +11,7 @@ UNREACHABLE_REDIS_URL: Final = "redis://127.0.0.1:1/0"
 
 
 class MemoryKeys:
-    """`app.worker.state.Keys`를 채우는 메모리 구현. Store가 쓰는 get·set·delete만 있다.
+    """`app.worker.store.state.Keys`를 채우는 메모리 구현. Store가 쓰는 get·set·delete만 있다.
     값은 실제 Redis처럼 bytes로 돌려준다."""
 
     def __init__(self) -> None:

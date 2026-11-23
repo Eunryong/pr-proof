@@ -25,13 +25,13 @@ import pytest
 
 from app.worker import pr_description_report_pure as shown
 from app.worker.ai.claude_backend import ClaudeCliBackend
-from app.worker.budget import CallBudget
 from app.worker.config.repo_config_pure import CallSettings
 from app.worker.git import repo
 from app.worker.rules import pr_description
 from app.worker.rules.pr_check_pure import Commit, PrFacts
 from app.worker.rules.pr_description_pure import PrDescription
-from app.worker.state import Store
+from app.worker.store.budget import CallBudget
+from app.worker.store.state import Store
 
 from ...redis_stand_ins import MemoryKeys
 
