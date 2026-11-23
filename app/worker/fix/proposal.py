@@ -18,6 +18,7 @@ from app.shared import config, github_auth
 from app.shared.job_pure import PRJob
 from app.worker import records, repo
 from app.worker.core.bundle_pure import FEEDBACK_BUNDLE, MECHANICAL_BUNDLE, MODEL_BUNDLE
+from app.worker.core.markdown_pure import code_fence, inline_code
 from app.worker.doc_rules_pure import Found, outcomes_by_rule
 from app.worker.fix import proposal_pure
 from app.worker.fix.feedback_fix_pure import Accepted, comment_lines, proposal_title
@@ -25,7 +26,6 @@ from app.worker.fix.fix_pure import MechanicalFix
 from app.worker.fix.model_fix_pure import Explanation, ModelFix
 from app.worker.fix.proposal_pure import ProposalResult
 from app.worker.github import GitHub, GitHubError, ReviewComment
-from app.worker.markdown_pure import code_fence, inline_code
 from app.worker.state import Store
 from app.worker.test_lines import generated_lines, runs_without_new_tests, status_lines
 

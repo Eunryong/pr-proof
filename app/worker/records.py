@@ -20,6 +20,8 @@ from app.shared.db_pure import SeenViolation
 from app.shared.job_pure import PRJob
 from app.worker import records_pure, repo
 from app.worker.core.bundle_pure import FEEDBACK_BUNDLE
+from app.worker.core.tools_pure import CONFIG_RULE_ID, RUFF_CODE
+from app.worker.core.violation_pure import Violation
 from app.worker.doc_rules_pure import Found, RuleChecked
 from app.worker.fix.fix_pure import MechanicalFix
 from app.worker.fix.model_fix_pure import ModelFix
@@ -27,8 +29,6 @@ from app.worker.fix.proposal_pure import find_secret_in_text
 from app.worker.repo import GitError
 from app.worker.sandbox.safe_read import read_regular_file
 from app.worker.state import Store
-from app.worker.tools_pure import CONFIG_RULE_ID, RUFF_CODE
-from app.worker.violation_pure import Violation
 
 log = logging.getLogger(__name__)
 

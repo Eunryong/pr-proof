@@ -3,10 +3,10 @@ test_mechanical_flow.py."""
 
 from pathlib import Path
 
+from app.worker.core.text_edit_pure import TextEdit
+from app.worker.core.violation_pure import Violation
 from app.worker.fix import mechanical_fix
 from app.worker.fix.fix_decision_pure import FixDecision
-from app.worker.text_edit_pure import TextEdit
-from app.worker.violation_pure import Violation
 
 
 def _violation(vid: str, unit: str = "line") -> Violation:

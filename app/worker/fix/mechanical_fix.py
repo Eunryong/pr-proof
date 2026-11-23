@@ -22,7 +22,9 @@ from app.shared.job_pure import PRJob
 from app.worker import records_pure, repo
 from app.worker.checker_authoring_pure import Checked, RuleCheck
 from app.worker.core.bundle_pure import MECHANICAL_BUNDLE
-from app.worker.diff_pure import added_lines_except_moved, added_texts, new_files
+from app.worker.core.diff_pure import added_lines_except_moved, added_texts, new_files
+from app.worker.core.text_edit_pure import TextEdit, apply_edits
+from app.worker.core.violation_pure import Violation
 from app.worker.doc_rules_pure import Found
 from app.worker.fix import model_fix_pure, scope
 from app.worker.fix.fix_decision_pure import FixDecision
@@ -37,8 +39,6 @@ from app.worker.rules.checkers import FormatsFiles
 from app.worker.state import Store
 from app.worker.test_lines import format_test_line
 from app.worker.test_run_pure import PytestRun
-from app.worker.text_edit_pure import TextEdit, apply_edits
-from app.worker.violation_pure import Violation
 
 log = logging.getLogger(__name__)
 

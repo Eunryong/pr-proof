@@ -5,6 +5,8 @@ from typing import Final
 
 import pytest
 
+from app.worker.core.rule_pure import CheckMethod, Rule, RuleSource
+from app.worker.core.violation_pure import Violation
 from app.worker.fix.fix_decision_pure import (
     SYSTEM_PROMPT,
     FixDecision,
@@ -19,8 +21,6 @@ from app.worker.fix.fix_decision_pure import (
     plan,
     reconcile,
 )
-from app.worker.rule_pure import CheckMethod, Rule, RuleSource
-from app.worker.violation_pure import Violation
 
 V: Final = Violation(
     id="v1", rule_id="R-1", file="orders/a.py", line=3, message="m", found_by="checker",

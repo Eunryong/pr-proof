@@ -18,13 +18,13 @@ from app.worker import (
     pr_description_report_pure,
 )
 from app.worker.base_config import PIPELINE_YAML, BaseConfig
-from app.worker.checker_pure import Checker
+from app.worker.core.checker_pure import Checker
+from app.worker.core.markdown_pure import code_fence, inline_code
 from app.worker.coverage import DiffCoverage
 from app.worker.doc_rules_pure import DocRules, Found
 from app.worker.doc_rules_report import FixView
 from app.worker.fix.fix_decision_pure import Decided
 from app.worker.lang.install_pure import InstallFailureKind
-from app.worker.markdown_pure import code_fence, inline_code
 from app.worker.merged_fix_pure import CarriedFrom
 from app.worker.rag_switch_pure import RagSwitch
 from app.worker.rules.linked_issues_pure import LinkedIssues

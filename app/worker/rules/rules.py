@@ -15,10 +15,10 @@ from app.worker import repo
 from app.worker.ai.model_backend import AskModel
 from app.worker.budget import CallBudget
 from app.worker.call_budget_pure import CALL_BUDGET_USD, Denied, RulesetScope
-from app.worker.diff_pure import added_lines
+from app.worker.core.diff_pure import added_lines
+from app.worker.core.rule_pure import Rule, RuleSet, UnreadDoc
 from app.worker.git.git_pure import REGULAR_FILE_MODES, TreeEntry
 from app.worker.repo_config_pure import RulesSettings
-from app.worker.rule_pure import Rule, RuleSet, UnreadDoc
 from app.worker.rule_reading_pure import (
     ANSWER_SCHEMA,
     MAX_DOCS_BYTES,

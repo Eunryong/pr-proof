@@ -118,7 +118,7 @@ tests/          코드와 같은 이름의 폴더 (tests/api, tests/worker, test
 
 **웹과 워커 사이의 계약 (`app/shared/`).** 웹과 워커는 메모리를 공유하지 않는다. 둘 사이에는 큐와 Redis·SQLite 상태만 오가고, 큐에 넣는 값은 작업 계약(`job_pure.py`의 `PRJob`)뿐이다. 키 형식과 큐 이름(`state_keys_pure.py`), SQLite 테이블 정의(`db_pure.py`)는 여기 두고, 읽기·쓰기 코드는 각자 자기 쪽에 둔다. 그 밖에 코멘트 표시(`comment_pure.py`), 운영 알림의 종류와 글(`ops_alert_pure.py`), 임베딩 모델 목록(`embed_models_pure.py`), 설정과 비밀값 읽기(`config.py`), macOS 알림(`notify.py`)이 있다.
 
-**순수 모듈.** 이름이 `_pure.py`로 끝나는 모듈은 바깥에 손대지 않는다: 파일, 프로세스, 네트워크, Redis, DB 연결을 쓰지 않고 받은 값으로 계산만 한다(데이터 정의, 판정, 프롬프트 만들기, 답 읽기). 대부분은 나누기 전의 `app/models/`에 있던 모듈이다. 순수 모듈은 그것이 속한 단계 폴더나 공용 폴더에 두고(`app/worker/fix/fix_decision_pure.py`, `app/worker/git/git_pure.py`), 어느 한 폴더에 속하지 않으면서 여러 단계가 쓰는 데이터 정의와 도구만 `app/worker/core/`에 둔다(`app/worker/core/bundle_pure.py`). 웹과 워커가 같이 쓰면 `app/shared/`, 웹만 쓰면 `app/api/`. 정리 중이라 아직 옮기지 않은 순수 모듈은 `app/worker/` 바로 아래에 있다(`app/worker/violation_pure.py`).
+**순수 모듈.** 이름이 `_pure.py`로 끝나는 모듈은 바깥에 손대지 않는다: 파일, 프로세스, 네트워크, Redis, DB 연결을 쓰지 않고 받은 값으로 계산만 한다(데이터 정의, 판정, 프롬프트 만들기, 답 읽기). 대부분은 나누기 전의 `app/models/`에 있던 모듈이다. 순수 모듈은 그것이 속한 단계 폴더나 공용 폴더에 두고(`app/worker/fix/fix_decision_pure.py`, `app/worker/git/git_pure.py`), 어느 한 폴더에 속하지 않으면서 여러 단계가 쓰는 데이터 정의와 도구만 `app/worker/core/`에 둔다(`app/worker/core/bundle_pure.py`). 웹과 워커가 같이 쓰면 `app/shared/`, 웹만 쓰면 `app/api/`. 정리 중이라 아직 옮기지 않은 순수 모듈은 `app/worker/` 바로 아래에 있다(`app/worker/doc_rules_pure.py`).
 
 같은 폴더에 같은 이름의 실행 코드 `x.py`가 있는 순수 모듈은 여덟 개다: `command_pure`, `coverage_pure`, `records_pure`, `fix/model_fix_pure`, `fix/proposal_pure`, `fix/scope_pure`, `rules/judge_pure`, `rules/pr_check_pure`. 아래는 주로 부르는 실행 코드와 이름이 다른 것이다.
 

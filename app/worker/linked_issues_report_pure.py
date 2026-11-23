@@ -4,13 +4,13 @@
 부분에는 사람이 할 일이 있는 것(빠진 것, 코드로 확인할 수 없는 요구, 견주지 못한 까닭, 보지 않은
 이슈, 잘라서 일부만 견준 것)만, 접는 블록에는 사용량을 둔다. 기계적인 분류 이름을 쓰지 않고 리뷰어가
 말하듯 적는다. 모델이 쓴 글과 저장소 이름은 믿지 않는 글이라 코드 스팬 안에만 넣는다
-(app/worker/markdown_pure.py). 이슈 번호는 이 저장소의 GitHub 응답에서 온 정수다.
+(app/worker/core/markdown_pure.py). 이슈 번호는 이 저장소의 GitHub 응답에서 온 정수다.
 """
 
 from collections.abc import Mapping, Sequence
 from typing import Final
 
-from app.worker.markdown_pure import inline_code
+from app.worker.core.markdown_pure import inline_code
 from app.worker.rules.linked_issues_pure import MAX_ISSUES, IssueGap, LinkedIssues
 
 TITLE: Final = "**이슈:**"

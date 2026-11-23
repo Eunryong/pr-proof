@@ -33,9 +33,10 @@ from app.worker.ai import workdir
 from app.worker.ai.model_backend import AskModel, ReadCode, StructuredResult
 from app.worker.budget import CallBudget
 from app.worker.call_budget_pure import Denied, PrScope
-from app.worker.diff_pure import added_lines
+from app.worker.core.diff_pure import added_lines
+from app.worker.core.rule_pure import Rule, checked_file
+from app.worker.core.violation_pure import Violation, violation_id
 from app.worker.doc_rules_pure import JudgeGap
-from app.worker.rule_pure import Rule, checked_file
 from app.worker.rules.checkers import STALE
 from app.worker.rules.detect import source_lines
 from app.worker.rules.judge_pure import (
@@ -65,7 +66,6 @@ from app.worker.rules.judge_pure import (
     verify_answer,
 )
 from app.worker.state import Store
-from app.worker.violation_pure import Violation, violation_id
 
 log = logging.getLogger(__name__)
 

@@ -1,10 +1,10 @@
-"""app/worker/checker_pure.py: 실행 전 검사기 본문 확인."""
+"""app/worker/core/checker_pure.py: 실행 전 검사기 본문 확인."""
 
 from typing import Final
 
 import pytest
 
-from app.worker.checker_pure import checker_id, validate_body
+from app.worker.core.checker_pure import checker_id, validate_body
 
 PRINT_RULE: Final = """\
 id: no-print
@@ -105,7 +105,7 @@ def test_path_pattern_is_rejected_before_running(body: str, reason: str) -> None
 )
 def test_tool_declarations_are_checked_before_running(kind, body, problem) -> None:
     """도구의 선언은 모델이 고른 것이라 실행 전에 모양을 본다. 코드가 옵션처럼 읽히지 못한다."""
-    from app.worker.checker_pure import validate_body
+    from app.worker.core.checker_pure import validate_body
 
     result = validate_body(kind, body)
     assert (result is None) if problem is None else (problem in result)

@@ -17,8 +17,8 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Final
 
-from app.worker.cache_key_pure import text_hash
-from app.worker.rule_pure import CheckMethod, Rule, RuleSource
+from app.worker.core.cache_key_pure import text_hash
+from app.worker.core.rule_pure import CheckMethod, Rule, RuleSource
 
 RUFF: Final = "ruff"
 RUFF_FORMAT: Final = "ruff-format"

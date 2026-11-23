@@ -10,7 +10,7 @@ from typing import Final
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 
 from app.worker import graph, repo
-from app.worker.rule_pure import CheckMethod, Rule, RuleSource
+from app.worker.core.rule_pure import CheckMethod, Rule, RuleSource
 from app.worker.rules import pr_check, pr_check_pure
 from app.worker.rules.pr_check_pure import PrChecks, PrPattern, PrRuleResult, PrUsage, PrViolation
 

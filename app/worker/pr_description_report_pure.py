@@ -4,13 +4,13 @@
 `PrDescription` 하나만 받는다. 맨 위 결론 줄 하나("**PR 설명:**")와, 펼친 부분에는 사람이 할 일이
 있는 것(어긋난 곳, 견주지 못한 까닭, 잘라서 일부만 견준 것)만, 접는 블록에는 사용량을 둔다. 기계적인
 분류 이름을 쓰지 않고 리뷰어가 말하듯 적는다. 모델이 쓴 글과 파일 경로는 믿지 않는 글이라 코드 스팬
-안에만 넣는다 (app/worker/markdown_pure.py).
+안에만 넣는다 (app/worker/core/markdown_pure.py).
 """
 
 from collections.abc import Mapping
 from typing import Final
 
-from app.worker.markdown_pure import inline_code
+from app.worker.core.markdown_pure import inline_code
 from app.worker.rules.pr_description_pure import Mismatch, PrDescription
 
 TITLE: Final = "**PR 설명:**"

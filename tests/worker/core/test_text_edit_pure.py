@@ -1,4 +1,4 @@
-from app.worker.text_edit_pure import TextEdit, apply_edits
+from app.worker.core.text_edit_pure import TextEdit, apply_edits
 
 
 def _e(row, col, end_row, end_col, content="") -> TextEdit:

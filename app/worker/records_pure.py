@@ -14,8 +14,8 @@ from dataclasses import asdict, dataclass, replace
 from typing import Final, Literal
 
 from app.shared.db_pure import Record, SeenViolation
-from app.worker.diff_pure import hunk_removing
-from app.worker.violation_pure import Violation
+from app.worker.core.diff_pure import hunk_removing
+from app.worker.core.violation_pure import Violation
 
 RecordKind = Literal["adopted", "rejected", "failed", "checker"]
 RecordOrigin = Literal["fix_pr", "author_commit", "verification", "ruleset"]

@@ -15,8 +15,10 @@ from typing import Final, Literal
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from app.worker.cache_key_pure import model_cache_key, prompt_version, text_hash
-from app.worker.diff_pure import ChangeBlock
+from app.worker.core.cache_key_pure import model_cache_key, prompt_version, text_hash
+from app.worker.core.diff_pure import ChangeBlock
+from app.worker.core.rule_pure import CheckMethod, Rule, RuleSource
+from app.worker.core.violation_pure import Violation
 from app.worker.fix.fix_decision_pure import FixDecision
 from app.worker.fix.proposal_pure import MAX_CHANGED_LINES, MAX_FILES
 from app.worker.fix.scope_pure import GENERATED_TEST_PREFIX
@@ -29,8 +31,6 @@ from app.worker.generated_tests_pure import (
 from app.worker.mcp_pure import TOOL_NAMES, ToolUsage
 from app.worker.prompt_text_pure import load
 from app.worker.rag_pure import Retrieval
-from app.worker.rule_pure import CheckMethod, Rule, RuleSource
-from app.worker.violation_pure import Violation
 
 MAX_SUMMARY_CHARS: Final = 1000
 MAX_WHY_CHARS: Final = 300

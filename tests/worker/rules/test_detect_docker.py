@@ -6,7 +6,7 @@ from typing import Final
 
 import pytest
 
-from app.worker.diff_pure import added_lines
+from app.worker.core.diff_pure import added_lines
 from app.worker.rules.checkers import Sandbox
 from app.worker.rules.detect import detect
 

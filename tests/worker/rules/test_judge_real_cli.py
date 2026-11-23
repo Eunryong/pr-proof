@@ -20,9 +20,9 @@ from app.worker import repo
 from app.worker.ai import claude_cli
 from app.worker.ai.claude_backend import ClaudeCliBackend
 from app.worker.budget import CallBudget
-from app.worker.diff_pure import added_lines
+from app.worker.core.diff_pure import added_lines
+from app.worker.core.rule_pure import CheckMethod, Rule, RuleSource
 from app.worker.repo_config_pure import CallSettings
-from app.worker.rule_pure import CheckMethod, Rule, RuleSource
 from app.worker.rules.detect import source_lines
 from app.worker.rules.judge import Judged, judge
 from app.worker.rules.judge_pure import basis_from_json, hunks_for, judge_key, reads_from_json

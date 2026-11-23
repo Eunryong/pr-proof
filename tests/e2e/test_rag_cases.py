@@ -35,10 +35,10 @@ from app.shared.job_pure import PRJob
 from app.worker import main, memory
 from app.worker.ai import claude_cli
 from app.worker.cli import reindex
+from app.worker.core.rule_pure import rule_id
 from app.worker.fix import fix_decision_pure
 from app.worker.rag_pure import collection_name
 from app.worker.records_pure import NewRecord
-from app.worker.rule_pure import rule_id
 
 from ..worker.rag_helpers import FAKE_SPEC, FakeEncoder
 from .test_lint_cases import _bodies, _git, shared_venvs  # noqa: F401

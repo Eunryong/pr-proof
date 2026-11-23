@@ -6,12 +6,12 @@ from typing import Final
 
 import pytest
 
-from app.worker.diff_pure import ChangeBlock
+from app.worker.core.diff_pure import ChangeBlock
+from app.worker.core.rule_pure import CheckMethod, Rule, RuleSource
+from app.worker.core.violation_pure import Violation
 from app.worker.fix import model_fix_pure
 from app.worker.fix.fix_decision_pure import FixDecision
 from app.worker.fix.model_fix_pure import Answer, Change, Explanation, Note, Target
-from app.worker.rule_pure import CheckMethod, Rule, RuleSource
-from app.worker.violation_pure import Violation
 
 RULE: Final = Rule(
     id="R-readme-1", text="비교에 쓰는 기준값은 숫자를 직접 쓰지 않는다.",

@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from typing import Final
 
-from app.worker.rule_pure import CheckMethod, Rule, RuleSet, RuleSource
+from app.worker.core.rule_pure import CheckMethod, Rule, RuleSet, RuleSource
 from app.worker.rule_reading_pure import Document, sections
 from app.worker.rules.doc_sections_pure import (
     always_read,

@@ -3,7 +3,7 @@
 `DocRules` 값 하나와, 위반을 찾은 검사기의 본문(`checkers` 테이블에서 읽은 것), 위반마다의 수정
 판단(`Decided`), 묶음마다의 수정 상태(`FixView`)만 받는다. 규칙의 인용, 문서의 절 이름, 파일 경로,
 도구의 메시지, 검사기 본문과 예시, 실패 이유, 모델이 쓴 수정 판단의 이유는 모두 믿지 않는 글이라
-코드 스팬이나 코드 울타리 안에만 넣는다 (app/worker/markdown_pure.py).
+코드 스팬이나 코드 울타리 안에만 넣는다 (app/worker/core/markdown_pure.py).
 """
 
 from collections import Counter
@@ -13,8 +13,11 @@ from typing import Final, Literal, get_args
 
 from app.worker import pr_check_report_pure
 from app.worker.checker_authoring_pure import JudgeRoute
-from app.worker.checker_pure import TOOL_KINDS, Checker
 from app.worker.core.bundle_pure import MECHANICAL_BUNDLE
+from app.worker.core.checker_pure import TOOL_KINDS, Checker
+from app.worker.core.markdown_pure import code_fence, inline_code
+from app.worker.core.rule_pure import Rule
+from app.worker.core.violation_pure import Violation
 from app.worker.doc_rules_pure import (
     CallUsage,
     DocRules,
@@ -32,13 +35,10 @@ from app.worker.fix.fix_decision_pure import Decided, FixDecision, SkipReason
 from app.worker.fix.fix_pure import MechanicalFix
 from app.worker.fix.model_fix_pure import ModelFix
 from app.worker.fix.proposal_pure import ProposalResult
-from app.worker.markdown_pure import code_fence, inline_code
 from app.worker.rag_pure import KIND_LABEL, SITE_LABEL, Retrieval, merge_retrievals
 from app.worker.rag_switch_pure import RagSwitch, comment_line
-from app.worker.rule_pure import Rule
 from app.worker.rules.pr_check_pure import PrChecks
 from app.worker.test_lines import generated_lines, runs_without_new_tests, status_lines
-from app.worker.violation_pure import Violation
 
 TITLE: Final = "**규칙:**"
 VIOLATION: Final = "⚠️"

@@ -8,7 +8,9 @@ from typing import Final
 import pytest
 
 from app.shared.db_pure import FixAttempt, Proposal, Run
-from app.worker.checker_pure import CheckerKind
+from app.worker.core.checker_pure import CheckerKind
+from app.worker.core.rule_pure import CheckMethod, Rule, RuleSource
+from app.worker.core.violation_pure import Violation
 from app.worker.doc_rules_pure import CallUsage, CheckerRef, Found, RuleChecked, RuleJudged
 from app.worker.fix.fix_decision_pure import Decided, FixDecision
 from app.worker.fix.fix_pure import MechanicalFix
@@ -26,12 +28,10 @@ from app.worker.merged_fix_pure import (
     state_problem,
     unverified_count,
 )
-from app.worker.rule_pure import CheckMethod, Rule, RuleSource
 from app.worker.rules.linked_issues_pure import IssueGap, LinkedIssues
 from app.worker.rules.pr_check_pure import PrChecks, PrRuleResult
 from app.worker.rules.pr_description_pure import Mismatch, PrDescription
 from app.worker.test_run_pure import PytestRun, ReportSummary
-from app.worker.violation_pure import Violation
 
 NOW: Final = datetime(2026, 11, 22, tzinfo=UTC)
 V: Final = "v" * 40  # 수정안을 검증한 커밋

@@ -15,7 +15,8 @@ from typing import Final
 from app.worker.ai.model_backend import AskModel
 from app.worker.budget import CallBudget
 from app.worker.call_budget_pure import CALL_BUDGET_USD, Denied, PrScope
-from app.worker.diff_pure import hunk_around
+from app.worker.core.diff_pure import hunk_around
+from app.worker.core.violation_pure import Violation
 from app.worker.doc_rules_pure import Found, outcomes_by_rule
 from app.worker.fix.fix_decision_pure import (
     ANSWER_SCHEMA,
@@ -50,7 +51,6 @@ from app.worker.rag_pure import (
     retrieval,
 )
 from app.worker.state import Store
-from app.worker.violation_pure import Violation
 
 log = logging.getLogger(__name__)
 

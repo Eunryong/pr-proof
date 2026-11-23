@@ -12,8 +12,8 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final
 
-from app.worker.cache_key_pure import model_cache_key
-from app.worker.rule_pure import Rule, RuleSet, in_scope
+from app.worker.core.cache_key_pure import model_cache_key
+from app.worker.core.rule_pure import Rule, RuleSet, in_scope
 from app.worker.rule_reading_pure import (
     MAX_DOCS_BYTES,
     PROMPT_VERSION,

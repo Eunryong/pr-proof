@@ -18,8 +18,8 @@ import pytest
 from app.worker.ai.claude_cli import AIErrorKind, StructuredResult
 from app.worker.budget import CallBudget
 from app.worker.call_budget_pure import RulesetScope
+from app.worker.core.rule_pure import CheckMethod, Example, Rule, RuleSource
 from app.worker.repo_config_pure import CallSettings
-from app.worker.rule_pure import CheckMethod, Example, Rule, RuleSource
 from app.worker.rules import pr_check, pr_check_pure
 from app.worker.rules.pr_check_pure import Commit, PrFacts
 from app.worker.sandbox import checker_runner

@@ -31,10 +31,11 @@ from app.shared.job_pure import PRJob
 from app.worker import mcp_pure, records_pure, repo
 from app.worker.ai.model_backend import FIX_TOOLS_TIMEOUT_S, AIEnvironmentError, EditCode
 from app.worker.budget import CallBudget
-from app.worker.cache_key_pure import text_hash
 from app.worker.call_budget_pure import Denied, PrScope
 from app.worker.core.bundle_pure import MODEL_BUNDLE
-from app.worker.diff_pure import ChangedLines, added_lines, change_blocks, new_files
+from app.worker.core.cache_key_pure import text_hash
+from app.worker.core.diff_pure import ChangedLines, added_lines, change_blocks, new_files
+from app.worker.core.violation_pure import Violation
 from app.worker.doc_rules_pure import Found, outcomes_by_rule
 from app.worker.fix import model_fix_pure, scope
 from app.worker.fix.model_fix_pure import (
@@ -95,7 +96,6 @@ from app.worker.sandbox.safe_read import read_regular_file
 from app.worker.state import Store
 from app.worker.test_lines import format_test_line
 from app.worker.test_run_pure import PytestRun
-from app.worker.violation_pure import Violation
 
 log = logging.getLogger(__name__)
 

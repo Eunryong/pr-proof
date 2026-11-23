@@ -9,6 +9,8 @@
 from collections.abc import Sequence
 from typing import Final
 
+from app.worker.core.markdown_pure import inline_code
+from app.worker.core.violation_pure import Violation
 from app.worker.generated_tests_pure import (
     LINE_LABEL,
     REJECTION_LABEL,
@@ -17,10 +19,8 @@ from app.worker.generated_tests_pure import (
     group_lines,
     line_runs,
 )
-from app.worker.markdown_pure import inline_code
 from app.worker.sandbox.docker_cli import MEMORY_LIMIT_GB
 from app.worker.test_run_pure import PytestRun
-from app.worker.violation_pure import Violation
 
 MAX_LINES_SHOWN: Final = 30
 MAX_WHY_CHARS: Final = 300

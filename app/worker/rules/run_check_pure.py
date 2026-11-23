@@ -16,11 +16,11 @@ from typing import Final, Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from app.worker.cache_key_pure import model_cache_key, prompt_version, text_hash
+from app.worker.core.cache_key_pure import model_cache_key, prompt_version, text_hash
+from app.worker.core.rule_pure import PYTHON_SUFFIXES, CheckMethod, Rule, RuleSource
 from app.worker.coverage_pure import CoverageData
 from app.worker.doc_rules_pure import Found, RuleChecked, RuleUnchecked
 from app.worker.prompt_text_pure import load
-from app.worker.rule_pure import PYTHON_SUFFIXES, CheckMethod, Rule, RuleSource
 from app.worker.test_run_pure import PytestRun
 
 MAX_FILES: Final = 100

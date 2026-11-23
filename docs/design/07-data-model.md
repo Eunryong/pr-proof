@@ -163,7 +163,7 @@ class Record:
 
 프로필 인터페이스를 미리 넓게 설계하지 않는다. 3단계에서는 지금 흩어져 있는 Python 전용 코드를 한 곳으로 모으기만 하고, 인터페이스는 두 번째 언어를 붙일 때 그 차이를 보고 정한다.
 
-3단계(2026-11-20)에 `app/worker/lang/python.py`로 옮긴 것: 런타임 준비, `.venv` 설치, pytest 실행과 `report.json` 읽기, 위반 줄의 커버리지 읽기, ruff·ruff-format 실행. 순수 모듈(coverage.xml과 문장 범위 파싱 `app/worker/coverage_pure.py`, 테스트 파일의 정의 `app/worker/fix/scope_pure.is_test_file`, ruff 설정·버전 읽기와 도구 목록 `app/worker/tools_pure.py`)은 프로필로 옮기지 않았다. 그것을 쓰는 판정(허용 범위, 도구 선택)도 순수 모듈이고, 순수 모듈은 실행 코드인 프로필을 import하지 않는다(12.5). 참고 지표 diff-cover(`app/worker/coverage.py`)는 체크포인트의 타입 경로를 지키려고 옮기지 않았다.
+3단계(2026-11-20)에 `app/worker/lang/python.py`로 옮긴 것: 런타임 준비, `.venv` 설치, pytest 실행과 `report.json` 읽기, 위반 줄의 커버리지 읽기, ruff·ruff-format 실행. 순수 모듈(coverage.xml과 문장 범위 파싱 `app/worker/coverage_pure.py`, 테스트 파일의 정의 `app/worker/fix/scope_pure.is_test_file`, ruff 설정·버전 읽기와 도구 목록 `app/worker/core/tools_pure.py`)은 프로필로 옮기지 않았다. 그것을 쓰는 판정(허용 범위, 도구 선택)도 순수 모듈이고, 순수 모듈은 실행 코드인 프로필을 import하지 않는다(12.5). 참고 지표 diff-cover(`app/worker/coverage.py`)는 체크포인트의 타입 경로를 지키려고 옮기지 않았다.
 
 ### 7.8 SQLite 테이블
 

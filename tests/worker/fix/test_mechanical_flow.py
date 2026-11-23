@@ -18,7 +18,8 @@ from app.shared import state_keys_pure
 from app.shared.job_pure import PRJob
 from app.worker import base_config, main, repo, retry
 from app.worker.ai import claude_cli
-from app.worker.checker_pure import CheckerKind, tool_codes
+from app.worker.core.checker_pure import CheckerKind, tool_codes
+from app.worker.core.text_edit_pure import TextEdit
 from app.worker.doc_rules_pure import Found, NoRuleDocs, RuleChecked
 from app.worker.fix import proposal
 from app.worker.github import GitHubError
@@ -26,7 +27,6 @@ from app.worker.repo_config_pure import PrDescriptionSettings
 from app.worker.rules import doc_rules
 from app.worker.sandbox.checker_runner import CheckerRun, Match, Ran
 from app.worker.test_run_pure import PytestRun, ReportSummary
-from app.worker.text_edit_pure import TextEdit
 
 from ..helpers import PASSED, bodies, use_runner
 from ..rules.test_doc_rules_flow import make_remote

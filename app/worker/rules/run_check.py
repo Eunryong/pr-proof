@@ -10,7 +10,7 @@ import logging
 from collections.abc import Callable
 
 from app.worker.call_budget_pure import CALL_BUDGET_USD, Denied, PrScope
-from app.worker.diff_pure import added_lines
+from app.worker.core.diff_pure import added_lines
 from app.worker.doc_rules_pure import Found, RunJudged
 from app.worker.lang import python
 from app.worker.rules.checkers import STALE

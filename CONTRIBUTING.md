@@ -66,7 +66,7 @@ from app.worker import repo
 
 # 지킴
 from app.worker.sandbox import docker_cli
-from app.worker.checker_pure import CheckerKind
+from app.worker.core.checker_pure import CheckerKind
 ```
 
 ### 순수 모듈

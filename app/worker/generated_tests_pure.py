@@ -14,9 +14,9 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final, Literal
 
+from app.worker.core.violation_pure import Violation
 from app.worker.coverage_pure import FileCoverage, line_covered, statements
 from app.worker.test_run_pure import PytestRun
-from app.worker.violation_pure import Violation
 
 # 만든 테스트의 상한 (9.2). 수정의 크기 상한(파일 20개, 바뀐 줄 500줄)과 따로 센다. 테스트 줄이
 # 수정의 상한을 먹어 수정이 못 올라가는 일이 없게 한다
