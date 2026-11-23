@@ -1,4 +1,4 @@
-"""`python -m app.setup.cli <명령>`. 보통은 입구(`npx pr-proof <명령>`, bin/pr-proof.js)가 부른다.
+"""`python -m app.setup.cli <명령>`. 보통은 입구(`pr-proof <명령>`, bin/pr-proof.js)가 부른다.
 
 - `configure`: 처음 설정 (`app/setup/configure.py`)
 - `add <repo>...`, `rm <repo>...`, `list`: 처리할 repo 목록과 그 웹훅
@@ -12,13 +12,13 @@ import sys
 from typing import Final
 
 from app.setup import configure as flow
-from app.setup import github_setup, setup_pure, start
+from app.setup import files, github_setup, setup_pure, start
 
 _REPO_HELP: Final = f"repo (예: {setup_pure.REPO_EXAMPLE})"
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="npx pr-proof")
+    parser = argparse.ArgumentParser(prog=files.command_prefix())
     commands = parser.add_subparsers(dest="command", required=True)
 
     conf = commands.add_parser(

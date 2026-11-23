@@ -97,6 +97,7 @@ def _check(name: str, ok: bool = True) -> preflight.Check:
 def env(tmp_path: Path, monkeypatch):
     directory = tmp_path / "config"
     monkeypatch.setenv(config.CONFIG_DIR_ENV, str(directory))
+    monkeypatch.delenv(files.COMMAND_ENV, raising=False)  # 입구가 넘기는 값. 테스트마다 정한다
     github = FakeGitHub()
     state = {"claude": [True], "smee_calls": 0, "compose": 0}
 
@@ -325,10 +326,23 @@ def test_repo_is_saved_as_github_spells_it(env) -> None:
     assert {tuple(sorted(env["gh"].hooks))} == {tuple(sorted([REPO, OTHER]))}
 
 
-def test_next_command_matches_how_it_was_run(env, monkeypatch) -> None:
+@pytest.mark.parametrize("command", ["pr-proof", "npx pr-proof", "npx ."])
+def test_next_command_matches_how_it_was_run(env, monkeypatch, command: str) -> None:
+    """입구(bin/pr-proof.js)가 부른 방식을 PR_PROOF_COMMAND로 넘기면 안내가 그 방식이다."""
+    monkeypatch.setenv(files.COMMAND_ENV, command)
+    code, out = _configure(env, repos=[REPO], auth="gh")
+    assert code == 0 and f"다음: {command} start\n" in out
+    # 파일에 남는 글은 부른 방식과 상관없이 `pr-proof <명령>`이다
+    text = (env["dir"] / files.CONFIG_FILE).read_text()
+    assert text.startswith("# pr-proof 설정 (configure가 만들었다). repos는 pr-proof add / rm으로")
+    assert (env["dir"] / files.RUN_ENV_FILE).read_text().startswith("# pr-proof start가")
+
+
+def test_next_command_without_the_entry_follows_the_folder(env, monkeypatch) -> None:
+    """`python -m app.setup.cli`로 직접 부르면 clone한 폴더는 `npx .`, 아니면 `pr-proof`다."""
     monkeypatch.setattr(files, "in_clone", lambda: False)
     code, out = _configure(env, repos=[REPO], auth="gh")
-    assert code == 0 and "다음: npx pr-proof start\n" in out and "npx . start" not in out
+    assert code == 0 and "다음: pr-proof start\n" in out and "npx" not in out
 
 
 def test_redis_down_is_started_with_compose(env) -> None:
@@ -473,7 +487,7 @@ def _add(env, repos, **opts):
 
 def test_add_before_configure_says_run_configure(env) -> None:
     code, out = _add(env, [REPO])
-    assert code == 1 and "먼저 npx pr-proof configure" in out
+    assert code == 1 and "먼저 npx . configure" in out  # 테스트는 clone한 폴더에서 돈다
 
 
 def test_add_registers_repo_and_webhook_and_says_restart(env) -> None:
@@ -592,7 +606,7 @@ def test_list_empty_suggests_add(env) -> None:
     env["dir"].mkdir()
     (env["dir"] / "config.yaml").write_text("repos: []\n")
     code, lines = _list(env)
-    assert code == 0 and "npx pr-proof add <repo>" in lines[0]
+    assert code == 0 and "npx . add <repo>" in lines[0]
 
 
 def test_list_check_shows_hook_state_and_survives_failures(env) -> None:
@@ -681,3 +695,11 @@ def test_model_view_points_out_a_broken_saved_value(env) -> None:
     (env["dir"] / "config.yaml").write_text("repos: []\nmodel:\n  default: '-x'\n")
     code, out = _model(env)
     assert code == 1 and "서버가 시작하지 못합니다" in out
+
+
+def test_model_guidance_uses_the_command_the_user_ran(env, monkeypatch) -> None:
+    monkeypatch.setenv(files.COMMAND_ENV, "pr-proof")
+    env["dir"].mkdir()
+    (env["dir"] / "config.yaml").write_text("repos: []\n")
+    code, out = _model(env)
+    assert code == 0 and "바꾸기: pr-proof model <이름>" in out and "npx" not in out

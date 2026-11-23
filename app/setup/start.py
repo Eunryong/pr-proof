@@ -1,4 +1,4 @@
-"""`npx pr-proof start`: api와 worker, 저장한 웹훅 받는 주소가 smee 주소면 smee-client까지 띄운다.
+"""`pr-proof start`: api와 worker, 저장한 웹훅 받는 주소가 smee 주소면 smee-client까지 띄운다.
 
 세 프로그램은 honcho 하나가 띄운다(`scripts/start.sh`와 같다). 하나가 끝나면 honcho가 나머지를 모두
 내린다. launchd로 띄웠으면 launchd가 통째로 다시 띄운다(docs/OPERATIONS.md). smee-client는 연결이
@@ -76,18 +76,18 @@ def start(
     directory = directory or files.config_dir()
     bin_dir = venv_bin or Path(sys.executable).parent
     if not (directory / files.CONFIG_FILE).is_file():
-        out(f"설정이 없습니다 ({directory / files.CONFIG_FILE}). 먼저 npx pr-proof configure를 "
-            "실행하세요.")  # fmt: skip
+        out(f"설정이 없습니다 ({directory / files.CONFIG_FILE}). 먼저 "
+            f"{files.command('configure', source)}를 실행하세요.")  # fmt: skip
         return 1
     honcho = bin_dir / "honcho"
     if not honcho.exists():
-        out(f"{honcho}가 없습니다. npx pr-proof configure를 다시 실행하세요.")
+        out(f"{honcho}가 없습니다. {files.command('configure', source)}를 다시 실행하세요.")
         return 1
     env = run_env(source, bin_dir, node)
     missing = missing_tools(env["PATH"])
     if missing:
         out(f"찾지 못한 프로그램: {', '.join(missing)} (PATH={env['PATH']}). "
-            "npx pr-proof configure로 확인하세요.")  # fmt: skip
+            f"{files.command('configure', source)}로 확인하세요.")  # fmt: skip
         return 1
     try:
         url = files.read_private(files.WEBHOOK_URL_FILE, directory)
@@ -96,8 +96,8 @@ def start(
         return 1
     smee_url = url if url and files.is_smee(url) else None
     if smee_url and not (node and smee_js):
-        out("smee 주소가 저장되어 있지만 smee-client를 찾지 못했습니다. npx pr-proof start로 "
-            "실행하세요.")  # fmt: skip
+        out("smee 주소가 저장되어 있지만 smee-client를 찾지 못했습니다. "
+            f"{files.command('start', source)}로 실행하세요.")  # fmt: skip
         return 1
     runtime = files.runtime_home(dict(source))
     runtime.mkdir(parents=True, exist_ok=True, mode=0o700)

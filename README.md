@@ -25,26 +25,24 @@ PR 하나에 네 가지를 한다.
 
 ## 바로 써 보기
 
-필요한 것을 깔고 명령 둘을 친다.
-
-처음 설정. 묻는 말 넷에 답한다(처리할 repo, GitHub 인증 방식, 토큰, 웹훅 받는 주소).
+필요한 것을 깔고, pr-proof를 깔고, 명령 둘을 친다.
 
 ```
-npx pr-proof configure
+npm install -g pr-proof
+pr-proof configure
+pr-proof start
 ```
 
-서버 실행. api, worker, 웹훅 받아 오기가 함께 뜬다.
+설치 없이 한 번 써 보려면 `npx pr-proof configure`로 친다(그때는 화면의 안내도 `npx pr-proof …`로 나온다).
 
-```
-npx pr-proof start
-```
+`configure`는 처음 설정이다. 묻는 말 다섯에 답한다(처리할 repo, GitHub 인증 방식, 토큰, 쓸 모델, 웹훅 받는 주소). `start`는 서버 실행이다. api, worker, 웹훅 받아 오기가 함께 뜬다.
 
 처리할 repo를 더하고, 빼고, 본다.
 
 ```
-npx pr-proof add <repo>          # 예: npx pr-proof add octocat/hello-world
-npx pr-proof rm <repo>
-npx pr-proof list
+pr-proof add <repo>          # 예: pr-proof add octocat/hello-world
+pr-proof rm <repo>
+pr-proof list
 ```
 
 그다음 대상 repo에 PR을 열면 결과 코멘트가 달린다.
@@ -52,11 +50,11 @@ npx pr-proof list
 **필요한 것**
 
 - macOS나 Linux
-- node 20.18 이상 (`npx`로 친다)
+- node 20.18 이상 (`npm`으로 깐다)
 - python 3.11 이상, Docker(켜 둔다), git, [gh](https://cli.github.com/)
 - [claude](https://docs.anthropic.com/en/docs/claude-code) CLI 설치와 **로그인**. 깔기만 해서는 안 되고 로그인까지 해 둔다. 모델 호출은 이 로그인한 계정의 사용량으로 나간다. 로그인은 터미널에서 `claude`를 실행해 `/login` 한다.
 
-빠진 것이 있으면 configure가 한 번에 모두 알려 주고 운영체제에 맞는 설치 방법을 보인다. npm에 있는 것은 시험판(0.1.x-beta)이다.
+빠진 것이 있으면 configure가 한 번에 모두 알려 주고 운영체제에 맞는 설치 방법을 보인다. npm에 있는 것은 시험판(0.1.x-beta)이다. 가장 새 시험판은 `npm install -g pr-proof@next`로 받는다.
 
 ---
 
@@ -214,7 +212,7 @@ access:
 
 - 여러 번 돌려도 같다. 있는 설정과 비밀값은 덮어쓰지 않는다.
 - Claude 로그인이 안 되어 있으면 무엇을 치면 되는지 보이고, 로그인한 뒤 Enter를 누르면 그 자리에서 다시 확인한다.
-- 질문 없이 돌리기: `npx pr-proof configure --repo octocat/hello-world --auth gh`. 그 밖의 인자는 `--webhook-url`, `--port`, `--model`, `--dry-run`(파일과 GitHub에 쓰지 않고 할 일만 보인다), `--manual-webhook`(웹훅을 손으로 등록할 값만 보인다)이다. 명령마다 `--help`로 본다.
+- 질문 없이 돌리기: `pr-proof configure --repo octocat/hello-world --auth gh`. 그 밖의 인자는 `--webhook-url`, `--port`, `--model`, `--dry-run`(파일과 GitHub에 쓰지 않고 할 일만 보인다), `--manual-webhook`(웹훅을 손으로 등록할 값만 보인다)이다. 명령마다 `--help`로 본다.
 
 ### 웹훅 받는 주소
 
@@ -241,9 +239,9 @@ gh 로그인 대신 토큰을 쓸 수 있다. 토큰은 설정 폴더의 `github
 
 | 명령 | 하는 일 |
 | --- | --- |
-| `npx pr-proof add <repo>` | 허용 목록에 더하고 권한을 확인하고 웹훅을 등록한다 |
-| `npx pr-proof rm <repo>` | 허용 목록에서 빼고 pr-proof가 등록한 웹훅만 지운다 |
-| `npx pr-proof list` | 처리하는 repo 목록. `--check`를 주면 웹훅까지 확인한다 |
+| `pr-proof add <repo>` | 허용 목록에 더하고 권한을 확인하고 웹훅을 등록한다 |
+| `pr-proof rm <repo>` | 허용 목록에서 빼고 pr-proof가 등록한 웹훅만 지운다 |
+| `pr-proof list` | 처리하는 repo 목록. `--check`를 주면 웹훅까지 확인한다 |
 
 `rm`은 그 repo의 PR 코멘트, 열린 수정안 PR, 데이터 폴더의 기록(DB, 캐시)은 그대로 둔다. 도는 서버는 목록을 시작할 때만 읽으므로 `add`와 `rm` 뒤에는 서버를 다시 띄운다.
 
@@ -253,9 +251,9 @@ gh 로그인 대신 토큰을 쓸 수 있다. 토큰은 설정 폴더의 `github
 
 | 명령 | 하는 일 |
 | --- | --- |
-| `npx pr-proof model` | 지금 설정과 단계별로 쓰일 모델을 보인다 |
-| `npx pr-proof model opus` | 모든 단계를 그 모델로 |
-| `npx pr-proof model default` | 지워서 기본값(판단 sonnet, 수정 haiku→sonnet)으로 되돌린다 |
+| `pr-proof model` | 지금 설정과 단계별로 쓰일 모델을 보인다 |
+| `pr-proof model opus` | 모든 단계를 그 모델로 |
+| `pr-proof model default` | 지워서 기본값(판단 sonnet, 수정 haiku→sonnet)으로 되돌린다 |
 
 - 값은 `config.yaml`의 `model.default`에 적는다. 다른 설정과 주석은 그대로 둔다. configure도 Claude 로그인 확인 다음에 한 번 묻는다(질문 없이 돌릴 때는 `--model <이름>`).
 - 대상 repo의 `.pipeline.yaml`에 단계별로 적은 모델(`model.rules` 등)이 이 값보다 앞선다.
@@ -289,7 +287,7 @@ flowchart LR
 
     SMEE["smee.io<br/>(웹훅 받는 주소가 없을 때)"]
 
-    subgraph LOCAL["사용자의 컴퓨터 (npx pr-proof start)"]
+    subgraph LOCAL["사용자의 컴퓨터 (pr-proof start)"]
         API["api<br/>서명 확인 · 큐 등록<br/>5분마다 동기화"]
         Q[("Redis 큐")]
         W["worker<br/>PR 하나씩 처리"]
@@ -376,7 +374,7 @@ PR의 코드와 글, 리뷰 코멘트는 모두 믿지 않는 입력으로 다�
 
 `npx` 없이 clone한 폴더에서 손으로 설치하고 띄울 수 있다. 워커는 시작할 때 GitHub 인증, Claude 로그인, Docker, Redis를 확인하고 하나라도 안 되면 멈춘다. 계속 띄워 두는 방법(macOS launchd)과 알림은 [docs/OPERATIONS.md](docs/OPERATIONS.md)에 있다.
 
-clone한 폴더에서는 `npx pr-proof` 대신 `npx .`로 친다.
+clone한 폴더에서는 `pr-proof` 대신 `npx .`로 친다.
 
 ```
 git clone https://github.com/Eunryong/pr-proof && cd pr-proof

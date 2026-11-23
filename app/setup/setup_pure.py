@@ -25,10 +25,10 @@ DEFAULT_MODEL_WORD: Final = "default"  # `model default`: 파이프라인 쪽 �
 STAGE_LABELS: Final[Mapping[str, str]] = {
     "rules": "규칙 읽기",
     "checker": "검사기 작성",
-    "judge": "위반 판단, PR 설명·이슈 확인",
+    "judge": "위반 판단, PR 설명·이슈",
     "decide": "수정 판단",
     "light": "수정 작성",
-    "heavy": "수정 작성 (실패가 이어지면 올리는 모델)",
+    "heavy": "수정 작성 (올린 뒤)",  # 가벼운 모델이 이어 실패하면 한 번 올린다
 }
 _REPO: Final = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/[A-Za-z0-9._-]{1,100}")
 

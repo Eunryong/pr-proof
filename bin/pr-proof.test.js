@@ -1,4 +1,5 @@
-// 입구의 작은 판단만 본다: 빠진 프로그램 안내, 쓰는 것을 두는 곳, 다시 설치할지의 표시.
+// 입구의 작은 판단만 본다: 빠진 프로그램 안내, 쓰는 것을 두는 곳, 다시 설치할지의 표시,
+// 안내에 쓸 명령 앞부분(부른 방식).
 // 실행: npm test  (node --test bin/pr-proof.test.js)
 "use strict";
 
@@ -57,4 +58,45 @@ test("모르는 명령은 사용법과 함께 2로 끝난다", () => {
   assert.equal(result.status, 2);
   assert.match(result.stderr, /모르는 명령: nope/);
   assert.match(result.stderr, /add <repo>/);
+});
+
+// npx가 두는 환경 변수 (npm 11에서 실제로 부른 것과 같은 값)
+const NPX = { npm_command: "exec", npm_lifecycle_event: "npx" };
+
+test("전역 설치로 부르면 안내는 pr-proof", () => {
+  const prefix = "/usr/local";
+  const root = path.join(prefix, "lib", "node_modules", "pr-proof");
+  assert.equal(entry.commandPrefix({}, root, "/home/u", path.join(prefix, "bin", "pr-proof")), "pr-proof");
+});
+
+test("npx로 부르면 npx 캐시든 전역 설치를 찾은 것이든 npx pr-proof", () => {
+  const cache = "/home/u/.npm/_npx/a3fd392e4bebf832/node_modules/pr-proof";
+  const bin = "/home/u/.npm/_npx/a3fd392e4bebf832/node_modules/.bin/pr-proof";
+  assert.equal(entry.commandPrefix(NPX, cache, "/home/u", bin), "npx pr-proof");
+  const global = "/usr/local/lib/node_modules/pr-proof";
+  assert.equal(entry.commandPrefix({ npm_command: "exec" }, global, "/x", "/usr/local/bin/pr-proof"),
+    "npx pr-proof");
+});
+
+test("clone한 폴더에서 npx .로 부르면 npx ., 다른 곳에서 부르면 그 폴더", () => {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pr-proof-clone-")));
+  const bin = "/home/u/.npm/_npx/744614315fac2693/node_modules/.bin/pr-proof";
+  assert.equal(entry.commandPrefix(NPX, dir, dir, bin), "npx .");
+  assert.equal(entry.commandPrefix(NPX, dir, os.tmpdir(), bin), `npx ${dir}`);
+});
+
+test("node로 파일을 부르면 그 꼴", () => {
+  const root = "/src/pr-proof";
+  assert.equal(entry.commandPrefix({}, root, root, path.join(root, "bin", "pr-proof.js")),
+    "node bin/pr-proof.js");
+});
+
+test("사용법은 부른 방식의 명령으로 보이고 model이 있다", () => {
+  const text = entry.usage("pr-proof");
+  assert.match(text, /^사용법: pr-proof <명령>/);
+  assert.match(text, /model \[이름\]/);
+  const result = spawnSync(process.execPath, [path.join(__dirname, "pr-proof.js"), "help"], {
+    encoding: "utf8", env: { PATH: process.env.PATH },
+  });
+  assert.match(result.stdout, /^사용법: node .*pr-proof\.js <명령>/);
 });

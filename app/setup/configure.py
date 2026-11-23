@@ -1,4 +1,4 @@
-"""`npx pr-proof configure | add | rm | list | model`의 흐름.
+"""`pr-proof configure | add | rm | list | model`의 흐름.
 
 configure의 단계 (docs/design/08-security.md "설치와 인증"):
 1 프로그램 확인 → 2 Docker가 켜져 있는지 → 3 설치(포트, Redis. venv는 입구가 만든다) →
@@ -41,8 +41,8 @@ from app.worker.sandbox.docker_cli import minimal_env
 PROGRAMS: Final = ("docker", "git", "gh", "claude")
 OPERATIONS_URL: Final = "https://github.com/Eunryong/pr-proof/blob/main/docs/OPERATIONS.md"
 CONFIG_HEADER: Final = (
-    "# pr-proof 설정 (configure가 만들었다). repos는 npx pr-proof add / rm으로, "
-    "model.default는 npx pr-proof model로 고친다.\n"
+    f"# pr-proof 설정 (configure가 만들었다). repos는 {files.FILE_COMMAND} add / rm으로, "
+    f"model.default는 {files.FILE_COMMAND} model로 고친다.\n"
 )
 STEPS: Final = 9
 RESTART: Final = "도는 서버는 config.yaml을 시작할 때만 읽습니다. 서버가 돌고 있으면 다시 띄우세요."
@@ -325,7 +325,7 @@ def add_to_config(directory: Path, repos: Sequence[str], io: Io, dry_run: bool) 
 
 
 def _need_configure() -> str:
-    return "설정이 없습니다. 먼저 npx pr-proof configure를 실행하세요."
+    return f"설정이 없습니다. 먼저 {files.command('configure')}를 실행하세요."
 
 
 def _step(io: Io, number: int, title: str) -> None:
@@ -469,10 +469,10 @@ def _claude(io: Io, deps: Deps) -> None:
                "사용량으로 나갑니다.")  # fmt: skip
         io.say("  다른 터미널에서 claude를 실행해 /login 하세요.")
         if not io.interactive:
-            io.say("  로그인한 뒤 npx pr-proof configure를 다시 실행하세요.")
+            io.say(f"  로그인한 뒤 {files.command('configure')}를 다시 실행하세요.")
             raise Stop
         answer = io.ask("  로그인한 뒤 Enter를 누르면 다시 확인합니다 (그만두려면 q, 나중에 "
-                        "npx pr-proof configure를 다시 실행해도 됩니다): ")  # fmt: skip
+                        f"{files.command('configure')}를 다시 실행해도 됩니다): ")  # fmt: skip
         if answer.strip() == "q":
             raise Stop
     io.say("  로그인되어 있음")
@@ -673,8 +673,9 @@ def configure(opts: Options, io: Io, deps: Deps, directory: Path | None = None) 
     elif not hooks_ok:
         io.say("웹훅을 모두 등록하지는 못했습니다. 위의 값으로 손으로 등록하세요.")
     if not checks_ok:
-        io.say("끝 확인에 실패한 줄이 있습니다. 고친 뒤 npx pr-proof configure를 다시 실행하세요.")
-    io.say(f"다음: {'npx . start' if files.in_clone() else 'npx pr-proof start'}")
+        io.say(f"끝 확인에 실패한 줄이 있습니다. 고친 뒤 {files.command('configure')}를 다시 "
+               "실행하세요.")  # fmt: skip
+    io.say(f"다음: {files.command('start')}")
     io.say(f"계속 띄워 두려면: {OPERATIONS_URL}")
     # 손으로 등록하라고 한 것(--manual-webhook)은 실패가 아니다
     return 0 if checks_ok and (hooks_ok or opts.manual_webhook) else 1
@@ -805,7 +806,7 @@ def list_repos(opts: Options, io: Io, deps: Deps, directory: Path | None = None)
         io.say(str(e))
         return 1
     if not repos:
-        io.say("처리하는 repo가 없습니다. 더하려면: npx pr-proof add <repo>")
+        io.say(f"처리하는 repo가 없습니다. 더하려면: {files.command('add <repo>')}")
         return 0
     if not opts.check:
         for repo in repos:
@@ -845,7 +846,7 @@ def model(name: str | None, io: Io, directory: Path | None = None) -> int:
     except Stop:
         return 1
     if name is None:
-        io.say(pure.model_view(current, "npx ." if files.in_clone() else "npx pr-proof"))
+        io.say(pure.model_view(current, files.command_prefix()))
         if current is not None and (problem := pure.model_name_problem(current)):
             io.say(f"\nconfig.yaml의 model.default가 틀려 서버가 시작하지 못합니다. {problem}")
             return 1
