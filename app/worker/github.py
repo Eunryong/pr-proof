@@ -182,7 +182,7 @@ def run_gh(args: list[str], stdin: str | None = None) -> str:
     except (OSError, subprocess.TimeoutExpired) as e:
         raise GitHubError(f"gh 실행 실패: {e}") from e
     if proc.returncode != 0:
-        detail = github_auth.redact(proc.stderr.strip(), env)[-500:]
+        detail = github_auth.failure_detail(proc.stderr, proc.stdout, proc.returncode, env)
         raise GitHubError(f"gh {' '.join(args[:2])} 실패: {detail}")
     return proc.stdout
 

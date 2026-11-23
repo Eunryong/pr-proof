@@ -246,7 +246,9 @@ def test_unknown_install_failure_uses_retry_count(env, attempt: int, unrunnable:
 def test_sync_job_result_says_so(env) -> None:
     use_runner(env, lambda *a, **k: PASSED)
     main.handle(_payload(source="sync"), env["deps"])
-    assert "동기화로 처리됨 (웹훅 누락)" in bodies(env["gh"])[-1]
+    last = bodies(env["gh"])[-1]
+    # 웹훅이 빠졌다고 적지 않는다. 등록 전에 열린 PR이나 새 판의 다시 검사도 동기화가 넣는다
+    assert "동기화로 처리됨" in last and "웹훅 누락" not in last
 
 
 def _checks(*failing: str):

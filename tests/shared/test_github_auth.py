@@ -61,3 +61,13 @@ def test_redact_removes_whole_token_before_cutting() -> None:
 
 def test_token_alert_says_to_replace_token() -> None:
     assert "github_token" in TEXT["gh_token"] and "만료" in TEXT["gh_token"]
+
+
+def test_failure_detail_never_comes_out_empty() -> None:
+    """gh가 stderr 없이 실패해도 로그의 까닭이 비지 않는다. 토큰은 지운다."""
+    env = {github_auth.TOKEN_ENV: "tok-123"}
+    assert github_auth.failure_detail("", "", 1, env) == "종료 코드 1, 출력 없음"
+    assert github_auth.failure_detail("", '{"message":"Not Found"} tok-123', 1, env) == (
+        '{"message":"Not Found"} <github_token> (종료 코드 1)'
+    )
+    assert github_auth.failure_detail("HTTP 502\n", "ignored", 1, {}) == "HTTP 502 (종료 코드 1)"
