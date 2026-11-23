@@ -17,6 +17,7 @@
     "bin/pr-proof.js",
     "app/**/*.py",
     "app/**/*.json",
+    "app/**/*.md",
     "docker/",
     "docker-compose.yml",
     "Procfile",
