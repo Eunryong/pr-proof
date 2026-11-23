@@ -90,16 +90,25 @@ PR_PROOF_REAL_EMBED=1 PR_PROOF_EMBED_DIR=<모델 폴더> pytest tests/worker/tes
 
 ## 코드 구조
 
-패키지는 `app` 하나다. 2026-11-21~22의 옛 경로(나누기 전의 `app/models/` 등, 하루 동안의 최상위 `api/`·`worker/`·`shared/`)는 `docs/DESIGN.md` 12.5의 대응표로 읽는다.
+패키지는 `app` 하나다. 2026-11-21~22의 옛 경로(나누기 전의 `app/models/` 등, 하루 동안의 최상위 `api/`·`worker/`·`shared/`)는 `docs/DESIGN.md` 12.5의 대응표로, `app/worker/` 아래의 2026-11-24 이전 경로는 12.6의 대응표로 읽는다.
 
 ```
 app/
   api/          웹. GitHub 변화를 감지해 PRJob을 큐에 넣기만 한다
   worker/       워커. 큐에서 작업을 꺼내 처리하고 결과(코멘트, 수정안 PR)를 GitHub에 남긴다
+                맨 위는 뼈대(진입점, 작업 흐름, 작업 종류)만 있고 나머지는 아래 폴더에 있다
     rules/      규칙 단계: 규칙 읽기, 검사 방법 정하기, 위반 찾기, 모델 판단, PR 단위 확인
     fix/        수정 단계: 수정 판단, 기계적 수정, 모델 수정과 출구 검사, 수정안 PR
+    feedback/   코멘트 단계: 리뷰 코멘트 가리기와 답글 만들기
+    report/     결과 코멘트 만들기
+    evaluation/ 평가 세트 실행과 기준선 비교
+    core/       모든 단계가 쓰는 데이터 정의와 도구
+    config/     대상 저장소의 설정
+    git/        체크아웃과 GitHub 쓰기
+    store/      상태, 호출 상한, 기록, 검색
+    model/      모델 호출의 인터페이스와 구현(model/claude/)
+    testing/    테스트 실행 결과와 커버리지
     sandbox/    언어와 무관한 docker 도구
-    ai/         claude CLI 호출과 수정 작성의 도구 서버
     lang/       Python 언어 프로필
   shared/       웹과 워커 사이의 계약 (둘 다 import하는 것만)
 tests/          코드와 같은 이름의 폴더 (tests/api, tests/worker, tests/shared. app 단계는 두지 않는다)
@@ -109,38 +118,50 @@ tests/          코드와 같은 이름의 폴더 (tests/api, tests/worker, test
 
 **워커 (`app/worker/`).**
 
-- 맨 위: 진입점(`main.py`), 작업 흐름(`graph.py`, LangGraph), 작업 종류(`update.py`, `command.py`), 가드레일(`guard.py`), 체크아웃(`repo.py`), base 설정(`base_config.py`: `.pipeline.yaml`, ruff 설정과 버전), 상태와 처리 기록 쓰기(`state.py`), GitHub 쓰기(`github.py`), 결과 코멘트의 글(`markdown_pure.py`), 고친 위반의 테스트 표시(`test_lines.py`), 공용 서브그래프 틀(`loop.py`), 호출 상한(`budget.py`), 기록(`records.py`), 검색(`memory.py`: 임베딩, Chroma 저장과 top-k, 밀린 기록 임베딩, reindex, 큰 규칙 문서의 조각 검색), 수동 명령(`cli.py`: reindex, eval). 여러 단계가 같이 쓰는 순수 모듈도 여기 있다
-- `rules/`: 규칙 경로(`doc_rules.py`) → 규칙 읽기(`rules.py`) → 검사 방법 정하기(`checkers.py`: 도구 설정의 규칙 묶음, 문서 규칙의 도구 선택, 검사기 작성) → 위반 찾기(`detect.py`) · 모델의 직접 판단(`judge.py`) · PR 단위 확인(`pr_check.py`, 알리기만)
-- `feedback/`: 리뷰 코멘트 가리기와 답글 만들기(`feedback_pure.py`, `feedback_triage.py`, `feedback_triage_pure.py`, `feedback_report_pure.py`). 코멘트 작업과 스레드 해결 작업의 흐름은 맨 위의 `feedback_job.py`다
+- 맨 위(뼈대): 진입점(`main.py`), 작업 흐름(`graph.py`, LangGraph), 작업 종류(`update.py`: 규칙 검사, `command.py`와 `command_pure.py`: PR 코멘트 명령, `feedback_job.py`: 리뷰 코멘트 작업과 머지 뒤 스레드 해결), 가드레일(`guard.py`), 재시도와 실패 기록(`retry.py`), 작업이 쓰는 의존 객체(`deps.py`), 시작 점검(`preflight.py`), 단계의 결과를 기록으로 바꾸기(`records.py`), 수동 명령(`cli.py`: reindex, eval). 단계를 부르기만 한다
+- `rules/`: 규칙 경로(`doc_rules.py`) → 규칙 읽기(`rules.py`) → 검사 방법 정하기(`checkers.py`: 도구 설정의 규칙 묶음, 문서 규칙의 도구 선택, 검사기 작성) → 위반 찾기(`detect.py`) · 모델의 직접 판단(`judge.py`) · PR 단위 확인(`pr_check.py`, 알리기만) · PR 설명 확인(`pr_description.py`) · 이슈 확인(`linked_issues.py`)
 - `fix/`: 수정 판단(`decide.py`) → 기계적 수정(`mechanical_fix.py`) · 모델 수정(`model_fix.py`: 수정 작성과 도구 둘의 구현, 출구 검사) · 허용 범위(`scope.py`) → 수정안 PR(`proposal.py`). 만든 테스트의 판정은 `app/worker/testing/generated_tests_pure.py`, 만든 테스트의 자리는 `scope_pure.is_generated_test`
-- `report/`: 결과 코멘트 만들기(`report.py`, `doc_rules_report.py`, `pr_check_report_pure.py`, `pr_description_report_pure.py`, `linked_issues_report_pure.py`). 다른 단계를 읽기만 하고 뼈대만 부른다
+- `feedback/`: 리뷰 코멘트 가리기(`feedback_triage.py`)와 답글 만들기(`feedback_report_pure.py`). 코멘트 작업의 흐름은 맨 위의 `feedback_job.py`다. 뼈대를 import하지 않는다
+- `report/`: 결과 코멘트 만들기(`report.py`, `doc_rules_report.py`와 `*_report_pure.py`). 다른 단계를 읽기만 하고 뼈대만 부른다
 - `evaluation/`: 평가 세트 실행(`evaluation.py`)과 결과·기준선 비교(`eval_run_pure.py`)
+- `core/`: 모든 단계가 쓰는 데이터 정의와 도구(`rule_pure.py`, `violation_pure.py`, `checker_pure.py`, `diff_pure.py`, `markdown_pure.py`, `prompt_text_pure.py` 등). 다른 폴더를 import하지 않는다
+- `config/`: 대상 저장소의 설정. base 브랜치에서 읽기(`base_config.py`: `.pipeline.yaml`, ruff 설정과 버전), `.pipeline.yaml`의 스키마(`repo_config_pure.py`), 외부 작성자 설정(`access_pure.py`)
+- `git/`: 체크아웃(`repo.py`)과 GitHub 쓰기(`github.py`), 그 데이터(`git_pure.py`)
+- `store/`: 상태와 처리 기록 쓰기(`state.py`), 호출 상한(`budget.py`), 과거 기록 저장(`records.py`)과 무엇을 기록할지(`records_pure.py`), 검색(`memory.py`: 임베딩, Chroma 저장과 top-k, 밀린 기록 임베딩, reindex, 큰 규칙 문서의 조각 검색)
+- `model/`: 모델 호출의 인터페이스(`model_backend.py`)와 구현 고르기(`backends.py`), 공용 서브그래프 틀(`loop.py`), MCP 메시지와 도구 상한(`mcp_pure.py`). claude CLI 구현은 `model/claude/`: 호출(`claude_cli.py`, 모양 넷: 수정 작성의 `file_tools`·`fix_tools`, 읽기만 하는 `read_tools`, 도구 없는 `no_tools`), 모델 전용 폴더(`workdir.py`), 경로 감시 훅(`path_hook.py`), 수정 작성의 파이프라인 도구 서버(`tool_server.py`)와 CLI가 띄우는 중계(`mcp_relay.py`)
+- `testing/`: 테스트 실행 결과(`test_run_pure.py`), 커버리지(`coverage.py`, `coverage_pure.py`), 고친 위반의 테스트 표시(`test_lines.py`), 모델이 만든 테스트(`generated_tests_pure.py`)
 - `sandbox/`: `docker_cli`, `container`, `toolcache`, `checker_runner`, `safe_read`. 도구(ast-grep, ruff)와 Python 런타임은 `toolcache.py`가 고정한 버전과 SHA256으로 받아 캐시한다. 샌드박스 이미지에는 언어가 없다 (`debian:bookworm-slim`에 curl과 인증서)
-- `ai/`: claude CLI 호출(`claude_cli.py`, 모양 넷: 수정 작성의 `file_tools`·`fix_tools`, 읽기만 하는 `read_tools`, 도구 없는 `no_tools`), 모델 전용 폴더(`workdir.py`), 경로 감시 훅(`path_hook.py`), 수정 작성의 파이프라인 도구 서버(`tool_server.py`)와 CLI가 띄우는 중계(`mcp_relay.py`). MCP 메시지와 도구 상한은 `app/worker/model/mcp_pure.py`
-- `lang/python.py`: Python 언어 프로필 (런타임 준비, `.venv` 설치, pytest 실행과 결과 읽기, 위반 줄의 커버리지 읽기, ruff). 테스트 파일의 정의(`fix/scope_pure.py`), coverage.xml 파싱(`coverage_pure.py`), ruff 설정 읽기와 도구 목록(`tools_pure.py`)은 순수 모듈에 있다. 두 번째 언어와 프로필 인터페이스는 만들지 않는다
+- `lang/python.py`: Python 언어 프로필 (런타임 준비, `.venv` 설치, pytest 실행과 결과 읽기, 위반 줄의 커버리지 읽기, ruff). 테스트 파일의 정의(`fix/scope_pure.py`), coverage.xml 파싱(`testing/coverage_pure.py`), ruff 설정 읽기와 도구 목록(`core/tools_pure.py`)은 순수 모듈에 있다. 두 번째 언어와 프로필 인터페이스는 만들지 않는다
+- 프롬프트: 모델에게 주는 지시문은 쓰는 단계의 `prompts/`에 있다(`rules/prompts/`, `fix/prompts/`, `feedback/prompts/`). 읽는 코드는 `core/prompt_text_pure.py`의 `load(__file__, "이름")`이고 부르는 모듈과 같은 폴더의 `prompts/`만 읽는다. 폴더마다 `README.md`에 목록이 있다
 
 **웹과 워커 사이의 계약 (`app/shared/`).** 웹과 워커는 메모리를 공유하지 않는다. 둘 사이에는 큐와 Redis·SQLite 상태만 오가고, 큐에 넣는 값은 작업 계약(`job_pure.py`의 `PRJob`)뿐이다. 키 형식과 큐 이름(`state_keys_pure.py`), SQLite 테이블 정의(`db_pure.py`)는 여기 두고, 읽기·쓰기 코드는 각자 자기 쪽에 둔다. 그 밖에 코멘트 표시(`comment_pure.py`), 운영 알림의 종류와 글(`ops_alert_pure.py`), 임베딩 모델 목록(`embed_models_pure.py`), 설정과 비밀값 읽기(`config.py`), macOS 알림(`notify.py`)이 있다.
 
-**순수 모듈.** 이름이 `_pure.py`로 끝나는 모듈은 바깥에 손대지 않는다: 파일, 프로세스, 네트워크, Redis, DB 연결을 쓰지 않고 받은 값으로 계산만 한다(데이터 정의, 판정, 프롬프트 만들기, 답 읽기). 대부분은 나누기 전의 `app/models/`에 있던 모듈이다. 순수 모듈은 그것이 속한 단계 폴더나 공용 폴더에 두고(`app/worker/fix/fix_decision_pure.py`, `app/worker/git/git_pure.py`), 어느 한 폴더에 속하지 않으면서 여러 단계가 쓰는 데이터 정의와 도구만 `app/worker/core/`에 둔다(`app/worker/core/bundle_pure.py`). 웹과 워커가 같이 쓰면 `app/shared/`, 웹만 쓰면 `app/api/`. 정리 중이라 아직 옮기지 않은 순수 모듈은 `app/worker/` 바로 아래에 있다(`app/worker/feedback/feedback_pure.py`).
+**순수 모듈.** 이름이 `_pure.py`로 끝나는 모듈은 바깥에 손대지 않는다: 파일, 프로세스, 네트워크, Redis, DB 연결을 쓰지 않고 받은 값으로 계산만 한다(데이터 정의, 판정, 프롬프트 만들기, 답 읽기). 순수 모듈은 그것이 속한 단계 폴더나 공용 폴더에 두고(`app/worker/fix/fix_decision_pure.py`, `app/worker/git/git_pure.py`), 어느 한 폴더에 속하지 않으면서 여러 단계가 쓰는 데이터 정의와 도구만 `app/worker/core/`에 둔다(`app/worker/core/bundle_pure.py`). 웹과 워커가 같이 쓰면 `app/shared/`, 웹만 쓰면 `app/api/`. `app/worker/` 맨 위의 순수 모듈은 `command_pure.py` 하나다.
 
-같은 폴더에 같은 이름의 실행 코드 `x.py`가 있는 순수 모듈은 여덟 개다: `command_pure`, `coverage_pure`, `records_pure`, `fix/model_fix_pure`, `fix/proposal_pure`, `fix/scope_pure`, `rules/judge_pure`, `rules/pr_check_pure`. 아래는 주로 부르는 실행 코드와 이름이 다른 것이다.
+같은 폴더에 같은 이름의 실행 코드 `x.py`가 있는 순수 모듈은 열세 개다: `command_pure`, `feedback/feedback_triage_pure`, `fix/model_fix_pure`, `fix/proposal_pure`, `fix/scope_pure`, `rules/doc_rules_pure`, `rules/judge_pure`, `rules/linked_issues_pure`, `rules/pr_check_pure`, `rules/pr_description_pure`, `rules/run_check_pure`, `store/records_pure`, `testing/coverage_pure`. 아래는 주로 부르는 실행 코드와 이름이 다른 것이다.
 
 | 실행 코드 | 순수 모듈 |
 | --- | --- |
 | `app/worker/fix/decide.py` | `app/worker/fix/fix_decision_pure.py` |
+| `app/worker/fix/mechanical_fix.py` | `app/worker/fix/fix_pure.py` |
+| `app/worker/update.py` | `app/worker/fix/merged_fix_pure.py` |
+| `app/worker/feedback_job.py` | `app/worker/feedback/feedback_pure.py`, `app/worker/feedback/feedback_report_pure.py`, `app/worker/fix/feedback_fix_pure.py` |
 | `app/worker/store/budget.py` | `app/worker/store/call_budget_pure.py` |
 | `app/worker/store/memory.py` | `app/worker/store/rag_pure.py`, `app/worker/store/rag_switch_pure.py` |
 | `app/worker/evaluation/evaluation.py` | `app/worker/evaluation/eval_run_pure.py` |
+| `app/worker/report/report.py` | `app/worker/report/pr_description_report_pure.py`, `app/worker/report/linked_issues_report_pure.py` |
+| `app/worker/report/doc_rules_report.py` | `app/worker/report/pr_check_report_pure.py` |
 | `app/worker/rules/rules.py` | `app/worker/rules/rule_reading_pure.py`, `app/worker/rules/doc_sections_pure.py` |
 | `app/worker/rules/checkers.py` | `app/worker/rules/checker_authoring_pure.py`, `app/worker/rules/tool_choice_pure.py` |
+| `app/worker/git/repo.py`, `app/worker/git/github.py` | `app/worker/git/git_pure.py` |
 | `app/worker/lang/python.py` | `app/worker/lang/install_pure.py` |
 | `app/api/sync.py` | `app/api/sync_rules_pure.py` |
 
-나머지(`rule_pure`, `violation_pure`, `doc_rules_pure`, `checker_pure`, `diff_pure`, `test_run_pure`, `shared/`의 `_pure` 등)는 여러 단계가 같이 쓰는 데이터 정의와 계산이라 짝이 없다.
+나머지(`app/worker/core/`의 `_pure`, `app/worker/testing/`의 `test_run_pure`와 `generated_tests_pure`, `app/worker/model/mcp_pure.py`, `app/worker/config/`의 `access_pure`와 `repo_config_pure`, `shared/`의 `_pure` 등)는 여러 단계가 같이 쓰는 데이터 정의와 계산이라 짝이 없다.
 
-**계층.** `app/api/`는 `app/worker/`를, `app/worker/`는 `app/api/`를 import하지 않고, `app/shared/`는 둘 다 import하지 않는다. `app/worker/`는 세 층으로 정리하는 중이다(pr-proof#98): 뼈대(맨 위의 진입점, 작업 흐름, 작업 종류, 가드레일, 재시도)는 단계 폴더(`rules`, `feedback`, `fix`, `report`, `evaluation`)를 부르기만 하고, 단계 폴더는 뼈대를, 공용 폴더(`core`, `sandbox`, `testing`, `lang`, `git`, `config`, `store`, `model`)는 단계 폴더와 뼈대를 import하지 않는다. 끝나면 맨 위에는 뼈대만 남는다. 폴더 사이의 방향은 `CONTRIBUTING.md`의 「계층」 절에 있다. `app/worker/sandbox/`는 sandbox와 순수 모듈만 import한다. 순수 모듈은 저장소 안에서 다른 순수 모듈만 import하고, 금지 목록의 라이브러리(파일 시스템, 프로세스, 네트워크, Redis, 큐, DB, 웹, 그래프, 벡터 저장소, 로그, 시계, 난수, 동적 import)와 내장 `open`을 쓰지 않는다. 이 규칙은 `CONTRIBUTING.md`의 「계층」·「순수 모듈」 절에 적혀 있고, pr-proof가 PR의 diff에서 검사한다.
+**계층.** `app/api/`는 `app/worker/`를, `app/worker/`는 `app/api/`를 import하지 않고, `app/shared/`는 둘 다 import하지 않는다. `app/worker/`는 세 층이다(pr-proof#98): 뼈대(맨 위의 진입점, 작업 흐름, 작업 종류, 가드레일, 재시도)는 단계 폴더(`rules`, `feedback`, `fix`, `report`, `evaluation`)를 부르기만 하고, 단계 폴더는 뼈대를, 공용 폴더(`core`, `sandbox`, `testing`, `lang`, `git`, `config`, `store`, `model`)는 단계 폴더와 뼈대를 import하지 않는다. 단계 폴더 사이는 `rules`·`feedback`에서 `fix`로, `fix`에서 `report`·`evaluation`으로만 읽는다. 폴더 사이의 방향은 `CONTRIBUTING.md`의 「계층」 절에 있다. `app/worker/sandbox/`는 sandbox와 순수 모듈만 import한다. 순수 모듈은 저장소 안에서 다른 순수 모듈만 import하고, 금지 목록의 라이브러리(파일 시스템, 프로세스, 네트워크, Redis, 큐, DB, 웹, 그래프, 벡터 저장소, 로그, 시계, 난수, 동적 import)와 내장 `open`을 쓰지 않는다. 이 규칙은 `CONTRIBUTING.md`의 「계층」·「순수 모듈」 절에 적혀 있고, pr-proof가 PR의 diff에서 검사한다.
 
-**테스트.** 테스트는 `tests/` 아래 코드와 같은 이름의 폴더에 두고 `app` 단계는 두지 않는다(`app/worker/fix/decide.py` → `tests/worker/fix/test_decide.py`). 순수 모듈 `x_pure.py`의 테스트는 `test_x_pure.py`다.
+**테스트.** 테스트는 `tests/` 아래 코드와 같은 이름의 폴더에 두고 `app` 단계는 두지 않는다(`app/worker/fix/decide.py` → `tests/worker/fix/test_decide.py`). 순수 모듈 `x_pure.py`의 테스트는 `test_x_pure.py`다. 뼈대의 테스트는 `tests/worker/` 바로 아래에 있다.
 
 ## 코드 스타일
 
