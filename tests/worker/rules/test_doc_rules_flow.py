@@ -392,7 +392,7 @@ def test_comment_for_base_without_rules_explains_how_to_write_them(doc_env, tmp_
     check(doc_env, tmp_path, {"orders/a.py": "x = 1\n"}, PR_FILES)
     body = _last_comment(doc_env)
     assert "**규칙:** 규칙을 찾지 못해 규칙 검사를 하지 않음" in body
-    assert "`## 코드 규칙` 같은 절을 두고 규칙을 한 문장씩 적거나 ruff 설정" in body
+    assert "`CONTRIBUTING.md`에 팀 규칙을 적어 두면 다음 PR부터" in body
 
 
 THREE_RULES: Final = (
