@@ -1,8 +1,8 @@
 """app/worker/fix/feedback_fix_pure.py: 받아들인 코멘트를 수정 작성의 틀에 태우는 자료 (4.11)."""
 
 from app.worker.core.violation_pure import Violation
-from app.worker.feedback_pure import Item
-from app.worker.feedback_triage_pure import Triage
+from app.worker.feedback.feedback_pure import Item
+from app.worker.feedback.feedback_triage_pure import Triage
 from app.worker.fix.feedback_fix_pure import Accepted, feedback_found, fix_targets
 from app.worker.rules.doc_rules_pure import CallUsage, Found, outcomes_by_rule
 

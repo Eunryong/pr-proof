@@ -1,7 +1,8 @@
 """진입점: RQ 워커. `python -m app.worker.main`.
 
-큐의 작업 하나를 handle()이 종류별로 나눠 처리한다 (update.py, command.py, feedback.py). 환경 오류는
-PR에 실패로 남기지 않고 예외를 올려 RQ가 정해진 간격으로 다시 시도하게 한다 (retry.py, 상한 있음).
+큐의 작업 하나를 handle()이 종류별로 나눠 처리한다 (update.py, command.py, feedback_job.py).
+환경 오류는 PR에 실패로 남기지 않고 예외를 올려 RQ가 정해진 간격으로 다시 시도하게 한다
+(retry.py, 상한 있음).
 """
 
 import logging
@@ -15,7 +16,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.shared import config, state_keys_pure
 from app.shared.job_pure import PRJob
-from app.worker import command, feedback, preflight, retry, update
+from app.worker import command, feedback_job, preflight, retry, update
 from app.worker.deps import Deps
 from app.worker.store.state import open_engine
 
@@ -35,9 +36,9 @@ def handle(
         elif job.kind == "command":
             result = command.process_command(job, deps)
         elif job.kind == "feedback":
-            result = feedback.process_feedback(job, deps)
+            result = feedback_job.process_feedback(job, deps)
         elif job.kind == "resolve":
-            result = feedback.process_resolve(job, deps)
+            result = feedback_job.process_resolve(job, deps)
         else:
             result = update.process_close(job, deps)
     except Exception as error:

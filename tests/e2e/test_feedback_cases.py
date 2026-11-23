@@ -1,7 +1,7 @@
 """PR 코멘트 E2E (eval/feedback/*.yaml, DESIGN 4.11).
 
 문서 규칙 케이스와 같은 방식이다: 예제 리포의 로컬 git 원격, 실제 샌드박스 테스트, GitHub만 가짜
-(`tests/worker/test_feedback.py`의 FeedbackGh: 스레드 읽기, 답글, 스레드 해결). 케이스는 모두
+(`tests/worker/test_feedback_job.py`의 FeedbackGh: 스레드 읽기, 답글, 스레드 해결). 케이스는 모두
 `real_only: true`라 `PR_PROOF_REAL_MODEL=1`일 때만 돈다(가짜 모델을 만들지 않는다. 2026-11-22 저장소
 주인). 케이스마다 PR에 줄 코멘트 하나를 달고 `feedback` 작업을 돌린 뒤 결과를 본다: 작업의 결과
 이름, 그 스레드의 답글, 기록의 판단, 수정안 PR과 푸시된 브랜치(있어야 하거나 없어야 한다).
@@ -30,7 +30,7 @@ from app.shared.job_pure import PRJob
 from app.worker import main
 from app.worker.git.github import GitHub
 
-from ..worker.test_feedback import FeedbackGh
+from ..worker.test_feedback_job import FeedbackGh
 from .test_lint_cases import _git, shared_venvs  # noqa: F401
 from .test_rules_cases import REAL_MODEL_ENV, _remote, deps_for  # noqa: F401
 

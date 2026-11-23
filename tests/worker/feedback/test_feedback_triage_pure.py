@@ -1,12 +1,12 @@
-"""app/worker/feedback_triage_pure.py: 겹침 가리기, 프롬프트, 답 읽기 (4.11)."""
+"""app/worker/feedback/feedback_triage_pure.py: 겹침 가리기, 프롬프트, 답 읽기 (4.11)."""
 
 from typing import Final
 
 import pytest
 
 from app.worker.core.rule_pure import CheckMethod, Rule, RuleSource
-from app.worker.feedback_pure import Item, line_at
-from app.worker.feedback_triage_pure import (
+from app.worker.feedback.feedback_pure import Item, line_at
+from app.worker.feedback.feedback_triage_pure import (
     Facts,
     KnownFix,
     Overlap,
