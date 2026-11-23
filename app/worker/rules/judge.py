@@ -1,8 +1,8 @@
 """모델의 직접 판단 (docs/DESIGN.md 4.5): 검사기를 만들지 못한 규칙을 PR이 바꾼 hunk에 대해 모델이
 본다.
 
-모델은 worktree의 일반 파일을 복사한 모델 폴더를 cwd로 읽기 도구(Read, Grep, Glob)만 주고 부른다
-(`workdir.reading_folder`, `read_tools` 모양, 8.4). hunk 밖을 봐야 판단할 수 있으면 모델이 그곳을
+모델은 worktree의 일반 파일을 복사한 모델 폴더를 읽을 수 있게 하고 부른다(`ModelBackend.reading`,
+claude 구현은 읽기 도구 Read, Grep, Glob만 준다, 8.4). hunk 밖을 봐야 판단할 수 있으면 모델이 그곳을
 찾아 읽는다. 폴더는 판단 한 번에 하나를 열고(묻는 호출이 있을 때만) 모델이 무엇을 써도 worktree에
 반영하지 않는다. 호출은 파일 단위로 묶고(그 파일의 hunk들과 거기 적용되는 규칙들) 답은 (규칙, hunk)
 쌍마다 `model_cache`에 모델이 읽은 경로들의 해시와 함께 저장한다. 저장된 쌍은 읽은 경로가 모두
@@ -30,7 +30,7 @@ from typing import Final
 
 from app.worker import repo
 from app.worker.ai import workdir
-from app.worker.ai.claude_cli import StructuredResult
+from app.worker.ai.model_backend import AskModel, ReadCode, StructuredResult
 from app.worker.budget import CallBudget
 from app.worker.call_budget_pure import Denied, PrScope
 from app.worker.diff_pure import added_lines
@@ -64,7 +64,6 @@ from app.worker.rules.judge_pure import (
     undecided_to_json,
     verify_answer,
 )
-from app.worker.rules.rules import AskModel
 from app.worker.state import Store
 from app.worker.violation_pure import Violation, violation_id
 
@@ -132,8 +131,8 @@ class CodeReader:
     """판단 한 번이 보는 PR의 코드: 읽기 도구를 주는 모델 폴더(처음 물을 때 연다)와 경로의 해시,
     앞 커밋과 지금 커밋 사이에 바뀐 파일."""
 
-    def __init__(self, worktree: Path, ask: AskModel, stack: ExitStack) -> None:
-        self.worktree, self._ask, self._stack = worktree, ask, stack
+    def __init__(self, worktree: Path, read_code: ReadCode, stack: ExitStack) -> None:
+        self.worktree, self._read_code, self._stack = worktree, read_code, stack
         self._asker: AskModel | None = None
         self._files: list[str] | None = None
         self._digests: dict[str, str] = {}
@@ -141,9 +140,7 @@ class CodeReader:
 
     def ask(self, prompt: str, **kwargs: object) -> StructuredResult:
         if self._asker is None:
-            self._asker = self._stack.enter_context(
-                workdir.reading_folder(self.worktree, self._ask)
-            )
+            self._asker = self._stack.enter_context(self._read_code(self.worktree))
         return self._asker(prompt, **kwargs)
 
     def digests(self, paths: Sequence[str]) -> dict[str, str]:
@@ -199,18 +196,18 @@ def judge(
     store: Store,
     budget: CallBudget,
     model: str,
-    ask: AskModel,
+    read_code: ReadCode,
     known: int = 0,
     is_stale: Callable[[], bool] = lambda: False,
 ) -> Judged:
-    """rules를 PR이 바꾼 파일의 hunk에 대해 판단한다. model은 `model.judge`다. ask는 구조화 출력
-    호출(`claude_cli.run_structured`)이고, worktree의 모델 폴더에서 읽기 도구를 주어 부른다.
+    """rules를 PR이 바꾼 파일의 hunk에 대해 판단한다. model은 `model.judge`다. read_code는
+    worktree의 코드를 읽을 수 있게 하고 묻는 폴더를 연다(`ModelBackend.reading`).
 
     known은 이 검사에서 도구·검사기가 이미 찾은 위반 수다. PR 상한의 대상 위반 수에 더한다 (9.2).
     새 커밋이 와서 낡았으면 남은 파일은 묻지 않는다 (결과는 쓰이지 않는다).
     """
     with ExitStack() as stack:
-        code = CodeReader(worktree, ask, stack)
+        code = CodeReader(worktree, read_code, stack)
         return _judge(rules, worktree, changes_diff, store=store, budget=budget, model=model,
                       code=code, known=known, is_stale=is_stale)  # fmt: skip
 

@@ -4,8 +4,8 @@
 그래프의 `pr_description` node가 PR 단위 확인 다음, 테스트 전에 부른다(규칙이 없어도 돈다).
 가드레일(8.6)이 들인 작업에서만 이 node까지 오고, 그때만 PR 글을 읽는다.
 
-모델은 위반 판단과 같은 장치로 부른다: worktree의 일반 파일을 복사한 모델 폴더를 cwd로 읽기
-도구(Read, Grep, Glob)만 주고(`workdir.reading_folder`, `read_tools` 모양, 8.4), 폴더는 물을 때만
+모델은 위반 판단과 같은 장치로 부른다: worktree의 일반 파일을 복사한 모델 폴더를 읽을 수 있게 하고
+(`ModelBackend.reading`, claude 구현은 읽기 도구 Read, Grep, Glob만 준다, 8.4), 폴더는 물을 때만
 연다. 호출은 PR 한 번에 하나이고 PR 상한(9.2)에서 센다. 답은 (보인 PR 글, diff, 파이프라인 수정안의
 변경, 모델, 프롬프트 판)의 키로 모델이 읽은 경로의 해시와 함께 저장하고, 그 경로가 모두 그대로일
 때만 다시 쓴다. 호출 상한, 실패는 저장하지 않는다.
@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Final
 
 from app.worker import repo
+from app.worker.ai.model_backend import ReadCode
 from app.worker.budget import CallBudget
 from app.worker.call_budget_pure import Denied, PrScope
 from app.worker.rules.checkers import STALE
@@ -57,7 +58,6 @@ from app.worker.rules.pr_description_pure import (
     render_view,
     verify,
 )
-from app.worker.rules.rules import AskModel
 from app.worker.state import Store
 
 log = logging.getLogger(__name__)
@@ -69,7 +69,7 @@ STAGE: Final = "pr_description"
 class Tools:
     store: Store
     budget: CallBudget
-    ask: AskModel  # 구조화 출력 호출(`claude_cli.run_structured`)
+    read_code: ReadCode  # 코드를 읽을 수 있게 하고 묻는 폴더를 연다(`ModelBackend.reading`)
     model: str  # `model.judge` (위반 판단과 같은 몫)
 
 
@@ -116,7 +116,7 @@ def check(
     head = tools.budget.head_sha
     pointer = earlier_key(pr_label(tools.budget.repo, tools.budget.pr_number), tools.model)
     with ExitStack() as stack:
-        code = CodeReader(worktree, tools.ask, stack)
+        code = CodeReader(worktree, tools.read_code, stack)
         entry = tools.store.cached_result(key)
         if entry is not None and code.unchanged(reads_from_json(entry.result_json)):
             try:

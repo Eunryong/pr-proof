@@ -1,4 +1,5 @@
-"""claude CLI 호출 (docs/DESIGN.md 8.4).
+"""claude CLI 호출 (docs/DESIGN.md 8.4). 모델 구현 `claude_backend.ClaudeCliBackend`의 아래층이다.
+호출하는 쪽은 이 모듈이 아니라 `model_backend.ModelBackend`를 쓴다.
 
 호출 모양은 넷이다. 수정 작성은 모델 폴더를 cwd로 파일 도구 다섯 개와 파이프라인 도구 둘(규칙 검사,
 테스트)을 주고(`fix_tools`), 파이프라인 도구가 없는 수정 작성은 파일 도구만 준다(`file_tools`).
@@ -18,11 +19,15 @@ import tempfile
 import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from enum import StrEnum
 from pathlib import Path
 from typing import Final, Literal
 
-from app.worker.mcp_pure import TOOL_NAMES, ToolUsage
+# FIX_TOOLS_TIMEOUT_S, AIEnvironmentError는 이 모듈에서 import하던 이름이라 다시 내보낸다
+# (정의는 구현에 묶이지 않은 `model_backend`로 옮겼다)
+from app.worker.ai.model_backend import FIX_TOOLS_TIMEOUT_S as FIX_TOOLS_TIMEOUT_S
+from app.worker.ai.model_backend import AIEnvironmentError as AIEnvironmentError
+from app.worker.ai.model_backend import AIErrorKind, EditResult, PermissionDenial, StructuredResult
+from app.worker.mcp_pure import TOOL_NAMES
 
 # 호출 한 번의 시간 상한(초). 넘으면 프로세스를 죽이고 TIMEOUT으로 돌려준다
 DEFAULT_TIMEOUT_S: Final = 600.0
@@ -71,8 +76,7 @@ _SHAPE_TOOLS: Final[Mapping[str, frozenset[str]]] = {
 }
 # 읽기 도구 중 경로를 받는 입력 키. Grep·Glob에 경로가 없으면 cwd 전체를 본 것이다
 _READ_PATH_KEYS: Final[Mapping[str, str]] = {"Read": "file_path", "Grep": "path", "Glob": "path"}
-# 파이프라인 도구가 든 호출의 시간 상한(초): 모델 600초 + 도구 시간 상한 900초 + 여유 300초
-FIX_TOOLS_TIMEOUT_S: Final = 1800.0
+# 파이프라인 도구가 든 호출의 시간 상한 FIX_TOOLS_TIMEOUT_S는 `model_backend`에 있다
 # 테스트 도구 한 번은 샌드박스의 pytest 시간 상한(600초)까지 걸린다. CLI의 MCP 도구 대기 시간(ms)
 MCP_TOOL_TIMEOUT_MS: Final = "660000"
 
@@ -94,60 +98,11 @@ _INPUT_TOKEN_KEYS: Final = (
 log = logging.getLogger(__name__)
 
 
-class AIErrorKind(StrEnum):
-    TIMEOUT = "timeout"
-    LAUNCH = "launch"  # claude를 실행하지 못함 (명령 없음, worktree 없음)
-    EXIT = "exit"  # 0이 아닌 종료 코드나 is_error (로그인 풀림 포함)
-    BAD_JSON = "bad_json"
-    BUDGET = "budget"  # --max-budget-usd를 넘김
-    # 모델에 보인 도구 목록이 기대와 다르거나, 경로 감시 훅이 돌지 않음. 결과를 쓰지 않는다
-    TOOLS = "tools"
-    TOOL_CAP = "tool_cap"  # 읽기 도구를 부른 횟수가 호출 하나의 상한을 넘음
-    APPLY = "apply"  # 모델 폴더의 변경을 worktree에 적용하지 못함
+# 결과 타입의 옛 이름. 구현에 묶이지 않은 이름(`model_backend.EditResult`)으로 옮겼다
+ClaudeResult = EditResult
 
 
-@dataclass(frozen=True)
-class PermissionDenial:
-    """허용 범위 밖이라 거부된 도구 호출 한 건 (worktree 밖 Read 등)."""
-
-    tool_name: str
-    tool_input: Mapping[str, object]
-
-
-@dataclass(frozen=True)
-class ClaudeResult:
-    """claude 호출 결과. ok는 호출이 정상으로 끝났다는 뜻일 뿐, 수정안의 판정이 아니다.
-
-    cost_usd가 None이면 비용을 알 수 없다 (시간 초과, JSON 없음). 상한은 호출 수로 세므로 이 값은
-    판단에 쓰지 않는다 (DESIGN 9.2).
-    """
-
-    ok: bool
-    error: AIErrorKind | None
-    cost_usd: float | None
-    num_turns: int
-    permission_denials: tuple[PermissionDenial, ...]
-    text: str
-    detail: str = ""
-    # 모델이 부르려 한, 허용 목록 밖 도구의 (이름, 횟수). 목록에 없는 도구는 CLI가 "없는 도구"로
-    # 답해 permission_denials에 잡히지 않으므로 스트림의 tool_use에서 센다
-    unexpected_tools: tuple[tuple[str, int], ...] = ()
-    # 모델이 부른, 목록 안 도구의 횟수. 경로 감시 훅이 호출마다 돌았는지 맞춰 보는 데 쓴다
-    tool_uses: int = 0
-    model_id: str = ""  # 별칭이 가리킨 전체 모델 id. 모르면 ""
-    input_tokens: int | None = None  # 캐시 생성·읽기를 합친 실제 입력. 모르면 None
-    output_tokens: int | None = None
-    # 모델 폴더에서 worktree에 적용한 diff. `workdir.run_in_model_folder`만 채운다
-    applied: bytes = b""
-    # 파이프라인 도구를 부른 횟수와 시간. 도구가 든 호출에서 `workdir.run_in_model_folder`가 채운다
-    tool_usage: ToolUsage = ToolUsage()
-
-
-class AIEnvironmentError(RuntimeError):
-    """claude를 실행할 수 없다 (명령 없음, 로그인 풀림). PR 탓이 아니라 환경 오류로 재시도한다."""
-
-
-def environment_problem(result: ClaudeResult) -> str | None:
+def environment_problem(result: EditResult) -> str | None:
     """PR과 관계없이 claude를 쓸 수 없는 상태면 그 이유."""
     if result.error == AIErrorKind.LAUNCH:
         return f"claude를 실행하지 못함: {result.detail}"
@@ -311,7 +266,7 @@ def run_claude(
     settings: Path | None = None,
     system_prompt: str | None = None,
     mcp_config: str | None = None,
-) -> ClaudeResult:
+) -> EditResult:
     """worktree를 cwd로 파일 도구(와 파이프라인 도구)를 준 claude를 한 번 실행한다. 셸을 거치지
     않는다.
 
@@ -345,31 +300,6 @@ def run_claude(
     if result.error == AIErrorKind.TOOLS:
         log.error("claude 수정 호출의 도구 목록 확인 실패: %s", result.detail)
     return result
-
-
-@dataclass(frozen=True)
-class StructuredResult:
-    """도구 없는 호출의 결과. ok이면 data에 스키마로 받은 객체가 있다 (형식 확인은 부른 쪽이 한다).
-
-    model_id는 별칭이 가리킨 전체 모델 id(`modelUsage`의 키)다. 모르면 "".
-    input_tokens는 캐시 생성·읽기를 합친 실제 입력이다. 모르면 None.
-    tool_uses(목록 안 도구를 부른 횟수, 구조화 출력은 빼고)와 reads(모델이 읽기 도구에 준 경로.
-    cwd 기준이고 cwd 자체는 ".")는 읽기 도구를 준 호출(`read_tools`)에서만 찬다.
-    """
-
-    ok: bool
-    error: AIErrorKind | None
-    data: Mapping[str, object] | None
-    model_id: str
-    input_tokens: int | None
-    output_tokens: int | None
-    cost_usd: float | None
-    permission_denials: int
-    detail: str = ""
-    tool_uses: int = 0
-    reads: tuple[str, ...] = ()
-    unexpected_tools: tuple[tuple[str, int], ...] = ()  # 목록 밖 도구의 (이름, 횟수)
-    num_turns: int = 0
 
 
 def run_structured(
@@ -430,7 +360,7 @@ def _check_system_prompt(system_prompt: str) -> None:
 
 def parse_output(
     stdout: str, returncode: int, stderr: str = "", shape: CallShape = "file_tools"
-) -> ClaudeResult:
+) -> EditResult:
     """stream-json 출력을 읽는다. 실패해도 결과 줄에 있는 비용과 거부 목록은 남긴다."""
     init, data = _events(stdout)
     if data is None:
@@ -438,7 +368,7 @@ def parse_output(
     error, detail = _checked_status(init, shape, data, returncode)
     text = data.get("result")
     input_tokens, output_tokens = _usage(data.get("usage"))
-    return ClaudeResult(
+    return EditResult(
         ok=error is None,
         error=error,
         cost_usd=_cost(data),
@@ -659,10 +589,10 @@ def _denials(raw: object) -> tuple[PermissionDenial, ...]:
     )
 
 
-def _failure(kind: AIErrorKind, detail: str, returncode: int | None = None) -> ClaudeResult:
+def _failure(kind: AIErrorKind, detail: str, returncode: int | None = None) -> EditResult:
     if returncode is not None:
         detail = f"종료 코드 {returncode}: {detail}"
-    return ClaudeResult(
+    return EditResult(
         ok=False,
         error=kind,
         cost_usd=None,

@@ -7,6 +7,7 @@ import pytest
 
 from app.shared.ops_alert_pure import TEXT
 from app.worker import preflight
+from app.worker.ai.claude_backend import ClaudeCliBackend
 
 NOW: Final = datetime(2026, 11, 18, 12, 0, tzinfo=UTC)
 
@@ -15,10 +16,14 @@ def _status(**fields: object) -> str:
     return json.dumps({"loggedIn": True, "loginExpiresAt": "2026-12-07T23:00:25.456Z", **fields})
 
 
+def _claude(claude_status) -> ClaudeCliBackend:
+    return ClaudeCliBackend(auth_status=claude_status, clock=lambda: NOW)
+
+
 def _checks(command_ok=lambda args: True, claude_status=_status, gh_ok=lambda: True):
     return preflight.run_checks(
-        fakeredis.FakeStrictRedis(), command_ok=command_ok, claude_status=claude_status, now=NOW,
-        gh_ok=gh_ok,
+        fakeredis.FakeStrictRedis(), command_ok=command_ok, gh_ok=gh_ok,
+        backend=_claude(claude_status),
     )  # fmt: skip
 
 
@@ -42,9 +47,8 @@ def test_each_failed_check_shows_its_own_line(tmp_path, notifications) -> None:
     checks = preflight.run_checks(
         fakeredis.FakeStrictRedis(server=server),
         command_ok=lambda args: True,
-        claude_status=lambda: "",
-        now=NOW,
         gh_ok=lambda: False,
+        backend=_claude(lambda: ""),
     )
     preflight.alert(checks, tmp_path)
     assert notifications == [TEXT["gh_login"], TEXT["claude_login"], TEXT["redis"]]

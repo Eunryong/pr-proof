@@ -6,14 +6,13 @@
 """
 
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
 from app.worker import repo
-from app.worker.ai import claude_cli
-from app.worker.ai.claude_cli import StructuredResult
+from app.worker.ai.model_backend import AskModel
 from app.worker.budget import CallBudget
 from app.worker.call_budget_pure import CALL_BUDGET_USD, Denied, RulesetScope
 from app.worker.diff_pure import added_lines
@@ -40,9 +39,6 @@ from app.worker.rules import doc_sections_pure
 from app.worker.state import Store
 
 log = logging.getLogger(__name__)
-
-# (사용자 메시지, *, system_prompt, schema, model, max_budget_usd) → 결과. 테스트는 가짜를 넘긴다
-AskModel = Callable[..., StructuredResult]
 
 
 @dataclass(frozen=True)
@@ -118,7 +114,7 @@ def load_rules(
     model: str,
     store: Store,
     budget: CallBudget,
-    ask: AskModel = claude_cli.run_structured,
+    ask: AskModel,
     sections: FindsSections | None = None,
     changes_diff: bytes = b"",
 ) -> RulesResult:

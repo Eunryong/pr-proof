@@ -1,6 +1,6 @@
 """수정 판단 (docs/DESIGN.md 4.6, 결정 3): 표로 먼저 정하고, 남은 위반만 모델에 묻는다.
 
-모델은 도구 없이 부른다 (`run_structured`, 8.4). 답은 위반마다 `model_cache`에 저장해 같은 위반과
+모델은 도구 없이 부른다 (`ModelBackend.ask`, 8.4). 답은 위반마다 `model_cache`에 저장해 같은 위반과
 hunk에는 다시 묻지 않는다. 호출은 PR 상한(9.2)에서 센다. 모델 호출이 실패하거나 상한에 걸리면 남은
 위반을 `skip`으로 두고 저장하지 않으므로 다음 검사가 다시 묻는다.
 
@@ -12,6 +12,7 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, replace
 from typing import Final
 
+from app.worker.ai.model_backend import AskModel
 from app.worker.budget import CallBudget
 from app.worker.call_budget_pure import CALL_BUDGET_USD, Denied, PrScope
 from app.worker.diff_pure import hunk_around
@@ -48,7 +49,6 @@ from app.worker.rag_pure import (
     render_records,
     retrieval,
 )
-from app.worker.rules.rules import AskModel
 from app.worker.state import Store
 from app.worker.violation_pure import Violation
 

@@ -58,6 +58,7 @@ def flow_context(deps: Deps, run_id: int, comment_id: int | None) -> graph.FlowC
         run_id=run_id,
         comment_id=comment_id,
         max_memory_gb=deps.settings.sandbox.max_memory_gb,
+        backend=deps.backend,
         call_maxima=deps.settings.model.calls,
         rag_model=deps.settings.rag.embed_model,
         default_model=deps.settings.model.default,

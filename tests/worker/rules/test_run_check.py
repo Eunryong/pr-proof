@@ -7,6 +7,7 @@ from typing import Final
 import fakeredis
 import pytest
 
+from app.worker.ai.claude_backend import ClaudeCliBackend
 from app.worker.ai.claude_cli import AIErrorKind, StructuredResult
 from app.worker.budget import CallBudget
 from app.worker.doc_rules_pure import CallUsage, Found, RuleUnchecked
@@ -50,7 +51,8 @@ def _rt(
         return answers.pop(0)
 
     budget = CallBudget(store, "o/r", 1, "a" * 40, calls or CallSettings())
-    return Runtime(store=store, budget=budget, models=ModelSettings(), ask=ask, sandbox=None)
+    return Runtime(store=store, budget=budget, models=ModelSettings(),
+                   backend=ClaudeCliBackend(run_structured=ask), sandbox=None)  # fmt: skip
 
 
 def test_answer_is_stored_by_the_results_and_reused(store: Store) -> None:

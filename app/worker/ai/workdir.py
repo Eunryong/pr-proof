@@ -17,6 +17,10 @@
 
 위반 판단(4.5)도 같은 폴더와 훅에서 읽기 도구(Read, Grep, Glob)로 PR의 코드를 읽는다
 (`reading_folder`). 쓰기 도구가 없고, 폴더의 변경은 worktree에 적용하지 않는다.
+
+폴더 만들기·복사·변경 적용(`model_folder`, `ModelFolder`, `path_digest`)은 어느 모델 구현이든 같이
+쓰는 것이고, 경로 감시 훅(`hook_settings`, 훅 기록 수 확인)과 그것을 claude에 넘기는
+`reading_folder`, `run_in_model_folder`는 claude 구현(`claude_backend.ClaudeCliBackend`)의 것이다.
 """
 
 import hashlib
@@ -36,7 +40,7 @@ from typing import Final
 
 from app.worker import repo
 from app.worker.ai import claude_cli, tool_server
-from app.worker.ai.claude_cli import AIErrorKind, ClaudeResult, StructuredResult
+from app.worker.ai.model_backend import AIErrorKind, AskModel, EditResult, StructuredResult
 from app.worker.ai.tool_server import Handler
 from app.worker.sandbox.container import OUT_DIR
 
@@ -248,18 +252,14 @@ def model_folder(worktree: Path, paths: Sequence[str]) -> Iterator[ModelFolder]:
         yield ModelFolder(work, settings, hook_log, git_dir, tree)
 
 
-def _failed(result: ClaudeResult, kind: AIErrorKind, detail: str) -> ClaudeResult:
+def _failed(result: EditResult, kind: AIErrorKind, detail: str) -> EditResult:
     return replace(result, ok=False, error=kind, detail=detail)
 
 
-# (사용자 메시지, *, system_prompt, schema, model, max_budget_usd, ...) → 결과.
-# `claude_cli.run_structured`의 모양이다
-AsksModel = Callable[..., StructuredResult]
-
-
 @contextmanager
-def reading_folder(worktree: Path, ask: AsksModel) -> Iterator[AsksModel]:
+def reading_folder(worktree: Path, ask: AskModel) -> Iterator[AskModel]:
     """worktree의 일반 파일만 복사한 모델 폴더를 열고, 그 폴더에서 읽기 도구로 묻는 함수를 준다.
+    ask는 `claude_cli.run_structured`의 모양이다(`read_in`을 받는다). claude 구현의 `reading`이다.
 
     폴더 하나를 블록 안의 호출들이 같이 쓰고 블록이 끝나면 지운다. 모델에게는 쓰기 도구가 없고,
     폴더에서 무엇이 바뀌어도 worktree에 적용하지 않는다. 호출마다 경로 감시 훅의 기록이 모델이 부른
@@ -293,11 +293,12 @@ def run_in_model_folder(
     worktree: Path,
     prompt: str,
     *,
-    run: Callable[..., ClaudeResult] | None = None,
+    run: Callable[..., EditResult] | None = None,
     tools: Mapping[str, Handler] | None = None,
     **kwargs: object,
-) -> ClaudeResult:
+) -> EditResult:
     """모델 전용 폴더에서 claude를 한 번 실행하고, 바뀐 것을 worktree에 diff로 적용한다.
+    claude 구현의 `fix`다.
 
     tools(이름 → 파이프라인 도구)가 있으면 도구 서버를 열어 `fix_tools` 모양으로 부른다. 도구는
     돌기 직전에 폴더의 지금 상태를 worktree에 맞춘다. 도구 호출 수와 시간은 결과의 `tool_usage`다.
