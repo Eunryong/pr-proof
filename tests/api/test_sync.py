@@ -141,6 +141,24 @@ def test_github_failure_skips_repo_without_raising(env, auth: bool, environment)
     assert result.environment == environment
 
 
+def test_token_mode_failure_is_gh_token(env, tmp_path, monkeypatch) -> None:
+    """토큰 방식(설정 폴더에 github_token)이면 알림은 토큰을 바꾸라는 글(gh_token)이다."""
+    from app.shared import config, github_auth
+
+    token = tmp_path / github_auth.TOKEN_FILE
+    token.write_text("github_pat_FAKE")
+    token.chmod(0o600)
+    monkeypatch.setenv(config.CONFIG_DIR_ENV, str(tmp_path))
+
+    def broken(repo: str):
+        raise GitHubReadError("Bad credentials")
+
+    result = sync.run_once(
+        env["settings"], env["redis"], env["history"], list_prs=broken, auth_ok=lambda: False
+    )
+    assert result.environment == {"gh_token"}
+
+
 def test_successful_listing_does_not_check_gh_login(env) -> None:
     def never() -> bool:
         raise AssertionError("조회가 됐는데 로그인을 확인함")

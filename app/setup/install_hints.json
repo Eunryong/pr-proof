@@ -1,0 +1,32 @@
+{
+  "python3": {
+    "label": "python 3.11 이상",
+    "darwin": "brew install python@3.12  (Homebrew가 없으면 https://www.python.org/downloads/)",
+    "linux": "sudo apt install python3 python3-venv  (apt가 아니면 배포판의 패키지 관리자로 python 3.11 이상)",
+    "other": "https://www.python.org/downloads/ 에서 3.11 이상"
+  },
+  "docker": {
+    "label": "docker",
+    "darwin": "Docker Desktop 설치: https://docs.docker.com/desktop/setup/install/mac-install/",
+    "linux": "Docker Engine 설치: https://docs.docker.com/engine/install/",
+    "other": "https://docs.docker.com/get-docker/"
+  },
+  "git": {
+    "label": "git",
+    "darwin": "xcode-select --install  (또는 brew install git)",
+    "linux": "sudo apt install git",
+    "other": "https://git-scm.com/downloads"
+  },
+  "gh": {
+    "label": "gh (GitHub CLI)",
+    "darwin": "brew install gh",
+    "linux": "https://github.com/cli/cli/blob/trunk/docs/install_linux.md",
+    "other": "https://cli.github.com/"
+  },
+  "claude": {
+    "label": "claude (Claude Code CLI)",
+    "darwin": "npm install -g @anthropic-ai/claude-code  → 설치한 뒤 claude를 실행해 /login 까지 해야 한다",
+    "linux": "npm install -g @anthropic-ai/claude-code  → 설치한 뒤 claude를 실행해 /login 까지 해야 한다",
+    "other": "npm install -g @anthropic-ai/claude-code  → 설치한 뒤 claude를 실행해 /login 까지 해야 한다"
+  }
+}

@@ -1,6 +1,7 @@
 """계층 규칙 (docs/CLAUDE.md "코드 구조", docs/DESIGN.md 12.5). import 문만 읽어 검사한다.
 
-- 패키지는 app 하나이고 그 아래가 api(웹), worker(워커), shared(웹과 워커가 같이 쓰는 것) 셋이다
+- 패키지는 app 하나이고 그 아래가 api(웹), worker(워커), shared(웹과 워커가 같이 쓰는 것) 셋과
+  setup(사람이 치는 설치·실행 명령. 서버는 import하지 않는다)이다
 - app.api는 app.worker를, app.worker는 app.api를 import하지 않는다 (api 프로세스는 PR 코드를
   실행하지 않는다)
 - app.shared는 app.api도 app.worker도 import하지 않는다
@@ -22,7 +23,7 @@ import app
 
 ROOT: Final = Path(__file__).resolve().parent.parent
 TOP: Final = "app"
-PACKAGES: Final = ("app.api", "app.worker", "app.shared")
+PACKAGES: Final = ("app.api", "app.worker", "app.shared", "app.setup")
 SANDBOX: Final = "app.worker.sandbox"
 PURE_SUFFIX: Final = "_pure"
 
@@ -31,6 +32,9 @@ ALLOWED: Final[Mapping[str, frozenset[str]]] = {
     "app.api": frozenset({"app.api", "app.shared"}),
     "app.worker": frozenset({"app.worker", "app.shared"}),
     "app.shared": frozenset({"app.shared"}),
+    # 사람이 치는 설치·실행 명령. 서버의 시작 확인(app.worker.preflight)을 그대로 다시 쓴다.
+    # api·worker·shared는 app.setup을 import하지 않는다 (위의 줄들이 막는다)
+    "app.setup": frozenset({"app.setup", "app.shared", "app.worker"}),
 }
 # 순수 모듈이 import하지 않는 표준·외부 라이브러리 (외부 호출, 프로세스, 파일 시스템, 로그, 시계,
 # 난수, 동적 import)

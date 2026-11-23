@@ -1,4 +1,5 @@
-"""워커 시작 전 점검: gh·claude 로그인, Docker, Redis (docs/DESIGN.md 보안·인증 > Preflight)."""
+"""워커 시작 전 점검: GitHub 인증(gh 로그인 또는 토큰), claude 로그인, Docker, Redis
+(docs/DESIGN.md 보안·인증 > Preflight). `npx pr-proof configure`의 끝 확인도 같은 함수를 쓴다."""
 
 import json
 import subprocess
@@ -10,8 +11,10 @@ from pathlib import Path
 from redis import Redis
 from redis.exceptions import RedisError
 
+from app.shared import github_auth
 from app.shared import notify as macos
 from app.shared.ops_alert_pure import Kind
+from app.worker import github
 from app.worker.ai.claude_cli import claude_env
 from app.worker.sandbox.docker_cli import minimal_env
 
@@ -83,15 +86,28 @@ def claude_login_ok(status_json: str, now: datetime) -> bool:
     return expires_at > now
 
 
+def _gh_auth_ok() -> bool:
+    """고른 인증(gh 로그인 또는 토큰)으로 `gh auth status`가 통과하는지. 토큰은 gh에만 넘긴다."""
+    try:
+        github.run_gh(github_auth.status_args())
+    except github.GitHubError:
+        return False
+    return True
+
+
 def run_checks(
     redis: Redis,
     command_ok: Callable[[list[str]], bool] = _command_ok,
     claude_status: Callable[[], str] = _claude_auth_status,
     now: datetime | None = None,
+    gh_ok: Callable[[], bool] = _gh_auth_ok,
+    config_dir: Path | None = None,
 ) -> list[Check]:
     claude_ok = claude_login_ok(claude_status(), now or datetime.now(UTC))
     return [
-        Check("GitHub 로그인", command_ok(["gh", "auth", "status"]), "gh auth login", "gh_login"),
+        Check(
+            "GitHub 인증", gh_ok(), github_auth.hint(config_dir), github_auth.alert_kind(config_dir)
+        ),
         Check("Claude 로그인", claude_ok, "claude 실행 후 /login", "claude_login"),
         Check("Docker", command_ok(["docker", "info"]), "Docker Desktop 실행", "docker"),
         Check("Redis", _redis_ok(redis), "docker compose up -d", "redis"),

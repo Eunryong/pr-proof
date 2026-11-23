@@ -1,4 +1,4 @@
-"""진입점: FastAPI 앱. `uvicorn app.api.main:app --port 8000`.
+"""진입점: FastAPI 앱. `uvicorn app.api.main:app --port 8765`.
 
 웹훅을 받고, 같은 프로세스에서 동기화 루프를 주기적으로 돌린다 (docs/DESIGN.md F2).
 """

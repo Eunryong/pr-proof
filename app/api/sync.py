@@ -17,8 +17,8 @@ from app.api import github, queue
 from app.api.history import History
 from app.api.sync_rules_pure import EnqueueReason, enqueue_reason
 from app.api.webhook import PIPELINE_BRANCH_PREFIX
+from app.shared import github_auth, version
 from app.shared import notify as macos
-from app.shared import version
 from app.shared.comment_pure import command_in_comment
 from app.shared.config import PipelineConfig
 from app.shared.feedback_pure import feedback_in_comment
@@ -33,6 +33,7 @@ class SyncResult:
     enqueued: list[tuple[str, int, EnqueueReason | str]] = field(default_factory=list)
     failed_repos: list[str] = field(default_factory=list)
     # 사람이 해야 풀리는 환경 오류로 보이는 것. 조회가 실패했고 `gh auth status`도 실패하면 gh_login
+    # (토큰 방식이면 gh_token)
     environment: frozenset[Kind] = frozenset()
 
 
@@ -46,6 +47,7 @@ def run_once(
     list_comments: Callable[[str, int, str], list[github.PRComment]] = github.list_comments_since,
     list_feedback: Callable[[str, int], list[github.FeedbackItem]] = github.list_feedback,
     auth_ok: Callable[[], bool] = github.auth_ok,
+    auth_kind: Callable[[], Kind] = github_auth.alert_kind,
     now: datetime | None = None,
     pipeline_commit: str | None = None,
 ) -> SyncResult:
@@ -109,7 +111,7 @@ def run_once(
             if queue.enqueue(redis, job) == "queued":
                 result.enqueued.append((repo, pr.number, reason))
     if result.failed_repos and not auth_ok():
-        result.environment = frozenset({"gh_login"})
+        result.environment = frozenset({auth_kind()})
     return result
 
 

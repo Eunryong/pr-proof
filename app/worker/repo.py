@@ -1,7 +1,9 @@
 """PR 코드 준비: bare clone 캐시, worktree, changes.diff (docs/DESIGN.md F4).
 
 git은 호스트에서만 실행한다. worktree의 `.git`은 bare 저장소를 가리키므로 컨테이너 안에서는
-동작하지 않는다. 인증은 gh 로그인을 명령 단위로 빌려 쓰고, 전역 git 설정은 바꾸지 않는다.
+동작하지 않는다. 인증은 gh를 명령 단위의 자격 증명 도우미로 빌려 쓰고(gh 로그인 또는 토큰 파일,
+`app/shared/github_auth.py`), 전역 git 설정은 바꾸지 않는다. 토큰은 GitHub과 주고받는 명령에만
+넘긴다.
 
 worktree 안의 `.git` 파일은 믿지 않는다. 샌드박스의 PR 코드(그리고 3단계의 AI)가 worktree에 쓸 수
 있어서, `.git`을 자기가 만든 저장소로 바꾸면 그 저장소 설정(`core.fsmonitor`, 필터 등)으로 호스트
@@ -21,6 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
+from app.shared import config, github_auth
 from app.worker.rule_reading_pure import TreeEntry
 from app.worker.rules.pr_check_pure import RawCommit
 from app.worker.sandbox.container import OUT_DIR
@@ -50,8 +53,17 @@ class Checkout:
     merge_base: str
 
 
-def _git(*args: str, cwd: Path | None = None) -> str:
-    env = {k: os.environ[k] for k in _ENV_PASSTHROUGH if k in os.environ}
+def _git(*args: str, cwd: Path | None = None, network: bool = False) -> str:
+    """network는 GitHub과 주고받는 명령(clone, fetch, push)이다. 토큰 방식이면 그 명령에만 토큰을
+    넘긴다. 자격 증명 도우미(`gh auth git-credential`)가 git의 환경을 물려받아 읽는다."""
+    try:
+        env = (
+            github_auth.gh_env(_ENV_PASSTHROUGH)
+            if network
+            else {k: os.environ[k] for k in _ENV_PASSTHROUGH if k in os.environ}
+        )
+    except config.ConfigError as e:
+        raise GitError(f"GitHub 토큰을 읽지 못함: {e}") from e
     env["GIT_TERMINAL_PROMPT"] = "0"
     try:
         proc = subprocess.run(
@@ -66,7 +78,8 @@ def _git(*args: str, cwd: Path | None = None) -> str:
     except (OSError, subprocess.TimeoutExpired) as e:
         raise GitError(f"git {args[0]} 실행 실패: {e}") from e
     if proc.returncode != 0:
-        raise GitError(f"git {args[0]} 실패 ({proc.returncode}): {proc.stderr.strip()[-1000:]}")
+        detail = github_auth.redact(proc.stderr.strip(), env)[-1000:]
+        raise GitError(f"git {args[0]} 실패 ({proc.returncode}): {detail}")
     return proc.stdout
 
 
@@ -85,13 +98,15 @@ def _forget_git_dir(worktree: Path) -> None:
     _git_dir_record(worktree).unlink(missing_ok=True)
 
 
-def _tree_git(worktree: Path, *args: str) -> str:
+def _tree_git(worktree: Path, *args: str, network: bool = False) -> str:
     """worktree에서 git을 실행한다. worktree 안의 `.git` 대신 만들 때 적어 둔 저장소를 쓴다."""
     try:
         git_dir = _git_dir_record(worktree).read_text().strip()
     except OSError as e:
         raise GitError(f"worktree의 저장소 기록이 없음: {worktree}") from e
-    return _git(f"--git-dir={git_dir}", f"--work-tree={worktree}", *args, cwd=worktree)
+    return _git(
+        f"--git-dir={git_dir}", f"--work-tree={worktree}", *args, cwd=worktree, network=network
+    )
 
 
 def worktree_file(worktree: Path, rel: str) -> Path | None:
@@ -126,7 +141,7 @@ def ensure_bare(data_dir: Path, repo: str, url: str | None = None) -> Path:
     path = bare_path(data_dir, repo)
     if not (path / "HEAD").is_file():
         path.parent.mkdir(parents=True, exist_ok=True)
-        _git("clone", "--bare", "--quiet", url or remote_url(repo), str(path))
+        _git("clone", "--bare", "--quiet", url or remote_url(repo), str(path), network=True)
     return path
 
 
@@ -137,6 +152,7 @@ def fetch_pr(bare: Path, pr_number: int, base_sha: str) -> None:
         f"+refs/pull/{pr_number}/head:refs/pipeline/pr/{pr_number}",
         base_sha,
         cwd=bare,
+        network=True,
     )  # fmt: skip
 
 
@@ -149,7 +165,7 @@ def fetch_commit(bare: Path, sha: str) -> None:
         return
     except GitError:
         pass
-    _git("fetch", "--quiet", "--no-tags", "origin", sha, cwd=bare)
+    _git("fetch", "--quiet", "--no-tags", "origin", sha, cwd=bare, network=True)
 
 
 def bare_entries(bare: Path, sha: str, paths: Sequence[str]) -> dict[str, TreeEntry]:
@@ -511,7 +527,7 @@ def commit_and_push(
               "commit", "-q", "-m", message)  # fmt: skip
     sha = _tree_git(worktree, "rev-parse", "HEAD").strip()
     _tree_git(worktree, *_COMMIT_SAFETY, "push", "--quiet", "--force", "origin",
-              f"HEAD:refs/heads/{branch}")  # fmt: skip
+              f"HEAD:refs/heads/{branch}", network=True)  # fmt: skip
     return sha
 
 

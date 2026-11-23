@@ -1,12 +1,12 @@
 """GitHub 조회 (gh CLI). 웹 쪽 동기화가 쓴다. 쓰기는 워커가 한다 (app/worker/github.py)."""
 
 import json
-import os
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Final
 
+from app.shared import config, github_auth
 from app.shared.feedback_pure import FeedbackKind
 
 GH_TIMEOUT: Final = 60
@@ -33,7 +33,11 @@ class OpenPR:
 
 
 def run_gh(args: list[str]) -> str:
-    env = {k: os.environ[k] for k in _ENV_PASSTHROUGH if k in os.environ}
+    """gh를 최소 환경으로 부른다. 토큰 방식이면 토큰을 이 프로세스에만 넘긴다(`github_auth`)."""
+    try:
+        env = github_auth.gh_env(_ENV_PASSTHROUGH)
+    except config.ConfigError as e:
+        raise GitHubReadError(f"GitHub 토큰을 읽지 못함: {e}") from e
     try:
         proc = subprocess.run(
             ["gh", *args], capture_output=True, text=True, env=env, timeout=GH_TIMEOUT, check=False
@@ -41,14 +45,16 @@ def run_gh(args: list[str]) -> str:
     except (OSError, subprocess.TimeoutExpired) as e:
         raise GitHubReadError(f"gh 실행 실패: {e}") from e
     if proc.returncode != 0:
-        raise GitHubReadError(f"gh {' '.join(args[:2])} 실패: {proc.stderr.strip()[-500:]}")
+        detail = github_auth.redact(proc.stderr.strip(), env)[-500:]
+        raise GitHubReadError(f"gh {' '.join(args[:2])} 실패: {detail}")
     return proc.stdout
 
 
 def auth_ok(runner: GhRunner = run_gh) -> bool:
-    """`gh auth status`가 통과하는지. 네트워크가 끊겨도 실패한다(gh가 둘을 가르지 못한다)."""
+    """`gh auth status`가 통과하는지. 네트워크가 끊겨도 실패한다(gh가 둘을 가르지 못한다).
+    토큰 방식이면 토큰 계정만 본다(`github_auth.status_args`)."""
     try:
-        runner(["auth", "status"])
+        runner(github_auth.status_args())
     except GitHubReadError:
         return False
     return True
