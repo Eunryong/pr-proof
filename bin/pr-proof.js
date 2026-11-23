@@ -11,18 +11,19 @@ const os = require("node:os");
 const path = require("node:path");
 
 const ROOT = path.resolve(__dirname, "..");
-const COMMANDS = ["configure", "start", "add", "rm", "list"];
+const COMMANDS = ["configure", "start", "add", "rm", "list", "model"];
 const PYTHONS = ["python3.14", "python3.13", "python3.12", "python3.11", "python3"];
 const OTHER_PROGRAMS = ["docker", "git", "gh", "claude"];
 const STAMP = ".pr-proof-install";
 
 const USAGE = `사용법: npx pr-proof <명령> [인자]
 
-  configure          처음 설정. 묻는 말에 답한다 (질문 없이: --repo, --auth, --webhook-url, --port)
+  configure          처음 설정. 묻는 말에 답한다 (질문 없이: --repo, --auth, --webhook-url, --port, --model)
   start              서버 실행 (api, worker, smee에서 받아 오기)
   add <repo>...      처리할 repo를 더한다 (예: octocat/hello-world)
   rm <repo>...       처리할 repo를 뺀다
   list               처리하는 repo 목록 (--check: 웹훅까지 확인)
+  model [이름]       모든 단계에 쓸 모델. 이름 없이: 지금 설정 보기, default: 기본값으로
 
 명령마다 --help로 자세한 인자를 본다.`;
 

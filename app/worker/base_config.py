@@ -19,6 +19,7 @@ from app.worker.repo_config_pure import (
     memory_limit,
     parse_repo_config,
     settings_notes,
+    with_default_model,
 )
 from app.worker.rule_reading_pure import REGULAR_FILE_MODES
 from app.worker.sandbox import toolcache
@@ -90,11 +91,18 @@ def load_access(
 
 
 def load_repo(
-    data_dir: Path, repo_name: str, base_sha: str, *, url: str | None = None
+    data_dir: Path,
+    repo_name: str,
+    base_sha: str,
+    *,
+    url: str | None = None,
+    default_model: str | None = None,
 ) -> RepoConfig:
     """코멘트 판단(4.11)이 체크아웃 전에 읽는 `.pipeline.yaml`. `load_access`와 같이 bare 캐시에서
-    읽고, 읽지 못하면 기본값이다. `fix`에는 파이프라인 쪽 최댓값을 적용한다."""
+    읽고, 읽지 못하면 기본값이다. `fix`에는 파이프라인 쪽 최댓값을, 저장소가 적지 않은 단계의
+    모델에는 파이프라인 쪽 `model.default`(default_model)를 적용한다."""
     config, _ = parse_repo_config(_bare_settings(data_dir, repo_name, base_sha, url))
+    config = with_default_model(config, default_model)
     return config.model_copy(update={"fix": fix_limits(config.fix)})
 
 
@@ -117,10 +125,14 @@ def _bare_settings(data_dir: Path, repo_name: str, base_sha: str, url: str | Non
         return None
 
 
-def load(worktree: Path, base_sha: str, max_memory_gb: float) -> BaseConfig:
+def load(
+    worktree: Path, base_sha: str, max_memory_gb: float, *, default_model: str | None = None
+) -> BaseConfig:
+    """default_model은 파이프라인 쪽 `model.default`다. 저장소가 적지 않은 단계에만 쓴다."""
     files, blobs, problems = _read_settings(worktree, base_sha)
 
     repo_config, problem = parse_repo_config(files.get(PIPELINE_YAML))
+    repo_config = with_default_model(repo_config, default_model)
     if problem:
         problems.append(f"`{PIPELINE_YAML}`을 읽지 못해 기본값을 씀: {problem}")
     problems += settings_notes(files.get(PIPELINE_YAML))

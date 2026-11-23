@@ -80,6 +80,15 @@ def test_call_maxima_default_and_override(tmp_path: Path) -> None:
     assert (calls.max_pr_max, calls.max_ruleset_max) == (7, 300)
 
 
+def test_default_model_is_optional_and_checked(tmp_path: Path) -> None:
+    (tmp_path / "config.yaml").write_text("repos: [o/r]\nmodel:\n  calls:\n    max_pr_max: 7\n")
+    assert config.load_config(tmp_path).model.default is None
+    (tmp_path / "config.yaml").write_text("repos: [o/r]\nmodel:\n  default: opus\n")
+    assert config.load_config(tmp_path).model.default == "opus"
+    with pytest.raises(ValueError):
+        config.PipelineConfig(repos=[], model={"default": "-x"})
+
+
 def test_rag_embed_model_must_be_a_pinned_model() -> None:
     from pydantic import ValidationError
 

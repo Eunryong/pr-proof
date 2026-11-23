@@ -5,13 +5,16 @@ from app.worker.repo_config_pure import (
     MAX_RETRIES_CAP,
     MIN_MEMORY_GB,
     REQUIRE_COVERED_NOTE,
+    STAGE_MODELS,
     CallSettings,
     FixSettings,
+    RepoConfig,
     call_limits,
     fix_limits,
     memory_limit,
     parse_repo_config,
     settings_notes,
+    with_default_model,
 )
 
 
@@ -121,6 +124,49 @@ def test_decision_model_is_its_own_setting() -> None:
     assert problem is None and (config.model.decide, config.model.checker) == ("opus", "sonnet")
     _, problem = parse_repo_config("model: {decide: '-x'}\n")
     assert problem is not None
+
+
+def _stage_models(config: RepoConfig) -> dict[str, str]:
+    return {stage: getattr(config.model, stage) for stage in STAGE_MODELS}
+
+
+def test_pipeline_default_model_fills_only_stages_the_repo_did_not_write() -> None:
+    """앞서는 순서: 저장소가 단계별로 적은 값 → 파이프라인 쪽 `model.default` → 코드의 기본값."""
+    config, _ = parse_repo_config("model:\n  judge: haiku\n  calls: {pr_max: 3}\n")
+    filled = with_default_model(config, "opus")
+    assert _stage_models(filled) == {
+        "rules": "opus", "checker": "opus", "judge": "haiku", "decide": "opus",
+        "light": "opus", "heavy": "opus",
+    }  # fmt: skip
+    assert filled.model.calls.pr_max == 3  # 다른 설정은 그대로
+    assert with_default_model(filled, "opus") == filled  # 두 번 불러도 같다
+
+
+def test_repo_that_writes_the_default_value_still_wins_over_the_pipeline() -> None:
+    """저장소가 기본값과 같은 값을 적어도 적은 것이다 (`model_fields_set`으로 가린다)."""
+    config, _ = parse_repo_config("model: {light: haiku}\n")
+    assert with_default_model(config, "opus").model.light == "haiku"
+
+
+@pytest.mark.parametrize("text", [None, "", "sandbox: {memory_gb: 2}\n", "model: {calls: {}}\n"])
+def test_pipeline_default_model_applies_to_every_stage_when_the_repo_writes_none(text) -> None:
+    config, _ = parse_repo_config(text)
+    assert set(_stage_models(with_default_model(config, "opus")).values()) == {"opus"}
+
+
+def test_without_a_pipeline_default_the_code_defaults_are_unchanged() -> None:
+    config, _ = parse_repo_config("model: {judge: opus}\n")
+    assert with_default_model(config, None) is config
+    assert _stage_models(with_default_model(RepoConfig(), None)) == {
+        "rules": "sonnet", "checker": "sonnet", "judge": "sonnet", "decide": "sonnet",
+        "light": "haiku", "heavy": "sonnet",
+    }  # fmt: skip
+
+
+def test_unreadable_repo_config_takes_the_pipeline_default_everywhere() -> None:
+    config, problem = parse_repo_config("model: {judge: '-x'}\n")
+    assert problem is not None
+    assert set(_stage_models(with_default_model(config, "opus")).values()) == {"opus"}
 
 
 def test_stage3_values_are_read() -> None:

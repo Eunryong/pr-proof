@@ -202,18 +202,19 @@ access:
 
 ### configure
 
-묻는 것은 넷이다.
+묻는 것은 다섯이다.
 
 1. 처리할 repo. 예: `octocat/hello-world`. GitHub 주소를 붙여 넣어도 된다. 여럿이면 띄어 쓴다. 대소문자는 GitHub에 적힌 대로 맞춰 넣는다
 2. GitHub 인증 방식: gh 로그인(`gh auth login`을 해 둔 계정) 또는 토큰
 3. 토큰. 토큰 방식일 때만 묻고, 화면에 보이지 않게 입력한다
-4. 웹훅 받는 주소. 없으면 Enter
+4. 쓸 모델. Enter면 그대로 둔다 (아래 [model](#model))
+5. 웹훅 받는 주소. 없으면 Enter
 
 나머지는 묻지 않고 한다: Python 실행 환경 설치, 포트(기본 8765. 쓰이고 있을 때만 다른 번호를 묻는다), Redis, 웹훅 비밀값, repo의 읽기·쓰기 권한 확인, 웹훅 등록, Claude 로그인 확인, 끝 확인 표(서버가 시작할 때 하는 확인과 같다: GitHub 인증, Claude 로그인, Docker, Redis).
 
 - 여러 번 돌려도 같다. 있는 설정과 비밀값은 덮어쓰지 않는다.
 - Claude 로그인이 안 되어 있으면 무엇을 치면 되는지 보이고, 로그인한 뒤 Enter를 누르면 그 자리에서 다시 확인한다.
-- 질문 없이 돌리기: `npx pr-proof configure --repo octocat/hello-world --auth gh`. 그 밖의 인자는 `--webhook-url`, `--port`, `--dry-run`(파일과 GitHub에 쓰지 않고 할 일만 보인다), `--manual-webhook`(웹훅을 손으로 등록할 값만 보인다)이다. 명령마다 `--help`로 본다.
+- 질문 없이 돌리기: `npx pr-proof configure --repo octocat/hello-world --auth gh`. 그 밖의 인자는 `--webhook-url`, `--port`, `--model`, `--dry-run`(파일과 GitHub에 쓰지 않고 할 일만 보인다), `--manual-webhook`(웹훅을 손으로 등록할 값만 보인다)이다. 명령마다 `--help`로 본다.
 
 ### 웹훅 받는 주소
 
@@ -245,6 +246,23 @@ gh 로그인 대신 토큰을 쓸 수 있다. 토큰은 설정 폴더의 `github
 | `npx pr-proof list` | 처리하는 repo 목록. `--check`를 주면 웹훅까지 확인한다 |
 
 `rm`은 그 repo의 PR 코멘트, 열린 수정안 PR, 데이터 폴더의 기록(DB, 캐시)은 그대로 둔다. 도는 서버는 목록을 시작할 때만 읽으므로 `add`와 `rm` 뒤에는 서버를 다시 띄운다.
+
+### model
+
+모든 단계(규칙 읽기, 검사기 작성, 위반 판단, 수정 판단, 수정 작성)에 쓸 모델을 정한다. 이 컴퓨터가 처리하는 모든 repo에 쓰인다.
+
+| 명령 | 하는 일 |
+| --- | --- |
+| `npx pr-proof model` | 지금 설정과 단계별로 쓰일 모델을 보인다 |
+| `npx pr-proof model opus` | 모든 단계를 그 모델로 |
+| `npx pr-proof model default` | 지워서 기본값(판단 sonnet, 수정 haiku→sonnet)으로 되돌린다 |
+
+- 값은 `config.yaml`의 `model.default`에 적는다. 다른 설정과 주석은 그대로 둔다. configure도 Claude 로그인 확인 다음에 한 번 묻는다(질문 없이 돌릴 때는 `--model <이름>`).
+- 대상 repo의 `.pipeline.yaml`에 단계별로 적은 모델(`model.rules` 등)이 이 값보다 앞선다.
+- 이름은 `claude --model`이 받는 이름이고 꼴만 확인한다(확인하려면 모델을 불러야 해 사용량이 든다). 없는 모델이면 첫 검사의 모델 호출이 실패하고 결과 코멘트에 그 단계가 실패했다고 나온다.
+- 하나로 정하면 수정 작성도 그 모델 하나라, 가벼운 모델로 시작해 무거운 모델로 올리는 단계가 없다.
+- 저장한 판단은 저장 키에 모델이 들어 있어, 모델을 바꾸면 다음 검사에서 다시 묻는다(그만큼 사용량이 든다).
+- 서버는 `config.yaml`을 시작할 때만 읽으므로 바꾼 뒤에는 서버를 다시 띄운다.
 
 ### 설정이 놓이는 곳
 

@@ -110,6 +110,106 @@ def test_remove_of_missing_repo_changes_nothing() -> None:
     assert pure.remove_repos(KEEP, ["x/y"]) == (KEEP, [])
 
 
+# --- config.yaml의 model.default ---
+
+WITH_CALLS: Final = """\
+# 운영 설정
+repos: [one/a]
+model:  # 호출 상한
+  calls:
+    max_pr_max: 7  # 낮춤
+sync:
+  interval_minutes: 10
+"""
+
+
+def _loaded(text: str, tmp_path: Path) -> config.PipelineConfig:
+    (tmp_path / "config.yaml").write_text(text)
+    return config.load_config(tmp_path)
+
+
+def test_default_model_goes_into_a_file_without_a_model_section(tmp_path: Path) -> None:
+    text = pure.set_default_model(KEEP, "opus")
+    assert text == KEEP + "model:\n  default: opus\n"
+    assert _loaded(text, tmp_path).model.default == "opus"
+    assert pure.set_default_model(text, None) == KEEP  # 지우면 원래 글로 돌아간다
+
+
+def test_default_model_joins_calls_under_model_and_keeps_comments(tmp_path: Path) -> None:
+    text = pure.set_default_model(WITH_CALLS, "opus")
+    assert text == WITH_CALLS.replace("# 호출 상한\n", "# 호출 상한\n  default: opus\n")
+    loaded = _loaded(text, tmp_path)
+    assert (loaded.model.default, loaded.model.calls.max_pr_max) == ("opus", 7)
+    assert loaded.sync.interval_minutes == 10
+    assert pure.set_default_model(text, None) == WITH_CALLS
+
+
+def test_existing_default_model_is_replaced_in_place_with_its_comment() -> None:
+    text = "repos: []\nmodel:\n    default: haiku  # 싸게\n    calls: {max_pr_max: 7}\n"
+    assert pure.set_default_model(text, "opus") == text.replace("haiku", "opus")
+    assert pure.config_default_model(text) == "haiku"
+    assert pure.set_default_model(text, "haiku") == text  # 바뀔 것이 없으면 그대로
+
+
+def test_removing_the_only_key_removes_model_so_the_server_still_starts(tmp_path: Path) -> None:
+    """`model:`만 남으면 null이라 PipelineConfig가 받지 않는다. 머리 줄의 주석은 남긴다."""
+    text = "repos: []\nmodel:  # 모델\n  default: opus\nsync:\n  interval_minutes: 5\n"
+    removed = pure.set_default_model(text, None)
+    assert removed == "repos: []\n# 모델\nsync:\n  interval_minutes: 5\n"
+    assert _loaded(removed, tmp_path).model.default is None
+
+
+def test_default_model_that_yaml_would_read_as_another_value_is_quoted(tmp_path: Path) -> None:
+    text = pure.set_default_model("repos: []\n", "123")
+    assert 'default: "123"' in text and _loaded(text, tmp_path).model.default == "123"
+    assert "default: sonnet[1m]" in pure.set_default_model("repos: []\n", "sonnet[1m]")
+
+
+def test_default_model_without_a_value_changes_nothing() -> None:
+    assert pure.set_default_model(KEEP, None) == KEEP
+    assert pure.config_default_model(KEEP) is None
+    assert pure.config_default_model("") is None
+
+
+def test_default_model_refuses_what_it_cannot_edit_line_by_line() -> None:
+    with pytest.raises(pure.ConfigEditError, match="손으로 고친다"):
+        pure.set_default_model("repos: []\nmodel: {calls: {max_pr_max: 7}}\n", "opus")
+    with pytest.raises(pure.ConfigEditError):
+        pure.set_default_model("repos: []\nmodel: opus\n", "haiku")  # 묶음이 아님
+    with pytest.raises(pure.ConfigEditError):
+        pure.config_default_model("repos: []\nmodel:\n  default: 3\n")  # 글자가 아님
+    with pytest.raises(pure.ConfigEditError):
+        pure.set_default_model("repos: []\n", "-x")
+
+
+@pytest.mark.parametrize("name", ["sonnet", "opus", "claude-sonnet-4-5", "sonnet[1m]"])
+def test_model_names_of_the_right_shape(name: str) -> None:
+    assert pure.model_name_problem(name) is None
+
+
+@pytest.mark.parametrize("name", ["-x", "", "opus 4", "a/b", "--model"])
+def test_bad_model_name_is_explained_with_examples(name: str) -> None:
+    problem = pure.model_name_problem(name)
+    assert problem is not None and pure.MODEL_EXAMPLES in problem
+
+
+def test_model_view_without_a_pipeline_value_shows_the_code_defaults() -> None:
+    text = pure.model_view(None, "pr-proof")
+    assert "파이프라인 쪽 모델: 정하지 않음 (단계별 기본값: 판단 sonnet, 수정 haiku→sonnet)" in text
+    assert [line.split()[-1] for line in text.splitlines()[3:9]] == [
+        "sonnet", "sonnet", "sonnet", "sonnet", "haiku", "sonnet",
+    ]  # fmt: skip
+    assert ".pipeline.yaml에 단계별로 적은 모델(model.rules 등)은 이 값보다 앞섭니다" in text
+    assert "pr-proof model <이름>" in text and "pr-proof model default" in text
+
+
+def test_model_view_with_a_pipeline_value_uses_it_everywhere() -> None:
+    text = pure.model_view("opus", "npx .")
+    assert "파이프라인 쪽 모델: opus" in text
+    assert "opus (수정 작성과 같은 모델이라 올리지 않는다)" in text
+    assert "npx . model <이름>" in text
+
+
 # --- 웹훅 ---
 
 URL: Final = "https://smee.io/FAKE"

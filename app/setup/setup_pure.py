@@ -1,8 +1,9 @@
 """configure·add·rm·list의 판정과 글 (외부 호출 없음).
 
 - repo 이름 확인
-- config.yaml 고치기: `repos`에 더하고 빼되 다른 설정과 주석을 지킨다(글을 줄 단위로 고치고, 고친 뒤
-  YAML로 읽어 바뀐 것이 `repos`뿐인지 확인한다)
+- config.yaml 고치기: `repos`에 더하고 빼고, `model.default`를 적고 지우되 다른 설정과 주석을 지킨다
+  (글을 줄 단위로 고치고, 고친 뒤 YAML로 읽어 바뀐 것이 그 키뿐인지 확인한다)
+- 모델 이름 확인과 단계별로 쓰일 모델의 글
 - 웹훅: 만들지 고칠지, 이벤트, 손으로 등록할 값
 - 빠진 프로그램 안내, 끝 확인 표, 토큰 권한 안내
 """
@@ -15,7 +16,20 @@ from typing import Any, Final, Literal
 
 import yaml
 
+from app.shared.model_names_pure import MODEL_NAME_PATTERN
+from app.worker.repo_config_pure import STAGE_MODELS, ModelSettings, RepoConfig, with_default_model
+
 REPO_EXAMPLE: Final = "octocat/hello-world"
+MODEL_EXAMPLES: Final = "sonnet, opus, haiku, claude-sonnet-4-5"
+DEFAULT_MODEL_WORD: Final = "default"  # `model default`: 파이프라인 쪽 값을 지운다
+STAGE_LABELS: Final[Mapping[str, str]] = {
+    "rules": "규칙 읽기",
+    "checker": "검사기 작성",
+    "judge": "위반 판단, PR 설명·이슈 확인",
+    "decide": "수정 판단",
+    "light": "수정 작성",
+    "heavy": "수정 작성 (실패가 이어지면 올리는 모델)",
+}
 _REPO: Final = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/[A-Za-z0-9._-]{1,100}")
 
 # 서버가 처리하는 이벤트 (app/api/webhook.py의 parse_event). tests/setup이 둘이 같은지 본다
@@ -216,6 +230,161 @@ def remove_repos(text: str, repos: Sequence[str]) -> tuple[str, list[str]]:
     else:
         raise ConfigEditError(f"config.yaml의 repos 줄을 고칠 수 없음: {line!r}. 손으로 고친다")
     return _check(before, "".join(lines), left), gone
+
+
+# --- config.yaml의 model.default ---
+#
+# `repos`와 같이 글을 줄 단위로 고친다(YAML로 읽어 다시 쓰면 주석과 순서가 사라진다). `model`은
+# 중첩된 키라 다루는 꼴을 좁힌다: 맨 위의 `model:` 줄이 블록의 머리(`model:` 뒤에 값이 없음)일 때
+# 그 바로 아래 들여쓴 키 중 `default:` 한 줄만 바꾸고, 넣고, 지운다. `model: {calls: ...}` 같은 한
+# 줄 꼴은 고치지 않고 손으로 고치라고 한다(configure가 쓰지 않는 꼴이다). 고친 뒤 YAML로 읽어
+# `model.default` 밖이 그대로인지 확인한다.
+
+_MODEL_KEY: Final = re.compile(r"^model\s*:")
+_MODEL_HEAD: Final = re.compile(r"^model\s*:\s*(#.*)?$")
+_DEFAULT_LINE: Final = re.compile(r"^(\s+)default\s*:\s*(.*?)\s*(#.*)?$")
+
+
+def model_name_problem(name: str) -> str | None:
+    """claude --model에 넘길 이름의 꼴이 아니면 그 안내. 그 이름의 모델이 실제로 있는지는 모델을
+    불러야 알 수 있어 보지 않는다."""
+    if re.fullmatch(MODEL_NAME_PATTERN, name):
+        return None
+    return (
+        f"모델 이름의 꼴이 아닙니다: {name!r}. claude --model이 받는 이름을 적습니다 "
+        f"(예: {MODEL_EXAMPLES})"
+    )
+
+
+def _model_section(data: Mapping[str, Any]) -> dict[str, Any]:
+    model = data.get("model")
+    if model is None:
+        return {}
+    if not isinstance(model, dict):
+        raise ConfigEditError("config.yaml의 model이 키와 값의 묶음이 아님")
+    return model
+
+
+def config_default_model(text: str) -> str | None:
+    """config.yaml의 `model.default`. 없으면 None. 글자가 아니면 ConfigEditError."""
+    value = _model_section(_load(text)).get("default")
+    if value is not None and not isinstance(value, str):
+        raise ConfigEditError(f"config.yaml의 model.default가 글자가 아님: {value!r}")
+    return value
+
+
+def _children(lines: list[str], head: int) -> list[tuple[int, str]]:
+    """`model:` 아래 들여쓴 줄의 (줄 번호, 들여쓰기). 빈 줄과 주석은 건너뛰고, 들여쓰지 않은 줄에서
+    멈춘다."""
+    found = []
+    for i in range(head + 1, len(lines)):
+        line = lines[i]
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        if line[0] not in " \t":
+            break
+        found.append((i, line[: len(line) - len(line.lstrip())]))
+    return found
+
+
+def _yaml_scalar(name: str) -> str:
+    """YAML이 그대로 글자로 읽는 꼴. `123`, `true`처럼 다른 값으로 읽히면 따옴표로 감싼다(이름의
+    꼴에 따옴표와 역슬래시가 없어 그대로 감쌀 수 있다)."""
+    return name if yaml.safe_load(name) == name else f'"{name}"'
+
+
+def _without_default(data: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    rest = {k: v for k, v in data.items() if k != "model"}
+    model = {k: v for k, v in _model_section(data).items() if k != "default"}
+    return rest, model
+
+
+def set_default_model(text: str, name: str | None) -> str:
+    """`model.default`를 name으로 적는다. None이면 지운다. 바뀔 것이 없으면 글을 그대로 돌려준다.
+
+    지워서 `model:` 아래가 비면 `model:` 줄도 지운다(`model:`만 남으면 null이라 서버가 시작하지
+    못한다). 줄 단위로 고칠 수 없는 꼴이면 ConfigEditError.
+    """
+    if name is not None and (problem := model_name_problem(name)):
+        raise ConfigEditError(problem)
+    before = _load(text)
+    if _model_section(before).get("default") == name:
+        return text
+    lines = text.splitlines(keepends=True)
+    head = next((i for i, line in enumerate(lines) if _MODEL_KEY.match(line)), None)
+    if head is None:
+        body = text if not text or text.endswith("\n") else text + "\n"
+        out = body + f"model:\n  default: {_yaml_scalar(name)}\n"  # name이 None이면 위에서 끝났다
+        return _check_model(before, out, name)
+    head_line = lines[head].rstrip("\n")
+    if not (head_match := _MODEL_HEAD.match(head_line)):
+        raise ConfigEditError(
+            f"config.yaml의 model 줄을 고칠 수 없음: {head_line!r}. 손으로 고친다 "
+            "(model 아래를 한 줄에 적은 꼴은 고치지 않는다)"
+        )
+    children = _children(lines, head)
+    indent = children[0][1] if children else "  "
+    direct = [i for i, own in children if own == indent]
+    found = next((i for i in direct if _DEFAULT_LINE.match(lines[i].rstrip("\n"))), None)
+    if name is None:
+        assert found is not None  # 값이 있었으므로 그 줄이 있다. 없으면 아래 확인이 막는다
+        del lines[found]
+        if len(direct) == 1:
+            comment = head_match.group(1)
+            lines[head] = f"{comment}\n" if comment else ""
+    elif found is not None:
+        line_match = _DEFAULT_LINE.match(lines[found].rstrip("\n"))
+        assert line_match is not None
+        comment = line_match.group(3)
+        lines[found] = (
+            f"{line_match.group(1)}default: {_yaml_scalar(name)}"
+            + (f"  {comment}" if comment else "")
+            + "\n"
+        )
+    else:
+        if not lines[head].endswith("\n"):
+            lines[head] += "\n"
+        lines.insert(head + 1, f"{indent}default: {_yaml_scalar(name)}\n")
+    return _check_model(before, "".join(lines), name)
+
+
+def _check_model(before: dict[str, Any], text: str, name: str | None) -> str:
+    after = _load(text)
+    if (
+        _without_default(after) != _without_default(before)
+        or _model_section(after).get("default") != name
+    ):
+        raise ConfigEditError("config.yaml의 model.default를 고치지 못함. 손으로 고친다")
+    return text
+
+
+def default_models_label() -> str:
+    """파이프라인 쪽 값이 없을 때의 단계별 기본값을 짧게 (예: 판단 sonnet, 수정 haiku→sonnet)."""
+    models = ModelSettings()
+    return f"판단 {models.judge}, 수정 {models.light}→{models.heavy}"
+
+
+def model_view(default: str | None, prefix: str) -> str:
+    """`model`(보기)의 글: 파이프라인 쪽 값과 단계별로 실제 쓰일 모델. prefix는 안내에 쓸 명령
+    앞부분(`files.command_prefix`)이다."""
+    if default is None:
+        head = f"파이프라인 쪽 모델: 정하지 않음 (단계별 기본값: {default_models_label()})"
+    else:
+        head = f"파이프라인 쪽 모델: {default} (config.yaml의 model.default, 모든 단계)"
+    models = with_default_model(RepoConfig(), default).model
+    width = max(_cells(label) for label in STAGE_LABELS.values()) + 2
+    lines = [head, "", "단계별로 쓰일 모델:"]
+    for stage in STAGE_MODELS:
+        value = getattr(models, stage)
+        if stage == "heavy" and value == models.light:
+            value += " (수정 작성과 같은 모델이라 올리지 않는다)"
+        lines.append(f"  {_pad(STAGE_LABELS[stage], width)}{value}")
+    lines += [
+        "",
+        "저장소의 .pipeline.yaml에 단계별로 적은 모델(model.rules 등)은 이 값보다 앞섭니다.",
+        f"바꾸기: {prefix} model <이름>   기본값으로: {prefix} model {DEFAULT_MODEL_WORD}",
+    ]
+    return "\n".join(lines)
 
 
 # --- 웹훅 ---

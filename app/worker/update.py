@@ -60,6 +60,7 @@ def flow_context(deps: Deps, run_id: int, comment_id: int | None) -> graph.FlowC
         max_memory_gb=deps.settings.sandbox.max_memory_gb,
         call_maxima=deps.settings.model.calls,
         rag_model=deps.settings.rag.embed_model,
+        default_model=deps.settings.model.default,
         sandbox_names=docker_cli.Names(
             image=deps.settings.sandbox.image,
             container_prefix=deps.settings.sandbox.container_prefix,
