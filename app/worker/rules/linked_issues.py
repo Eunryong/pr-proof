@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Final
 
 from app.worker import repo
+from app.worker.ai.model_backend import ReadCode
 from app.worker.budget import CallBudget
 from app.worker.call_budget_pure import Denied, PrScope
 from app.worker.github import GitHub, GitHubError
@@ -51,7 +52,6 @@ from app.worker.rules.linked_issues_pure import (
     verify,
 )
 from app.worker.rules.pr_description_pure import DescriptionUsage, parse_diff, render_view
-from app.worker.rules.rules import AskModel
 from app.worker.state import Store
 
 log = logging.getLogger(__name__)
@@ -63,7 +63,7 @@ STAGE: Final = "linked_issues"
 class Tools:
     store: Store
     budget: CallBudget
-    ask: AskModel  # 구조화 출력 호출(`claude_cli.run_structured`)
+    read_code: ReadCode  # 코드를 읽을 수 있게 하고 묻는 폴더를 연다(`ModelBackend.reading`)
     model: str  # `model.judge` (PR 설명 확인과 같은 몫)
 
 
@@ -108,7 +108,7 @@ def check(
     head = tools.budget.head_sha
     pointer = earlier_key(pr_label(tools.budget.repo, tools.budget.pr_number), tools.model)
     with ExitStack() as stack:
-        code = CodeReader(worktree, tools.ask, stack)
+        code = CodeReader(worktree, tools.read_code, stack)
         entry = tools.store.cached_result(key)
         if entry is not None and code.unchanged(reads_from_json(entry.result_json)):
             try:

@@ -13,6 +13,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from app.worker import repo
+from app.worker.ai.model_backend import ModelBackend
 from app.worker.budget import CallBudget
 from app.worker.call_budget_pure import RulesetScope, limits_for
 from app.worker.checker_authoring_pure import (
@@ -62,7 +63,7 @@ class Runtime:
     store: Store
     budget: CallBudget
     models: ModelSettings
-    ask: rules.AskModel
+    backend: ModelBackend  # 모델 구현 (`app/worker/ai/model_backend.py`)
     sandbox: checkers.FormatsFiles
     ruff: RuffSetup | None = None  # 이 저장소의 ruff (base 설정, 버전)
     disabled: frozenset[str] = frozenset()  # `rules.disabled`. 도구 설정 규칙의 ruff 코드를 끈다
@@ -96,7 +97,7 @@ def _read_documents(
     try:
         result = rules.load_rules(
             worktree, base_sha, settings, model=rt.models.rules, store=rt.store,
-            budget=rt.budget, ask=rt.ask, sections=rt.retriever, changes_diff=changes_diff,
+            budget=rt.budget, ask=rt.backend.ask, sections=rt.retriever, changes_diff=changes_diff,
         )  # fmt: skip
     except GitError as e:
         log.warning("규칙 문서를 읽지 못함: %s", e)
@@ -135,8 +136,9 @@ def author(
     try:
         checks = checkers.plan_and_author(
             read.rules, ruleset_key=read.key, store=rt.store, budget=rt.budget,
-            models=rt.models, ask=rt.ask, sandbox=rt.sandbox, ruff=rt.ruff, is_stale=is_stale,
-            retriever=rt.retriever, on_retrieval=on_retrieval, secrets=rt.secrets,
+            models=rt.models, ask=rt.backend.ask, sandbox=rt.sandbox, ruff=rt.ruff,
+            is_stale=is_stale, retriever=rt.retriever, on_retrieval=on_retrieval,
+            secrets=rt.secrets,
         )  # fmt: skip
     except SandboxError as e:
         log.warning("검사기 확인 샌드박스 실패: %s", e)
@@ -228,7 +230,8 @@ def judge(
     known = tuple(v for v in found.violations if v.found_by != "model")
     result = model_judge.judge(
         rules_, worktree, changes_diff.decode("utf-8", errors="replace"), store=rt.store,
-        budget=rt.budget, model=rt.models.judge, ask=rt.ask, known=len(known), is_stale=is_stale,
+        budget=rt.budget, model=rt.models.judge, read_code=rt.backend.reading, known=len(known),
+        is_stale=is_stale,
     )  # fmt: skip
 
     def judged(o: RuleOutcome) -> RuleOutcome:

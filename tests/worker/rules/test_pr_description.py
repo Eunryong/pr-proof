@@ -10,6 +10,7 @@ import pytest
 
 from app.worker import repo
 from app.worker.ai import workdir
+from app.worker.ai.claude_backend import ClaudeCliBackend
 from app.worker.ai.claude_cli import AIErrorKind, StructuredResult
 from app.worker.budget import CallBudget
 from app.worker.repo_config_pure import CallSettings
@@ -62,9 +63,14 @@ def _never(*args, **kwargs):
     pytest.fail("이 경우에는 모델을 부르지 않아야 한다")
 
 
+def _reading(ask):
+    """claude 구현의 읽기 폴더에서 claude 대신 ask를 부른다."""
+    return ClaudeCliBackend(run_structured=ask).reading
+
+
 def _tools(store: Store, **limits: int) -> pr_description.Tools:
     budget = CallBudget(store, "o/r", 1, "a" * 40, CallSettings(**limits))
-    return pr_description.Tools(store=store, budget=budget, ask=_never, model=MODEL)
+    return pr_description.Tools(store=store, budget=budget, read_code=_reading(_never), model=MODEL)
 
 
 def _facts(title: str, body: str = "", messages: tuple[str, ...] = ()) -> PrFacts:
@@ -131,7 +137,9 @@ def test_next_commit_is_asked_with_the_earlier_result_and_what_changed(
     first = _git(wt, "rev-parse", "HEAD").strip()
     _save(store, wt, {"config.py": workdir.path_digest(wt, "config.py", repo.list_files(wt))})
     budget = CallBudget(store, "o/r", 1, first, CallSettings())
-    tools = pr_description.Tools(store=store, budget=budget, ask=_never, model=MODEL)
+    tools = pr_description.Tools(
+        store=store, budget=budget, read_code=_reading(_never), model=MODEL
+    )
     assert pr_description.check(FACTS, _diff(wt), wt, tools).usage.cached == 1
     (wt / "notes.txt").write_text("메모\n")
     _git(wt, "add", "-A")
@@ -146,7 +154,7 @@ def test_next_commit_is_asked_with_the_earlier_result_and_what_changed(
                                 permission_denials=0)  # fmt: skip
 
     budget = CallBudget(store, "o/r", 1, second, CallSettings())
-    tools = pr_description.Tools(store=store, budget=budget, ask=ask, model=MODEL)
+    tools = pr_description.Tools(store=store, budget=budget, read_code=_reading(ask), model=MODEL)
     out = pr_description.check(FACTS, _git(wt, "diff", "HEAD~2", "HEAD"), wt, tools)
     (prompt,) = asked
     assert f"같은 PR의 앞 커밋 {first[:12]}에서 견준 결과다." in prompt
@@ -159,7 +167,7 @@ def test_next_commit_is_asked_with_the_earlier_result_and_what_changed(
         FACTS,
         _git(wt, "diff", "HEAD~2", "HEAD"),
         wt,
-        pr_description.Tools(store=store, budget=other, ask=ask, model=MODEL),
+        pr_description.Tools(store=store, budget=other, read_code=_reading(ask), model=MODEL),
     )
     assert "<<<EARLIER" not in asked[-1]
 

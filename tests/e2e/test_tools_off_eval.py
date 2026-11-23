@@ -43,6 +43,7 @@ import yaml
 
 from app.worker import base_config, repo, rule_reading_pure
 from app.worker.ai import claude_cli
+from app.worker.ai.claude_backend import ClaudeCliBackend
 from app.worker.ai.claude_cli import StructuredResult
 from app.worker.budget import CallBudget
 from app.worker.checker_pure import TOOL_KINDS
@@ -259,7 +260,8 @@ def _judge_alone(wanted: Sequence[Rule], target: Target, rt: doc_rules.Runtime) 
     found: set[tuple[str, Hit]] = set()
     for sample in target.samples:
         got = model_judge.judge(wanted, sample.root, sample.diff, store=rt.store,
-                                budget=rt.budget, model=rt.models.judge, ask=rt.ask)  # fmt: skip
+                                budget=rt.budget, model=rt.models.judge,
+                                read_code=rt.backend.reading)  # fmt: skip
         found |= {(v.rule_id, (sample.name, v.file, v.line)) for v in got.violations}
     alone: tuple[Method, str] = ("judge", "judge (모델 판단만)")
     return ArmResult({r.id: alone for r in wanted}, frozenset(found), tuple(wanted))
@@ -294,7 +296,8 @@ def run_once(
         "off": checkers.Sandbox(tool_cache, image=TEST_NAMES.image),
         "on": checkers.Sandbox(tool_cache, ruff, image=TEST_NAMES.image),
     }
-    runtimes = {arm: doc_rules.Runtime(store=store, budget=budget, models=models, ask=calls,
+    runtimes = {arm: doc_rules.Runtime(store=store, budget=budget, models=models,
+                                       backend=ClaudeCliBackend(run_structured=calls),
                                        sandbox=sandboxes[arm], ruff=ruff if arm == "on" else None)
                 for arm in ARMS}  # fmt: skip
     read = doc_rules.read(target.base_root, target.base_sha, RulesSettings(), runtimes["off"])

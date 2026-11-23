@@ -11,6 +11,7 @@ import pytest
 
 from app.worker import repo
 from app.worker.ai import workdir
+from app.worker.ai.claude_backend import ClaudeCliBackend
 from app.worker.ai.claude_cli import AIErrorKind, StructuredResult
 from app.worker.budget import CallBudget
 from app.worker.diff_pure import added_lines
@@ -93,7 +94,15 @@ class _Asked:
 def _run(store: Store, ask: _Asked, worktree: Path, *, rules: tuple[Rule, ...] = (NAMES, MONEY),
          calls: CallSettings | None = None) -> Judged:  # fmt: skip
     budget = CallBudget(store, "o/r", 1, HEAD, calls or CallSettings())
-    return judge(rules, worktree, DIFF, store=store, budget=budget, model="sonnet", ask=ask)
+    return judge(
+        rules,
+        worktree,
+        DIFF,
+        store=store,
+        budget=budget,
+        model="sonnet",
+        read_code=ClaudeCliBackend(run_structured=ask).reading,
+    )
 
 
 def test_daily_cap_stops_judging(store, worktree) -> None:
@@ -143,7 +152,7 @@ def test_stored_answer_is_reused_only_while_the_files_the_model_read_are_unchang
     def run() -> Judged:
         budget = CallBudget(store, "o/r", 1, HEAD, CallSettings())
         return judge((NAMES,), worktree, _diff_api(), store=store, budget=budget, model="sonnet",
-                     ask=asked)  # fmt: skip
+                     read_code=ClaudeCliBackend(run_structured=asked).reading)  # fmt: skip
 
     (worktree / "README.md").write_text("# 읽지 않은 파일만 바뀜\n")
     kept = run()
@@ -171,7 +180,7 @@ def _reask_prompt(store: Store, worktree: Path, *, pr: int = 1, head: str) -> tu
     asked = _Asked()
     budget = CallBudget(store, "o/r", pr, head, CallSettings())
     result = judge((NAMES,), worktree, _diff_api(), store=store, budget=budget, model="sonnet",
-                   ask=asked)  # fmt: skip
+                   read_code=ClaudeCliBackend(run_structured=asked).reading)  # fmt: skip
     (prompt,) = asked.prompts
     return prompt, result
 

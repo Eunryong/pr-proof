@@ -25,7 +25,7 @@ import pytest
 
 from app.worker import linked_issues_report_pure as shown
 from app.worker import repo
-from app.worker.ai import claude_cli
+from app.worker.ai.claude_backend import ClaudeCliBackend
 from app.worker.budget import CallBudget
 from app.worker.repo_config_pure import CallSettings
 from app.worker.rules import linked_issues
@@ -132,8 +132,8 @@ def _linked(body: str, comments: tuple[IssueNote, ...] = ()) -> Linked:
 
 def _check(wt: Path, diff: str, linked: Linked, store: Store, case: str) -> LinkedIssues:
     budget = CallBudget(store, REPO, 1, "a" * 40, CallSettings())
-    tools = linked_issues.Tools(store=store, budget=budget, ask=claude_cli.run_structured,
-                                model=MODEL)  # fmt: skip
+    tools = linked_issues.Tools(store=store, budget=budget, model=MODEL,
+                                read_code=ClaudeCliBackend().reading)  # fmt: skip
     out = linked_issues.check(linked, REPO, diff, wt, tools)
     u = out.usage
     print(f"\n[{case}] 호출 {u.calls}, 저장 {u.cached}, 도구 {u.tool_uses}, 입력 {u.input_tokens}, "

@@ -44,11 +44,13 @@ VIOLATION: Final = "⚠️"
 CLEAN: Final = "✅"
 NO_RULES: Final = "규칙을 찾지 못해 규칙 검사를 하지 않음"
 HOW_TO_WRITE: Final = (
-    "규칙 문서(기본은 `README.md`, `CONTRIBUTING.md`)에 `## 코드 규칙` 같은 절을 두고 규칙을 "
-    "한 문장씩 적거나 ruff 설정(`ruff.toml`, `pyproject.toml`의 `[tool.ruff]`)을 두면 다음 "
-    "검사부터 그 규칙으로 검사합니다. "
-    '예: "`orders/` 아래 모듈은 `print`를 쓰지 않는다." '
-    "다른 문서에 적었으면 base 브랜치 `.pipeline.yaml`의 `rules.docs`에 그 경로를 적으세요."
+    "이 저장소의 `CONTRIBUTING.md`에 팀 규칙을 적어 두면 다음 PR부터 그 규칙으로 검사합니다. "
+    "`## 코드 규칙` 같은 절 아래에 한 문장씩 적으면 됩니다. "
+    '예: "`orders/` 아래 모듈은 `print`를 쓰지 않는다."\n'
+    "\n"
+    "- `README.md`에 적어도 읽습니다. 다른 문서에 적었으면 base 브랜치 `.pipeline.yaml`의 "
+    "`rules.docs`에 그 경로를 적습니다.\n"
+    "- ruff 설정이 이미 있는 저장소는 그 설정도 함께 검사합니다."
 )
 # 규칙마다 바로 보이는 위반 수. 나머지는 접는다 (11.2 D6)
 MAX_SHOWN_PER_RULE: Final = 10

@@ -18,7 +18,7 @@ labels: feedback
 
 ## 규칙 문장
 
-<!-- README나 CONTRIBUTING에 적은 그대로 -->
+<!-- CONTRIBUTING이나 README에 적은 그대로 -->
 
 ## 결과 코멘트
 
@@ -29,5 +29,5 @@ labels: feedback
 ## 환경
 
 - OS:
-- pr-proof 커밋:
+- pr-proof 판(`pr-proof update --check`나 `npm list -g pr-proof`로 본다. clone이면 커밋):
 - 대상 저장소(공개면 링크):

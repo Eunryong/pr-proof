@@ -1,7 +1,7 @@
 """실행 결과의 규칙 (docs/DESIGN.md 4.5 "실행 결과의 규칙"): 테스트 뒤에 run 규칙마다 모델이 정한다.
 
 그래프의 `test` node가 테스트와 커버리지를 읽은 뒤 부른다. 규칙마다 호출 하나이고 도구 없이
-부른다(`run_structured`). 호출은 PR 상한(9.2)에서 세고 답은 (규칙, 실행 결과의 해시)로 저장한다.
+부른다(`ModelBackend.ask`). 호출은 PR 상한(9.2)에서 세고 답은 (규칙, 실행 결과의 해시)로 저장한다.
 같은 실행 결과에는 다시 묻지 않는다. 상한에 걸리거나 호출이 실패하면 그 규칙은 "묻지 못함"이고
 저장하지 않는다. 어겼다는 답은 알리기만 한다: 줄이 아니라 PR에 걸려 수정 대상이 되지 않는다(12.2).
 """
@@ -67,9 +67,9 @@ def judge_runs(
             if isinstance(call, Denied):
                 out.append(RunJudged(rule.id, "left", call.reason, facts.summary()))
                 continue
-            result = rt.ask(build_prompt(rule, facts), system_prompt=SYSTEM_PROMPT,
-                            schema=ANSWER_SCHEMA, model=model,
-                            max_budget_usd=CALL_BUDGET_USD["light"])  # fmt: skip
+            result = rt.backend.ask(build_prompt(rule, facts), system_prompt=SYSTEM_PROMPT,
+                                    schema=ANSWER_SCHEMA, model=model,
+                                    max_budget_usd=CALL_BUDGET_USD["light"])  # fmt: skip
             failure = None if result.ok else f"{result.error}: {result.detail}"
             if failure is None:
                 try:

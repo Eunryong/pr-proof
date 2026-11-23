@@ -37,8 +37,7 @@ from langgraph.graph.state import CompiledStateGraph
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.worker import records, records_pure
-from app.worker.ai import claude_cli
-from app.worker.ai.claude_cli import StructuredResult
+from app.worker.ai.model_backend import AskModel
 from app.worker.budget import CallBudget
 from app.worker.cache_key_pure import text_hash
 from app.worker.call_budget_pure import CALL_BUDGET_USD, Denied, RulesetScope
@@ -89,8 +88,6 @@ from app.worker.tools_pure import RUFF, RuffSetup, valid_codes
 
 log = logging.getLogger(__name__)
 
-# (사용자 메시지, *, system_prompt, schema, model, max_budget_usd) → 결과. 테스트는 가짜를 넘긴다
-AskModel = Callable[..., StructuredResult]
 STALE: Final = "새 커밋이 와서 멈춤"
 # 검사기 종류마다 도구 캐시에서 붙이는 도구. 이미지에는 언어가 없어 Python AST 스크립트와 경로
 # 패턴의 고정 스크립트도 Python 런타임을 받아 붙인다
@@ -232,7 +229,7 @@ def plan_and_author(
     store: Store,
     budget: CallBudget,
     models: ModelSettings,
-    ask: AskModel = claude_cli.run_structured,
+    ask: AskModel,
     sandbox: RunsCheckers | None = None,
     ruff: RuffSetup | None = None,
     is_stale: Callable[[], bool] = lambda: False,

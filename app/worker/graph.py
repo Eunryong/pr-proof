@@ -62,7 +62,7 @@ from app.worker import (
     repo,
     report,
 )
-from app.worker.ai import claude_cli, workdir
+from app.worker.ai.model_backend import ModelBackend, fix_unavailable
 from app.worker.base_config import BaseConfig
 from app.worker.budget import CallBudget
 from app.worker.call_budget_pure import RulesetScope
@@ -231,6 +231,7 @@ class FlowContext:
     run_id: int
     comment_id: int | None
     max_memory_gb: float
+    backend: ModelBackend  # 모델 구현 (`app/worker/ai/model_backend.py`). 워커가 작업마다 넘긴다
     call_maxima: CallMaxima = field(default_factory=CallMaxima)
     sandbox_names: docker_cli.Names = docker_cli.DEFAULT_NAMES
     started: float = field(default_factory=time.monotonic)
@@ -373,7 +374,7 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
                 store=ctx.store,
                 budget=CallBudget(ctx.store, job.repo, job.pr_number, job.head_sha, limits),
                 models=models,
-                ask=claude_cli.run_structured,
+                backend=ctx.backend,
                 sandbox=doc_rules.sandbox_for(
                     ctx.data_dir / TOOL_DIR, ctx.base.ruff, ctx.sandbox_names.image
                 ),
@@ -474,7 +475,7 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
         scope = RulesetScope(read.key, len(read.rules)) if read is not None else RulesetScope("pr")
         facts = pr_facts(job)
         tools = pr_check.Tools(
-            store=rt.store, budget=rt.budget, ask=rt.ask, sandbox=rt.sandbox,
+            store=rt.store, budget=rt.budget, ask=rt.backend.ask, sandbox=rt.sandbox,
             plan_model=rt.models.checker, judge_model=rt.models.judge, ruleset=scope,
         )  # fmt: skip
         known = len(found.violations) if isinstance(found, Found) else 0
@@ -513,8 +514,8 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
         )
         result = pr_description.check(
             facts, ctx.changes_diff.decode("utf-8", errors="replace"), ctx.worktree,
-            pr_description.Tools(store=rt.store, budget=rt.budget, ask=rt.ask,
-                                 model=rt.models.judge),
+            pr_description.Tools(store=rt.store, budget=rt.budget,
+                                 read_code=rt.backend.reading, model=rt.models.judge),
             pipeline=pipeline, known=len(found.violations) if isinstance(found, Found) else 0,
             is_stale=lambda: ctx.store.is_stale(job),
         )  # fmt: skip
@@ -542,8 +543,8 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
         result = linked_issues.check(
             linked, job.repo,
             ctx.changes_diff.decode("utf-8", errors="replace"), ctx.worktree,
-            linked_issues.Tools(store=rt.store, budget=rt.budget, ask=rt.ask,
-                                model=rt.models.judge),
+            linked_issues.Tools(store=rt.store, budget=rt.budget,
+                                read_code=rt.backend.reading, model=rt.models.judge),
             known=len(found.violations) if isinstance(found, Found) else 0,
             is_stale=lambda: ctx.store.is_stale(job),
         )  # fmt: skip
@@ -590,7 +591,7 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
         rt, run = doc_runtime(state), state["test_run"]
         decided = decide.decide(
             found, SafetyNet(run.status, flaky=bool(run.flaky)), ctx.changes_diff, store=rt.store,
-            budget=rt.budget, model=rt.models.decide, ask=rt.ask, retriever=rt.retriever,
+            budget=rt.budget, model=rt.models.decide, ask=rt.backend.ask, retriever=rt.retriever,
             context_of=records.context_of(ctx.worktree),
         )  # fmt: skip
         return {"fix_decisions": decided}
@@ -738,7 +739,8 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
         budget = rt.budget.with_targets(open_targets(state["fix_decisions"].decisions))
         checks = doc_rules.saved_checks(found, rt.store)
         tools = model_fix.FixTools(
-            run_model=workdir.run_in_model_folder,
+            run_model=ctx.backend.fix,
+            unavailable=fix_unavailable(ctx.backend),
             recheck=lambda changed, new: detect.detect(
                 checks,
                 ctx.worktree,

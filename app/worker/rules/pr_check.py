@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Literal, Protocol
 
 from app.worker import repo
+from app.worker.ai.model_backend import AskModel
 from app.worker.budget import CallBudget
 from app.worker.call_budget_pure import CALL_BUDGET_USD, Denied, PrScope, RulesetScope
 from app.worker.doc_rules_pure import Found, RuleUnchecked
@@ -75,7 +76,6 @@ from app.worker.rules.pr_check_pure import (
     violations_from_json,
     violations_to_json,
 )
-from app.worker.rules.rules import AskModel
 from app.worker.sandbox.checker_runner import Failed, PrRan
 from app.worker.sandbox.toolcache import ToolUnavailable
 from app.worker.state import Store

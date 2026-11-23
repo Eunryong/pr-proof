@@ -208,7 +208,7 @@ def test_no_ruff_settings_and_no_rule_docs_means_no_rule_check(mech_env) -> None
     assert _update(mech_env) == "passed"
     body = _comment(mech_env)
     assert "**규칙:** 규칙을 찾지 못해 규칙 검사를 하지 않음" in body
-    assert "ruff 설정(`ruff.toml`" in body  # 규칙을 두는 방법을 알린다
+    assert "ruff 설정이 이미 있는 저장소는" in body  # 규칙을 두는 방법을 알린다
     assert mech_env["ruff"].calls == [] and mech_env["pushes"] == []
 
 

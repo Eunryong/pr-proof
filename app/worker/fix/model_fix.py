@@ -1,8 +1,8 @@
 """문서 규칙 위반의 모델 수정: 공용 틀(app/worker/loop.py)의 작성과 출구 검사 (docs/DESIGN.md 4.7,
 4.8, 5.3 (b)).
 
-write는 모델 전용 폴더(`workdir.run_in_model_folder`)에서 파일 도구와 파이프라인 도구 둘(규칙 검사,
-테스트)을 준 모델을 부른다. 모델이 한 호출 안에서 테스트를 쓰고, 돌려 보고, 고치고, 다시 돌려 본다.
+write는 모델 전용 폴더에서 고치는 호출(`ModelBackend.fix`)에 파이프라인 도구 둘(규칙 검사, 테스트)을
+준다. 모델이 한 호출 안에서 테스트를 쓰고, 돌려 보고, 고치고, 다시 돌려 본다.
 도구의 구현은 아래 verify가 쓰는 것과 같은 함수다(`check_now`, `judge_before`, `tools.run_suite`).
 지시는 시스템 프롬프트로, 규칙 원문과 위반 목록은 사용자 메시지의 자료로 넘긴다. 회차가 적용한
 diff와 마지막 답(설명 JSON)은 `model_cache`에 저장하고, 같은 입력이면 모델을 다시 부르지 않고
@@ -29,12 +29,7 @@ from typing import Final
 from app.shared.db_pure import FixAttempt
 from app.shared.job_pure import PRJob
 from app.worker import mcp_pure, records_pure, repo
-from app.worker.ai.claude_cli import (
-    FIX_TOOLS_TIMEOUT_S,
-    AIEnvironmentError,
-    ClaudeResult,
-    environment_problem,
-)
+from app.worker.ai.model_backend import FIX_TOOLS_TIMEOUT_S, AIEnvironmentError, EditCode
 from app.worker.budget import CallBudget
 from app.worker.cache_key_pure import text_hash
 from app.worker.call_budget_pure import Denied, PrScope
@@ -138,9 +133,9 @@ def module_constants(worktree: Path, files: Sequence[str]) -> dict[str, list[str
 class FixTools:
     """수정 루프가 쓰는 외부 동작. 테스트에서는 가짜로 바꾼다."""
 
-    # (worktree, 사용자 메시지, *, system_prompt, model, max_budget_usd) → 결과.
-    # 그래프는 workdir.run_in_model_folder를 넘긴다
-    run_model: Callable[..., ClaudeResult]
+    # (worktree, 사용자 메시지, *, system_prompt, model, max_budget_usd, tools, timeout) → 결과.
+    # 그래프는 모델 구현의 fix(`ModelBackend.fix`)를 넘긴다
+    run_model: EditCode
     # 도구·검사기로 확인하는 모든 규칙을 다시 돌린다: (바뀐 줄, 새 파일) → 위반
     recheck: Callable[[ChangedLines, frozenset[str]], Detection]
     rules_rechecked: int  # recheck가 돌리는 도구·검사기 수 (수정안 PR의 검증 절에 쓴다)
@@ -149,6 +144,9 @@ class FixTools:
     run_suite: Callable[[Mapping[str, bytes] | None, Sequence[str]], Suite]
     is_stale: Callable[[], bool] = lambda: False
     secrets: Sequence[str] = ()  # 파이프라인의 비밀값
+    # 모델 구현이 수정 작성을 할 수 없는 까닭(`model_backend.fix_unavailable`). 있으면 모델을 부르지
+    # 않고 그 까닭으로 끝낸다
+    unavailable: str = ""
 
 
 class _Cancelled(Exception):
@@ -337,6 +335,8 @@ def fix_violations(
             tool_usage=sum(usage, ToolUsage()),
         )  # fmt: skip
 
+    if tools.unavailable:
+        return outcome("refused", 0, f"수정안을 만들지 않음: {tools.unavailable}")
     outside = repo.outside_symlinks(worktree)
     if outside:  # 링크 폴더를 거친 쓰기는 worktree 밖으로 가고 범위 검사에도 안 보인다
         shown = ", ".join(outside[:5])
@@ -460,9 +460,8 @@ def fix_violations(
         if result.unexpected_tools:
             log.warning("수정 모델이 목록에 없는 도구를 부르려 함: %s",
                         ", ".join(f"{n} {c}회" for n, c in result.unexpected_tools))  # fmt: skip
-        problem = environment_problem(result)
-        if problem is not None:
-            raise AIEnvironmentError(problem)
+        if result.environment:
+            raise AIEnvironmentError(result.environment)
         if tools.is_stale():
             raise _Cancelled
         if failure is not None:

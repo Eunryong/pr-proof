@@ -1,6 +1,6 @@
 """PR 코멘트의 판단 호출 (docs/DESIGN.md 4.11). 수정 판단(fix/decide.py)과 같은 방식이다.
 
-모델은 도구 없이 부른다(`run_structured`). 답은 사용자 메시지 전체의 해시로 `model_cache`에 저장해
+모델은 도구 없이 부른다(`ModelBackend.ask`). 답은 사용자 메시지 전체의 해시로 `model_cache`에 저장해
 같은 입력이면 다시 묻지 않는다. 호출은 PR 상한(9.2)에서 단계 `feedback`으로 센다. 호출이 실패하거나
 상한에 걸리면 넘긴 코멘트 모두 error이고 저장하지 않는다(새 커밋에서 다시 묻는다).
 """
@@ -9,6 +9,7 @@ import json
 import logging
 from collections.abc import Mapping, Sequence
 
+from app.worker.ai.model_backend import AskModel
 from app.worker.budget import CallBudget
 from app.worker.call_budget_pure import CALL_BUDGET_USD, Denied, PrScope
 from app.worker.feedback_pure import Item
@@ -26,7 +27,6 @@ from app.worker.feedback_triage_pure import (
     triage_key,
 )
 from app.worker.rule_pure import Rule
-from app.worker.rules.rules import AskModel
 from app.worker.state import Store
 
 log = logging.getLogger(__name__)
