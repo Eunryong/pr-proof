@@ -4,6 +4,9 @@
 - `add <repo>...`, `rm <repo>...`, `list`: 처리할 repo 목록과 그 웹훅
 - `model [이름 | default]`: 모든 단계에 쓸 모델 (config.yaml의 `model.default`)
 - `start`: api, worker, (smee 주소가 있으면) smee-client를 띄운다 (`app/setup/start.py`)
+
+`update`(새 판 깔기)와 새 판 알림은 Python이 필요 없어 입구(bin/pr-proof.js)에서 끝나고
+여기로 오지 않는다.
 """
 
 import argparse
