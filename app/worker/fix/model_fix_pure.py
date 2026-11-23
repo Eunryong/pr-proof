@@ -17,13 +17,13 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 
 from app.worker.core.cache_key_pure import model_cache_key, prompt_version, text_hash
 from app.worker.core.diff_pure import ChangeBlock
+from app.worker.core.prompt_text_pure import load
 from app.worker.core.rule_pure import CheckMethod, Rule, RuleSource
 from app.worker.core.violation_pure import Violation
 from app.worker.fix.fix_decision_pure import FixDecision
 from app.worker.fix.proposal_pure import MAX_CHANGED_LINES, MAX_FILES
 from app.worker.fix.scope_pure import GENERATED_TEST_PREFIX
 from app.worker.model.mcp_pure import TOOL_NAMES, ToolUsage
-from app.worker.prompt_text_pure import load
 from app.worker.store.rag_pure import Retrieval
 from app.worker.testing.generated_tests_pure import (
     MAX_TEST_FILES,
@@ -168,6 +168,7 @@ def pick_targets(
 # --- 프롬프트 (4.7) ---
 
 SYSTEM_PROMPT: Final = load(
+    __file__,
     "model_fix",
     check_rules=TOOL_NAMES[0],
     run_tests=TOOL_NAMES[1],
@@ -184,7 +185,7 @@ class Target:
 
 # 검색으로 과거 기록을 넣은 회차에만 시스템 프롬프트 뒤에 붙인다 (6.2). 기록이 없는 회차의
 # 프롬프트와 저장 키는 검색을 켜기 전과 같다
-RECORDS_NOTE: Final = "\n\n" + load("model_fix.records")
+RECORDS_NOTE: Final = "\n\n" + load(__file__, "model_fix.records")
 RECORDS_VERSION: Final = text_hash(RECORDS_NOTE)[:12]
 
 

@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, TypeAdapter
 
 from app.worker.core.cache_key_pure import Part, model_cache_key, prompt_version, text_hash
 from app.worker.core.checker_pure import Checker, CheckerKind, is_repo_path
+from app.worker.core.prompt_text_pure import load
 from app.worker.core.rule_pure import (
     CheckMethod,
     Example,
@@ -27,7 +28,6 @@ from app.worker.core.rule_pure import (
     looks_at_paths,
     normalize,
 )
-from app.worker.prompt_text_pure import load
 
 # 예시 확인(judge_examples, model_examples)의 규칙을 바꾸면 올린다 (캐시 키에 들어간다).
 # 프롬프트와 스키마의 버전은 그 글에서 만든다 (PROMPT_VERSION)
@@ -180,14 +180,14 @@ def draft_key(
 
 # --- 프롬프트 ---
 
-_COMMON: Final = load("checker_authoring.common")
+_COMMON: Final = load(__file__, "checker_authoring.common")
 
 SYSTEM_PROMPT: Final[Mapping[str, str]] = {
-    "ast-grep": _COMMON + "\n\n" + load("checker_authoring.ast_grep"),
-    "python-ast": _COMMON + "\n\n" + load("checker_authoring.python_ast"),
+    "ast-grep": _COMMON + "\n\n" + load(__file__, "checker_authoring.ast_grep"),
+    "python-ast": _COMMON + "\n\n" + load(__file__, "checker_authoring.python_ast"),
 }
 
-SYSTEM_PROMPT_PATH: Final = load("checker_authoring.path")
+SYSTEM_PROMPT_PATH: Final = load(__file__, "checker_authoring.path")
 
 
 def system_prompt(kind: CheckerKind) -> str:
@@ -258,7 +258,7 @@ def shortfall(examples: Sequence[Example]) -> Shortfall:
 
 # 검색으로 비슷한 규칙의 검사기 기록을 넣은 호출에만 시스템 프롬프트 뒤에 붙인다 (6.2). 기록이
 # 없는 호출의 프롬프트와 저장 키는 검색을 켜기 전과 같다
-RECORDS_NOTE: Final = "\n\n" + load("checker_authoring.records")
+RECORDS_NOTE: Final = "\n\n" + load(__file__, "checker_authoring.records")
 RECORDS_VERSION: Final = text_hash(RECORDS_NOTE)[:12]
 
 

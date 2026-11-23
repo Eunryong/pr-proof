@@ -16,6 +16,7 @@ from typing import Final, Literal, get_args
 from pydantic import BaseModel, ConfigDict
 
 from app.worker.core.cache_key_pure import model_cache_key, prompt_version
+from app.worker.core.prompt_text_pure import load
 from app.worker.core.rule_pure import (
     CheckMethod,
     DroppedRule,
@@ -29,7 +30,6 @@ from app.worker.core.rule_pure import (
     rule_id,
 )
 from app.worker.git.git_pure import REGULAR_FILE_MODES, TreeEntry
-from app.worker.prompt_text_pure import load
 
 # 문서 고르기와 원문 확인의 버전. 이 파일의 결정적 처리를 바꾸면 올린다 (캐시 키에 들어간다)
 READER_VERSION: Final = "3"
@@ -100,7 +100,7 @@ def ruleset_key(listed: Iterable[TreeEntry], model: str) -> str:
 
 # --- 프롬프트 ---
 
-SYSTEM_PROMPT: Final = load("rule_reading")
+SYSTEM_PROMPT: Final = load(__file__, "rule_reading")
 
 ANSWER_SCHEMA: Final[Mapping[str, object]] = {
     "type": "object",
