@@ -21,11 +21,9 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Final, Literal
 
-from app.worker.fix.model_fix_pure import MODEL_BUNDLE
+from app.worker.core.bundle_pure import MODEL_BUNDLE
+from app.worker.repo_config_pure import RagMode
 
-RagMode = Literal["auto", "on", "off"]
-MODES: Final = ("auto", "on", "off")
-DEFAULT_MODE: Final = "auto"
 # 초깃값이다. 측정한 뒤 조정한다 (6.7). 테스트는 상수를 바꾸지 않고 함수 인자로 넘긴다
 AUTO_MIN_RECORDS: Final = 20  # auto가 검색을 켜는 이 저장소의 채택·거절 기록 수
 # auto가 채택률을 견주기 시작하는, 검색으로 기록을 넣은 수정 시도 중 결과를 아는 수 (저장소 주인)
@@ -39,16 +37,6 @@ OUTCOME_STATES: Final = frozenset({"merged", "rejected"})
 _STATE_RANK: Final[Mapping[str, int]] = {"merged": 2, "rejected": 1}
 
 Why = Literal["setting", "few_records", "enough_records", "worse"]
-
-
-def parse_mode(value: object) -> RagMode | None:
-    """`.pipeline.yaml`의 `rag.enabled` 값. 옛 불리언은 `true` = on, `false` = off다 (YAML 1.1은
-    따옴표 없는 `on`·`off`도 불리언으로 읽는다). 그 밖의 값은 None (기본값으로 읽고 알린다)."""
-    if isinstance(value, bool):
-        return "on" if value else "off"
-    if isinstance(value, str) and value in MODES:
-        return value  # type: ignore[return-value]
-    return None
 
 
 @dataclass(frozen=True)

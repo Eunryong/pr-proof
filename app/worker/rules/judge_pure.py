@@ -22,10 +22,9 @@ from typing import Final
 
 from pydantic import BaseModel, ConfigDict
 
-from app.worker.cache_key_pure import model_cache_key, text_hash
+from app.worker.cache_key_pure import model_cache_key, prompt_version, text_hash
 from app.worker.prompt_text_pure import load
 from app.worker.rule_pure import CheckMethod, Rule, RuleSource
-from app.worker.rule_reading_pure import prompt_version
 
 # 바뀐 줄 앞뒤로 보이는 줄 수 (4.5)
 HUNK_RADIUS: Final = 20

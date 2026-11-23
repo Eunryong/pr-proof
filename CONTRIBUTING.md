@@ -41,6 +41,22 @@ LIMITS: typing.Final[Mapping[str, int]] = {"pr": 14}
 
 `app/setup/` 아래 모듈은 `app` 안에서 `app.setup`, `app.shared`, `app.worker`만 import한다. 서버의 시작 확인(`app.worker.preflight`)을 그대로 다시 쓰기 때문이고, 거꾸로 `app.api`·`app.worker`·`app.shared`는 `app.setup`을 import하지 않는다.
 
+`app/worker/`는 세 층으로 정리하는 중이다(pr-proof#98). 끝나면 아래 구조가 되고, 그때까지 아직 옮기지 않은 공용·단계 모듈은 `app/worker/` 바로 아래에 남아 있다.
+
+- 뼈대: `app/worker/` 바로 아래의 `main`, `graph`, `update`, `command`, `command_pure`, `feedback`, `guard`, `retry`, `deps`, `cli`, `preflight`, `records`. 단계를 부르기만 한다.
+- 단계 폴더: `rules`, `feedback`, `fix`, `report`, `evaluation`. 한 단계가 하는 일 전부를 둔다.
+- 공용 폴더: `core`, `sandbox`, `testing`, `lang`, `git`, `config`, `store`, `model`. 모든 단계가 쓰는 데이터 정의와 도구를 둔다.
+
+단계 폴더 아래 모듈은 뼈대 모듈을 import하지 않는다.
+
+공용 폴더 아래 모듈은 단계 폴더의 모듈과 뼈대 모듈을 import하지 않는다.
+
+단계 폴더 사이에는 `fix`가 `rules`·`feedback`을, `report`와 `evaluation`이 `rules`·`feedback`·`fix`를 import하는 방향만 쓴다.
+
+공용 폴더 사이에는 다음 방향만 쓴다: `sandbox`는 `core`를, `testing`은 `core`·`sandbox`를, `lang`은 `core`·`sandbox`·`testing`을, `git`은 `core`·`sandbox`를, `config`는 `core`·`sandbox`·`git`을, `store`는 `core`·`sandbox`·`git`·`config`를, `model`은 `core`·`sandbox`·`git`·`config`·`store`를 import하고, `core`는 다른 폴더를 import하지 않는다.
+
+정리가 끝날 때까지 남는 예외는 `app/worker/rules/checkers.py`와 `app/worker/fix/proposal.py`가 `app.worker.records`를 import하는 것이다.
+
 `app/worker/sandbox/` 아래 모듈은 `app` 안에서 `app.worker.sandbox`의 모듈과 순수 모듈만 import한다.
 
 ```python
@@ -58,6 +74,8 @@ from app.worker.checker_pure import CheckerKind
 순수 모듈은 `app/` 아래에서 파일 이름이 `_pure.py`로 끝나는 모듈이다.
 
 순수 모듈은 `app` 안에서 이름이 `_pure`로 끝나는 다른 순수 모듈만 import한다.
+
+순수 모듈은 그것이 속한 단계 폴더나 공용 폴더에 두고, 어느 한 폴더에 속하지 않으면서 여러 단계가 쓰는 데이터 정의와 도구만 `app/worker/core/`에 둔다.
 
 순수 모듈은 `os`, `shutil`, `tempfile`, `subprocess`, `socket`, `http`, `urllib`, `sqlite3`, `redis`, `rq`, `httpx`, `requests`, `fastapi`, `uvicorn`, `langgraph`, `chromadb`, `onnxruntime`, `tokenizers`, `logging`, `time`, `random`, `importlib`을 import하지 않는다(파일 시스템, 프로세스, 네트워크, Redis, 큐, DB, 웹, 그래프, 벡터 저장소, 로그, 시계, 난수, 동적 import).
 

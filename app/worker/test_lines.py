@@ -18,10 +18,40 @@ from app.worker.generated_tests_pure import (
     line_runs,
 )
 from app.worker.markdown_pure import inline_code
+from app.worker.sandbox.docker_cli import MEMORY_LIMIT_GB
+from app.worker.test_run_pure import PytestRun
 from app.worker.violation_pure import Violation
 
 MAX_LINES_SHOWN: Final = 30
 MAX_WHY_CHARS: Final = 300
+
+
+def _gb(value: float) -> str:
+    return f"{value:g}GB"
+
+
+def format_test_line(run: PytestRun, memory_gb: float = MEMORY_LIMIT_GB) -> str:
+    """'테스트:' 줄의 글자 표시. 기호를 쓰지 않는다."""
+    s = run.summary
+    match run.status:
+        case "passed":
+            if run.flaky:
+                return f"통과, 불안정한 테스트 {len(run.flaky)}개"
+            return f"통과 ({s.total}개)" if s else "통과"
+        case "failed":
+            if s is None:
+                return "실패"
+            return f"실패 ({s.total}개 중 {s.failed + s.errors}개)"
+        case "no_tests":
+            return "실행된 테스트 없음"
+        case "timeout":
+            return "시간 초과로 중단"
+        case "cancelled":
+            return "새 커밋이 올라와 중단"
+        case "unrunnable":
+            if run.memory_exceeded:
+                return f"실행 불가 (메모리 한도 {_gb(memory_gb)}를 넘어 종료됨)"
+            return f"실행 불가 ({run.unrunnable_reason})"
 
 
 def _numbers(lines: Sequence[int]) -> str:

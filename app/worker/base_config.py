@@ -12,6 +12,7 @@ from typing import Final
 
 from app.worker import repo
 from app.worker.access_pure import AccessSettings, parse_access
+from app.worker.git.git_pure import REGULAR_FILE_MODES
 from app.worker.repo_config_pure import (
     LINT,
     RepoConfig,
@@ -21,7 +22,6 @@ from app.worker.repo_config_pure import (
     settings_notes,
     with_default_model,
 )
-from app.worker.rule_reading_pure import REGULAR_FILE_MODES
 from app.worker.sandbox import toolcache
 from app.worker.tools_pure import (
     CONFIG_RULE_ID,

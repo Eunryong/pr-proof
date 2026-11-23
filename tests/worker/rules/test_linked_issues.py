@@ -12,14 +12,13 @@ from app.worker import repo
 from app.worker.ai import workdir
 from app.worker.ai.claude_backend import ClaudeCliBackend
 from app.worker.budget import CallBudget
+from app.worker.git.git_pure import Issue, Linked
 from app.worker.github import GitHub
 from app.worker.repo_config_pure import CallSettings
 from app.worker.rules import linked_issues
 from app.worker.rules.checkers import STALE
 from app.worker.rules.linked_issues_pure import (
-    Issue,
     IssueGap,
-    Linked,
     earlier_from_json,
     earlier_key,
     issues_key,

@@ -67,6 +67,7 @@ from app.worker.base_config import BaseConfig
 from app.worker.budget import CallBudget
 from app.worker.call_budget_pure import RulesetScope
 from app.worker.checker_authoring_pure import Checked
+from app.worker.core.bundle_pure import MECHANICAL_BUNDLE, MODEL_BUNDLE
 from app.worker.coverage import DiffCoverage
 from app.worker.doc_rules_pure import DocRules, Found, RuleOutcome, RulesRead
 from app.worker.doc_rules_report import FixView
@@ -80,7 +81,7 @@ from app.worker.fix import (
     proposal,
 )
 from app.worker.fix.fix_decision_pure import Decided, SafetyNet, open_targets
-from app.worker.fix.fix_pure import MECHANICAL_BUNDLE, MechanicalFix
+from app.worker.fix.fix_pure import MechanicalFix
 from app.worker.fix.model_fix_pure import ModelFix, Picked
 from app.worker.fix.proposal_pure import ProposalResult
 from app.worker.generated_tests_pure import Suite
@@ -131,7 +132,7 @@ DELIVER_MECHANICAL: Final = "deliver_mechanical"
 FIX_MODEL: Final = "fix_model"
 DELIVER_MODEL: Final = "deliver_model"
 MECHANICAL: Final = MECHANICAL_BUNDLE
-MODEL: Final = proposal.MODEL_BUNDLE
+MODEL: Final = MODEL_BUNDLE
 BUNDLES: Final = (MECHANICAL, MODEL)  # 고치는 순서. 싼 쪽부터 (9.3)
 # 묶음 → 수정 node, 전달 node. `/fix <묶음>`이 승인하거나 다시 돌린다
 FIX_NODES: Final[Mapping[str, str]] = {MECHANICAL: FIX_MECHANICAL, MODEL: FIX_MODEL}

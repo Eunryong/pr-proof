@@ -33,6 +33,7 @@ from app.worker.ai.model_backend import FIX_TOOLS_TIMEOUT_S, AIEnvironmentError,
 from app.worker.budget import CallBudget
 from app.worker.cache_key_pure import text_hash
 from app.worker.call_budget_pure import Denied, PrScope
+from app.worker.core.bundle_pure import MODEL_BUNDLE
 from app.worker.diff_pure import ChangedLines, added_lines, change_blocks, new_files
 from app.worker.doc_rules_pure import Found, outcomes_by_rule
 from app.worker.fix import model_fix_pure, scope
@@ -44,7 +45,6 @@ from app.worker.fix.model_fix_pure import (
     Verification,
     Written,
 )
-from app.worker.fix.proposal import MODEL_BUNDLE
 from app.worker.fix.proposal_pure import (
     SECRET_BLOCKED,
     changed_line_count,
@@ -90,10 +90,10 @@ from app.worker.rag_pure import (
     retrieval,
 )
 from app.worker.repo_config_pure import ModelSettings
-from app.worker.report import format_test_line
 from app.worker.rules.detect import Detection, source_lines
 from app.worker.sandbox.safe_read import read_regular_file
 from app.worker.state import Store
+from app.worker.test_lines import format_test_line
 from app.worker.test_run_pure import PytestRun
 from app.worker.violation_pure import Violation
 

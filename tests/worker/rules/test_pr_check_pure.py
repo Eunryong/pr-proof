@@ -6,6 +6,7 @@ from typing import Final
 
 import pytest
 
+from app.worker.git.git_pure import RawCommit
 from app.worker.rule_pure import CheckMethod, Example, Rule, RuleSource
 from app.worker.rules import pr_check_pure
 from app.worker.rules.pr_check_pure import (
@@ -15,7 +16,6 @@ from app.worker.rules.pr_check_pure import (
     PrFacts,
     PrPattern,
     PrPlan,
-    RawCommit,
     Shown,
 )
 

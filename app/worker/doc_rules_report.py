@@ -14,6 +14,7 @@ from typing import Final, Literal, get_args
 from app.worker import pr_check_report_pure
 from app.worker.checker_authoring_pure import JudgeRoute
 from app.worker.checker_pure import TOOL_KINDS, Checker
+from app.worker.core.bundle_pure import MECHANICAL_BUNDLE
 from app.worker.doc_rules_pure import (
     CallUsage,
     DocRules,
@@ -28,7 +29,7 @@ from app.worker.doc_rules_pure import (
     outcomes_by_rule,
 )
 from app.worker.fix.fix_decision_pure import Decided, FixDecision, SkipReason
-from app.worker.fix.fix_pure import MECHANICAL_BUNDLE, MechanicalFix
+from app.worker.fix.fix_pure import MechanicalFix
 from app.worker.fix.model_fix_pure import ModelFix
 from app.worker.fix.proposal_pure import ProposalResult
 from app.worker.markdown_pure import code_fence, inline_code

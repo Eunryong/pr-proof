@@ -24,6 +24,7 @@ from app.worker import repo
 from app.worker.ai.model_backend import ReadCode
 from app.worker.budget import CallBudget
 from app.worker.call_budget_pure import Denied, PrScope
+from app.worker.git.git_pure import Linked
 from app.worker.github import GitHub, GitHubError
 from app.worker.rules.checkers import STALE
 from app.worker.rules.judge import CodeReader
@@ -36,7 +37,6 @@ from app.worker.rules.linked_issues_pure import (
     SYSTEM_PROMPT,
     IssueGap,
     IssuesEarlier,
-    Linked,
     LinkedIssues,
     Shown,
     build_prompt,

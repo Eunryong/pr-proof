@@ -19,8 +19,8 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.shared.db_pure import SeenViolation
 from app.shared.job_pure import PRJob
 from app.worker import records_pure, repo
+from app.worker.core.bundle_pure import FEEDBACK_BUNDLE
 from app.worker.doc_rules_pure import Found, RuleChecked
-from app.worker.fix.feedback_fix_pure import FEEDBACK_BUNDLE
 from app.worker.fix.fix_pure import MechanicalFix
 from app.worker.fix.model_fix_pure import ModelFix
 from app.worker.fix.proposal_pure import find_secret_in_text

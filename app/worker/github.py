@@ -10,8 +10,8 @@ from typing import Final
 from app.shared import config, github_auth
 from app.shared.comment_pure import COMMENT_MARKER, REPLY_MARKER
 from app.shared.feedback_pure import FEEDBACK_MARKER
-from app.worker.rules import linked_issues_pure
-from app.worker.rules.linked_issues_pure import Linked
+from app.worker.git import git_pure
+from app.worker.git.git_pure import Linked
 
 GH_TIMEOUT: Final = 60
 _ENV_PASSTHROUGH: Final = ("PATH", "HOME", "GH_CONFIG_DIR")
@@ -123,16 +123,16 @@ query($owner: String!, $name: String!, $number: Int!) {
 }
 """
 # PR이 닫겠다고 한 이슈 (본문의 `Closes #N`·`Fixes #N`과 PR 화면에서 연결한 것을 GitHub이 모은다).
-# 이슈는 10개, 이슈마다 댓글은 최근 50개까지 읽는다 (`linked_issues_pure`의 상한)
+# 이슈는 10개, 이슈마다 댓글은 최근 50개까지 읽는다 (`git_pure`의 상한)
 CLOSING_ISSUES_QUERY: Final = f"""
 query($owner: String!, $name: String!, $number: Int!) {{
   repository(owner: $owner, name: $name) {{
     pullRequest(number: $number) {{
-      closingIssuesReferences(first: {linked_issues_pure.MAX_FETCHED_ISSUES}) {{
+      closingIssuesReferences(first: {git_pure.MAX_FETCHED_ISSUES}) {{
         totalCount
         nodes {{
           __typename number title body repository {{ nameWithOwner }}
-          comments(last: {linked_issues_pure.MAX_FETCHED_COMMENTS}) {{
+          comments(last: {git_pure.MAX_FETCHED_COMMENTS}) {{
             totalCount nodes {{ authorAssociation body }}
           }}
         }}
@@ -241,7 +241,7 @@ class GitHub:
             data = json.loads(out)
             if not isinstance(data, dict):
                 raise ValueError("응답이 객체가 아님")
-            return linked_issues_pure.parse_closing_issues(data)
+            return git_pure.parse_closing_issues(data)
         except ValueError as e:
             raise GitHubError(f"연결된 이슈 조회 응답을 읽지 못함: {repo}#{pr_number}: {e}") from e
 

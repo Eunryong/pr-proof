@@ -15,6 +15,12 @@ def text_hash(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
 
 
+def prompt_version(system_prompt: str, schema: Mapping[str, object], user_frame: str) -> str:
+    """프롬프트 글과 스키마의 해시. 손으로 올리는 번호는 고치고도 잊을 수 있어 내용에서 만든다."""
+    schema_text = json.dumps(schema, sort_keys=True, ensure_ascii=False)
+    return text_hash("\0".join((system_prompt, schema_text, user_frame)))[:12]
+
+
 def model_cache_key(stage: str, model: str, prompt_version: str, parts: Mapping[str, Part]) -> str:
     """parts의 이름 순서는 키에 영향을 주지 않고, 목록 안의 순서는 영향을 준다.
 

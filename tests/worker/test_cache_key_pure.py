@@ -1,6 +1,6 @@
 import pytest
 
-from app.worker.cache_key_pure import model_cache_key
+from app.worker.cache_key_pure import model_cache_key, prompt_version
 
 
 def _key(**parts: object) -> str:
@@ -36,3 +36,12 @@ def test_empty_identity_is_rejected(empty: str) -> None:
     args[empty] = ""
     with pytest.raises(ValueError):
         model_cache_key(**args, parts={})
+
+
+def test_prompt_version_changes_with_any_prompt_part() -> None:
+    schema = {"type": "object"}
+    version = prompt_version("지시", schema, "틀")
+    assert version == prompt_version("지시", {"type": "object"}, "틀")
+    assert version != prompt_version("지시.", schema, "틀")
+    assert version != prompt_version("지시", {"type": "array"}, "틀")
+    assert version != prompt_version("지시", schema, "틀 ")

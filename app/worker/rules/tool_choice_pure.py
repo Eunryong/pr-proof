@@ -12,11 +12,10 @@ from typing import Final, Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from app.worker.cache_key_pure import model_cache_key, text_hash
+from app.worker.cache_key_pure import model_cache_key, prompt_version, text_hash
 from app.worker.checker_authoring_pure import Shortfall, example_parts
 from app.worker.prompt_text_pure import load
 from app.worker.rule_pure import CheckMethod, Example, Rule, RuleSource, normalize
-from app.worker.rule_reading_pure import prompt_version
 from app.worker.tools_pure import TOOL_LIST, TOOLS_VERSION
 
 # 예시 확인과 답 확인의 규칙을 바꾸면 올린다 (캐시 키에 들어간다)

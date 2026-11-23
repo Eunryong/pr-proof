@@ -21,8 +21,6 @@ from app.worker.prompt_text_pure import load
 from app.worker.rule_pure import CheckMethod, Rule, RuleSource
 from app.worker.violation_pure import Violation, violation_id
 
-# 코멘트 수정안 묶음. 브랜치는 pipeline/pr-<n>-fix-feedback. `/fix`의 묶음 인자에는 없다
-FEEDBACK_BUNDLE: Final = "feedback"
 RULE_PREFIX: Final = "feedback-"
 SOURCE_FILE: Final = "PR 코멘트"
 MAX_MESSAGE_CHARS: Final = 600

@@ -6,6 +6,7 @@ from typing import Final
 
 import pytest
 
+from app.worker.git.git_pure import Issue, IssueNote, Linked, parse_closing_issues
 from app.worker.rules import pr_description_pure
 from app.worker.rules.linked_issues_pure import (
     MAX_BODY_BYTES,
@@ -15,11 +16,8 @@ from app.worker.rules.linked_issues_pure import (
     PROMPT_VERSION,
     SYSTEM_PROMPT,
     AnswerItem,
-    Issue,
     IssueGap,
-    IssueNote,
     IssuesEarlier,
-    Linked,
     LinkedIssues,
     Shown,
     ShownIssue,
@@ -32,7 +30,6 @@ from app.worker.rules.linked_issues_pure import (
     items_from_json,
     items_to_json,
     parse_answer,
-    parse_closing_issues,
     select,
     verify,
 )

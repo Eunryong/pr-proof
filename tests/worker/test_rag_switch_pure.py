@@ -17,9 +17,9 @@ from app.worker.rag_switch_pure import (
     decide,
     describe,
     outcomes,
-    parse_mode,
     worse,
 )
+from app.worker.repo_config_pure import parse_mode
 
 LIMITS: Final[Mapping[str, int]] = {"min_records": 20, "min_attempts": 30, "min_baseline": 10}
 

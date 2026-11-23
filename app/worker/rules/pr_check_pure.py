@@ -24,11 +24,11 @@ from typing import Final, Literal, get_args
 
 from pydantic import BaseModel, ConfigDict
 
-from app.worker.cache_key_pure import model_cache_key, text_hash
+from app.worker.cache_key_pure import model_cache_key, prompt_version, text_hash
 from app.worker.checker_pure import is_repo_path
+from app.worker.git.git_pure import RawCommit
 from app.worker.prompt_text_pure import load
 from app.worker.rule_pure import CheckMethod, Example, Rule, RuleSource, normalize
-from app.worker.rule_reading_pure import prompt_version
 
 # --- 사실의 상한 (4.5 표). 넘으면 그 사실을 보는 규칙은 "일부만 확인함"으로 보인다 ---
 MAX_COMMITS: Final = 250
@@ -112,16 +112,6 @@ class Commit:
     @property
     def checked(self) -> bool:
         return not (self.merge or self.pipeline)
-
-
-@dataclass(frozen=True)
-class RawCommit:
-    """git에서 읽은 커밋 하나. 메시지는 이미 상한까지 읽었다(cut이면 더 있었다)."""
-
-    sha: str
-    parents: tuple[str, ...]
-    message: str
-    cut: bool = False
 
 
 @dataclass(frozen=True)

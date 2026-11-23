@@ -4,7 +4,7 @@
 """
 
 from collections.abc import Mapping
-from typing import Annotated, Final
+from typing import Annotated, Final, Literal
 
 import yaml
 from pydantic import (
@@ -19,8 +19,11 @@ from pydantic import (
 )
 
 from app.shared.model_names_pure import MODEL_NAME_PATTERN
-from app.worker.rag_switch_pure import DEFAULT_MODE, MODES, RagMode, parse_mode
 
+# `rag.enabled`의 값 (10절, 6.7 "검색을 켜는 조건"). 켜고 끄는 판단은 app/worker/rag_switch_pure.py
+RagMode = Literal["auto", "on", "off"]
+MODES: Final = ("auto", "on", "off")
+DEFAULT_MODE: Final = "auto"
 # docker가 받는 최소 메모리보다 넉넉히 크게. 너무 작으면 컨테이너가 뜨지 않아 환경 오류로 보인다
 MIN_MEMORY_GB: Final = 0.5
 DEFAULT_MAX_RETRIES: Final = 3
@@ -47,6 +50,16 @@ MAX_RULE_DOCS: Final = 20
 DEFAULT_MIN_SIMILARITY: Final = 0.91
 # 프롬프트에 넣는 기록 수의 상한. 저장소 설정이 프롬프트를 끝없이 늘리지 못하게
 MAX_RECORDS_CAP: Final = 10
+
+
+def parse_mode(value: object) -> RagMode | None:
+    """`.pipeline.yaml`의 `rag.enabled` 값. 옛 불리언은 `true` = on, `false` = off다 (YAML 1.1은
+    따옴표 없는 `on`·`off`도 불리언으로 읽는다). 그 밖의 값은 None (기본값으로 읽고 알린다)."""
+    if isinstance(value, bool):
+        return "on" if value else "off"
+    if isinstance(value, str) and value in MODES:
+        return value  # type: ignore[return-value]
+    return None
 
 
 def _check_doc_path(path: str) -> str:
