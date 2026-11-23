@@ -95,7 +95,7 @@ ModelFixStatus = Literal[
     "failed",  # 회차 안에 검증을 통과하지 못함
     "dropped",  # 허용 범위 밖·파이프라인 파일·비밀값. 재시도 없이 버림
     "budget",  # 호출 상한에 걸림
-    "refused",  # 모델을 실행하지 않음 (worktree 밖을 가리키는 링크)
+    "refused",  # 모델을 실행하지 않음 (worktree 밖을 가리키는 링크, 고치지 못하는 모델 구현)
 ]
 
 

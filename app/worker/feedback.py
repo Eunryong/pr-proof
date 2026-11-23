@@ -24,7 +24,7 @@ from typing import Final, Literal
 from app.shared.feedback_pure import handled, resolution_reason
 from app.shared.job_pure import PRJob
 from app.worker import base_config, feedback_triage, graph, repo, retry, update
-from app.worker.ai import claude_cli, workdir
+from app.worker.ai.model_backend import AskModel, fix_unavailable
 from app.worker.budget import CallBudget
 from app.worker.checker_authoring_pure import Checked
 from app.worker.deps import Deps
@@ -57,7 +57,6 @@ from app.worker.rule_pure import Rule
 from app.worker.rule_reading_pure import REGULAR_FILE_MODES
 from app.worker.rules import detect, doc_rules, rules
 from app.worker.rules.detect import Detection, source_lines
-from app.worker.rules.rules import AskModel
 from app.worker.state import Store
 from app.worker.test_run_pure import PytestRun
 
@@ -301,7 +300,7 @@ def _write_fix(ctx: graph.FlowContext, work: PRJob, deps: Deps, found: Found, pi
                              disabled=disabled)  # fmt: skip
 
     tools = model_fix.FixTools(
-        run_model=workdir.run_in_model_folder, recheck=recheck,
+        run_model=deps.backend.fix, unavailable=fix_unavailable(deps.backend), recheck=recheck,
         rules_rechecked=sum(1 for c in checks if isinstance(c, Checked)),
         run_suite=lambda generated, files: graph.pr_suite(ctx, work, generated, files),
         is_stale=lambda: store.is_stale(work), secrets=proposal.pipeline_secrets(),
@@ -373,9 +372,9 @@ def handle_items(
        않고 끝낸다(`overlaps`).
     2. 판단: 남은 코멘트를 한 번에 묻는다. 자료는 체크아웃 없이 읽는다.
     3. 수정: 받아들인 코멘트가 있을 때만 체크아웃하고 한 수정안으로 고친다.
-    ask는 판단 모델 호출이다(기본 `claude_cli.run_structured`).
+    ask는 판단 모델 호출이다(기본은 모델 구현의 `ask`).
     """
-    ask = ask or claude_cli.run_structured
+    ask = ask or deps.backend.ask
     store = deps.store
     store.set_latest_head(job.repo, job.pr_number, refs.head_sha)
     work = job.model_copy(update={"head_sha": refs.head_sha, "base_sha": refs.base_sha})

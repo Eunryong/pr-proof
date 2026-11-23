@@ -19,6 +19,7 @@ import pytest
 
 from app.worker import repo
 from app.worker.ai import claude_cli
+from app.worker.ai.claude_backend import ClaudeCliBackend
 from app.worker.budget import CallBudget
 from app.worker.diff_pure import added_lines
 from app.worker.repo_config_pure import CallSettings
@@ -97,7 +98,7 @@ def _worktree(tmp_path: Path, checks: str) -> tuple[Path, str]:
 def _judge(wt: Path, diff: str, store: Store) -> Judged:
     budget = CallBudget(store, "o/r", 1, "a" * 40, CallSettings())
     return judge((RULE,), wt, diff, store=store, budget=budget, model=MODEL,
-                 ask=claude_cli.run_structured)  # fmt: skip
+                 read_code=ClaudeCliBackend().reading)  # fmt: skip
 
 
 @pytest.fixture
@@ -168,7 +169,8 @@ def test_prior_answer_is_kept_for_unrelated_changes_and_revised_when_the_body_ch
     def judge_at_head() -> Judged:
         head = _git(wt, "rev-parse", "HEAD").strip()
         budget = CallBudget(store, "o/r", 1, head, CallSettings())
-        return judge((RULE,), wt, diff, store=store, budget=budget, model=MODEL, ask=rec)
+        return judge((RULE,), wt, diff, store=store, budget=budget, model=MODEL,
+                     read_code=ClaudeCliBackend(run_structured=rec).reading)  # fmt: skip
 
     first = judge_at_head()
     stored = _stored(wt, diff, store)

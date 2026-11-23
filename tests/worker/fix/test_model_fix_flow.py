@@ -18,7 +18,9 @@ from app.shared.db_pure import ModelCall
 from app.shared.job_pure import PRJob
 from app.worker import graph, main, repo, retry, update
 from app.worker.ai import claude_cli, workdir
+from app.worker.ai.claude_backend import ClaudeCliBackend
 from app.worker.ai.claude_cli import AIErrorKind, ClaudeResult
+from app.worker.ai.model_backend import Capabilities
 from app.worker.fix import model_fix_pure
 from app.worker.fix.proposal import FORK_NO_PR
 from app.worker.github import GitHubError
@@ -603,6 +605,29 @@ def test_model_outside_the_tool_list_is_an_environment_error(fix_env, tmp_path: 
     use_fixer(fix_env, wrong_tools)
     with pytest.raises(Exception, match="claude 호출을 중단함"):
         run(fix_env, tmp_path)
+
+
+class _NoEdit(ClaudeCliBackend):
+    """코드를 고치지 못한다고 밝힌 모델 구현 (읽기·판단만 하는 구현의 자리)."""
+
+    capabilities = Capabilities(reads_code=True, reports_reads=True, edits=False,
+                                pipeline_tools=False)  # fmt: skip
+
+
+def test_backend_that_cannot_edit_makes_no_fix_and_says_why(fix_env, tmp_path: Path) -> None:
+    """모델 구현이 고치지 못하면 수정 작성을 부르지 않고, 수정안을 만들지 않은 까닭을 코멘트에
+    남긴다. 위반을 찾고 수정 판단을 하는 데까지는 같다."""
+    use_model(fix_env, FakeModel(rule_answer(print_rule()), decide=first_fix_then_skip))
+    use_fixer(fix_env, lambda *a, **k: pytest.fail("고치지 못하는 구현으로 수정 작성을 부름"))
+    fix_env["deps"].backend = _NoEdit()
+    state = run(fix_env, tmp_path)
+
+    fix = state["model_fix"]
+    assert (fix.status, fix.attempts, fix.calls) == ("refused", 0, 0)
+    assert fix.detail == "수정안을 만들지 않음: 모델 구현 claude-cli은 코드를 고치지 못한다"
+    assert fix_env["pushes"] == [] and fix_env["gh"].pulls == {}
+    assert ("**모델 수정안:** 수정안을 만들지 못함: 모델을 실행하지 않음 "
+            f"({inline_code(fix.detail)})") in _comment(fix_env)  # fmt: skip
 
 
 def test_model_folder_git_failure_is_an_environment_error(fix_env, tmp_path: Path) -> None:

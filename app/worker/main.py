@@ -7,6 +7,7 @@ PR에 실패로 남기지 않고 예외를 올려 RQ가 정해진 간격으로 �
 import logging
 import sys
 from collections.abc import Callable
+from functools import partial
 
 from redis import Redis
 from rq import Queue, SimpleWorker
@@ -24,7 +25,7 @@ log = logging.getLogger(__name__)
 def handle(
     payload: str,
     deps: Deps | None = None,
-    checks: Callable[[Redis], list[preflight.Check]] = preflight.run_checks,
+    checks: Callable[[Redis], list[preflight.Check]] | None = None,
 ) -> str:
     job = PRJob.model_validate_json(payload)
     deps = deps or Deps.from_config()
@@ -43,7 +44,8 @@ def handle(
         # 재시도를 모두 쓴 환경 오류만 시작 전 확인으로 다시 가려 알린다. 앞 시도의 실패는 RQ가
         # 다시 하고, 다시 해서 풀리는 오류는 알리지 않는다. 확인이 모두 통과하면 알리지 않는다
         if isinstance(error, retry.EnvironmentFailure) and retry.attempt()[1]:
-            preflight.alert(checks(deps.store.redis), deps.settings.data_dir)
+            run_checks = checks or partial(preflight.run_checks, backend=deps.backend)
+            preflight.alert(run_checks(deps.store.redis), deps.settings.data_dir)
         raise
     deps.store.release(job)
     return result

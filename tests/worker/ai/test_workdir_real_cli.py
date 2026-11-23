@@ -6,6 +6,7 @@
 
 import os
 import subprocess
+from functools import partial
 from pathlib import Path
 from typing import Final
 
@@ -13,6 +14,7 @@ import pytest
 
 from app.worker import repo
 from app.worker.ai import claude_cli, workdir
+from app.worker.ai.claude_backend import ClaudeCliBackend
 
 REAL_AI_ENV: Final = "PR_PROOF_REAL_AI"
 CANARY: Final = "CANARY-5d0c2e7b-outside-the-worktree"
@@ -68,13 +70,14 @@ def test_model_folder_keeps_the_link_out_and_applies_the_edit(tmp_path: Path, ou
     captured: list[str] = []
 
     # 수정 작성과 같이 지시를 시스템 프롬프트로도 넘긴다 (--append-system-prompt와 --restricted,
-    # 파일 도구, --settings의 훅이 한 호출에서 같이 돈다)
-    result = workdir.run_in_model_folder(
-        wt, PROMPT, model="haiku", max_budget_usd=0.5, runner=_capture(captured),
+    # 파일 도구, --settings의 훅이 한 호출에서 같이 돈다). 수정 작성처럼 모델 구현의 fix를 거친다
+    backend = ClaudeCliBackend(run_claude=partial(claude_cli.run_claude, runner=_capture(captured)))
+    result = backend.fix(
+        wt, PROMPT, model="haiku", max_budget_usd=0.5,
         system_prompt="너는 파이프라인의 시험 단계다. 사용자 메시지가 시키는 도구 호출을 한다.",
     )  # fmt: skip
 
-    assert result.error is None, result.detail
+    assert result.error is None and result.environment == "", result.detail
     assert captured and CANARY not in "".join(captured)
     assert result.tool_uses >= 2  # 모델이 실제로 읽으려 했다
     assert "# checked" in (wt / "src" / "app.py").read_text()

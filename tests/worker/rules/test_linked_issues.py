@@ -11,6 +11,7 @@ import pytest
 
 from app.worker import repo
 from app.worker.ai import workdir
+from app.worker.ai.claude_backend import ClaudeCliBackend
 from app.worker.budget import CallBudget
 from app.worker.github import GitHub
 from app.worker.repo_config_pure import CallSettings
@@ -69,9 +70,14 @@ def _never(*args, **kwargs):
     pytest.fail("이 경우에는 모델을 부르지 않아야 한다")
 
 
+def _reading(ask):
+    """claude 구현의 읽기 폴더에서 claude 대신 ask를 부른다."""
+    return ClaudeCliBackend(run_structured=ask).reading
+
+
 def _tools(store: Store, **limits: int) -> linked_issues.Tools:
     budget = CallBudget(store, "o/r", 1, HEAD_SHA, CallSettings(**limits))
-    return linked_issues.Tools(store=store, budget=budget, ask=_never, model=MODEL)
+    return linked_issues.Tools(store=store, budget=budget, read_code=_reading(_never), model=MODEL)
 
 
 def _diff(wt: Path) -> str:

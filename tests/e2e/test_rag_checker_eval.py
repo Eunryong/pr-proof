@@ -28,6 +28,7 @@ import pytest
 from app.shared.embed_models_pure import E5_SMALL, EMBED_MODELS
 from app.worker import memory
 from app.worker.ai import claude_cli
+from app.worker.ai.claude_backend import ClaudeCliBackend
 from app.worker.budget import CallBudget
 from app.worker.checker_authoring_pure import checker_key
 from app.worker.doc_rules_pure import Found, RuleChecked, RulesRead
@@ -60,7 +61,8 @@ def _settings() -> RagSettings:
 
 def _runtime(store: Store, target: Target, ask, sandbox, retriever=None) -> doc_rules.Runtime:
     budget = CallBudget(store, f"local/{target.name}", 1, target.base_sha, EVAL_CALLS)
-    return doc_rules.Runtime(store=store, budget=budget, models=ModelSettings(), ask=ask,
+    return doc_rules.Runtime(store=store, budget=budget, models=ModelSettings(),
+                             backend=ClaudeCliBackend(run_structured=ask),
                              sandbox=sandbox, retriever=retriever)  # fmt: skip
 
 
