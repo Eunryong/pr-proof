@@ -20,7 +20,7 @@
 | 실행 결과의 규칙 | `run_check.md` | `app/worker/rules/run_check_pure.py` |
 | 수정할지 정하기 | `fix_decision.md` | `app/worker/fix/fix_decision_pure.py` |
 | 수정 작성 | `model_fix.md` | `app/worker/fix/model_fix_pure.py` |
-| PR 코멘트 가리기 | `feedback_triage.md` | `app/worker/feedback_triage_pure.py` |
+| PR 코멘트 가리기 | `feedback_triage.md` | `app/worker/feedback/feedback_triage_pure.py` |
 
 ## 뒤에 덧붙는 조각
 

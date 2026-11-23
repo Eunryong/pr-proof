@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 import pytest
 
 from app.shared.feedback_pure import FEEDBACK_MARKER
-from app.worker.feedback_pure import Item, flat_item, thread_item, unhandled
+from app.worker.feedback.feedback_pure import Item, flat_item, thread_item, unhandled
 
 
 @dataclass(frozen=True)

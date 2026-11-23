@@ -1,9 +1,9 @@
-"""app/worker/feedback_report_pure.py: 코멘트에 다는 답글 (4.11)."""
+"""app/worker/feedback/feedback_report_pure.py: 코멘트에 다는 답글 (4.11)."""
 
 import pytest
 
-from app.worker.feedback_pure import Item
-from app.worker.feedback_report_pure import VERDICTS, Handled, record_why, reply_body
+from app.worker.feedback.feedback_pure import Item
+from app.worker.feedback.feedback_report_pure import VERDICTS, Handled, record_why, reply_body
 
 
 def _item(kind="review_comment") -> Item:

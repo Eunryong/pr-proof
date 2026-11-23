@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Final, Literal
 
 from app.worker.core.markdown_pure import inline_code
-from app.worker.feedback_pure import Item
+from app.worker.feedback.feedback_pure import Item
 
 # 코멘트 하나를 처리한 결과
 # - fixed: 받아들여 이번에 수정안 PR을 염, proposed: 열린 수정안이 이미 고침(머지를 기다림)

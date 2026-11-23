@@ -10,8 +10,8 @@ import logging
 from collections.abc import Mapping, Sequence
 
 from app.worker.core.rule_pure import Rule
-from app.worker.feedback_pure import Item
-from app.worker.feedback_triage_pure import (
+from app.worker.feedback.feedback_pure import Item
+from app.worker.feedback.feedback_triage_pure import (
     ANSWER_SCHEMA,
     CALL_FAILED,
     PROMPT_VERSION,

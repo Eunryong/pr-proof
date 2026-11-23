@@ -43,7 +43,7 @@ LIMITS: typing.Final[Mapping[str, int]] = {"pr": 14}
 
 `app/worker/`는 세 층으로 정리하는 중이다(pr-proof#98). 끝나면 아래 구조가 되고, 그때까지 아직 옮기지 않은 공용·단계 모듈은 `app/worker/` 바로 아래에 남아 있다.
 
-- 뼈대: `app/worker/` 바로 아래의 `main`, `graph`, `update`, `command`, `command_pure`, `feedback`, `guard`, `retry`, `deps`, `cli`, `preflight`, `records`. 단계를 부르기만 한다.
+- 뼈대: `app/worker/` 바로 아래의 `main`, `graph`, `update`, `command`, `command_pure`, `feedback_job`, `guard`, `retry`, `deps`, `cli`, `preflight`, `records`. 단계를 부르기만 한다.
 - 단계 폴더: `rules`, `feedback`, `fix`, `report`, `evaluation`. 한 단계가 하는 일 전부를 둔다.
 - 공용 폴더: `core`, `sandbox`, `testing`, `lang`, `git`, `config`, `store`, `model`. 모든 단계가 쓰는 데이터 정의와 도구를 둔다.
 

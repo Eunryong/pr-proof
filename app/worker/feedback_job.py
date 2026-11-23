@@ -23,14 +23,15 @@ from typing import Final, Literal
 
 from app.shared.feedback_pure import handled, resolution_reason
 from app.shared.job_pure import PRJob
-from app.worker import feedback_triage, graph, retry, update
+from app.worker import graph, retry, update
 from app.worker.config import base_config
 from app.worker.config.repo_config_pure import RepoConfig, call_limits
 from app.worker.core.bundle_pure import FEEDBACK_BUNDLE
 from app.worker.core.rule_pure import Rule
 from app.worker.deps import Deps
-from app.worker.feedback_pure import Item, flat_item, thread_item, unhandled
-from app.worker.feedback_report_pure import (
+from app.worker.feedback import feedback_triage
+from app.worker.feedback.feedback_pure import Item, flat_item, thread_item, unhandled
+from app.worker.feedback.feedback_report_pure import (
     RESOLVES,
     RESOLVES_FOR_COPILOT,
     VERDICTS,
@@ -38,7 +39,7 @@ from app.worker.feedback_report_pure import (
     record_why,
     reply_body,
 )
-from app.worker.feedback_triage_pure import Facts, KnownFix, Triage, excerpt, overlaps
+from app.worker.feedback.feedback_triage_pure import Facts, KnownFix, Triage, excerpt, overlaps
 from app.worker.fix import model_fix, proposal
 from app.worker.fix.feedback_fix_pure import FIX_NOTE, Accepted, feedback_found, fix_targets
 from app.worker.fix.fix_decision_pure import SafetyNet, safety_gap
