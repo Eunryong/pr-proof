@@ -27,7 +27,7 @@ from app.worker.fix.proposal_pure import ProposalResult
 from app.worker.markdown_pure import inline_code
 from app.worker.rule_pure import CheckMethod, Example, Rule, RuleSource, UnreadDoc
 from app.worker.rules.judge_pure import JudgeUsage
-from app.worker.test_run_pure import PytestRun
+from app.worker.test_run_pure import PytestRun, ReportSummary
 from app.worker.violation_pure import Violation
 
 USAGE: Final = CallUsage(calls=3, limit=14, cache_hits=1, models=("claude-haiku-5-5",),
@@ -264,8 +264,8 @@ def test_folded_list_is_capped_and_says_how_many_are_left_out() -> None:
 
 def test_fixed_lines_are_listed_and_left_lines_are_summarised_by_reason() -> None:
     """4.9: 고칠 대상은 위치마다 방법이 보이고(테스트 표시는 수정 결과 아래에 묶는다), 고치지 않은
-    위반은 규칙마다
-    "직접 고쳐야 함"의 이유별 건수 한 줄 아래에 위치가 접힌다. "skip"이라는 말은 나오지 않는다."""
+    위반은 규칙마다 "직접 고쳐야 함" 아래에 이유마다 건수와 문장을 한 줄씩 적고 위치를 접는다.
+    이유가 여럿이면 위치마다 짧은 이름이 붙는다. "skip"이라는 말은 나오지 않는다."""
     a, b, c, d, e = (_violation(line=n) for n in (2, 3, 4, 5, 6))
     a, d = replace(a, covered=False), replace(d, covered=True)
     decided = Decided((
@@ -281,7 +281,11 @@ def test_fixed_lines_are_listed_and_left_lines_are_summarised_by_reason() -> Non
     assert "  - `orders/a.py:5` · 고칠 대상 (기계적 수정)\n" in text
     assert "실행함" not in text and "실행하지 않음" not in text
     head, _, folded = text.partition("<details><summary>직접 고쳐야 함 3건의 위치</summary>")
-    assert "  직접 고쳐야 함 3건 (고치면 동작이 바뀜 2건, 테스트가 실패함 1건)" in head
+    assert ("  직접 고쳐야 함 3건\n"
+            "  - 2건: 규칙을 지키는 어떤 변경도 동작을 바꾼다고 모델이 보아 수정안을 만들지 "
+            "않았습니다.\n"
+            "  - 1건: 테스트가 실패해 고친 것을 확인할 수 없으므로 수정안을 만들지 않았습니다.\n"
+            ) in head  # fmt: skip
     assert "orders/a.py:3" not in head and "orders/a.py:4" not in head
     assert "  - `orders/a.py:3` · 고치면 동작이 바뀜: `출력이 기능이다`" in folded
     assert "  - `orders/a.py:4` · 테스트가 실패함" in folded
@@ -312,8 +316,9 @@ def test_left_lines_are_folded_even_when_few_and_count_toward_the_fold_cap() -> 
     decided = Decided(tuple(FixDecision(v.id, "skip", "model", reason="changes_behavior", why="w")
                             for v in violations))  # fmt: skip
     text = "\n".join(section(_found(RuleChecked(RULE, REF), violations=violations), {}, decided))
-    assert "  직접 고쳐야 함 12건 (고치면 동작이 바뀜 12건)" in text
-    assert "  - `orders/a.py:12` · 고치면 동작이 바뀜: `w`" in text
+    assert ("  직접 고쳐야 함 12건 · 규칙을 지키는 어떤 변경도 동작을 바꾼다고 모델이 보아 "
+            "수정안을 만들지 않았습니다.") in text  # fmt: skip
+    assert "  - `orders/a.py:12` · `w`\n" in text  # 이유가 하나면 까닭은 되풀이하지 않는다
     many = tuple(_violation(line=n) for n in range(1, 512))
     decided = Decided(tuple(FixDecision(v.id, "skip", "pipeline", reason="notify_only",
                                         why="알리기만 하는 규칙") for v in many))  # fmt: skip
@@ -321,29 +326,183 @@ def test_left_lines_are_folded_even_when_few_and_count_toward_the_fold_cap() -> 
     assert "  - 외 211건" in text and len(text) <= doc_rules_report.MAX_SECTION_CHARS
 
 
-def test_notify_only_rule_shows_no_reason_text() -> None:
-    """알리기만 하는 규칙은 까닭을 적지 않는다. "직접 고쳐야 함"이 이미 그 뜻이고 위반마다 같은 말이
-    붙어 읽기 어려웠다. 파이프라인이 더 구체적인 까닭을 적은 것(도구의 자동 수정이 없음)은
-    보인다."""
+def _left_text(*pairs: tuple[Violation, FixDecision], rule: Rule = RULE) -> str:
+    """위반과 그 수정 판단으로 그린 규칙 절."""
+    violations = tuple(v for v, _ in pairs)
+    decided = Decided(tuple(d for _, d in pairs))
+    return "\n".join(section(_found(RuleChecked(rule, REF), violations=violations), {}, decided))
+
+
+def _skip(v: Violation, reason: str, why: str, by: str = "pipeline") -> FixDecision:
+    return FixDecision(v.id, "skip", by, reason=reason, why=why)  # type: ignore[arg-type]
+
+
+FILE_SENTENCE: Final = "파일 이름이나 위치를 바꿔야 하는 위반이라 수정안을 만들지 않았습니다."
+
+
+def test_each_reason_has_one_sentence_per_rule() -> None:
+    """수정안을 만들지 않은 까닭은 규칙마다 한 번, "직접 고쳐야 함 N건" 옆에 문장으로 적는다. 위치
+    줄에는 되풀이하지 않는다. "알리기만 하는 규칙"이라는 말은 나오지 않는다 (2026-11-23)."""
+    v = _violation()
+    cases = [
+        (_skip(v, "notify_only", "알리기만 하는 규칙"),
+         "규칙을 읽은 모델이 그 파일 안에서는 고칠 수 없는 규칙(다른 파일의 사용처까지 바꿔야 "
+         "하거나 코드로 고칠 수 없음)이라고 답해 수정안을 만들지 않았습니다."),
+        (_skip(v, "notify_only", "도구의 자동 수정이 없음"),
+         "도구에 이 위반의 자동 수정이 없어 수정안을 만들지 않았습니다."),
+        (_skip(v, "tests_failed", "테스트가 시간 안에 끝나지 않음"),
+         "테스트가 시간 안에 끝나지 않아 고친 것을 확인할 수 없으므로 수정안을 만들지 않았습니다."),
+        (_skip(v, "tests_failed", "테스트를 돌리지 못함"),
+         "테스트를 돌리지 못해 고친 것을 확인할 수 없으므로 수정안을 만들지 않았습니다."),
+        (_skip(v, "no_safety_net", "테스트로 확인할 수 없음 (테스트가 없음)"),
+         "테스트가 없어 고친 것을 확인할 수 없으므로 수정안을 만들지 않았습니다."),
+        (_skip(v, "no_safety_net", "테스트로 확인할 수 없음 (불안정한 테스트가 있음)"),
+         "불안정한 테스트가 있어 고친 것을 확인할 수 없으므로 수정안을 만들지 않았습니다."),
+        (_skip(v, "call_limit", "수정 판단을 하지 못함 (호출 상한: PR 상한 (3/3회 사용))"),
+         "모델 호출 상한에 걸려 고칠지 판단하지 못했습니다. `/fix`로 다시 돌릴 수 있습니다."),
+        (_skip(v, "undecided", "수정 판단을 하지 못함 (모델 호출 실패)"),
+         "모델 호출이 실패해 고칠지 판단하지 못했습니다."),
+        (_skip(v, "undecided", "모델이 답하지 않음"),
+         "모델이 이 위반에 답하지 않아 수정안을 만들지 않았습니다."),
+        (_skip(v, "undecided", ""),
+         "모델이 고칠지 판단하지 못해 수정안을 만들지 않았습니다."),
+        (_skip(v, "needs_other_file", "`b.py`의 호출부도 바꿔야 함", by="model"),
+         "고치려면 그 파일 밖의 다른 파일이나 다른 파일이 쓰는 이름을 바꿔야 한다고 모델이 보아 "
+         "수정안을 만들지 않았습니다."),
+        (_skip(v, "team_pattern", "기록 12와 같음", by="model"),
+         "팀이 전에 닫은 수정안과 비슷하다고 모델이 보아 수정안을 만들지 않았습니다."),
+        (_skip(v, "risky", "잘 모르겠음", by="model"),
+         "모델이 고치지 않기로 해 수정안을 만들지 않았습니다."),
+    ]  # fmt: skip
+    for decision, sentence in cases:
+        text = _left_text((v, decision))
+        assert f"  직접 고쳐야 함 1건 · {sentence}\n" in text, decision.reason
+        assert "알리기만 하는 규칙" not in text
+        located = text.partition("직접 고쳐야 함 1건의 위치</summary>")[2]
+        assert sentence not in located
+        assert "수정 판단: 고칠 대상 0건, 직접 고쳐야 함 1건 ·" in text  # 이유가 하나면 괄호 없음
+
+
+def test_location_keeps_only_what_differs_per_line() -> None:
+    """위치 줄에는 위치마다 다른 것만 붙는다: 모델이 쓴 이유 글(코드 스팬), 거절된 수정안 번호."""
     a, b = _violation(line=1), _violation(line=2)
-    decided = Decided((
-        FixDecision(a.id, "skip", "pipeline", reason="notify_only", why="알리기만 하는 규칙"),
-        FixDecision(b.id, "skip", "pipeline", reason="notify_only", why="도구의 자동 수정이 없음"),
-    ))  # fmt: skip
-    text = "\n".join(section(_found(RuleChecked(RULE, REF), violations=(a, b)), {}, decided))
-    assert "알리기만 하는 규칙" not in text
-    assert "  직접 고쳐야 함 2건\n" in text + "\n"
-    assert "  - `orders/a.py:1`\n" in text + "\n"
-    assert "  - `orders/a.py:2` · 도구의 자동 수정이 없음" in text
-    assert "수정 판단: 고칠 대상 0건, 직접 고쳐야 함 2건 ·" in text
+    text = _left_text((a, _skip(a, "notify_only", "알리기만 하는 규칙")),
+                      (b, _skip(b, "notify_only", "알리기만 하는 규칙")))  # fmt: skip
+    assert "  - `orders/a.py:1`\n" in text and "  - `orders/a.py:2`\n" in text
+    rejected = _left_text((a, _skip(a, "rejected_before", "이전에 거절됨 (#900)")))
+    assert ("  직접 고쳐야 함 1건 · 같은 줄을 고친 수정안이 머지되지 않고 닫혀 다시 만들지 "
+            "않았습니다.") in rejected  # fmt: skip
+    assert "  - `orders/a.py:1` · 이전에 거절됨 (#900)" in rejected
+
+
+def test_mixed_reasons_are_split_with_counts_and_named_per_line() -> None:
+    """한 규칙에 이유가 여럿이면 이유마다 건수와 문장을 한 줄씩 적고, 위치마다 짧은 이름을 붙인다.
+    "수정 판단:" 줄에는 이유별 건수가 붙는다."""
+    a, b, c = _violation(line=1), _violation(line=2), replace(_violation("x.py", 0), unit="file")
+    text = _left_text(
+        (a, _skip(a, "notify_only", "도구의 자동 수정이 없음")),
+        (b, _skip(b, "changes_behavior", "반환값이 바뀐다", by="model")),
+        (c, _skip(c, "notify_only", "알리기만 하는 규칙")),
+    )
+    assert ("  직접 고쳐야 함 3건\n"
+            "  - 1건: 도구에 이 위반의 자동 수정이 없어 수정안을 만들지 않았습니다.\n"
+            "  - 1건: 규칙을 지키는 어떤 변경도 동작을 바꾼다고 모델이 보아 수정안을 만들지 "
+            "않았습니다.\n"
+            f"  - 1건: {FILE_SENTENCE}\n") in text  # fmt: skip
+    assert "  - `orders/a.py:1` · 도구의 자동 수정이 없음\n" in text
+    assert "  - `orders/a.py:2` · 고치면 동작이 바뀜: `반환값이 바뀐다`\n" in text
+    assert "  - `x.py` (파일 이름·경로) · 파일 이름·위치를 바꿔야 함\n" in text
+    assert ("수정 판단: 고칠 대상 0건, 직접 고쳐야 함 3건 (도구의 자동 수정이 없음 1건, "
+            "고치면 동작이 바뀜 1건, 파일 이름·위치를 바꿔야 함 1건) ·") in text  # fmt: skip
 
 
 def test_unknown_reason_from_an_old_checkpoint_shows_the_pipeline_reason() -> None:
     v = _violation()
-    decided = Decided((FixDecision(v.id, "skip", "pipeline", reason="not_covered",  # type: ignore[arg-type]
-                                   why="테스트가 지나가지 않음"),))  # fmt: skip
-    text = "\n".join(section(_found(RuleChecked(RULE, REF), violations=(v,)), {}, decided))
-    assert "  직접 고쳐야 함 1건 (테스트가 지나가지 않음 1건)" in text
+    text = _left_text((v, _skip(v, "not_covered", "테스트가 지나가지 않음")))
+    assert "  직접 고쳐야 함 1건 · 수정안을 만들지 않았습니다 (테스트가 지나가지 않음)." in text
+
+
+def test_problem_is_lifted_once_when_violations_share_a_message() -> None:
+    """같은 메시지를 가진 위반들의 "무엇이 문제인가"는 규칙 블록에 한 줄로 오른다. 메시지는 코드
+    스팬 안에 길이 상한을 두고 넣는다."""
+    message = "`print` 대신 `logger`를 쓴다 @team"
+    vs = tuple(replace(_violation(line=n), message=message) for n in (1, 2))
+    text = _text(_found(RuleChecked(RULE, REF), violations=vs))
+    assert text.count("무엇이 문제인가") == 1
+    assert "  출처: `README.md > 코드 규칙 > 출력` · 모델이 쓴 검사기 (ast-grep)\n" \
+           "  무엇이 문제인가: `` `print` 대신 `logger`를 쓴다 @team ``\n" in text  # fmt: skip
+    assert "@" not in _outside_code(text)
+    long = (replace(_violation(), message="x" * 1000),)
+    shown = _text(_found(RuleChecked(RULE, REF), violations=long))
+    assert f"무엇이 문제인가: `{'x' * doc_rules_report.MAX_DETAIL_CHARS}…`" in shown
+
+
+def test_problem_is_left_out_when_it_says_nothing_new() -> None:
+    """메시지가 서로 다르거나, 없거나, 규칙 원문과 공백·대소문자·마침표만 다르거나, 위치 줄에 이미
+    보이면(도구 설정의 규칙) 싣지 않는다."""
+    rule = replace(RULE, text="New files are written in TypeScript.")
+    differ = (replace(_violation(line=1), message="a"), replace(_violation(line=2), message="b"))
+    empty = (replace(_violation(), message=" "),)
+    same = (replace(_violation(), message="new  files are written in typescript"),)
+    for vs in (differ, empty, same):
+        assert "무엇이 문제인가" not in _text(_found(RuleChecked(rule, REF), violations=vs))
+    tool_rule = replace(RULE, id="E741", origin="tool_config")
+    tool = (Violation(id="t", rule_id="E741", file="a.py", line=3, code="E741",
+                      message="Ambiguous variable name: `l`", found_by="tool"),)  # fmt: skip
+    text = _text(_found(RuleChecked(tool_rule, REF), violations=tool))
+    assert "무엇이 문제인가" not in text
+    assert "  - `a.py:3` `` Ambiguous variable name: `l` ``" in text
+
+
+TS_RULE: Final = Rule(
+    id="R-readme-9b6db85d",
+    text="New files and contracts are written in TypeScript or .d.ts (S1).",
+    source=RuleSource("README.md", "Tech stack", "abc"), origin="document", scope=(),
+    check=CheckMethod("path"), fix="none",
+)  # fmt: skip
+TS_MESSAGE: Final = (
+    "New files and contracts must be written in TypeScript or .d.ts, not JavaScript."
+)
+TS_FILES: Final = (
+    "src/map-edit.cjs", "src/room-state.cjs", "src/net/socket.cjs", "src/net/lobby.cjs",
+    "src/ui/panel.js", "src/ui/toolbar.js", "src/ui/dialog.js", "src/ui/menu.js",
+    "server/index.cjs", "server/routes.cjs", "server/store.cjs", "scripts/build.mjs",
+)  # fmt: skip
+
+
+def ts_comment() -> str:
+    """주인이 받은 코멘트와 같은 입력(JavaScript 저장소, 파일 단위 위반 12건, 테스트 없음, 수정안
+    없음)으로 그린 결과 코멘트. 파일 이름은 예시다."""
+    ref = CheckerRef(key="k", id="d" * 64, kind="path-pattern", cached=False)
+    violations = tuple(
+        Violation(id=f"v{i}", rule_id=TS_RULE.id, file=f, line=0, message=TS_MESSAGE,
+                  found_by="checker", unit="file")
+        for i, f in enumerate(TS_FILES)
+    )  # fmt: skip
+    found = _found(RuleChecked(TS_RULE, ref), violations=violations)
+    decided = Decided(tuple(_skip(v, "notify_only", "알리기만 하는 규칙") for v in violations))
+    run = PytestRun(exit_code=5, summary=ReportSummary())
+    return report.render_result(run, "a" * 40, 12.0, doc_rules=found, decisions=decided)
+
+
+def test_the_reported_typescript_comment_explains_what_and_why() -> None:
+    """pr-proof#78: 무엇이 문제인지, 왜 수정안을 만들지 않았는지, 테스트가 왜 돌지 않았는지가 위반
+    가까이에 있다."""
+    text = ts_comment()
+    head, _, folded = text.partition(doc_rules_report.DETAILS_SUMMARY)
+    assert "**테스트:** 실행된 테스트 없음\n**규칙:** ⚠️ 위반 12건 (규칙 1개)\n" in text
+    assert report.untested_note(PytestRun(exit_code=5, summary=ReportSummary()), True)[1] in head
+    assert (
+        "- `R-readme-9b6db85d` `New files and contracts are written in TypeScript or .d.ts (S1).` "
+        "· 12건\n"
+        "  출처: `README.md > Tech stack` · 모델이 쓴 검사기 (path-pattern)\n"
+        f"  무엇이 문제인가: `{TS_MESSAGE}`\n"
+        f"  직접 고쳐야 함 12건 · {FILE_SENTENCE}\n"
+    ) in head
+    assert "  - `src/map-edit.cjs` (파일 이름·경로)\n" in head
+    assert "알리기만 하는 규칙" not in text and "검색:" not in text
+    assert "수정 판단: 고칠 대상 0건, 직접 고쳐야 함 12건 · 모델 호출 0회" in head
+    assert "읽은 규칙 1개" in folded
 
 
 def test_model_reason_cannot_escape_code() -> None:
@@ -526,7 +685,8 @@ def test_what_the_model_says_is_not_a_violation_is_set_aside_not_counted() -> No
     assert title(found, decisions=decided) == "**규칙:** ⚠️ 위반 1건 (규칙 1개)"
     text = "\n".join(section(found, {}, decided))
     shown, _, folded = text.partition(doc_rules_report.DETAILS_SUMMARY)
-    assert "`orders/a.py:3`" not in shown and "직접 고쳐야 함 1건 (고치면 동작이 바뀜 1건)" in shown
+    assert "`orders/a.py:3`" not in shown
+    assert "  직접 고쳐야 함 1건 · 규칙을 지키는 어떤 변경도 동작을 바꾼다고" in shown
     assert "모델이 위반이 아니라고 판단함 1건" in shown
     assert ("도구가 잡았지만 모델이 위반이 아니라고 판단함 1건:\n"
             "- `R-readme-1` `orders/a.py:3` · `<문서의 예외>`") in folded  # fmt: skip

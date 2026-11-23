@@ -50,7 +50,7 @@ fix:
 expect:
   violations: ["orders/services/pricing.py:30"]
   contains:
-    - "수정 판단: 고칠 대상 0건, 직접 고쳐야 함 1건 (다른 파일이나 공개 이름을 바꿔야 함 1건)"
-    - "  직접 고쳐야 함 1건 (다른 파일이나 공개 이름을 바꿔야 함 1건)"
-    - "  - `orders/services/pricing.py:30` · 다른 파일이나 공개 이름을 바꿔야 함: `orders/api/handlers.py가 이 이름을 import한다`"
+    - "수정 판단: 고칠 대상 0건, 직접 고쳐야 함 1건 ·"
+    - "  직접 고쳐야 함 1건 · 고치려면 그 파일 밖의 다른 파일이나 다른 파일이 쓰는 이름을 바꿔야 한다고 모델이 보아 수정안을 만들지 않았습니다."
+    - "  - `orders/services/pricing.py:30` · `orders/api/handlers.py가 이 이름을 import한다`"
   fix: none

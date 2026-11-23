@@ -167,6 +167,48 @@ def test_install_failure_keeps_rules() -> None:
     assert "No matching distribution" in text
 
 
+NO_TESTS: Final = PytestRun(exit_code=5, summary=ReportSummary())
+
+
+@pytest.mark.parametrize(
+    ("run", "note"),
+    [
+        (NO_TESTS, "pytest가 테스트를 하나도 찾지 못해 고친 것을 확인할 수 없으므로 모델 "
+                   "수정안을 만들지 않습니다. 지금 테스트를 돌릴 수 있는 것은 Python(pytest) "
+                   "테스트뿐입니다."),
+        (PytestRun(exit_code=124, summary=None, timed_out=True),
+         "테스트가 시간 안에 끝나지 않아 고친 것을 확인할 수 없으므로 수정안을 만들지 않습니다."),
+        (PytestRun(exit_code=4, summary=None, output="ERROR: usage"),
+         "테스트 결과를 얻지 못해 고친 것을 확인할 수 없으므로 수정안을 만들지 않습니다."),
+    ],
+    ids=["no_tests", "timeout", "unrunnable"],
+)  # fmt: skip
+def test_untested_run_with_violations_says_why_no_fix(run: PytestRun, note: str) -> None:
+    """테스트가 돌지 않았으면 위반이 있을 때 "테스트:" 줄 아래(펼친 부분)에 까닭을 적는다. 맨 위
+    줄은 짧게 둔다."""
+    text = _render(run, doc_rules=_found(3))
+    top, _, rest = text.partition("**규칙:**")
+    assert note not in top and f"\n\n{note}\n" in rest.partition("<details>")[0]
+    assert note not in _render(run, doc_rules=_found())  # 위반이 없으면 할 일이 없다
+    assert note not in _render(run)
+
+
+def test_runs_that_ran_or_stopped_have_no_untested_note() -> None:
+    failed = PytestRun(exit_code=1, summary=ReportSummary(failed=1, total=1))
+    cancelled = PytestRun(exit_code=None, summary=None, cancelled=True)
+    for run in (PASSED, failed, cancelled):
+        assert report.untested_note(run, True) == []
+    assert report.untested_note(NO_TESTS, False) == []
+
+
+def test_install_failure_with_violations_says_no_fix_was_judged() -> None:
+    text = report.render_install_failure(HEAD, "ERROR: x", doc_rules=_found(3))
+    assert f"\n\n{report.INSTALL_FAILED_NOTE}\n" in text
+    assert report.INSTALL_FAILED_NOTE not in report.render_install_failure(
+        HEAD, "ERROR: x", doc_rules=_found()
+    )
+
+
 def test_environment_wait_shows_no_results() -> None:
     text = report.render_environment_wait(HEAD, final=False)
     assert "**규칙:**" not in text

@@ -185,8 +185,9 @@ def test_fix_decided_violation_reaches_a_fix_pull_request(fix_env, tmp_path: Pat
     comment = _comment(fix_env)
     assert "**모델 수정안:** 위반 1건을 고쳤습니다." in comment
     assert f"수정안 PR #{number}을 열었습니다." in comment
-    assert "  직접 고쳐야 함 1건 (고치면 동작이 바뀜 1건)" in comment
-    assert f"  - `orders/a.py:3` · 고치면 동작이 바뀜: {inline_code('출력이 기능이다')}" in comment
+    assert ("  직접 고쳐야 함 1건 · 규칙을 지키는 어떤 변경도 동작을 바꾼다고 모델이 보아 수정안을 "
+            "만들지 않았습니다.") in comment  # fmt: skip
+    assert f"  - `orders/a.py:3` · {inline_code('출력이 기능이다')}" in comment
     fixed = "  - `orders/a.py:2` · 고칠 대상 (모델 수정: `로거로 바꿀 수 있다`) · 수정안 #900"
     assert fixed in comment
     assert "skip" not in comment
@@ -312,7 +313,8 @@ def test_skipped_violation_never_reaches_the_fixer(fix_env, tmp_path) -> None:
     assert "model_fix" not in state and fixer.calls == [] and fix_env["gh"].pulls == {}
     comment = _comment(fix_env)
     assert "**모델 수정안:**" not in comment
-    assert "  직접 고쳐야 함 2건 (다른 파일이나 공개 이름을 바꿔야 함 2건)" in comment
+    assert ("  직접 고쳐야 함 2건 · 고치려면 그 파일 밖의 다른 파일이나 다른 파일이 쓰는 이름을 "
+            "바꿔야 한다고 모델이 보아 수정안을 만들지 않았습니다.") in comment  # fmt: skip
 
 
 def test_fork_pull_request_gets_no_fix_pull_request(fix_env, tmp_path: Path) -> None:
