@@ -25,13 +25,13 @@ import pytest
 
 from app.worker import linked_issues_report_pure as shown
 from app.worker.ai.claude_backend import ClaudeCliBackend
-from app.worker.budget import CallBudget
 from app.worker.config.repo_config_pure import CallSettings
 from app.worker.git import repo
 from app.worker.git.git_pure import Issue, IssueNote, Linked
 from app.worker.rules import linked_issues
 from app.worker.rules.linked_issues_pure import LinkedIssues
-from app.worker.state import Store
+from app.worker.store.budget import CallBudget
+from app.worker.store.state import Store
 
 from ...redis_stand_ins import MemoryKeys
 

@@ -7,9 +7,10 @@ from typing import Final
 import pytest
 from sqlalchemy import create_engine, inspect, text
 
-from app.worker import cli, evaluation, state
+from app.worker import cli, evaluation
 from app.worker.eval_run_pure import RunSummary
-from app.worker.state import Store
+from app.worker.store import state
+from app.worker.store.state import Store
 
 from ..redis_stand_ins import MemoryKeys
 

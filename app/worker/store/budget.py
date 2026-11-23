@@ -1,5 +1,5 @@
 """모델 호출 수 상한을 `ai_calls`에 묶는다 (docs/DESIGN.md 9.2). 판단은
-app/worker/call_budget_pure.py.
+app/worker/store/call_budget_pure.py.
 
 호출은 시작할 때 센 값과 함께 한 줄을 쓰고(`begin`), 끝나면 결과를 채운다(`finish`). 워커가
 호출 도중 죽어도 그 호출은 상한에서 센다. 저장된 결과를 쓴 것은 0으로 한 줄 남긴다(`record_hit`).
@@ -10,7 +10,8 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 
 from app.shared.db_pure import ModelCall
-from app.worker.call_budget_pure import (
+from app.worker.config.repo_config_pure import CallSettings
+from app.worker.store.call_budget_pure import (
     DAILY_WINDOW,
     Allowed,
     Denied,
@@ -21,8 +22,7 @@ from app.worker.call_budget_pure import (
     decide,
     limits_for,
 )
-from app.worker.config.repo_config_pure import CallSettings
-from app.worker.state import Store
+from app.worker.store.state import Store
 
 
 def _utc_now() -> datetime:

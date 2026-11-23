@@ -1,5 +1,6 @@
 import pytest
 
+from app.worker.core import secret_pure
 from app.worker.fix import proposal_pure
 
 
@@ -52,11 +53,9 @@ def test_limits() -> None:
 
 
 def test_find_secret_in_text_checks_the_whole_text() -> None:
-    assert proposal_pure.find_secret_in_text("상수로 뺐다") is None
-    assert proposal_pure.find_secret_in_text("키는 ghp_" + "a" * 36 + " 이다") == "토큰·키 형식"
-    assert proposal_pure.find_secret_in_text("hook-secret-123 를 읽었다", ["hook-secret-123"]) == (
+    assert secret_pure.find_secret_in_text("상수로 뺐다") is None
+    assert secret_pure.find_secret_in_text("키는 ghp_" + "a" * 36 + " 이다") == "토큰·키 형식"
+    assert secret_pure.find_secret_in_text("hook-secret-123 를 읽었다", ["hook-secret-123"]) == (
         "파이프라인 비밀값"
     )
-    assert (
-        proposal_pure.find_secret_in_text("short", ["short"]) is None
-    )  # 너무 짧은 값은 보지 않는다
+    assert secret_pure.find_secret_in_text("short", ["short"]) is None  # 너무 짧은 값은 보지 않는다

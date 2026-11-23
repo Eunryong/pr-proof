@@ -28,7 +28,7 @@ from app.worker import main
 from app.worker.deps import Deps
 from app.worker.git import repo
 from app.worker.git.github import GitHub
-from app.worker.state import Store
+from app.worker.store.state import Store
 from tests.sandbox_names import TEST_NAMES
 
 from ..redis_stand_ins import MemoryKeys

@@ -35,9 +35,9 @@ from app.worker.fix.fix_decision_pure import Decided, FixDecision, SkipReason
 from app.worker.fix.fix_pure import MechanicalFix
 from app.worker.fix.model_fix_pure import ModelFix
 from app.worker.fix.proposal_pure import ProposalResult
-from app.worker.rag_pure import KIND_LABEL, SITE_LABEL, Retrieval, merge_retrievals
-from app.worker.rag_switch_pure import RagSwitch, comment_line
 from app.worker.rules.pr_check_pure import PrChecks
+from app.worker.store.rag_pure import KIND_LABEL, SITE_LABEL, Retrieval, merge_retrievals
+from app.worker.store.rag_switch_pure import RagSwitch, comment_line
 from app.worker.testing.test_lines import generated_lines, runs_without_new_tests, status_lines
 
 TITLE: Final = "**규칙:**"

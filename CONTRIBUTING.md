@@ -55,8 +55,6 @@ LIMITS: typing.Final[Mapping[str, int]] = {"pr": 14}
 
 공용 폴더 사이에는 다음 방향만 쓴다: `sandbox`는 `core`를, `testing`은 `core`·`sandbox`를, `lang`은 `core`·`sandbox`·`testing`을, `git`은 `core`·`sandbox`를, `config`는 `core`·`sandbox`·`git`을, `store`는 `core`·`sandbox`·`git`·`config`를, `model`은 `core`·`sandbox`·`git`·`config`·`store`를 import하고, `core`는 다른 폴더를 import하지 않는다.
 
-정리가 끝날 때까지 남는 예외는 `app/worker/rules/checkers.py`와 `app/worker/fix/proposal.py`가 `app.worker.records`를 import하는 것이다.
-
 `app/worker/sandbox/` 아래 모듈은 `app` 안에서 `app.worker.sandbox`의 모듈과 순수 모듈만 import한다.
 
 ```python

@@ -5,7 +5,7 @@ import pytest
 
 from app.shared.db_pure import Record
 from app.shared.embed_models_pure import E5_SMALL, EMBED_MODELS
-from app.worker.rag_pure import (
+from app.worker.store.rag_pure import (
     RECORDS_HEAD,
     Hit,
     Retrieval,

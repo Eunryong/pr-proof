@@ -12,7 +12,7 @@ from app.shared import config, state_keys_pure
 from app.shared.feedback_pure import FEEDBACK_MARKER
 from app.shared.job_pure import PRJob
 from app.shared.ops_alert_pure import TEXT
-from app.worker.state import Store
+from app.worker.store.state import Store
 
 HEAD: Final = "h" * 40
 

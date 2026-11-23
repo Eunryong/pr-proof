@@ -17,7 +17,7 @@ from app.shared import config, state_keys_pure
 from app.shared.job_pure import PRJob
 from app.worker import command, feedback, preflight, retry, update
 from app.worker.deps import Deps
-from app.worker.state import open_engine
+from app.worker.store.state import open_engine
 
 log = logging.getLogger(__name__)
 

@@ -13,7 +13,8 @@
    남기므로 다시 켜지지 않는다.
 4. 그 밖은 켬.
 
-이 모듈은 외부 호출이 없다. 숫자를 읽고 1의 기록을 쓰는 것은 app/worker/memory.py의 `switch_for`다.
+이 모듈은 외부 호출이 없다. 숫자를 읽고 1의 기록을 쓰는 것은 app/worker/store/memory.py의
+`switch_for`다.
 """
 
 import json
@@ -195,7 +196,7 @@ def comment_line(switch: RagSwitch) -> str | None:
 
 # 체크포인트에서 되살릴 수 있게 graph.py가 등록하는 타입
 STATE_TYPES: Final = (
-    ("app.worker.rag_switch_pure", "RagSwitch"),
-    ("app.worker.rag_switch_pure", "Evidence"),
-    ("app.worker.rag_switch_pure", "Outcomes"),
+    ("app.worker.store.rag_switch_pure", "RagSwitch"),
+    ("app.worker.store.rag_switch_pure", "Evidence"),
+    ("app.worker.store.rag_switch_pure", "Outcomes"),
 )

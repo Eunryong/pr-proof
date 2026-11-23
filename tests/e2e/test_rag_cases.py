@@ -32,15 +32,16 @@ import yaml
 
 from app.shared.embed_models_pure import E5_SMALL, EMBED_MODELS
 from app.shared.job_pure import PRJob
-from app.worker import main, memory
+from app.worker import main
 from app.worker.ai import claude_cli
 from app.worker.cli import reindex
 from app.worker.core.rule_pure import rule_id
 from app.worker.fix import fix_decision_pure
-from app.worker.rag_pure import collection_name
-from app.worker.records_pure import NewRecord
+from app.worker.store import memory
+from app.worker.store.rag_pure import collection_name
+from app.worker.store.records_pure import NewRecord
 
-from ..worker.rag_helpers import FAKE_SPEC, FakeEncoder
+from ..worker.store.rag_helpers import FAKE_SPEC, FakeEncoder
 from .test_lint_cases import _bodies, _git, shared_venvs  # noqa: F401
 from .test_rules_cases import (
     REAL_MODEL_ENV,

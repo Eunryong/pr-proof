@@ -45,7 +45,8 @@ def main(argv: list[str] | None = None) -> int:
 def evaluate(db: Path, *, baseline: bool, real_model: bool, label: str, out: Path | None = None,
              runner=subprocess.run) -> int:  # noqa: ANN001  # fmt: skip
     """runner(`subprocess.run`과 같은 꼴)는 테스트가 바꾼다."""
-    from app.worker import eval_run_pure, evaluation, state
+    from app.worker import eval_run_pure, evaluation
+    from app.worker.store import state
 
     engine = state.open_engine(db)
     try:
@@ -70,8 +71,8 @@ def reindex(settings: config.PipelineConfig, repos: list[str] | None, encoder=No
     """encoder(`memory.Encoder`)를 주지 않으면 설정의 임베딩 모델을 받아 쓴다. 테스트는 가짜를
     넘긴다."""
     from app.shared.embed_models_pure import EMBED_MODELS
-    from app.worker import memory
-    from app.worker.state import Store
+    from app.worker.store import memory
+    from app.worker.store.state import Store
 
     store = Store(settings.db_path, Redis.from_url(settings.redis_url))
     try:

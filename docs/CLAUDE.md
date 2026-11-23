@@ -125,8 +125,8 @@ tests/          코드와 같은 이름의 폴더 (tests/api, tests/worker, test
 | 실행 코드 | 순수 모듈 |
 | --- | --- |
 | `app/worker/fix/decide.py` | `app/worker/fix/fix_decision_pure.py` |
-| `app/worker/budget.py` | `app/worker/call_budget_pure.py` |
-| `app/worker/memory.py` | `app/worker/rag_pure.py`, `app/worker/rag_switch_pure.py` |
+| `app/worker/store/budget.py` | `app/worker/store/call_budget_pure.py` |
+| `app/worker/store/memory.py` | `app/worker/store/rag_pure.py`, `app/worker/store/rag_switch_pure.py` |
 | `app/worker/evaluation.py` | `app/worker/eval_run_pure.py` |
 | `app/worker/rules/rules.py` | `app/worker/rule_reading_pure.py`, `app/worker/rules/doc_sections_pure.py` |
 | `app/worker/rules/checkers.py` | `app/worker/checker_authoring_pure.py`, `app/worker/rules/tool_choice_pure.py` |

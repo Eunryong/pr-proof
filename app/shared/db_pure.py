@@ -1,4 +1,4 @@
-"""SQLite 테이블 정의. 연결과 쓰기는 각자 자기 쪽(워커는 app/worker/state.py)에서 한다."""
+"""SQLite 테이블 정의. 연결과 쓰기는 각자 자기 쪽(워커는 app/worker/store/state.py)에서 한다."""
 
 from datetime import datetime
 from typing import Literal

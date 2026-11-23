@@ -10,7 +10,6 @@ import pytest
 
 from app.worker.ai import workdir
 from app.worker.ai.claude_backend import ClaudeCliBackend
-from app.worker.budget import CallBudget
 from app.worker.config.repo_config_pure import CallSettings
 from app.worker.git import repo
 from app.worker.git.git_pure import Issue, Linked
@@ -25,7 +24,8 @@ from app.worker.rules.linked_issues_pure import (
     items_to_json,
     select,
 )
-from app.worker.state import Store
+from app.worker.store.budget import CallBudget
+from app.worker.store.state import Store
 
 from ...redis_stand_ins import MemoryKeys
 from ..git.test_github import FakeGh

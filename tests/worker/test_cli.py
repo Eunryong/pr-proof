@@ -7,10 +7,10 @@ def test_reindex_rebuilds_the_vector_store_from_records(monkeypatch, tmp_path, c
     from ..redis_stand_ins import MemoryKeys
 
     pytest.importorskip("chromadb")
-    from app.worker.records_pure import NewRecord
-    from app.worker.state import Store
+    from app.worker.store.records_pure import NewRecord
+    from app.worker.store.state import Store
 
-    from .rag_helpers import FakeEncoder
+    from .store.rag_helpers import FakeEncoder
 
     settings = cli.config.PipelineConfig(
         repos=["o/r"], data_dir=tmp_path, redis_url="redis://127.0.0.1:1/0"
@@ -26,7 +26,7 @@ def test_reindex_rebuilds_the_vector_store_from_records(monkeypatch, tmp_path, c
 
 
 def test_reindex_without_the_model_reports_and_fails(monkeypatch, tmp_path, capsys) -> None:
-    from app.worker import memory
+    from app.worker.store import memory
 
     settings = cli.config.PipelineConfig(
         repos=["o/r"], data_dir=tmp_path, redis_url="redis://127.0.0.1:1/0"

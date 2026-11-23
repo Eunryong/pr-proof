@@ -14,12 +14,13 @@ from app.shared import state_keys_pure
 from app.shared.db_pure import FixAttempt, SeenViolation
 from app.shared.feedback_pure import FEEDBACK_MARKER
 from app.shared.job_pure import PRJob
-from app.worker import feedback, main, records_pure, retry
+from app.worker import feedback, main, retry
 from app.worker.ai import claude_cli
 from app.worker.ai.claude_cli import StructuredResult
 from app.worker.config.repo_config_pure import RepoConfig
 from app.worker.feedback_triage_pure import Facts
 from app.worker.git.github import GitHub, GitHubError
+from app.worker.store import records_pure
 
 from .git.test_github import FakeGh
 from .helpers import HEAD

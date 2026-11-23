@@ -1,5 +1,5 @@
 """모델 호출 수 상한 (docs/DESIGN.md 9.2, 9.3). 판단만 한다. 세고 기록하는 것은
-app/worker/budget.py.
+app/worker/store/budget.py.
 
 상한은 셋이다. PR 상한(그 PR의 모든 커밋 누적), 규칙 묶음 상한(규칙 읽기와 검사기 작성, 그 묶음의
 캐시 키 단위), 저장소 하루 상한(그 저장소의 모든 호출, 최근 24시간). 무거운 모델 호출은 3으로,
@@ -43,7 +43,7 @@ CAP_LABEL: Final[Mapping[str, str]] = {
 
 @dataclass(frozen=True)
 class PrScope:
-    """PR 상한에서 세는 호출. 어느 PR인지는 호출을 세는 쪽(app/worker/budget.py)이 안다."""
+    """PR 상한에서 세는 호출. 어느 PR인지는 호출을 세는 쪽(app/worker/store/budget.py)이 안다."""
 
 
 @dataclass(frozen=True)
