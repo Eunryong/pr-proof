@@ -21,7 +21,6 @@ import subprocess
 from pathlib import Path
 from typing import Final
 
-import fakeredis
 import pytest
 
 from app.worker import linked_issues_report_pure as shown
@@ -32,6 +31,8 @@ from app.worker.repo_config_pure import CallSettings
 from app.worker.rules import linked_issues
 from app.worker.rules.linked_issues_pure import Issue, IssueNote, Linked, LinkedIssues
 from app.worker.state import Store
+
+from ...redis_stand_ins import MemoryKeys
 
 REAL_AI_ENV: Final = "PR_PROOF_REAL_AI"
 MODEL: Final = "sonnet"
@@ -145,7 +146,7 @@ def _check(wt: Path, diff: str, linked: Linked, store: Store, case: str) -> Link
 
 @pytest.fixture
 def store(tmp_path: Path) -> Store:
-    return Store(tmp_path / "pipeline.db", fakeredis.FakeStrictRedis())
+    return Store(tmp_path / "pipeline.db", MemoryKeys())
 
 
 def test_resolved_issue_has_nothing_missing(tmp_path: Path, store: Store) -> None:

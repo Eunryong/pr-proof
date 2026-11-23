@@ -1,7 +1,6 @@
 from datetime import UTC, datetime
 from pathlib import Path
 
-import fakeredis
 import pytest
 from sqlalchemy import create_engine, inspect, text
 
@@ -13,12 +12,13 @@ from app.worker.rag_switch_pure import Evidence, Outcomes
 from app.worker.records_pure import NewRecord
 from app.worker.state import Store
 
+from ..redis_stand_ins import MemoryKeys
 from .rag_helpers import fix_outcome, record
 
 
 @pytest.fixture
 def store(tmp_path: Path) -> Store:
-    return Store(tmp_path / "db" / "pipeline.db", fakeredis.FakeStrictRedis())
+    return Store(tmp_path / "db" / "pipeline.db", MemoryKeys())
 
 
 def _job(head: str = "abc") -> PRJob:
@@ -82,7 +82,7 @@ def test_old_v1_proposal_targets_table_is_left_alone(tmp_path: Path) -> None:
             )
         )
     old.dispose()
-    store = Store(path, fakeredis.FakeStrictRedis())
+    store = Store(path, MemoryKeys())
     with store.engine.connect() as conn:
         assert conn.execute(text("SELECT count(*) FROM proposaltarget")).scalar() == 1
     store.record_proposal("o/r", 1, "mechanical", "h1", "b", 900)
@@ -106,8 +106,8 @@ def test_old_dollar_table_is_left_alone(tmp_path: Path) -> None:
         )
     old.dispose()
 
-    store = Store(path, fakeredis.FakeStrictRedis())
-    Store(path, fakeredis.FakeStrictRedis())  # 다시 열어도 같은 상태
+    store = Store(path, MemoryKeys())
+    Store(path, MemoryKeys())  # 다시 열어도 같은 상태
     with store.engine.connect() as conn:
         assert conn.execute(text("SELECT count(*) FROM aicall")).scalar() == 1
     store.record_proposal("o/r", 1, "mechanical", "h1", "b", 900)
@@ -137,7 +137,7 @@ def test_existing_proposal_table_gets_the_attempt_column(tmp_path: Path) -> None
         )
     old.dispose()
 
-    store = Store(path, fakeredis.FakeStrictRedis())
+    store = Store(path, MemoryKeys())
     tables = set(inspect(store.engine).get_table_names())
     assert {"fix_attempts", "violations", "records"} <= tables
     (row,) = store.proposals("o/r", 1)
@@ -203,8 +203,8 @@ def test_existing_runs_table_gets_the_author_columns_and_approvals_is_created(
         )
     old.dispose()
 
-    store = Store(path, fakeredis.FakeStrictRedis())
-    Store(path, fakeredis.FakeStrictRedis())  # 다시 열어도 같은 상태
+    store = Store(path, MemoryKeys())
+    Store(path, MemoryKeys())  # 다시 열어도 같은 상태
     assert "approvals" in set(inspect(store.engine).get_table_names())
     assert store.last_comment_id("o/r", 1) == 555
     with store.engine.connect() as conn:
@@ -256,13 +256,13 @@ def test_turned_off_is_one_row_per_repo_and_bound_to_the_comparison_threshold(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "pipeline.db"
-    store = Store(path, fakeredis.FakeStrictRedis())
+    store = Store(path, MemoryKeys())
     first = Evidence(25, Outcomes(9, 30), Outcomes(10, 30))
     assert store.rag_turned_off("o/r", 30, 10) is None
     store.turn_rag_off("o/r", first, 30, 10)
     store.turn_rag_off("o/r", first, 30, 10)  # 다시 불려도 한 줄
     # 워커를 다시 띄운 것과 같다: 새 연결이 같은 사실을 읽는다
-    again = Store(path, fakeredis.FakeStrictRedis())
+    again = Store(path, MemoryKeys())
     assert again.rag_turned_off("o/r", 30, 10) == first
     assert again.rag_turned_off("o/r", 40, 10) is None  # 기준값을 바꾸면 다시 정한다
     assert again.rag_turned_off("o/r", 30, 5) is None
@@ -275,7 +275,7 @@ def test_existing_database_gets_rag_auto_off_and_keeps_its_rows(tmp_path: Path) 
     """이 작업 전의 데이터베이스(`rag_auto_off` 없음)를 그대로 연다. 있던 기록은 남고 auto가 그
     기록을 센다."""
     path = tmp_path / "pipeline.db"
-    store = Store(path, fakeredis.FakeStrictRedis())
+    store = Store(path, MemoryKeys())
     for n in range(3):
         store.add_record(record("adopted", n))
     fix_outcome(store, 1, "merged", "[1]")
@@ -284,7 +284,7 @@ def test_existing_database_gets_rag_auto_off_and_keeps_its_rows(tmp_path: Path) 
         conn.execute(text("DROP TABLE rag_auto_off"))
     old.dispose()
 
-    store = Store(path, fakeredis.FakeStrictRedis())
+    store = Store(path, MemoryKeys())
     assert "rag_auto_off" in inspect(store.engine).get_table_names()
     assert store.rag_evidence("o/r") == Evidence(3, Outcomes(1, 1), Outcomes(0, 0))
     assert store.rag_turned_off("o/r", 30, 10) is None
@@ -354,6 +354,6 @@ def test_feedback_table_is_added_to_an_existing_database(tmp_path: Path) -> None
                 "INSERT INTO commandrecord VALUES (1, 'o/r', 1, '/fix', 'x', '2026-11-22 00:00:00')"
             )
         )
-    store = Store(db, fakeredis.FakeStrictRedis())
+    store = Store(db, MemoryKeys())
     assert "feedback" in inspect(store.engine).get_table_names()
     assert store.command_handled(1)

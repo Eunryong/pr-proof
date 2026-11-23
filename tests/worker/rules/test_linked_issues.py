@@ -6,7 +6,6 @@ import subprocess
 from pathlib import Path
 from typing import Final
 
-import fakeredis
 import pytest
 
 from app.worker import repo
@@ -29,6 +28,7 @@ from app.worker.rules.linked_issues_pure import (
 )
 from app.worker.state import Store
 
+from ...redis_stand_ins import MemoryKeys
 from ..test_github import FakeGh
 
 MODEL: Final = "sonnet"
@@ -63,7 +63,7 @@ def wt(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def store(tmp_path: Path) -> Store:
-    return Store(tmp_path / "pipeline.db", fakeredis.FakeStrictRedis())
+    return Store(tmp_path / "pipeline.db", MemoryKeys())
 
 
 def _never(*args, **kwargs):

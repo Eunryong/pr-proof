@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Final
 
+import pytest
 from rq import Queue, SimpleWorker
 from rq.job import JobStatus
 from rq.registry import StartedJobRegistry
@@ -25,6 +26,12 @@ from app.worker import main
 from .helpers import HEAD, PASSED, use_runner
 
 HEARTBEAT_TIMEOUT: Final = timedelta(minutes=20)  # sync.heartbeat_timeout_minutes 기본값
+
+
+@pytest.fixture
+def env(redis_env):
+    """이 파일은 큐 등록·동기화·RQ를 거치므로 실제 Redis를 쓴다 (tests/conftest.py)."""
+    return redis_env
 
 
 def _webhook_job() -> PRJob:

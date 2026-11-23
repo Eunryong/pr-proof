@@ -3,8 +3,8 @@
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Protocol
 
-from redis import Redis
 from sqlalchemy import Engine, func, inspect, text
 from sqlalchemy.schema import CreateColumn
 from sqlmodel import Session, SQLModel, create_engine, select
@@ -84,8 +84,18 @@ def latest_baseline(
         return session.exec(stmt.order_by(EvalRun.id.desc())).first()
 
 
+class Keys(Protocol):
+    """Store가 Redis에서 쓰는 세 동작. 실제 `redis.Redis`가 그대로 맞는다."""
+
+    def get(self, name: str) -> bytes | None: ...
+
+    def set(self, name: str, value: str) -> object: ...
+
+    def delete(self, *names: str) -> object: ...
+
+
 class Store:
-    def __init__(self, db_path: Path, redis: Redis) -> None:
+    def __init__(self, db_path: Path, redis: Keys) -> None:
         self.engine = open_engine(db_path)
         self.redis = redis
 

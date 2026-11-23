@@ -2,12 +2,14 @@ import json
 from datetime import UTC, datetime
 from typing import Final
 
-import fakeredis
 import pytest
+from redis import Redis
 
 from app.shared.ops_alert_pure import TEXT
 from app.worker import preflight
 from app.worker.ai.claude_backend import ClaudeCliBackend
+
+from ..redis_stand_ins import UNREACHABLE_REDIS_URL, Pong
 
 NOW: Final = datetime(2026, 11, 18, 12, 0, tzinfo=UTC)
 
@@ -22,7 +24,7 @@ def _claude(claude_status) -> ClaudeCliBackend:
 
 def _checks(command_ok=lambda args: True, claude_status=_status, gh_ok=lambda: True):
     return preflight.run_checks(
-        fakeredis.FakeStrictRedis(), command_ok=command_ok, gh_ok=gh_ok,
+        Pong(), command_ok=command_ok, gh_ok=gh_ok,
         backend=_claude(claude_status),
     )  # fmt: skip
 
@@ -42,10 +44,8 @@ def test_failures_include_hint() -> None:
 
 def test_each_failed_check_shows_its_own_line(tmp_path, notifications) -> None:
     """6-4: 실패한 확인마다 그 종류의 정한 한 줄이 뜬다. 통과한 확인은 뜨지 않는다."""
-    server = fakeredis.FakeServer()
-    server.connected = False
     checks = preflight.run_checks(
-        fakeredis.FakeStrictRedis(server=server),
+        Redis.from_url(UNREACHABLE_REDIS_URL),
         command_ok=lambda args: True,
         gh_ok=lambda: False,
         backend=_claude(lambda: ""),

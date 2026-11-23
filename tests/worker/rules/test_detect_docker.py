@@ -2,6 +2,7 @@
 
 from dataclasses import replace
 from pathlib import Path
+from typing import Final
 
 import pytest
 
@@ -9,10 +10,31 @@ from app.worker.diff_pure import added_lines
 from app.worker.rules.checkers import Sandbox
 from app.worker.rules.detect import detect
 
-from .test_checkers_docker import PRINT_RULE, PRINT_SCRIPT
 from .test_detect import CHECKED, CHECKER, _diff
 
 pytestmark = pytest.mark.docker
+
+PRINT_RULE: Final = """\
+id: no-print
+language: python
+severity: error
+message: print를 쓰지 않는다
+rule:
+  pattern: print($$$ARGS)
+"""
+PRINT_SCRIPT: Final = """\
+import ast, json, sys
+out = []
+for path in json.load(sys.stdin)["files"]:
+    try:
+        tree = ast.parse(open(path).read())
+    except SyntaxError:
+        continue
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and getattr(node.func, "id", "") == "print":
+            out.append({"file": path, "line": node.lineno, "why": "print"})
+print(json.dumps(out))
+"""
 
 
 @pytest.fixture

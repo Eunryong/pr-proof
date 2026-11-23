@@ -2,9 +2,9 @@ import asyncio
 import json
 from pathlib import Path
 
-import fakeredis
 import pytest
 from fastapi.testclient import TestClient
+from redis import Redis
 from redis import exceptions as redis_errors
 
 from app.api import main as api
@@ -13,19 +13,19 @@ from app.api.sync import SyncResult
 from app.shared import config
 from app.shared.ops_alert_pure import TEXT
 
+from ..redis_stand_ins import UNREACHABLE_REDIS_URL
+
 
 @pytest.fixture
-def client(tmp_path: Path, monkeypatch):
-    (tmp_path / "config.yaml").write_text("repos: [Eunryong/eval]\nsync:\n  interval_minutes: 0\n")
+def client(tmp_path: Path, monkeypatch, test_redis_url: str, real_redis):
+    """웹훅을 실제 Redis의 큐에 넣는다 (tests/conftest.py)."""
+    (tmp_path / "config.yaml").write_text(
+        f"repos: [Eunryong/eval]\nredis_url: {test_redis_url}\nsync:\n  interval_minutes: 0\n"
+    )
     secret = tmp_path / "webhook_secret"
     secret.write_text("api-secret")
     secret.chmod(0o600)
     monkeypatch.setenv("PIPELINE_CONFIG_DIR", str(tmp_path))
-    monkeypatch.setattr(
-        api,
-        "Redis",
-        type("R", (), {"from_url": staticmethod(lambda url: fakeredis.FakeStrictRedis())}),
-    )
     with TestClient(api.app) as c:
         yield c
 
@@ -81,6 +81,6 @@ def test_sync_loop_notifies_once_from_the_second_failing_cycle(
             raise asyncio.CancelledError
 
     with pytest.raises(asyncio.CancelledError):
-        asyncio.run(api.sync_loop(settings, fakeredis.FakeStrictRedis(), sleep=sleep))
+        asyncio.run(api.sync_loop(settings, Redis.from_url(UNREACHABLE_REDIS_URL), sleep=sleep))
     assert seen == [0, 1, 1]
     assert notifications == [TEXT[kind]]

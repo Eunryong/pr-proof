@@ -3,7 +3,6 @@
 
 from pathlib import Path
 
-import fakeredis
 import pytest
 from rq.timeouts import JobTimeoutException
 from sqlmodel import Session, select
@@ -19,6 +18,7 @@ from app.worker.lang.python import DependencyInstallError
 from app.worker.rules import doc_rules
 from app.worker.sandbox.docker_cli import SandboxError
 
+from ..redis_stand_ins import UNREACHABLE_REDIS_URL
 from .helpers import BASE, HEAD, PASSED, bodies, use_runner
 
 
@@ -100,7 +100,7 @@ def test_head_lookup_failure_is_environment_error(env, final: bool) -> None:
     job = PRJob.model_validate_json(_payload())
     env["redis"].set(state_keys_pure.job(job.dedup_key), "1")
     with pytest.raises(GitHubError):
-        main.handle(_payload(), env["deps"])
+        main.handle(_payload(), env["deps"], checks=_checks())  # 시작 전 확인은 모두 통과로 둔다
     assert _states(env) == []
     assert (env["redis"].get(state_keys_pure.job(job.dedup_key)) is None) == final
 
@@ -142,9 +142,11 @@ def test_commit_that_goes_stale_during_tests_leaves_no_result(env) -> None:
     assert not any("통과" in b for b in bodies(env["gh"]))  # 새 커밋의 작업이 코멘트를 고친다
 
 
-def test_pr_closed_during_the_check_stops_it_without_running_tests(env) -> None:
+def test_pr_closed_during_the_check_stops_it_without_running_tests(redis_env) -> None:
     """검사가 도는 중에 PR이 닫혔다. api가 닫힘 소식을 받는 즉시 닫힘 표시를 적고(`queue.enqueue`),
-    돌던 검사는 다음 확인에서 멈춘다. 테스트까지 가지 않고 결과도 남기지 않는다."""
+    돌던 검사는 다음 확인에서 멈춘다. 테스트까지 가지 않고 결과도 남기지 않는다. 큐 등록은 실제
+    Redis로 한다."""
+    env = redis_env
     from app.api import queue
 
     def closed_while_reading_rules(*a, **k):
@@ -189,7 +191,7 @@ def test_last_environment_retry_says_not_checked_and_releases_key(env) -> None:
     job = PRJob.model_validate_json(_payload())
     env["redis"].set(state_keys_pure.job(job.dedup_key), "1")
     with pytest.raises(SandboxError):
-        main.handle(_payload(), env["deps"])
+        main.handle(_payload(), env["deps"], checks=_checks())  # 시작 전 확인은 모두 통과로 둔다
     assert "환경 문제로 검사하지 못함" in bodies(env["gh"])[-1]
     # 동기화가 30분 뒤 같은 커밋을 다시 넣을 수 있어야 한다
     assert env["redis"].get(state_keys_pure.job(job.dedup_key)) is None
@@ -297,9 +299,11 @@ def test_repeated_start_up_failures_notify_once_per_window(
 ) -> None:
     """launchd가 시작 전 확인에서 멈춘 워커를 1분마다 다시 띄워도 같은 오류는 30분에 한 번만 뜬다.
     표시는 data_dir의 파일이라 프로세스를 넘어 남는다. 종류가 다르면 따로 뜬다."""
-    settings = config.PipelineConfig(repos=["o/r"], data_dir=tmp_path)
+    # 시작 전 확인을 바꿔 끼워 Redis에 명령을 보내기 전에 멈춘다. 운영 Redis를 가리키지 않게 한다
+    settings = config.PipelineConfig(
+        repos=["o/r"], data_dir=tmp_path, redis_url=UNREACHABLE_REDIS_URL
+    )
     monkeypatch.setattr(main.config, "load_config", lambda: settings)
-    monkeypatch.setattr(main.Redis, "from_url", lambda url: fakeredis.FakeStrictRedis())
     monkeypatch.setattr(main.preflight, "run_checks", _checks("claude_login", "docker"))
     assert [main.main() for _ in range(5)] == [1] * 5
     assert notifications == [TEXT["claude_login"], TEXT["docker"]]

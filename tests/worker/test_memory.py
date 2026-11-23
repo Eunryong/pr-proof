@@ -12,7 +12,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final
 
-import fakeredis
 import pytest
 
 from app.shared.embed_models_pure import ModelFile
@@ -22,6 +21,7 @@ from app.worker.records_pure import NewRecord
 from app.worker.repo_config_pure import RagSettings
 from app.worker.state import Store
 
+from ..redis_stand_ins import MemoryKeys
 from .rag_helpers import FAKE_SPEC, FakeEncoder
 
 np = pytest.importorskip("numpy")
@@ -31,7 +31,7 @@ REPO: Final = "o/r"
 
 
 def _store(tmp_path: Path) -> Store:
-    return Store(tmp_path / "db.sqlite", fakeredis.FakeRedis())
+    return Store(tmp_path / "db.sqlite", MemoryKeys())
 
 
 def _vectors(n: int, dim: int, seed: int = 7):

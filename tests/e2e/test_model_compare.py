@@ -32,7 +32,6 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Final
 
-import fakeredis
 import pytest
 import yaml
 from sqlmodel import Session, select
@@ -47,6 +46,7 @@ from app.worker.github import GitHub
 from app.worker.state import Store
 from tests.sandbox_names import TEST_NAMES
 
+from ..redis_stand_ins import MemoryKeys
 from ..worker.test_github import FakeGh
 from .test_lint_cases import _git, shared_venvs  # noqa: F401
 from .test_rules_cases import (
@@ -119,7 +119,7 @@ def _deps(remote: dict, data: Path, shared_venvs: Path, tool_cache: Path, monkey
     (data / "venvs").symlink_to(shared_venvs, target_is_directory=True)
     (data / "tools").symlink_to(tool_cache, target_is_directory=True)
     monkeypatch.setattr(repo, "remote_url", lambda name: str(remote["path"]))
-    redis = fakeredis.FakeStrictRedis()
+    redis = MemoryKeys()
     gh = FakeGh(head=remote["head"], base=remote["base"])
     settings = config.PipelineConfig(
         repos=[REPO], data_dir=data,

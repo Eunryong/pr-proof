@@ -114,11 +114,11 @@ def test_token_is_a_pipeline_secret_for_the_diff_check(token_dir) -> None:
 
 
 def test_preflight_in_token_mode_says_to_replace_token(token_dir, tmp_path) -> None:
-    import fakeredis
+    from ..redis_stand_ins import Pong
 
     claude = ClaudeCliBackend(auth_status=lambda: '{"loggedIn": true, "loginExpiresAt": null}')
     checks = preflight.run_checks(
-        fakeredis.FakeStrictRedis(), command_ok=lambda args: True, gh_ok=lambda: False,
+        Pong(), command_ok=lambda args: True, gh_ok=lambda: False,
         backend=claude,
     )  # fmt: skip
     gh = checks[0]

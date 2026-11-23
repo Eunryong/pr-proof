@@ -3,7 +3,6 @@ import json
 from pathlib import Path
 from typing import Final
 
-import fakeredis
 import pytest
 from rq import Queue
 
@@ -271,8 +270,9 @@ def test_merged_normal_pr_is_still_a_close_job(pr_opened: dict) -> None:
 
 
 @pytest.fixture
-def redis():
-    return fakeredis.FakeStrictRedis()
+def redis(real_redis):
+    """큐 등록과 중복 방지 키는 실제 Redis로 본다 (tests/conftest.py)."""
+    return real_redis
 
 
 def _handle(redis, payload: dict, *, event: str = "pull_request", delivery: str = "d-1", sig=None):

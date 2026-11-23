@@ -9,8 +9,8 @@ import logging
 from pathlib import Path
 from typing import Final
 
-import fakeredis
 import pytest
+from redis import Redis
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.exc import OperationalError
 
@@ -69,14 +69,17 @@ def _old_db(path: Path, ddl: str = OLD_RUN, row: str = OLD_ROW) -> None:
 
 
 def _sync(
-    settings: config.PipelineConfig, history: History, run_once=sync.run_once
+    settings: config.PipelineConfig,
+    redis: Redis,
+    history: History,
+    run_once=sync.run_once,
 ) -> sync.SyncResult:
     prs = [
         OpenPR(number=1, head_sha=HEAD, base_sha="b" * 40, head_ref="f", draft=False),
         OpenPR(number=2, head_sha=NEW_HEAD, base_sha="b" * 40, head_ref="g", draft=False),
     ]
     return run_once(
-        settings, fakeredis.FakeStrictRedis(), history, list_prs=lambda repo: prs,
+        settings, redis, history, list_prs=lambda repo: prs,
         head_time=lambda repo, sha: "2026-11-20T00:00:00Z",
         list_comments=lambda repo, n, since: [],
     )  # fmt: skip
@@ -90,7 +93,7 @@ def _columns(path: Path) -> set[str]:
         engine.dispose()
 
 
-def test_sync_reads_the_old_db_after_the_worker_has_started(deploy) -> None:
+def test_sync_reads_the_old_db_after_the_worker_has_started(deploy, real_redis) -> None:
     """배포 순서 그대로: 워커가 뜨고 작업이 오기 전에 동기화가 돈다. 옛 행은 그대로 읽힌다."""
     settings = deploy["settings"]
     _old_db(settings.db_path)
@@ -98,12 +101,14 @@ def test_sync_reads_the_old_db_after_the_worker_has_started(deploy) -> None:
     assert main.main() == 0
     assert deploy["waiting"] == [deploy["data_dir"]]  # 작업은 하나도 처리하지 않았다
 
-    result = _sync(settings, History(settings.db_path))
+    result = _sync(settings, real_redis, History(settings.db_path))
     # PR 1의 done은 파이프라인 커밋을 적기 전의 기록이라 지금 코드로 다시 검사한다
     assert result.enqueued == [("o/r", 1, "new_pipeline"), ("o/r", 2, "no_record")]
 
 
-def test_sync_started_before_the_worker_recovers_on_the_next_cycle(deploy, caplog) -> None:
+def test_sync_started_before_the_worker_recovers_on_the_next_cycle(
+    deploy, caplog, real_redis
+) -> None:
     """honcho는 api와 워커를 같이 띄운다. api의 첫 동기화가 먼저 옛 DB를 읽으면 그 주기는
     실패로 남고, 루프는 살아서 워커가 스키마를 맞춘 다음 주기에 같은 History로 읽는다."""
     settings = deploy["settings"].model_copy(update={"sync": config.SyncConfig(interval_minutes=0)})
@@ -117,7 +122,7 @@ def test_sync_started_before_the_worker_recovers_on_the_next_cycle(deploy, caplo
             raise asyncio.CancelledError
         if len(cycles) == 2:
             assert main.main() == 0  # 워커는 api의 첫 주기 뒤에 뜬다
-        results.append(_sync(settings, history))
+        results.append(_sync(settings, real_redis, history))
         return results[-1]
 
     monkeypatch = pytest.MonkeyPatch()
@@ -125,7 +130,7 @@ def test_sync_started_before_the_worker_recovers_on_the_next_cycle(deploy, caplo
     caplog.set_level(logging.ERROR, logger=api.__name__)
     try:
         with pytest.raises(asyncio.CancelledError):
-            asyncio.run(api.sync_loop(settings, fakeredis.FakeStrictRedis()))
+            asyncio.run(api.sync_loop(settings, real_redis))
     finally:
         monkeypatch.undo()
 

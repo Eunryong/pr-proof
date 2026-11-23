@@ -4,7 +4,6 @@
 from pathlib import Path
 from typing import Final
 
-import fakeredis
 import pytest
 
 from app.worker.ai.claude_backend import ClaudeCliBackend
@@ -17,6 +16,8 @@ from app.worker.rules.doc_rules import Runtime
 from app.worker.rules.run_check import judge_runs
 from app.worker.state import Store
 from app.worker.test_run_pure import PytestRun, ReportSummary
+
+from ...redis_stand_ins import MemoryKeys
 
 RULE: Final = Rule(
     id="R-readme-run", text="데이터 생성기 테스트 통과", source=RuleSource("README.md", "s", "b"),
@@ -41,7 +42,7 @@ def _answer(verdict: str = "broken", ok: bool = True) -> StructuredResult:
 
 @pytest.fixture
 def store(tmp_path: Path) -> Store:
-    return Store(tmp_path / "pipeline.db", fakeredis.FakeStrictRedis())
+    return Store(tmp_path / "pipeline.db", MemoryKeys())
 
 
 def _rt(

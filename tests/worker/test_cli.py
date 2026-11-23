@@ -2,8 +2,9 @@ from app.worker import cli
 
 
 def test_reindex_rebuilds_the_vector_store_from_records(monkeypatch, tmp_path, capsys) -> None:
-    import fakeredis
     import pytest
+
+    from ..redis_stand_ins import MemoryKeys
 
     pytest.importorskip("chromadb")
     from app.worker.records_pure import NewRecord
@@ -14,7 +15,7 @@ def test_reindex_rebuilds_the_vector_store_from_records(monkeypatch, tmp_path, c
     settings = cli.config.PipelineConfig(
         repos=["o/r"], data_dir=tmp_path, redis_url="redis://127.0.0.1:1/0"
     )
-    db = Store(settings.db_path, fakeredis.FakeRedis())
+    db = Store(settings.db_path, MemoryKeys())
     db.add_record(NewRecord(repo="o/r", kind="adopted", origin="fix_pr", source_id="a",
                             rule_id="R", rule_text="규칙", file="a.py", line_text="x",
                             context="x", diff="+x"))  # fmt: skip

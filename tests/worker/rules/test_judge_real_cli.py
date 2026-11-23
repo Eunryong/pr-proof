@@ -14,7 +14,6 @@ import subprocess
 from pathlib import Path
 from typing import Final
 
-import fakeredis
 import pytest
 
 from app.worker import repo
@@ -28,6 +27,8 @@ from app.worker.rules.detect import source_lines
 from app.worker.rules.judge import Judged, judge
 from app.worker.rules.judge_pure import basis_from_json, hunks_for, judge_key, reads_from_json
 from app.worker.state import Store
+
+from ...redis_stand_ins import MemoryKeys
 
 REAL_AI_ENV: Final = "PR_PROOF_REAL_AI"
 MODEL: Final = "sonnet"
@@ -103,7 +104,7 @@ def _judge(wt: Path, diff: str, store: Store) -> Judged:
 
 @pytest.fixture
 def store(tmp_path: Path) -> Store:
-    return Store(tmp_path / "pipeline.db", fakeredis.FakeStrictRedis())
+    return Store(tmp_path / "pipeline.db", MemoryKeys())
 
 
 def test_body_that_calls_the_validator_is_read_and_kept(tmp_path: Path, store: Store) -> None:

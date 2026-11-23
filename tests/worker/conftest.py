@@ -1,9 +1,9 @@
-"""워커 흐름 테스트 fixture: 가짜 gh·Redis·체크아웃·설정. Docker·GitHub 없이 돈다."""
+"""워커 흐름 테스트 fixture: 가짜 gh·체크아웃·설정. Docker·GitHub 없이 돈다. Redis 자리는 메모리
+(`env`)이고, 큐 등록·RQ를 거치는 테스트는 실제 Redis(`redis_env`)를 쓴다."""
 
 from contextlib import contextmanager
 from pathlib import Path
 
-import fakeredis
 import pytest
 
 from app.shared import config, state_keys_pure
@@ -14,13 +14,23 @@ from app.worker.github import GitHub
 from app.worker.repo import Checkout
 from app.worker.state import Store
 
+from ..redis_stand_ins import MemoryKeys
 from .helpers import BASE, HEAD
 from .test_github import FakeGh
 
 
 @pytest.fixture
 def env(tmp_path: Path, monkeypatch):
-    redis = fakeredis.FakeStrictRedis()
+    return _env(tmp_path, monkeypatch, MemoryKeys())
+
+
+@pytest.fixture
+def redis_env(tmp_path: Path, monkeypatch, real_redis):
+    """env와 같되 Redis 자리가 실제 Redis다 (tests/conftest.py의 real_redis)."""
+    return _env(tmp_path, monkeypatch, real_redis)
+
+
+def _env(tmp_path: Path, monkeypatch, redis):
     gh = FakeGh()
     deps = Deps(
         store=Store(tmp_path / "pipeline.db", redis),

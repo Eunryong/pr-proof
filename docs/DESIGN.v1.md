@@ -557,7 +557,7 @@ docker rm -f pr-proof-job-<id>
 ```
 
 - 작업당 컨테이너 하나, 명령은 `docker exec`로 넣는다.
-- 이미지 태그(`pipeline-sandbox`)와 컨테이너 이름 접두어(`pr-proof-job`)는 파이프라인 설정(`sandbox.image`, `sandbox.container_prefix`)에서 바꿀 수 있다. `pytest -m docker`는 운영과 같은 Docker를 쓰므로 `pipeline-sandbox-test`, `pr-proof-test`를 쓴다. 같으면 테스트가 운영 이미지를 개발 중인 Dockerfile로 다시 빌드하고, runs ID가 같은 운영 컨테이너를 지울 수 있다. Redis는 `fakeredis`, 데이터·.venv 캐시·설정은 임시 경로를 쓴다.
+- 이미지 태그(`pipeline-sandbox`)와 컨테이너 이름 접두어(`pr-proof-job`)는 파이프라인 설정(`sandbox.image`, `sandbox.container_prefix`)에서 바꿀 수 있다. `pytest -m docker`는 운영과 같은 Docker를 쓰므로 `pipeline-sandbox-test`, `pr-proof-test`를 쓴다. 같으면 테스트가 운영 이미지를 개발 중인 Dockerfile로 다시 빌드하고, runs ID가 같은 운영 컨테이너를 지울 수 있다. Redis의 동작(큐 등록, 중복 방지 키, RQ)을 보는 테스트는 실제 Redis의 테스트용 DB(`PR_PROOF_TEST_REDIS_URL`, 기본 `redis://127.0.0.1:6379/15`. 0번·1번은 쓰지 않고, 붙지 못하거나 키가 이미 있으면 건너뛴다)를 쓰고 테스트마다 그 DB만 비운다. 나머지는 Redis 자리에 메모리 대역을 넣는다. 데이터·.venv 캐시·설정은 임시 경로를 쓴다.
 - 설치·작업 컨테이너 모두 `--cap-drop ALL`로 리눅스 권한(capability)을 모두 빼고, `no-new-privileges`로 setuid 바이너리를 통한 권한 상승을 막는다. 호스트 UID로 실행하므로 `/work` 쓰기와 pip 설치에 권한이 필요 없다. `pytest -m docker`가 실제 컨테이너의 `CapBnd`(0)와 `NoNewPrivs`(1)를 확인한다.
 - 컨테이너는 호스트 사용자의 UID·GID로 실행한다. 고정 UID(1000)는 Linux에서 호스트 UID가 다르면 `.pipeline-out/`에 쓰지 못한다. 컨테이너에 없는 UID라 홈 디렉터리가 없으므로 `HOME=/tmp`를 준다.
 - 이미지는 Python과 검사 도구만 든 베이스 이미지 하나다. 대상 리포의 의존성은 이미지가 아니라 `.venv`에 설치하고, 캐시 키별로 보관해 테스트 컨테이너에는 읽기 전용으로 마운트한다 (F5). 설치는 네트워크를 쓰지만 컨테이너 안에서 일어나고 비밀값이 없다.
@@ -707,7 +707,7 @@ echo "$PROMPT" | claude -p \
 | `worker/` | 워커: 진입점, 작업 흐름(LangGraph), PR 코멘트, 처리 기록 쓰기, git·GitHub 쓰기 | models, sandbox |
 | `sandbox/` | 워커가 쓰는 docker 도구. PR 코드는 여기를 거쳐서만 실행한다 | models |
 
-웹 쪽(controllers·services·views)은 `worker/`와 `sandbox/`를, 워커는 웹 쪽을 import하지 않는다. 의존 방향은 `tests/test_layers.py`가 검사한다.
+웹 쪽(controllers·services·views)은 `worker/`와 `sandbox/`를, 워커는 웹 쪽을 import하지 않는다. 의존 방향의 지금 규칙은 `CONTRIBUTING.md`의 「계층」 절에 있고, pr-proof가 PR의 diff에서 검사한다.
 
 ```
 pipeline/
