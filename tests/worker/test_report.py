@@ -9,8 +9,8 @@ from app.worker.core.violation_pure import Violation, violation_id
 from app.worker.doc_rules_pure import CallUsage, CheckerRef, Found, RuleChecked
 from app.worker.repo_config_pure import RepoConfig
 from app.worker.report import render_result
-from app.worker.test_lines import format_test_line
-from app.worker.test_run_pure import PytestRun, ReportSummary
+from app.worker.testing.test_lines import format_test_line
+from app.worker.testing.test_run_pure import PytestRun, ReportSummary
 
 SYMBOLS: Final = ("⚠️", "✅", "❌")
 HEAD: Final = "a" * 40
@@ -229,7 +229,7 @@ def test_code_fence_outgrows_backticks_in_text() -> None:
 
 
 def test_diff_coverage_line() -> None:
-    from app.worker.coverage import DiffCoverage
+    from app.worker.testing.coverage import DiffCoverage
 
     assert report.diff_coverage_line(None) == []
     assert report.diff_coverage_line(DiffCoverage(66.67, 3, 1)) == [
@@ -241,8 +241,8 @@ def test_diff_coverage_line() -> None:
 
 def test_clean_pr_comment_is_short_and_keeps_coverage_folded() -> None:
     """위반이 없으면 결론 두 줄 뒤에 펼친 것이 없다. 테스트 수와 커버리지는 접는 블록 안에 있다."""
-    from app.worker.coverage import DiffCoverage
     from app.worker.doc_rules_report import DETAILS_SUMMARY
+    from app.worker.testing.coverage import DiffCoverage
 
     text = report.render_result(PASSED, "a" * 40, 1.0, doc_rules=_found(),
                                 diff_coverage=DiffCoverage(0.0, 220, 220))  # fmt: skip

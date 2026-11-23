@@ -12,7 +12,7 @@ from app.worker.pr_description_report_pure import (
     title,
 )
 from app.worker.rules.pr_description_pure import DescriptionUsage, Mismatch, PrDescription
-from app.worker.test_run_pure import PytestRun, ReportSummary
+from app.worker.testing.test_run_pure import PytestRun, ReportSummary
 
 ITEMS: Final = (
     Mismatch("unrelated", "config.py에서 기본 타임아웃을 30초에서 5초로 줄였습니다. 설명에는 파서 "

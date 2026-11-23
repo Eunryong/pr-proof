@@ -7,7 +7,7 @@ from app.worker import graph
 from app.worker.base_config import BaseConfig
 from app.worker.core.tools_pure import RuffSetup
 from app.worker.repo_config_pure import FixSettings, PrDescriptionSettings, RepoConfig
-from app.worker.test_run_pure import PytestRun, ReportSummary
+from app.worker.testing.test_run_pure import PytestRun, ReportSummary
 
 from .test_github import FakeGh
 

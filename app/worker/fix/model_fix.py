@@ -59,17 +59,6 @@ from app.worker.fix.scope_pure import (
     is_pipeline_output,
     parse_porcelain,
 )
-from app.worker.generated_tests_pure import (
-    Candidate,
-    GeneratedTest,
-    Suite,
-    after_check,
-    judge_tests,
-    line_runs,
-    render_before,
-    render_check,
-    render_now,
-)
 from app.worker.lang.python import read_sources
 from app.worker.loop import (
     HEAVY_AFTER_FAILURES,
@@ -94,8 +83,19 @@ from app.worker.repo_config_pure import ModelSettings
 from app.worker.rules.detect import Detection, source_lines
 from app.worker.sandbox.safe_read import read_regular_file
 from app.worker.state import Store
-from app.worker.test_lines import format_test_line
-from app.worker.test_run_pure import PytestRun
+from app.worker.testing.generated_tests_pure import (
+    Candidate,
+    GeneratedTest,
+    Suite,
+    after_check,
+    judge_tests,
+    line_runs,
+    render_before,
+    render_check,
+    render_now,
+)
+from app.worker.testing.test_lines import format_test_line
+from app.worker.testing.test_run_pure import PytestRun
 
 log = logging.getLogger(__name__)
 

@@ -20,7 +20,6 @@ from app.worker import (
 from app.worker.base_config import PIPELINE_YAML, BaseConfig
 from app.worker.core.checker_pure import Checker
 from app.worker.core.markdown_pure import code_fence, inline_code
-from app.worker.coverage import DiffCoverage
 from app.worker.doc_rules_pure import DocRules, Found
 from app.worker.doc_rules_report import FixView
 from app.worker.fix.fix_decision_pure import Decided
@@ -31,8 +30,9 @@ from app.worker.rules.linked_issues_pure import LinkedIssues
 from app.worker.rules.pr_check_pure import PrChecks
 from app.worker.rules.pr_description_pure import PrDescription
 from app.worker.sandbox.docker_cli import MEMORY_LIMIT_GB
-from app.worker.test_lines import _gb, format_test_line
-from app.worker.test_run_pure import PytestRun
+from app.worker.testing.coverage import DiffCoverage
+from app.worker.testing.test_lines import _gb, format_test_line
+from app.worker.testing.test_run_pure import PytestRun
 
 MAX_LISTED_FAILURES: Final = 10
 MAX_OUTPUT_CHARS: Final = 1500

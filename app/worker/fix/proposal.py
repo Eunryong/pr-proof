@@ -27,7 +27,7 @@ from app.worker.fix.model_fix_pure import Explanation, ModelFix
 from app.worker.fix.proposal_pure import ProposalResult
 from app.worker.github import GitHub, GitHubError, ReviewComment
 from app.worker.state import Store
-from app.worker.test_lines import generated_lines, runs_without_new_tests, status_lines
+from app.worker.testing.test_lines import generated_lines, runs_without_new_tests, status_lines
 
 # v1의 lint 수정안 기록. 기계적 수정 묶음의 기록으로 본다 (머지로 생긴 커밋, 열린 수정안)
 LEGACY_SKILLS: Final[Mapping[str, str]] = {"lint": MECHANICAL_BUNDLE}
