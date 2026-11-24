@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 
 from redis import Redis
 
-from app.shared import config
+from app.shared import config, server
 from app.worker.git.github import GitHub
 from app.worker.model import backends
 from app.worker.model.model_backend import ModelBackend
@@ -23,4 +23,5 @@ class Deps:
     def from_config(cls) -> "Deps":
         settings = config.load_config()
         redis = Redis.from_url(settings.redis_url)
-        return cls(Store(settings.db_path, redis), GitHub(), settings, backends.default_backend())
+        github = GitHub(server=server.current(settings.data_dir))
+        return cls(Store(settings.db_path, redis), github, settings, backends.default_backend())

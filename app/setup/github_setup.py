@@ -11,8 +11,9 @@ import subprocess
 from collections.abc import Callable, Mapping
 from typing import Final
 
-from app.setup.setup_pure import Hook
+from app.setup.setup_pure import Hook, SeenMarker
 from app.shared import config, github_auth
+from app.shared.comment_pure import COMMENT_MARKER
 
 GH_TIMEOUT: Final = 60
 _ENV_PASSTHROUGH: Final = ("PATH", "HOME", "GH_CONFIG_DIR")
@@ -104,6 +105,32 @@ def list_hooks(run: Runner, repo: str) -> list[Hook]:
             active=bool(item.get("active")), content_type=str(item.get("content_type") or ""),
         ))  # fmt: skip
     return hooks
+
+
+def open_prs(run: Runner, repo: str, limit: int) -> list[int]:
+    """열린 PR 번호, 최근에 고친 것부터 limit개."""
+    out = run(
+        ["api", f"repos/{repo}/pulls?state=open&sort=updated&direction=desc&per_page={limit}",
+         "--jq", ".[].number"],
+        None,
+    )  # fmt: skip
+    return [int(line) for line in out.split() if line.isdigit()][:limit]
+
+
+def result_markers(run: Runner, repo: str, pr_number: int, me: str) -> list[SeenMarker]:
+    """그 PR에서 이 계정(me)이 단 결과 코멘트의 첫 줄(표시)과 고친 때. 서버들은 같은 계정이면
+    같은 코멘트를 번갈아 고친다(`app/worker/git/github.py`의 `result_comment`와 같은 범위)."""
+    jq = (
+        f'.[] | select(.body | contains("{COMMENT_MARKER}")) '
+        '| [.user.login, .updated_at, (.body | split("\\n") | .[0])] | @tsv'
+    )
+    out = run(["api", "--paginate", f"repos/{repo}/issues/{pr_number}/comments", "--jq", jq], None)
+    seen = []
+    for line in out.splitlines():
+        login, updated, marker = (line.split("\t") + ["", ""])[:3]
+        if login == me:
+            seen.append(SeenMarker(pr_number, marker, updated))
+    return seen
 
 
 def create_hook(run: Runner, repo: str, payload: dict[str, object]) -> int:

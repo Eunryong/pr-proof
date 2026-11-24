@@ -8,7 +8,13 @@ from sqlmodel import Field, SQLModel
 
 # error: 환경 오류가 아닌 예외(파이프라인 버그, 작업 시간 초과). 같은 커밋은 다시 넣지 않는다
 # blocked: 신뢰되지 않은 작성자의 PR이라 승인 안내만 달고 끝냈다 (8.6). 같은 커밋은 다시 넣지 않는다
-RunState = Literal["running", "done", "cancelled", "env_error", "error", "blocked"]
+# elsewhere: 같은 저장소를 보는 다른 서버가 이 커밋을 이미 처리해 검사하지 않았다. 코멘트를 건드리지
+#   않았고 같은 커밋은 다시 넣지 않는다 (`other_server_pure`)
+# deferred: 다른 서버가 이 커밋을 처리하기를 기다리며 검사하지 않았다. 코멘트를 건드리지 않았고,
+#   기다리는 시간이 지나면 동기화가 같은 커밋을 한 번 더 넣는다
+RunState = Literal[
+    "running", "done", "cancelled", "env_error", "error", "blocked", "elsewhere", "deferred"
+]
 
 
 # open: 열려 있음, merged: 머지됨, superseded: 원본 PR에 새 커밋이 와서 파이프라인이 닫음,

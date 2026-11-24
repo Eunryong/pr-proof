@@ -35,7 +35,7 @@ from redis.exceptions import RedisError
 from app.setup import files
 from app.setup import github_setup as gh
 from app.setup import setup_pure as pure
-from app.shared import config, github_auth
+from app.shared import config, github_auth, server
 from app.shared.embed_models_pure import EMBED_MODELS, EmbedModel
 from app.worker import preflight
 from app.worker.sandbox.docker_cli import minimal_env
@@ -111,7 +111,7 @@ class Options:
     model: str | None = None
     # configure: 과거 수정 기록 검색 "on" | "off". None이면 터미널에서 묻고, 아니면 그대로
     rag: str | None = None
-    check: bool = False  # list: 웹훅까지 본다
+    check: bool = False  # list: 웹훅과 같은 repo를 처리하는 다른 서버까지 본다
 
 
 class Stop(Exception):
@@ -975,6 +975,8 @@ def list_repos(opts: Options, io: Io, deps: Deps, directory: Path | None = None)
     except config.ConfigError:
         url = None
     run = deps.runner(None)
+    my_id = _server_id(directory)
+    me: str | None = None
     for repo in repos:
         try:
             status = pure.hook_status(gh.list_hooks(run, repo), url)
@@ -983,7 +985,28 @@ def list_repos(opts: Options, io: Io, deps: Deps, directory: Path | None = None)
         except gh.SetupGitHubError:
             status = "웹훅을 확인하지 못함 (GitHub 조회 실패)"
         io.say(f"{repo}  {status}")
+        try:
+            me = me or gh.login(run)
+            seen = [
+                marker for number in gh.open_prs(run, repo, pure.OTHER_SERVER_PRS)
+                for marker in gh.result_markers(run, repo, number, me)
+            ]  # fmt: skip
+        except gh.SetupGitHubError:
+            io.say(f"{repo}  다른 pr-proof 서버를 확인하지 못함 (GitHub 조회 실패)")
+            continue
+        others = pure.other_servers_text(seen, my_id)
+        if others is not None:
+            io.say(f"{repo}  {others}. 한 서버에서 {files.command(f'rm {repo}')}로 빼세요")
     return 0
+
+
+def _server_id(directory: Path) -> str | None:
+    """이 서버의 id (데이터 폴더의 파일). 읽기만 하고, 설정이나 파일이 없으면 None이다."""
+    try:
+        data_dir = config.load_config(directory).data_dir
+    except (config.ConfigError, ValueError, OSError):
+        return None
+    return server.read_id(data_dir)
 
 
 # --- model ---
