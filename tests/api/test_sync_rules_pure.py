@@ -36,11 +36,18 @@ def _reason(*runs: RunSnapshot, commit: str = ""):
         ((_run("env_error", ago=90), _run("error", ago=60)), None),
         ((_run("blocked", ago=500),), None),  # 승인을 기다리는 외부 작성자의 PR (8.6)
         ((_run("env_error", ago=90), _run("blocked", ago=60)), None),
+        # 같은 저장소를 보는 다른 서버가 이미 했다. 새 커밋 때만
+        ((_run("elsewhere", ago=500),), None),
+        ((_run("deferred", ago=500), _run("elsewhere", ago=400)), None),
+        # 다른 서버를 기다린다. 30분이 지나면 한 번 더 넣는다
+        ((_run("deferred", ago=29),), None),
+        ((_run("deferred", ago=30),), "deferred"),
     ],
     ids=[
         "no-record", "done", "env-error-recent", "env-error-old", "running-alive",
         "running-dead", "cancelled", "done-then-env-error", "env-error-then-running",
         "error", "env-error-then-error", "blocked", "env-error-then-blocked",
+        "elsewhere", "deferred-then-elsewhere", "deferred-recent", "deferred-old",
     ],
 )  # fmt: skip
 def test_enqueue_reason(runs, reason) -> None:
@@ -88,3 +95,9 @@ def test_unknown_pipeline_commit_never_requeues_finished_results() -> None:
     """지금 코드의 커밋을 모르면(git이 없는 배포) 끝난 결과를 다시 넣지 않는다."""
     assert _reason(_by("done", "old"), commit="") is None
     assert _reason(_by("done", None), commit="") is None
+
+
+def test_other_server_states_are_not_results_of_old_code() -> None:
+    """다른 서버 때문에 검사하지 않은 기록은 옛 코드의 결과가 아니다. 배포 뒤 다시 넣지 않는다."""
+    assert _reason(_by("elsewhere", "old"), commit="new") is None
+    assert _reason(_by("deferred", "old", ago=10), commit="new") is None

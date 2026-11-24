@@ -7,7 +7,15 @@ from typing import Final
 import pytest
 
 from app.shared import notify as macos
-from app.shared.ops_alert_pure import MARKER_DIR, TEXT, WINDOW_SECONDS, due
+from app.shared.ops_alert_pure import (
+    MARKER_DIR,
+    OTHER_SERVER_WINDOW_SECONDS,
+    TEXT,
+    WINDOW_SECONDS,
+    due,
+    other_server_key,
+    other_server_text,
+)
 
 # conftest가 테스트마다 macos.show_notification을 가짜로 바꾸기 전, import할 때의 진짜 함수
 REAL_SHOW: Final = macos.show_notification
@@ -130,3 +138,36 @@ def test_unwritable_data_dir_shows_nothing_and_does_not_raise(tmp_path: Path) ->
     shown: list[str] = []
     assert _send(blocked, T0, shown) == "failed"
     assert shown == []
+
+
+def test_other_server_texts_follow_the_version() -> None:
+    assert other_server_text("o/r", "0.1.3", "0.2.0", 1) == (
+        "다른 pr-proof 서버(판 0.2.0)가 o/r를 처리하고 있어 이 서버(판 0.1.3)는 검사하지 "
+        "않았습니다. 이 서버에서 `pr-proof rm o/r`로 빼거나 `pr-proof update`로 판을 올리세요."
+    )
+    assert other_server_text("o/r", "0.1.3", "0.1.3", 0) == (
+        "다른 pr-proof 서버가 o/r를 처리하고 있어 이 서버는 검사하지 않았습니다. "
+        "한 서버에서 `pr-proof rm o/r`로 빼세요."
+    )
+    assert other_server_text("o/r", "0.1.3", "0.1.0", -1) == (
+        "판이 낮은 다른 pr-proof 서버(판 0.1.0)도 o/r를 처리하고 있습니다. 이 서버(판 0.1.3)가 "
+        "검사했습니다. 그 서버에서 `pr-proof rm o/r`로 빼거나 판을 올리세요."
+    )
+
+
+def test_other_server_alert_shows_once_a_day_per_repo_and_server(tmp_path: Path) -> None:
+    shown: list[str] = []
+
+    def send(repo: str, server_id: str, now: float) -> str:
+        return macos.send_text(
+            other_server_key(repo, server_id), f"{repo} {server_id}", tmp_path, now=now,
+            window_seconds=OTHER_SERVER_WINDOW_SECONDS, show=lambda t: shown.append(t) or True,
+        )  # fmt: skip
+
+    assert send("o/r", "bbbb2222", T0) == "shown"
+    assert send("O/R", "bbbb2222", T0 + 60 * MINUTE) == "duplicate"  # 대소문자만 다른 같은 저장소
+    assert send("o/r", "cccc3333", T0 + MINUTE) == "shown"  # 다른 서버
+    assert send("o/other", "bbbb2222", T0 + MINUTE) == "shown"  # 다른 저장소
+    assert send("o/r", "bbbb2222", T0 + OTHER_SERVER_WINDOW_SECONDS) == "shown"
+    assert len(shown) == 4
+    assert all("/" not in p.name for p in (tmp_path / MARKER_DIR).iterdir())

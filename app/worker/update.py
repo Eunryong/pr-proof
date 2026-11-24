@@ -2,17 +2,29 @@
 
 import logging
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, Final
 
-from app.shared import state_keys_pure, version
+from app.shared import notify, ops_alert_pure, state_keys_pure, version
+from app.shared.comment_pure import read_owner
 from app.shared.job_pure import PRJob
+from app.shared.other_server_pure import (
+    DEFER_WAIT,
+    DEFERRED,
+    ELSEWHERE,
+    Server,
+    Verdict,
+    decide,
+    should_recommend,
+    skips,
+)
 from app.worker import graph, guard, records, retry
 from app.worker.config.access_pure import Author, NeedsApproval
 from app.worker.deps import Deps
 from app.worker.fix import merged_fix_pure, proposal
 from app.worker.fix.merged_fix_pure import CarriedFrom, VerifiedCheck
 from app.worker.git import repo
-from app.worker.git.github import PullRefs
+from app.worker.git.github import PullRefs, ResultComment
 from app.worker.lang.install_pure import install_failure_outcome
 from app.worker.lang.python import DependencyInstallError
 from app.worker.report import report
@@ -122,12 +134,18 @@ def process_update(job: PRJob, deps: Deps) -> str:
     return run_admitted(job, deps, admitted)
 
 
-def run_admitted(job: PRJob, deps: Deps, refs: PullRefs, *, carry: bool = True) -> str:
+def run_admitted(
+    job: PRJob, deps: Deps, refs: PullRefs, *, carry: bool = True, claim: bool = False
+) -> str:
     """가드레일(8.6)을 지난 update 작업을 돌린다. refs는 같은 작업에서 방금 조회한 PR이다.
 
     웹훅은 순서대로 오지 않을 수 있다. 옛 커밋의 웹훅이 늦게 오면 Redis의 최신 head가 옛 커밋으로
     덮이고, 그대로 두면 옛 커밋의 결과가 PR에 남는다. 그래서 최신 head를 GitHub의 값으로 바로잡고,
     이 작업의 커밋이 지금 head가 아니면 더 새 커밋의 작업(또는 동기화)에 맡긴다.
+
+    코멘트를 고치기 전에 결과 코멘트의 표시로 다른 서버가 이 PR을 맡고 있는지 본다(`other_server`).
+    검사하지 않거나 미루면 코멘트를 건드리지 않고 runs에 그 상태만 남긴다. claim은 사람이 단
+    `/recheck`의 작업이고, 표시와 관계없이 검사한다.
 
     이 커밋이 파이프라인 수정안의 머지 커밋이고 내용이 검증한 수정안과 같으면 검사하지 않고 검증한
     결과를 옮겨 적는다(`carry_plan`). carry가 False면(`/recheck`) 늘 처음부터 검사한다.
@@ -137,13 +155,30 @@ def run_admitted(job: PRJob, deps: Deps, refs: PullRefs, *, carry: bool = True) 
     store.set_latest_head(job.repo, job.pr_number, refs.head_sha)
     if refs.head_sha != job.head_sha:
         return "stale"
+    looked = github.server is not None
+    try:
+        found = github.result_comment(job.repo, job.pr_number) if looked else None
+        verdict = other_server(job, deps, found, claim=claim)
+    except retry.EnvironmentFailure:
+        if final:
+            store.release(job)  # 아직 runs 기록 전이다 (admit과 같다)
+        raise
+    if skips(verdict):
+        state = ELSEWHERE if verdict.action == "elsewhere" else DEFERRED
+        store.finish_run(store.start_run(job, author=guard.author(refs)), state)
+        return state
     run_id = store.start_run(job, author=guard.author(refs))
-    comment_id = store.last_comment_id(job.repo, job.pr_number)
+    # 결과 코멘트를 방금 찾았으면 그것을 고치고, 없었으면 다시 찾지 않고 단다
+    if looked:
+        comment_id = found.id if found is not None else None
+    else:
+        comment_id = store.last_comment_id(job.repo, job.pr_number)
     ctx = flow_context(deps, run_id, comment_id, guard.author(refs))
     try:
         ctx.comment_id = github.upsert_comment(
-            job.repo, job.pr_number, report.render_progress(job.head_sha, "체크아웃"), comment_id
-        )
+            job.repo, job.pr_number, report.render_progress(job.head_sha, "체크아웃"), comment_id,
+            head_sha=job.head_sha, search=not looked,
+        )  # fmt: skip
         # 이전 커밋의 열린 제안을 정리한다. 머지됐는지도 여기서 알게 된다 (루프 방지에 쓴다)
         proposal.refresh(store, github, job.repo, job.pr_number)
         plan = carry_plan(job, ctx) if carry else "/recheck"
@@ -164,7 +199,9 @@ def run_admitted(job: PRJob, deps: Deps, refs: PullRefs, *, carry: bool = True) 
                 packages=e.packages, pr=ctx.pr_checks, description=ctx.pr_description,
                 issues=ctx.linked_issues,
             )  # fmt: skip
-            ctx.comment_id = github.upsert_comment(job.repo, job.pr_number, body, ctx.comment_id)
+            ctx.comment_id = github.upsert_comment(
+                job.repo, job.pr_number, body, ctx.comment_id, head_sha=job.head_sha
+            )
             store.finish_run(run_id, "done", test_status="unrunnable", comment_id=ctx.comment_id)
             return "unrunnable"
         retry.environment_failure(job, ctx, run_id, final, e)
@@ -182,6 +219,57 @@ def run_admitted(job: PRJob, deps: Deps, refs: PullRefs, *, carry: bool = True) 
     run = result["test_run"]
     store.finish_run(run_id, "done", test_status=run.status, comment_id=ctx.comment_id)
     return run.status
+
+
+def other_server(
+    job: PRJob, deps: Deps, found: ResultComment | None, *, claim: bool = False
+) -> Verdict:
+    """결과 코멘트(found, 이 계정이 단 것)의 표시를 읽어 이 PR의 지금 커밋(job.head_sha)을 이
+    서버가 다룰지 정한다 (`other_server_pure.decide`). 코멘트를 고치거나 모델을 부르기 전에 부른다.
+
+    미룬 적이 있는지는 이 커밋의 runs에서 처음 미룬 때로 안다. 검사하지 않거나 미룰 때, 판이 낮은
+    서버의 것을 넘겨받을 때는 로그 한 줄과 운영 알림으로 사람에게 권한다. 저장소를 목록에서 빼지
+    않고 PR에도 아무것도 달지 않는다.
+    """
+    me = deps.github.server
+    if me is None:
+        return Verdict("check")
+    head = job.head_sha or ""
+    owner = read_owner(found.marker) if found is not None else None
+    deferred = [
+        r.finished_at for r in deps.store.runs(job.repo, job.pr_number, head)
+        if r.state == DEFERRED and r.finished_at is not None
+    ]  # fmt: skip
+    verdict = decide(
+        owner, me, head, claim=claim, deferred_at=min(deferred, default=None),
+        now=datetime.now(UTC),
+    )  # fmt: skip
+    _tell(job, deps, me, verdict)
+    return verdict
+
+
+def _tell(job: PRJob, deps: Deps, me: Server, verdict: Verdict) -> None:
+    other = verdict.other
+    if other is None:
+        return
+    where = f"{job.repo}#{job.pr_number} {(job.head_sha or '')[:7]}"
+    if verdict.timed_out:
+        log.warning(
+            "다른 pr-proof 서버 %s(판 %s)가 %d분이 지나도 이 커밋을 처리하지 않아 "
+            "넘겨받아 검사함: %s",
+            other.server_id, other.version, DEFER_WAIT.total_seconds() // 60, where,
+        )  # fmt: skip
+        return
+    if not should_recommend(verdict):
+        log.info("사람이 단 명령이라 다른 pr-proof 서버 %s(판 %s)의 코멘트를 넘겨받아 검사함: %s",
+                 other.server_id, other.version, where)  # fmt: skip
+        return
+    text = ops_alert_pure.other_server_text(job.repo, me.version, other.version, verdict.relation)
+    log.warning("%s (%s, 다른 서버 %s)", text, where, other.server_id)
+    notify.send_text(
+        ops_alert_pure.other_server_key(job.repo, other.server_id), text, deps.settings.data_dir,
+        window_seconds=ops_alert_pure.OTHER_SERVER_WINDOW_SECONDS,
+    )  # fmt: skip
 
 
 @dataclass(frozen=True)

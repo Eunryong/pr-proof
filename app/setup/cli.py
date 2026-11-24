@@ -70,8 +70,10 @@ def _parser() -> argparse.ArgumentParser:
 
     ls = commands.add_parser("list", help="처리하는 repo 목록 (설정 파일만 읽는다)")
     ls.add_argument(
-        "--check", action="store_true", help="repo마다 웹훅이 맞게 등록됐는지 GitHub에서 본다"
-    )
+        "--check", action="store_true",
+        help="repo마다 웹훅이 맞게 등록됐는지, 다른 pr-proof 서버가 같은 repo를 처리하는지 "
+        "GitHub에서 본다",
+    )  # fmt: skip
 
     mdl = commands.add_parser(
         "model", help="모든 단계에 쓸 모델을 보거나 바꾼다",

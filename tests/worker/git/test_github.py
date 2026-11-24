@@ -1,10 +1,12 @@
 import json
 import re
+from typing import Final
 
 import pytest
 
-from app.shared.comment_pure import COMMENT_MARKER, REPLY_MARKER
-from app.worker.git.github import GitHub, GitHubError, ReviewComment
+from app.shared.comment_pure import COMMENT_MARKER, REPLY_MARKER, result_marker
+from app.shared.other_server_pure import Server
+from app.worker.git.github import GitHub, GitHubError, ResultComment, ReviewComment
 
 
 class FakeGh:
@@ -219,35 +221,64 @@ def test_reply_uses_its_own_marker() -> None:
     assert body.startswith(REPLY_MARKER) and COMMENT_MARKER not in body
 
 
+SERVER: Final = Server("1a2b3c4d", "0.1.3-beta.0")
+SHA: Final = "c" * 40
+
+
 def test_creates_comment_with_marker_when_none_exists() -> None:
     gh = FakeGh()
-    assert GitHub(gh).upsert_comment("o/r", 1, "본문", None) == 555
+    assert GitHub(gh, server=SERVER).upsert_comment("o/r", 1, "본문", None, head_sha=SHA) == 555
     assert gh.kinds() == ["find", "create"]
+    body = json.loads(gh.calls[-1][1])["body"]
+    assert body == f"{result_marker(SERVER.id, SERVER.version, SHA)}\n본문"
+    # 서버 정보가 있어도 앞부분은 옛 표시 그대로다. 옛 판의 서버도 같은 코멘트를 찾는다
+    assert body.startswith(COMMENT_MARKER)
+
+
+def test_without_a_server_the_marker_has_no_owner() -> None:
+    gh = FakeGh()
+    GitHub(gh).upsert_comment("o/r", 1, "본문", None, head_sha=SHA)
     assert json.loads(gh.calls[-1][1])["body"] == f"{COMMENT_MARKER}\n본문"
 
 
 def test_updates_stored_comment_without_searching() -> None:
     gh = FakeGh()
-    assert GitHub(gh).upsert_comment("o/r", 1, "본문", 42) == 42
+    assert GitHub(gh).upsert_comment("o/r", 1, "본문", 42, head_sha=SHA) == 42
     assert gh.kinds() == ["patch"]
 
 
 def test_finds_own_marked_comment() -> None:
     gh = FakeGh(comments="10\tsomeone\n11\tme\n")  # 다른 사람이 표시를 흉내 낸 코멘트는 건너뜀
-    assert GitHub(gh).upsert_comment("o/r", 1, "본문", None) == 11
+    assert GitHub(gh).upsert_comment("o/r", 1, "본문", None, head_sha=SHA) == 11
     assert gh.kinds() == ["find", "patch"]
+
+
+def test_no_search_creates_without_looking_again() -> None:
+    gh = FakeGh(comments="11\tme\n")
+    assert GitHub(gh).upsert_comment("o/r", 1, "본문", None, head_sha=SHA, search=False) == 555
+    assert gh.kinds() == ["create"]
+
+
+def test_result_comment_reads_the_first_line_of_this_accounts_comment() -> None:
+    """다른 계정이 흉내 낸 표시는 읽지 않는다. 그 글로 이 서버가 양보하지 않게 한다."""
+    other = result_marker("9f9f9f9f", "9.0.0", SHA)
+    gh = FakeGh(comments=f"10\tsomeone\t{other}\n11\tme\t{COMMENT_MARKER}\n")
+    assert GitHub(gh).result_comment("o/r", 1) == ResultComment(11, COMMENT_MARKER)
+    jq = gh.calls[0][0][-1]
+    assert f'contains("{COMMENT_MARKER}")' in jq and 'split("\\n")' in jq
+    assert GitHub(FakeGh(comments="10\tsomeone\t" + other + "\n")).result_comment("o/r", 1) is None
 
 
 def test_deleted_comment_falls_back_to_create() -> None:
     gh = FakeGh(patch_error="gh api 실패: HTTP 404: Not Found")
-    assert GitHub(gh).upsert_comment("o/r", 1, "본문", 42) == 555
+    assert GitHub(gh).upsert_comment("o/r", 1, "본문", 42, head_sha=SHA) == 555
     assert gh.kinds() == ["patch", "find", "create"]
 
 
 def test_other_patch_errors_propagate() -> None:
     gh = FakeGh(patch_error="gh api 실패: HTTP 401: Bad credentials")
     with pytest.raises(GitHubError):
-        GitHub(gh).upsert_comment("o/r", 1, "본문", 42)
+        GitHub(gh).upsert_comment("o/r", 1, "본문", 42, head_sha=SHA)
 
 
 def test_review_is_posted_once_per_patch_and_ignores_lookalikes() -> None:

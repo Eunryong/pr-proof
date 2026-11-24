@@ -17,6 +17,7 @@ from typing import Any, Final, Literal
 
 import yaml
 
+from app.shared.comment_pure import read_owner
 from app.shared.embed_models_pure import EmbedModel
 from app.shared.model_names_pure import MODEL_NAME_PATTERN
 from app.worker.config.repo_config_pure import (
@@ -547,6 +548,51 @@ def hook_status(hooks: Sequence[Hook], url: str | None) -> str:
     if missing:
         return f"웹훅 있음, 이벤트 빠짐: {', '.join(missing)}"
     return "웹훅 있음, 이벤트 맞음"
+
+
+# `list --check`가 다른 서버를 찾으려고 보는 열린 PR 수 (최근에 고친 것부터)
+OTHER_SERVER_PRS: Final = 10
+
+
+@dataclass(frozen=True)
+class SeenMarker:
+    """열린 PR의 결과 코멘트 하나의 첫 줄(표시)과 그 코멘트를 마지막으로 고친 때(GitHub의 값)."""
+
+    pr_number: int
+    marker: str
+    updated_at: str
+
+
+def other_servers_text(seen: Sequence[SeenMarker], my_id: str | None) -> str | None:
+    """결과 코멘트에서 찾은 다른 서버를 한 줄로. 없으면 None. my_id는 이 서버의 id(아직 없으면
+    None: 이 서버가 단 표시가 없다)이고, 서버 정보가 없는 옛 표시는 세지 않는다.
+
+    서버마다 마지막으로 처리한 코멘트의 판과 때를 보인다.
+    """
+    latest: dict[str, SeenMarker] = {}
+    versions: dict[str, str] = {}
+    for item in seen:
+        owner = read_owner(item.marker)
+        if owner is None or owner.server_id == my_id:
+            continue
+        known = latest.get(owner.server_id)
+        if known is None or item.updated_at > known.updated_at:
+            latest[owner.server_id] = item
+            versions[owner.server_id] = owner.version or "알 수 없음"
+    if not latest:
+        return None
+    parts = [
+        f"서버 {sid} (판 {versions[sid]}, "
+        f"마지막 처리 {_when(item.updated_at)} PR #{item.pr_number})"
+        for sid, item in sorted(latest.items(), key=lambda kv: kv[1].updated_at, reverse=True)
+    ]
+    return "다른 pr-proof 서버가 처리하고 있음: " + ", ".join(parts)
+
+
+def _when(iso: str) -> str:
+    """GitHub의 시각(`2026-11-24T10:05:00Z`)을 `2026-11-24 10:05 UTC`로."""
+    m = re.fullmatch(r"(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})(?::\d{2})?Z", iso)
+    return f"{m.group(1)} {m.group(2)} UTC" if m else iso
 
 
 def manual_hook_text(repo: str, url: str, secret_path: str) -> str:

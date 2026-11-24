@@ -10,6 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Final
 
 from redis import Redis
 
@@ -24,8 +25,12 @@ from app.shared.config import PipelineConfig
 from app.shared.feedback_pure import feedback_in_comment
 from app.shared.job_pure import PRJob
 from app.shared.ops_alert_pure import Kind
+from app.shared.other_server_pure import DEFERRED, ELSEWHERE
 
 log = logging.getLogger(__name__)
+
+# 이 head의 마지막 기록이 이 상태면 PR 코멘트 작업을 넣지 않는다
+_NO_FEEDBACK: Final = frozenset({"blocked", ELSEWHERE, DEFERRED})
 
 
 @dataclass
@@ -85,8 +90,9 @@ def run_once(
                 log.warning("동기화: %s#%s 명령 조회 실패: %s", repo, pr.number, e)
             runs = history.runs_for(repo, pr.number, pr.head_sha)
             # 승인을 기다리는 외부 작성자의 PR은 코멘트도 처리하지 않는다. 넣으면 주기마다
-            # 승인 안내를 다시 달고 blocked 기록이 쌓인다 (8.6)
-            if not (runs and runs[-1].state == "blocked"):
+            # 승인 안내를 다시 달고 blocked 기록이 쌓인다 (8.6). 다른 서버가 맡은 PR도 그 서버가
+            # 코멘트를 다룬다. 넣으면 주기마다 워커가 표시만 읽고 끝난다
+            if not (runs and runs[-1].state in _NO_FEEDBACK):
                 try:
                     _unhandled_feedback(repo, pr, redis, history, result, list_feedback)
                 except github.GitHubReadError as e:
