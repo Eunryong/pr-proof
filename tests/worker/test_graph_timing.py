@@ -36,3 +36,24 @@ def test_timed_saves_the_time_of_a_stage_that_fails() -> None:
     with pytest.raises(RuntimeError):
         timed(ctx, "checkout", broken, clock=_clock(0.0, 3.0))({})
     assert store.saved == [(7, "checkout", 3.0)]
+
+
+class _BrokenTimes:
+    def add_stage_time(self, run_id: int, stage: str, seconds: float) -> None:
+        raise OSError("database is locked")
+
+
+def test_a_failure_to_save_the_time_does_not_change_the_result_of_the_stage() -> None:
+    ctx = SimpleNamespace(store=_BrokenTimes(), run_id=7)
+    node = timed(ctx, "test", lambda state: {"ok": True}, clock=_clock(0.0, 1.0))
+    assert node({}) == {"ok": True}
+
+
+def test_a_failure_to_save_the_time_does_not_replace_the_error_of_the_stage() -> None:
+    ctx = SimpleNamespace(store=_BrokenTimes(), run_id=7)
+
+    def broken(state: object) -> None:
+        raise RuntimeError("docker가 없음")
+
+    with pytest.raises(RuntimeError, match="docker가 없음"):
+        timed(ctx, "checkout", broken, clock=_clock(0.0, 3.0))({})

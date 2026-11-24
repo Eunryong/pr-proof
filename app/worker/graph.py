@@ -258,7 +258,8 @@ def timed(
     ctx: "FlowContext", name: str, node: Callable[[Any], Any],
     clock: Callable[[], float] = time.monotonic,
 ) -> Callable[[Any], Any]:  # fmt: skip
-    """단계가 끝날 때(실패해 예외로 나갈 때도) 걸린 시간을 로그와 그 검사의 줄에 남긴다."""
+    """단계가 끝날 때(실패해 예외로 나갈 때도) 걸린 시간을 로그와 그 검사의 줄에 남긴다. 시간을
+    남기다 실패하면 로그에만 적는다. 단계의 결과와 단계가 낸 예외는 그대로 나간다."""
 
     def run(state: Any) -> Any:
         start = clock()
@@ -267,7 +268,10 @@ def timed(
         finally:
             seconds = clock() - start
             log.info("단계 %s: %.1f초", name, seconds)
-            ctx.store.add_stage_time(ctx.run_id, name, seconds)
+            try:
+                ctx.store.add_stage_time(ctx.run_id, name, seconds)
+            except Exception:  # noqa: BLE001 (기록의 실패가 검사를 바꾸지 않는다)
+                log.warning("단계 %s의 시간을 남기지 못함", name, exc_info=True)
 
     return run
 
