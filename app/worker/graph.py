@@ -436,7 +436,8 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
             rt.retriever.prepare()
         read = doc_rules.read(
             ctx.worktree, job.base_sha, ctx.base.repo.rules, rt, ctx.changes_diff,
-            head_sha=job.head_sha, trusted=is_trusted(ctx.author, ctx.base.access),
+            head_sha=job.head_sha, fork_sha=ctx.merge_base,
+            trusted=is_trusted(ctx.author, ctx.base.access),
         )  # fmt: skip
         if isinstance(read, RulesRead):
             return {"rules_read": read, "rag_switch": switch}

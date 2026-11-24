@@ -136,6 +136,22 @@ def test_pr_that_leaves_the_documents_alone_reads_base_as_before(
     assert len(hits) == 2 and {c.ruleset_key for c in hits} == {key}
 
 
+def test_documents_changed_on_base_after_the_pr_branched_are_not_the_pr_s_change(
+    worktree: Path, store: Store
+) -> None:
+    """PR이 갈라진 뒤 base 쪽에서 규칙 문서가 바뀌었다. PR은 문서를 건드리지 않았으므로 믿는
+    작성자의 PR이어도 base의 지금 문서로 읽는다."""
+    fork = _commit(worktree, {"README.md": _readme(OLD, KEPT), "a.py": "x = 1\n"})
+    _git(worktree, "switch", "-q", "-c", "feature")
+    head = _commit(worktree, {"a.py": "x = 2\n"})
+    _git(worktree, "switch", "-q", "main")
+    base = _commit(worktree, {"README.md": _readme(NEW, KEPT)})
+    assert fork != base
+    key = _save(worktree, base, store, NEW, KEPT)
+    read = _read(worktree, base, store, head_sha=head, fork_sha=fork, trusted=True)
+    assert read.source is None and read.key == key and _texts(read) == [NEW, KEPT]
+
+
 def test_trusted_author_is_checked_with_the_rules_of_the_pr(worktree, store, edited) -> None:
     base, head, _, head_key = edited
     read = _read(worktree, base, store, head_sha=head, trusted=True)

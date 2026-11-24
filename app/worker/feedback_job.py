@@ -168,9 +168,10 @@ def read_material(
     )
     model = config.model.rules
     access = base_config.load_access(data_dir, work.repo, work.base_sha)
+    fork = repo.bare_merge_base(bare, work.base_sha, work.head_sha)
     source = source_for(
         config.rules.docs,
-        repo.bare_entries(bare, work.base_sha, config.rules.docs),
+        repo.bare_entries(bare, fork, config.rules.docs),
         repo.bare_entries(bare, work.head_sha, config.rules.docs),
         trusted=is_trusted(author, access), rules_from=config.rules.docs_from,
     )  # fmt: skip

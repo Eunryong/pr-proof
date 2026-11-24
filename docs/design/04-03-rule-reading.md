@@ -23,7 +23,7 @@
   | 고쳤고, 작성자가 믿는 작성자이고, 설정이 `rules.from: pr`(기본) | PR의 head |
   | 고쳤지만 작성자가 믿는 작성자가 아님, 또는 `rules.from: base` | base |
 
-  - "고쳤다"는 `rules.docs`의 경로 가운데 base 커밋과 head 커밋에서 (모드, blob 해시)가 다른 것이 있다는 뜻이다. 한쪽에만 있는 문서(새로 더함, 지움)도 고친 것이다. 두 커밋의 트리만 보고 정하고 모델을 부르지 않는다(`app/worker/rules/rule_docs_source_pure.py`).
+  - "고쳤다"는 `rules.docs`의 경로 가운데 PR이 base에서 갈라진 커밋(merge-base)과 head 커밋에서 (모드, blob 해시)가 다른 것이 있다는 뜻이다. PR이 갈라진 뒤 base 쪽에서 문서가 바뀐 것은 이 PR이 고친 것이 아니고, 그런 PR은 base의 지금 문서로 검사한다. 한쪽에만 있는 문서(새로 더함, 지움)도 고친 것이다. 두 커밋의 트리만 보고 정하고 모델을 부르지 않는다(`app/worker/rules/rule_docs_source_pure.py`).
   - 믿는 작성자는 가드레일(8.6)과 같은 기준이다: 워커가 그 작업에서 GitHub에 조회한 PR 작성자의 `author_association`이 base `.pipeline.yaml`의 `access.trusted`(기본 OWNER·MEMBER·COLLABORATOR)에 든다. 작성자를 모르면 믿지 않는다. `access.bots`의 봇과 커밋을 승인받은 외부 작성자는 검사는 돌지만 믿는 작성자가 아니라 base의 규칙으로 검사한다.
   - 바뀌는 것은 규칙 문서의 본문뿐이다. 읽을 문서의 목록(`rules.docs`), `rules.from`, `access`를 비롯한 `.pipeline.yaml`과 도구 설정(ruff)은 늘 base에서 읽는다(8.3). PR이 새 문서에 규칙을 적고 `rules.docs`에 그 경로를 더해도 그 PR에서는 읽지 않는다.
   - PR의 문서로 읽었으면 base의 규칙 묶음도 얻어(대개 저장돼 있어 모델을 부르지 않고, 없으면 한 번 부른다) 규칙 id로 견준다. base에만 있으면 "없어지는 규칙", PR에만 있으면 "새로 생기는 규칙"이다. 규칙 id는 원문으로 만들므로 문장이 바뀐 규칙은 짝짓지 않고 없어짐 하나와 새로 생김 하나로 나온다. base의 규칙을 얻지 못하면(호출 상한, 모델 호출 실패) 견주기만 건너뛰고 그 사실을 코멘트에 적는다. 검사는 그대로 한다.

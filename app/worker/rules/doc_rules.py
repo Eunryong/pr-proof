@@ -87,18 +87,22 @@ def read(
     changes_diff: bytes = b"",
     *,
     head_sha: str | None = None,
+    fork_sha: str | None = None,
     trusted: bool = False,
 ) -> RulesRead | DocRules:
     """규칙 문서와 base의 도구 설정을 읽는다. 검사할 규칙이 있으면 RulesRead, 없으면 끝난 결과.
 
-    head_sha는 PR의 커밋이고 trusted는 PR 작성자가 믿는 작성자인지다. PR이 규칙 문서를 고쳤으면
+    head_sha는 PR의 커밋, fork_sha는 PR이 base에서 갈라진 커밋이고 trusted는 PR 작성자가 믿는
+    작성자인지다. PR이 규칙 문서를 고쳤으면
     이 둘과 `rules.from`으로 문서를 읽는 커밋을 정하고 결과의 source에 싣는다. head_sha가 없으면
     base의 문서를 읽는다. changes_diff(PR의 diff)는 규칙 문서가 400KB를 넘는 저장소에서 관련 절을
     찾는 데 쓴다 (6.3).
     """
     configured = (config_rule(rt.ruff.config),) if rt.ruff and rt.ruff.config else ()
     tool_rules = apply_disabled(configured, settings.disabled)
-    docs = _read_documents(worktree, base_sha, head_sha, settings, rt, changes_diff, trusted)
+    docs = _read_documents(
+        worktree, base_sha, head_sha, fork_sha or base_sha, settings, rt, changes_diff, trusted
+    )
     if isinstance(docs, RulesRead):
         return replace(docs, rules=(*docs.rules, *tool_rules),
                        disabled=docs.disabled + len(configured) - len(tool_rules))  # fmt: skip
@@ -109,13 +113,17 @@ def read(
 
 
 def docs_source(
-    worktree: Path, base_sha: str, head_sha: str, settings: RulesSettings, trusted: bool
+    worktree: Path, fork_sha: str, head_sha: str, settings: RulesSettings, trusted: bool
 ) -> DocsSource | None:
     """PR이 규칙 문서를 고쳤으면 어느 쪽 문서로 읽을지, 고치지 않았으면 None. 두 커밋의 트리만
-    읽는다."""
+    읽는다.
+
+    PR이 고쳤는지는 PR이 base에서 갈라진 커밋(fork_sha)과 PR의 커밋을 견주어 정한다. PR이 갈라진
+    뒤 base 쪽에서 규칙 문서가 바뀐 것은 이 PR이 고친 것이 아니다.
+    """
     return source_for(
         settings.docs,
-        repo.list_base_entries(worktree, base_sha, settings.docs),
+        repo.list_base_entries(worktree, fork_sha, settings.docs),
         repo.list_base_entries(worktree, head_sha, settings.docs),
         trusted=trusted, rules_from=settings.docs_from,
     )  # fmt: skip
@@ -134,6 +142,7 @@ def _read_documents(
     worktree: Path,
     base_sha: str,
     head_sha: str | None,
+    fork_sha: str,
     settings: RulesSettings,
     rt: Runtime,
     changes_diff: bytes,
@@ -143,7 +152,7 @@ def _read_documents(
     source = None
     try:
         if head_sha is not None:
-            source = docs_source(worktree, base_sha, head_sha, settings, trusted)
+            source = docs_source(worktree, fork_sha, head_sha, settings, trusted)
         docs_sha = read_commit(source, base_sha, head_sha or base_sha)
         result = _load(worktree, docs_sha, settings, rt, changes_diff)
     except GitError as e:
