@@ -969,7 +969,7 @@ def _run_broken(answers: Mapping[str, RunAnswer]) -> list[str]:
     broken = [a for a in answers.values() if a.verdict == "broken"]
     if not broken:
         return []
-    lines = ["", "테스트·정적 검사 결과로 어긴 규칙 (줄이 아니라 PR에 걸려 수정안은 만들지 않음):"]
+    lines = ["", "테스트·정적 검사 결과로 어긴 규칙:"]
     for a in broken:
         lines += [f"- `{a.rule.id}` {_quote(a.rule)} · {inline_code(a.why, MAX_DETAIL_CHARS)}",
                   f"  근거: {a.basis}"]  # fmt: skip

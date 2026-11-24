@@ -720,17 +720,17 @@ def test_rule_the_model_could_not_judge_is_listed_with_its_reason() -> None:
 
 
 def test_run_rule_shows_the_models_answer_and_the_results_it_saw() -> None:
-    """실행 결과의 규칙은 모델이 테스트·커버리지·정적 검사를 보고 정한 답으로 보인다."""
+    """실행 결과의 규칙은 모델이 테스트와 정적 검사의 결과를 보고 정한 답으로 보인다."""
     run_rule = replace(RULE, id="R-run", target="run", runs=("tests",))
-    facts = "테스트 통과 (6개) · 있던 테스트가 PR이 바꾼 줄 220줄 중 0줄을 실행함 · 정적 검사 x"
+    facts = "테스트 실패 (6개 중 2개) · 정적 검사 x"
     outcome = RuleUnchecked(run_rule, "run", "")
     broken = replace(
         _found(RuleChecked(RULE, REF), outcome),
-        runs=(RunJudged("R-run", "broken", "새 생성기를 실행하는 테스트가 없음", facts),),
+        runs=(RunJudged("R-run", "broken", "테스트 6개 중 2개가 실패함", facts),),
     )
     text = _text(broken)
     assert "**규칙:** ⚠️ 위반 1건 (규칙 1개)" in text
-    assert "테스트·정적 검사 결과로 어긴 규칙 (줄이 아니라 PR에 걸려 수정안은 만들지 않음):" in text
+    assert "테스트·정적 검사 결과로 어긴 규칙:" in text
     assert f"  근거: {facts}" in text
     kept = replace(broken, runs=(RunJudged("R-run", "kept", "실행함", facts),))
     assert "규칙 2개를 확인함 (도구·검사기 1개, 테스트·정적 검사 결과 1개)" in _text(kept)
