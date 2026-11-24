@@ -263,7 +263,7 @@ def test_check_and_fix_hints() -> None:
 def test_fix_hint_leaves_changed_behaviour_to_the_tests_and_keeps_none_for_wide_fixes() -> None:
     # 수정 방법 none은 알리기만 하는 규칙이다 (4.4). "동작을 바꾸지 않고"를 조건으로 두면
     # 테스트와 사람이 확인할 수정까지 none이 된다 (2026-11-20, 완료 기준 2-1)
-    hint = SYSTEM_PROMPT.split("- fix:", 1)[1].split("\n규칙이 없으면", 1)[0]
+    hint = SYSTEM_PROMPT.split("**fix**:", 1)[1].split("\n## 제약", 1)[0]
     assert "동작을 바꾸지 않고" not in hint
     assert "테스트로 확인" in hint and "동작이 달라질 수 있다는 것만으로" in hint
     assert "다른 파일의 사용처" in hint and "이름 바꾸기" in hint
