@@ -301,3 +301,27 @@ def test_marked_time_is_kept(tmp_path: Path) -> None:
     assert db.pending_records(REPO) == []
     db.clear_embedded(REPO)
     assert len(db.pending_records(REPO)) == 1
+
+
+def test_tls_context_adds_certifi_when_system_has_no_ca(monkeypatch) -> None:
+    """python.org에서 깐 macOS의 Python처럼 시스템의 CA가 비어 있어도 확인할 기준이 있다
+    (pr-proof#121). 확인은 끄지 않는다."""
+    import ssl
+
+    empty = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    assert empty.get_ca_certs() == []
+    monkeypatch.setattr(memory.ssl, "create_default_context", lambda: empty)
+    context = memory._tls_context()
+    assert context.get_ca_certs()
+    assert context.verify_mode == ssl.CERT_REQUIRED
+    assert context.check_hostname
+
+
+def test_tls_context_without_certifi_is_the_system_one(monkeypatch) -> None:
+    import ssl
+    import sys
+
+    monkeypatch.setitem(sys.modules, "certifi", None)
+    context = memory._tls_context()
+    assert context.verify_mode == ssl.CERT_REQUIRED
+    assert context.check_hostname

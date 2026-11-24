@@ -20,6 +20,7 @@ import importlib.util
 import json
 import logging
 import os
+import ssl
 import tempfile
 import urllib.request
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -90,11 +91,27 @@ class _HttpsOnly(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
+def _tls_context() -> ssl.SSLContext:
+    """서버 인증서를 확인할 기준. 시스템의 CA에 certifi의 묶음을 더한다. python.org에서 깐
+    macOS의 Python은 자기 CA 묶음이 비어 있어(`Install Certificates.command`를 돌리기 전) 시스템
+    것만으로는 어느 https 서버도 확인하지 못한다 (pr-proof#121). certifi는 `[rag]`와 같이 깔린다.
+    없으면 시스템 것만 쓴다."""
+    context = ssl.create_default_context()
+    try:
+        import certifi
+    except ImportError:
+        return context
+    context.load_verify_locations(cafile=certifi.where())
+    return context
+
+
 def _download(url: str, dest: Path, file: ModelFile) -> None:
     """url을 dest로 받는다. 크기가 고정한 값을 넘거나 해시가 다르면 지우고 SearchUnavailable."""
     if not url.startswith("https://"):
         raise SearchUnavailable(f"https가 아닌 주소: {url}")
-    opener = urllib.request.build_opener(_HttpsOnly)
+    opener = urllib.request.build_opener(
+        _HttpsOnly, urllib.request.HTTPSHandler(context=_tls_context())
+    )
     digest, size = hashlib.sha256(), 0
     fd, tmp = tempfile.mkstemp(dir=dest.parent, prefix=f".{dest.name}.")
     try:

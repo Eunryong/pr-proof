@@ -26,6 +26,8 @@ rag = [
     "onnxruntime==1.31.1",
     "tokenizers==0.23.3",
     "numpy==2.4.6",
+    # 임베딩 모델을 받을 때 서버 인증서를 확인하는 CA 묶음 (pr-proof#121). 받은 파일은 해시로 맞춰 본다
+    "certifi>=2024.7.4",
 ]
 # 서버 실행에 필요한 것 (Procfile의 api·worker를 같이 띄운다). npx 입구(bin/pr-proof.js)가 설치한다
 run = [
