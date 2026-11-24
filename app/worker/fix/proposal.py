@@ -338,7 +338,9 @@ def open_model_proposal(
     if refs.head_sha != job.head_sha:
         return ProposalResult(reason="그 사이 새 커밋이 올라옴")
     secrets = list(pipeline_secrets() if secrets is None else secrets)
-    blocker = proposal_pure.push_blocker(patch, fix.changed_files, secrets)
+    blocker = proposal_pure.push_blocker(
+        patch, fix.changed_files, secrets, [t.file for t in fix.generated if t.accepted]
+    )
     if blocker is not None:
         log.warning("수정안 PR을 만들지 않음 %s#%s: %s", job.repo, job.pr_number, blocker)
         return ProposalResult(reason=blocker)
@@ -453,7 +455,9 @@ def open_feedback_proposal(
     if refs.head_sha != job.head_sha:
         return ProposalResult(reason="그 사이 새 커밋이 올라옴")
     secrets = list(pipeline_secrets() if secrets is None else secrets)
-    blocker = proposal_pure.push_blocker(patch, fix.changed_files, secrets)
+    blocker = proposal_pure.push_blocker(
+        patch, fix.changed_files, secrets, [t.file for t in fix.generated if t.accepted]
+    )
     if blocker is not None:
         log.warning("코멘트 수정안 PR을 만들지 않음 %s#%s: %s", job.repo, job.pr_number, blocker)
         return ProposalResult(reason=blocker)
