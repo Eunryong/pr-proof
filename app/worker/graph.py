@@ -248,6 +248,8 @@ class FlowContext:
     changes_diff: bytes = b""  # 테스트 전에 읽은 PR의 diff (테스트 뒤에는 샌드박스가 바꿀 수 있다)
     run_tests: Callable[..., PytestRun] | None = None  # 없으면 run_pr_tests
     rag_model: str = E5_SMALL  # 파이프라인 쪽 `rag.embed_model`. 저장소가 검색을 켰을 때만 쓴다
+    # 파이프라인 쪽 `rag.allowed` (`pr-proof rag on|off`). False면 이 컴퓨터에서 검색하지 않는다
+    rag_allowed: bool | None = None
     # 파이프라인 쪽 `model.default`. 저장소의 `.pipeline.yaml`이 적지 않은 단계의 모델이다
     default_model: str | None = None
 
@@ -359,7 +361,9 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
         saved = state.get("rag_switch")
         if saved is not None:
             return saved
-        return memory.switch_for(ctx.store, state["job"].repo, ctx.base.repo.rag.enabled)
+        return memory.switch_for(
+            ctx.store, state["job"].repo, ctx.base.repo.rag.enabled, allowed=ctx.rag_allowed
+        )
 
     def doc_runtime(state: FlowState) -> DocRuntime:
         job = state["job"]

@@ -61,6 +61,10 @@ class RagConfig(BaseModel):
     `app/shared/embed_models_pure.py`의 `EMBED_MODELS`에 판과 해시를 고정한 것만 받는다."""
 
     embed_model: str = E5_SMALL
+    # 이 컴퓨터에서 검색을 쓸지 (`pr-proof rag on|off`, configure가 묻는다). 저장소의
+    # `.pipeline.yaml`의 `rag.enabled`보다 먼저 본다: false면 어느 저장소도 검색하지 않는다. 없으면
+    # 묻기 전의 설치이고 저장소의 설정을 따른다. true면 입구가 실행 환경을 새로 깔 때 `[rag]`도 깐다
+    allowed: bool | None = Field(default=None, strict=True)
 
     @field_validator("embed_model")
     @classmethod

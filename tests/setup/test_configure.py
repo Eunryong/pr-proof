@@ -17,6 +17,7 @@ from app.setup import files
 from app.setup import github_setup as gh
 from app.setup import setup_pure as pure
 from app.shared import config, github_auth
+from app.shared.embed_models_pure import E5_SMALL, EmbedModel
 from app.worker import preflight
 
 REPO: Final = "octocat/hello-world"
@@ -89,6 +90,35 @@ class FakeGitHub:
                                  "active": True, "content_type": "json"})  # fmt: skip
 
 
+class FakeRag:
+    """pip과 임베딩 모델 받기 대신. 깐 것과 받은 것을 적기만 한다(파일을 쓰지 않는다)."""
+
+    def __init__(self) -> None:
+        self.installed = False
+        self.install_ok = True
+        self.installs = 0
+        self.fetched: list[tuple[Path, str]] = []
+        self.fetch_error: Exception | None = None
+
+    def install(self) -> bool:
+        self.installs += 1
+        self.installed = self.install_ok
+        return self.install_ok
+
+    def fetch(self, model_dir: Path, spec: EmbedModel) -> Path:
+        if self.fetch_error is not None:
+            raise self.fetch_error
+        self.fetched.append((model_dir, spec.name))
+        return model_dir
+
+    def deps(self) -> flow.RagDeps:
+        return flow.RagDeps(
+            install=self.install, extras_missing=lambda: not self.installed,
+            fetch_model=self.fetch,
+            model_ready=lambda model_dir, spec: (model_dir, spec.name) in self.fetched,
+        )  # fmt: skip
+
+
 def _check(name: str, ok: bool = True) -> preflight.Check:
     return preflight.Check(name, ok, "고치는 방법", "docker")
 
@@ -99,6 +129,7 @@ def env(tmp_path: Path, monkeypatch):
     monkeypatch.setenv(config.CONFIG_DIR_ENV, str(directory))
     monkeypatch.delenv(files.COMMAND_ENV, raising=False)  # 입구가 넘기는 값. 테스트마다 정한다
     github = FakeGitHub()
+    rag = FakeRag()
     state = {"claude": [True], "smee_calls": 0, "compose": 0}
 
     def smee_new() -> str:
@@ -118,9 +149,10 @@ def env(tmp_path: Path, monkeypatch):
         port_busy=lambda port: False, pr_proof_on=lambda port: False, smee_new=smee_new,
         checks=lambda url: [_check("GitHub 인증"), _check("Claude 로그인"), _check("Docker"),
                             _check("Redis")],
+        rag=rag.deps(),
         new_secret=lambda: "fake-secret-0001", environ={}, platform="darwin", hints=HINTS,
     )  # fmt: skip
-    return {"dir": directory, "gh": github, "deps": deps, "state": state}
+    return {"dir": directory, "gh": github, "deps": deps, "state": state, "rag": rag}
 
 
 def _io(answers=(), secrets=(), interactive=False):
@@ -238,8 +270,9 @@ def test_rejected_token_is_not_saved(env) -> None:
 
 
 def test_interactive_token_is_asked_hidden_again_after_a_bad_one(env) -> None:
-    # 묻는 것: 모델(Enter), 웹훅 받는 주소(Enter)
-    code, out = _configure(env, interactive=True, repos=[REPO], auth="token", answers=["", ""],
+    # 묻는 것: 모델(Enter), 검색(Enter), 웹훅 받는 주소(Enter)
+    code, out = _configure(env, interactive=True, repos=[REPO], auth="token",
+                           answers=["", "", ""],
                            secrets=["github_pat_WRONG", TOKEN])  # fmt: skip
     assert code == 0, out
     assert "Contents: Read and write" in out  # 묻기 전에 필요한 권한을 보인다
@@ -280,9 +313,9 @@ def test_claude_not_logged_in_says_how_and_stops_without_terminal(env) -> None:
 
 def test_claude_login_is_checked_again_on_enter(env) -> None:
     env["state"]["claude"] = [False, True]
-    # 묻는 것: Claude 로그인 뒤 Enter, 모델(Enter), 웹훅 받는 주소(Enter)
+    # 묻는 것: Claude 로그인 뒤 Enter, 모델(Enter), 검색(Enter), 웹훅 받는 주소(Enter)
     code, out = _configure(env, interactive=True, repos=[REPO], auth="gh",
-                           answers=["", "", ""])  # fmt: skip
+                           answers=["", "", "", ""])  # fmt: skip
     assert code == 0, out
     assert "로그인한 뒤 Enter를 누르면 다시 확인합니다" in out
 
@@ -392,9 +425,10 @@ def test_dry_run_writes_nothing(env) -> None:
 
 
 def test_interactive_questions(env) -> None:
-    # 인증 방식(Enter: gh 로그인) → 모델(Enter: 그대로) → repo(틀린 것, 맞는 것) →
-    # 웹훅 받는 주소(Enter: smee)
-    code, out = _configure(env, interactive=True, answers=["", "", "bad", f"{REPO} {OTHER}", ""])
+    # 인증 방식(Enter: gh 로그인) → 모델(Enter: 그대로) → 검색(Enter: 아니오) →
+    # repo(틀린 것, 맞는 것) → 웹훅 받는 주소(Enter: smee)
+    code, out = _configure(env, interactive=True,
+                           answers=["", "", "", "bad", f"{REPO} {OTHER}", ""])  # fmt: skip
     assert code == 0, out
     assert "model" not in yaml.safe_load((env["dir"] / "config.yaml").read_text())
     assert "repo는 `계정/저장소이름` 꼴이나 GitHub 주소로 적습니다" in out
@@ -409,12 +443,13 @@ def test_failed_final_check_is_shown_and_fails(env) -> None:
     assert "Claude 로그인" in out and "실패 → 고치는 방법" in out
 
 
-def test_steps_are_numbered_out_of_nine_with_the_model_after_claude(env) -> None:
+def test_steps_are_numbered_out_of_ten_with_the_model_and_search_after_claude(env) -> None:
     code, out = _configure(env, repos=[REPO], auth="gh")
     assert code == 0, out
     steps = [line for line in out.splitlines() if line.startswith("[")]
-    assert [s.split("]")[0] for s in steps] == [f"[{n}/9" for n in range(1, 10)]
-    assert steps[4] == "[5/9] Claude 로그인" and steps[5] == "[6/9] 모델"
+    assert [s.split("]")[0] for s in steps] == [f"[{n}/10" for n in range(1, 11)]
+    assert steps[4] == "[5/10] Claude 로그인" and steps[5] == "[6/10] 모델"
+    assert steps[6] == "[7/10] 과거 수정 기록 검색"
 
 
 def test_without_model_option_nothing_is_asked_or_written(env) -> None:
@@ -460,7 +495,7 @@ def test_model_option_in_dry_run_writes_nothing(env) -> None:
     ],
 )
 def test_interactive_model_choice(env, answers: list[str], expected: str) -> None:
-    code, out = _configure(env, interactive=True, answers=["", *answers, REPO, ""])
+    code, out = _configure(env, interactive=True, answers=["", *answers, "", REPO, ""])
     assert code == 0, out
     assert config.load_config(env["dir"]).model.default == expected
     assert "1) 기본값 (판단 sonnet, 수정 haiku→sonnet)" in out and "5) 직접 입력" in out
@@ -468,12 +503,75 @@ def test_interactive_model_choice(env, answers: list[str], expected: str) -> Non
 
 def test_interactive_model_shows_the_saved_one_and_enter_keeps_it(env) -> None:
     _configure(env, repos=[REPO], auth="gh", model="opus")
-    code, out = _configure(env, interactive=True, answers=["", ""])
+    code, out = _configure(env, interactive=True, answers=["", "", ""])
     assert code == 0, out
     assert "지금: opus" in out and "모델: opus (그대로)" in out
     assert config.load_config(env["dir"]).model.default == "opus"
-    code, out = _configure(env, interactive=True, answers=["", "1"])  # 1: 기본값으로
+    code, out = _configure(env, interactive=True, answers=["", "1", ""])  # 1: 기본값으로
     assert code == 0 and config.load_config(env["dir"]).model.default is None
+
+
+# --- configure: 과거 수정 기록 검색 ---
+
+
+def _rag_allowed(env) -> bool | None:
+    return config.load_config(env["dir"]).rag.allowed
+
+
+def test_without_rag_option_nothing_is_asked_installed_or_written(env) -> None:
+    code, out = _configure(env, repos=[REPO], auth="gh")
+    assert code == 0, out
+    assert "과거 수정 기록 검색: 정하지 않음" in out and "--rag on" in out
+    assert _rag_allowed(env) is None
+    assert (env["rag"].installs, env["rag"].fetched) == (0, [])
+
+
+def test_rag_on_installs_the_extras_fetches_the_model_and_saves_the_choice(env) -> None:
+    code, out = _configure(env, repos=[REPO], auth="gh", rag="on")
+    assert code == 0, out
+    rag = env["rag"]
+    data_dir = config.load_config(env["dir"]).data_dir
+    assert rag.installs == 1 and rag.fetched == [(data_dir / "models", E5_SMALL)]
+    assert "pr-proof[rag]를 깝니다 (패키지 수백 MB" in out and "(약 487MB)" in out
+    assert _rag_allowed(env) is True and "과거 수정 기록 검색: 켬" in out
+    # 다시 돌려도 같다: 깔려 있으면 다시 깔지 않는다
+    code, out = _configure(env, repos=[REPO], auth="gh", rag="on")
+    assert code == 0 and rag.installs == 1 and "pr-proof[rag]: 깔려 있음" in out
+    code, out = _configure(env, repos=[REPO], auth="gh", rag="off")
+    assert code == 0 and _rag_allowed(env) is False and "과거 수정 기록 검색: 끔" in out
+    code, out = _configure(env, repos=[REPO], auth="gh", rag="off")
+    assert code == 0 and "끔 (그대로)" in out
+
+
+def test_rag_on_that_fails_to_install_saves_nothing_and_says_how_to_retry(env) -> None:
+    env["rag"].install_ok = False
+    code, out = _configure(env, repos=[REPO], auth="gh", rag="on")
+    assert code == 1
+    assert "깔지 못했습니다" in out and "rag on" in out
+    assert _rag_allowed(env) is None and env["rag"].fetched == []
+    assert yaml.safe_load((env["dir"] / "config.yaml").read_text())["repos"] == [REPO]  # 이어 간다
+
+
+def test_rag_on_in_dry_run_installs_and_writes_nothing(env) -> None:
+    code, out = _configure(env, repos=[REPO], auth="gh", rag="on", dry_run=True)
+    assert code == 0, out
+    assert not env["dir"].exists()
+    assert (env["rag"].installs, env["rag"].fetched) == (0, [])
+    assert "(dry-run)" in out and "rag.allowed를 true로 적는다" in out
+
+
+def test_interactive_rag_question_defaults_to_no_and_tells_the_size(env) -> None:
+    # 인증 방식, 모델, 검색(Enter: 아니오), repo, 웹훅 받는 주소
+    code, out = _configure(env, interactive=True, answers=["", "", "", REPO, ""])
+    assert code == 0, out
+    assert "과거 수정 기록 검색을 쓸까요? [y/N]: " in out
+    assert "패키지 수백 MB" in out and "임베딩 모델(약 487MB)" in out
+    assert _rag_allowed(env) is False and env["rag"].installs == 0
+    # 켬이면 Enter는 그대로 켬이다
+    code, out = _configure(env, interactive=True, answers=["", "", "maybe", "y"])
+    assert code == 0 and "y나 n을 적습니다" in out and _rag_allowed(env) is True
+    code, out = _configure(env, interactive=True, answers=["", "", ""])
+    assert code == 0 and "[Y/n]" in out and _rag_allowed(env) is True
 
 
 # --- add ---
@@ -703,3 +801,76 @@ def test_model_guidance_uses_the_command_the_user_ran(env, monkeypatch) -> None:
     (env["dir"] / "config.yaml").write_text("repos: []\n")
     code, out = _model(env)
     assert code == 0 and "바꾸기: pr-proof model <이름>" in out and "npx" not in out
+
+
+# --- rag ---
+
+
+def _rag(env, action=None):
+    io, lines = _io()
+    code = flow.rag(action, io, env["rag"].deps(), env["dir"])
+    return code, "\n".join(lines)
+
+
+def _configured(env, text: str = "repos: []\n") -> Path:
+    env["dir"].mkdir()
+    (env["dir"] / "config.yaml").write_text(text)
+    return env["dir"] / "config.yaml"
+
+
+def test_rag_before_configure_says_run_configure(env) -> None:
+    code, out = _rag(env)
+    assert code == 1 and "configure를 실행하세요" in out
+
+
+def test_rag_shows_turns_on_and_off_keeping_other_settings(env, tmp_path: Path) -> None:
+    head = f"# 내 설정\nrepos: [octocat/spoon-knife]  # 목록\ndata_dir: {tmp_path / 'data'}\n"
+    path = _configured(env, head)
+    code, out = _rag(env)
+    assert code == 0 and "rag.allowed): 정하지 않음" in out
+    assert ": 없음" in out and "받지 않음" in out
+
+    code, out = _rag(env, "on")
+    assert code == 0, out
+    assert "과거 수정 기록 검색을 켭니다: 선택 의존성 pr-proof[rag](패키지 수백 MB)" in out
+    assert env["rag"].fetched == [(tmp_path / "data" / "models", E5_SMALL)]
+    assert flow.RESTART in out and path.read_text().startswith(head)
+    assert _rag_allowed(env) is True
+
+    code, out = _rag(env)
+    assert code == 0 and "rag.allowed): 켬" in out and ": 깔림" in out and "받음 (" in out
+
+    code, out = _rag(env, "off")
+    assert code == 0 and "깐 패키지와 받은 임베딩 모델은 그대로 둡니다" in out
+    assert _rag_allowed(env) is False and env["rag"].installed  # 지우지 않는다
+    code, out = _rag(env)
+    assert code == 0 and "rag.allowed): 끔" in out
+    code, out = _rag(env, "off")
+    assert code == 0 and "이미 끔입니다" in out
+
+
+def test_rag_on_that_cannot_fetch_the_model_saves_nothing(env) -> None:
+    from app.worker.store.memory import SearchUnavailable
+
+    _configured(env)
+    env["rag"].fetch_error = SearchUnavailable("onnx/model.onnx: 크기나 해시가 고정한 값과 다름")
+    code, out = _rag(env, "on")
+    assert code == 1 and "임베딩 모델을 받지 못했습니다" in out and "해시" in out
+    assert _rag_allowed(env) is None
+
+
+def test_rag_sync_installs_again_only_when_turned_on(env) -> None:
+    """입구가 실행 환경을 새로 깐 뒤 부른다. 설정이 없거나 켬이 아니면 아무것도 하지 않는다."""
+    assert _rag(env, "sync") == (0, "")
+    path = _configured(env)
+    assert _rag(env, "sync") == (0, "") and env["rag"].installs == 0
+    path.write_text("repos: []\nrag:\n  allowed: false\n")
+    assert _rag(env, "sync") == (0, "") and env["rag"].installs == 0
+    path.write_text("repos: []\nrag:\n  allowed: true\n")
+    code, out = _rag(env, "sync")
+    assert code == 0 and env["rag"].installs == 1 and "pr-proof[rag]도 깝니다" in out
+    env["rag"].install_ok = False
+    code, out = _rag(env, "sync")
+    assert code == 1 and "검색 없이" in out and "rag on" in out
+    path.write_text("repos: [\n")  # 읽지 못하면 본 명령이 알린다
+    assert _rag(env, "sync") == (0, "")

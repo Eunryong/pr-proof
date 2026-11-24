@@ -153,8 +153,21 @@ def test_describe_says_when_the_extras_are_missing() -> None:
     assert switch.on is False
     assert describe(switch) == (
         "검색: 꺼짐 (`rag.enabled: on`). 켜야 하지만 선택 의존성 `pr-proof[rag]`이 설치되지 않아 "
-        "검색 없이 검사함"
+        "검색 없이 검사함. 켜려면 이 컴퓨터에서 `pr-proof rag on`"
     )
+
+
+def test_machine_setting_turns_search_off_before_anything_else() -> None:
+    """이 컴퓨터의 `rag.allowed: false`면 저장소의 `rag.enabled`와 숫자를 보지 않는다. 값이 없거나
+    true면 지금과 같다."""
+    for mode in ("auto", "on", "off"):
+        switch = decide(mode, Evidence(25), None, allowed=False, **LIMITS)
+        assert (switch.wanted, switch.why, switch.evidence) == (False, "machine", None)
+        assert describe(switch) == "검색: 꺼짐 (이 컴퓨터에서 끔, `rag.allowed: false`)"
+        assert comment_line(switch) is None  # 설정으로 끈 것과 같이 코멘트에 싣지 않는다
+    for allowed in (None, True):
+        assert decide("on", None, None, allowed=allowed, **LIMITS) == decide("on", None, None,
+                                                                             **LIMITS)  # fmt: skip
 
 
 def test_comment_shows_the_search_line_only_when_it_tells_something() -> None:

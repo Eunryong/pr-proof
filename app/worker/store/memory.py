@@ -7,9 +7,9 @@
   id)만 넣는다. 원본은 SQLite의 `records`다. 지워지면 `reindex`로 다시 만든다.
 
 chromadb, onnxruntime, tokenizers, numpy는 선택 의존성(`pip install pr-proof[rag]`)이라 이 모듈의
-함수 안에서만 import한다. 검색이 꺼진 검사(`rag.enabled: off`, 기록이 기준에 못 미친 `auto`)는
-`switch_for`(SQLite만 읽음) 밖의 이 모듈 함수를 부르지 않으므로 넷 다 import되지 않고 `chroma/`
-폴더와 임베딩 모델도 만들어지지 않는다 (완료 기준 5-8).
+함수 안에서만 import한다. 검색이 꺼진 검사(`rag.enabled: off`, 기록이 기준에 못 미친 `auto`, 이
+컴퓨터의 `rag.allowed: false`)는 `switch_for`(SQLite만 읽음) 밖의 이 모듈 함수를 부르지 않으므로 넷
+다 import되지 않고 `chroma/` 폴더와 임베딩 모델도 만들어지지 않는다 (완료 기준 5-8).
 
 임베딩 모델은 `app/shared/embed_models_pure.py`의 `EMBED_MODELS`가 고정한 판(revision)의 파일만
 https로 받아 SHA256을 맞춰 본 뒤 `data_dir/models/`에 둔다 (위협 T30).
@@ -122,6 +122,32 @@ def model_folder(model_dir: Path, spec: EmbedModel) -> Path:
     return model_dir / f"{spec.name.replace('/', '--')}@{spec.revision[:12]}"
 
 
+def _verified(folder: Path) -> dict[str, str]:
+    marker = folder / _VERIFIED
+    try:
+        return json.loads(marker.read_text()) if marker.is_file() else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _in_place(folder: Path, verified: Mapping[str, str], file: ModelFile) -> bool:
+    """맞춰 본 표시가 있고 그 파일이 고정한 크기로 있다."""
+    local = folder / Path(file.path).name
+    return (
+        verified.get(file.path) == file.sha256
+        and local.is_file()
+        and not local.is_symlink()
+        and local.stat().st_size == file.size
+    )
+
+
+def model_ready(model_dir: Path, spec: EmbedModel) -> bool:
+    """고정한 판의 파일을 다 받아 맞춰 봤는지 (`pr-proof rag`가 보인다). 받지 않는다."""
+    folder = model_folder(model_dir, spec)
+    verified = _verified(folder)
+    return all(_in_place(folder, verified, file) for file in (spec.tokenizer, spec.onnx))
+
+
 def ensure_model(model_dir: Path, spec: EmbedModel, download: Downloader = _download) -> Path:
     """고정한 판의 토크나이저와 ONNX 모델이 든 폴더. 없으면 받고 해시를 맞춰 본다.
 
@@ -130,18 +156,10 @@ def ensure_model(model_dir: Path, spec: EmbedModel, download: Downloader = _down
     folder = model_folder(model_dir, spec)
     folder.mkdir(parents=True, exist_ok=True)
     marker = folder / _VERIFIED
-    try:
-        verified = json.loads(marker.read_text()) if marker.is_file() else {}
-    except (OSError, ValueError):
-        verified = {}
+    verified = _verified(folder)
     for file in (spec.tokenizer, spec.onnx):
         local = folder / Path(file.path).name
-        if (
-            verified.get(file.path) == file.sha256
-            and local.is_file()
-            and not local.is_symlink()
-            and local.stat().st_size == file.size
-        ):
+        if _in_place(folder, verified, file):
             continue
         log.info("임베딩 모델 파일을 받음: %s (%d바이트)", spec.url(file), file.size)
         download(spec.url(file), local, file)
@@ -377,16 +395,19 @@ def switch_for(
     min_attempts: int = AUTO_MIN_ATTEMPTS,
     min_baseline: int = AUTO_MIN_BASELINE,
     extras_missing: Callable[[], bool] = missing_extras,
+    allowed: bool | None = None,
 ) -> RagSwitch:
     """이 검사의 검색 상태. auto는 SQLite의 숫자만 읽는다(임베딩 모델과 Chroma를 열지 않는다).
     auto가 채택률 비교로 끄면 그 사실을 남겨 워커를 다시 띄워도 꺼진 채다. 켜야 하는데 선택
-    의존성이 없으면 검색 없이 검사하도록 표시한다."""
+    의존성이 없으면 검색 없이 검사하도록 표시한다. allowed는 이 컴퓨터의 `rag.allowed`이고 False면
+    SQLite도 읽지 않고 끈다."""
     evidence = turned_off = None
-    if mode == "auto":
+    if mode == "auto" and allowed is not False:
         turned_off = store.rag_turned_off(repo, min_attempts, min_baseline)
         evidence = store.rag_evidence(repo) if turned_off is None else None
     switch = decide(mode, evidence, turned_off, min_records=min_records,
-                    min_attempts=min_attempts, min_baseline=min_baseline)  # fmt: skip
+                    min_attempts=min_attempts, min_baseline=min_baseline,
+                    allowed=allowed)  # fmt: skip
     if switch.why == "worse" and turned_off is None and switch.evidence is not None:
         store.turn_rag_off(repo, switch.evidence, min_attempts, min_baseline)
         log.info("auto가 검색을 끔 %s: %s", repo, switch.evidence)

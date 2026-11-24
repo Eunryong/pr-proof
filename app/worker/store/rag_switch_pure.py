@@ -1,5 +1,8 @@
 """과거 기록 검색을 켜는 조건 (docs/DESIGN.md 6.7 "검색을 켜는 조건", 10절 `rag.enabled`).
 
+그보다 먼저 이 컴퓨터의 설정(`config.yaml`의 `rag.allowed`, `pr-proof rag on|off`)을 본다. `false`면
+저장소의 설정과 숫자를 보지 않고 끔이다. `true`와 값이 없는 것(묻기 전의 설치)은 아래로 넘어간다.
+
 `rag.enabled`는 `auto`(기본) / `on` / `off`다. `on`과 `off`는 조건을 보지 않는다. `auto`는 SQLite에
 있는 숫자만 보고 정한다:
 
@@ -37,7 +40,9 @@ COUNTED_KINDS: Final = frozenset({"adopted", "rejected"})
 OUTCOME_STATES: Final = frozenset({"merged", "rejected"})
 _STATE_RANK: Final[Mapping[str, int]] = {"merged": 2, "rejected": 1}
 
-Why = Literal["setting", "few_records", "enough_records", "worse"]
+Why = Literal["machine", "setting", "few_records", "enough_records", "worse"]
+# 이 컴퓨터에서 검색을 켜는 명령. 선택 의존성이 없을 때 결과 코멘트가 알린다
+ENABLE_COMMAND: Final = "pr-proof rag on"
 
 
 @dataclass(frozen=True)
@@ -137,11 +142,15 @@ def decide(
     min_records: int,
     min_attempts: int,
     min_baseline: int,
+    allowed: bool | None = None,
 ) -> RagSwitch:
     """검색을 켤지 (모듈 설명의 1–4). turned_off는 이 저장소에서 auto가 같은 기준값으로 검색을
-    끈 때의 숫자다. auto가 아니면 evidence는 보지 않는다."""
+    끈 때의 숫자다. auto가 아니면 evidence는 보지 않는다. allowed는 이 컴퓨터의 `rag.allowed`이고
+    False면 다른 것을 보지 않고 끈다."""
     limits = {"min_records": min_records, "min_attempts": min_attempts,
               "min_baseline": min_baseline}  # fmt: skip
+    if allowed is False:
+        return RagSwitch(mode, False, "machine", **limits)
     if mode != "auto":
         return RagSwitch(mode, mode == "on", "setting", **limits)
     if turned_off is not None:
@@ -160,7 +169,9 @@ def _rate(o: Outcomes) -> str:
 def describe(switch: RagSwitch) -> str:
     """결과 코멘트의 한 줄: 지금 상태와 그 이유. 숫자만 쓰고 기록의 글은 넣지 않는다."""
     e = switch.evidence or Evidence(0)
-    if switch.why == "setting":
+    if switch.why == "machine":
+        reason = "이 컴퓨터에서 끔, `rag.allowed: false`"
+    elif switch.why == "setting":
         reason = f"`rag.enabled: {switch.mode}`"
     elif switch.why == "worse":
         reason = (
@@ -178,7 +189,10 @@ def describe(switch: RagSwitch) -> str:
         return f"검색: 켜짐 ({reason})"
     text = f"검색: 꺼짐 ({reason})"
     if switch.missing_extras:
-        return text + ". 켜야 하지만 선택 의존성 `pr-proof[rag]`이 설치되지 않아 검색 없이 검사함"
+        return text + (
+            ". 켜야 하지만 선택 의존성 `pr-proof[rag]`이 설치되지 않아 검색 없이 검사함. "
+            f"켜려면 이 컴퓨터에서 `{ENABLE_COMMAND}`"
+        )
     if switch.why == "worse":
         return text + ". 다시 켜려면 `rag.enabled: on`"
     return text
@@ -187,7 +201,8 @@ def describe(switch: RagSwitch) -> str:
 def comment_line(switch: RagSwitch) -> str | None:
     """결과 코멘트(접는 블록)에 싣는 검색 줄. 켜져 있으면 늘 싣는다. 꺼져 있으면 사람이 알 만한
     때만 싣는다: auto가 채택률이 낮아 다시 끈 때(설정으로 다시 켤 수 있다), 켜야 하는데 선택
-    의존성이 없는 때(운영자가 고칠 일). 설정으로 끈 것과 기록이 아직 적어 꺼진 것은 싣지 않는다.
+    의존성이 없는 때(운영자가 고칠 일). 설정으로 끈 것(저장소의 `rag.enabled: off`, 이 컴퓨터의
+    `rag.allowed: false`)과 기록이 아직 적어 꺼진 것은 싣지 않는다.
     사람이 할 일이 없는 줄이 거의 모든 코멘트에 붙었다 (2026-11-23, pr-proof#78)."""
     if switch.on or switch.missing_extras or switch.why == "worse":
         return describe(switch)

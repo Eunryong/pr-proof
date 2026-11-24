@@ -8,6 +8,7 @@ import yaml
 from app.api import webhook
 from app.setup import setup_pure as pure
 from app.shared import config
+from app.shared.embed_models_pure import E5_SMALL, EMBED_MODELS
 
 HINTS: Final = json.loads((Path(pure.__file__).with_name("install_hints.json")).read_text())
 
@@ -180,6 +181,55 @@ def test_default_model_refuses_what_it_cannot_edit_line_by_line() -> None:
         pure.config_default_model("repos: []\nmodel:\n  default: 3\n")  # 글자가 아님
     with pytest.raises(pure.ConfigEditError):
         pure.set_default_model("repos: []\n", "-x")
+
+
+# --- config.yaml의 rag.allowed ---
+
+
+def test_rag_allowed_goes_under_rag_and_keeps_the_embed_model_and_comments(tmp_path: Path) -> None:
+    text = WITH_CALLS + "rag:  # 검색\n  embed_model: intfloat/multilingual-e5-small\n"
+    assert pure.config_rag_allowed(text) is None
+    on = pure.set_rag_allowed(text, True)
+    assert on == text.replace("# 검색\n", "# 검색\n  allowed: true\n")
+    loaded = _loaded(on, tmp_path)
+    assert (loaded.rag.allowed, loaded.model.calls.max_pr_max) == (True, 7)
+    off = pure.set_rag_allowed(on, False)
+    assert off == on.replace("allowed: true", "allowed: false")
+    assert pure.config_rag_allowed(off) is False and _loaded(off, tmp_path).rag.allowed is False
+    assert pure.set_rag_allowed(off, False) == off  # 바뀔 것이 없으면 그대로
+
+
+def test_rag_allowed_goes_into_a_file_without_a_rag_section(tmp_path: Path) -> None:
+    text = pure.set_rag_allowed(KEEP, False)
+    assert text == KEEP + "rag:\n  allowed: false\n"
+    assert _loaded(text, tmp_path).rag.allowed is False
+
+
+def test_rag_allowed_that_is_not_true_or_false_is_refused() -> None:
+    with pytest.raises(pure.ConfigEditError, match="rag.allowed"):
+        pure.config_rag_allowed("repos: []\nrag:\n  allowed: 1\n")
+    with pytest.raises(pure.ConfigEditError, match="손으로 고친다"):
+        pure.set_rag_allowed("repos: []\nrag: {allowed: true}\n", False)
+
+
+def test_rag_view_shows_the_choice_the_extras_and_the_model() -> None:
+    spec = EMBED_MODELS[E5_SMALL]
+    unset = pure.rag_view(None, False, False, spec, "/d/models/x", "pr-proof")
+    assert "과거 수정 기록 검색 (이 컴퓨터, config.yaml의 rag.allowed): 정하지 않음" in unset
+    assert "선택 의존성 pr-proof[rag]: 없음" in unset
+    assert f"임베딩 모델 {E5_SMALL}: 받지 않음 (약 487MB)" in unset
+    assert "검색 없이 검사합니다" in unset
+    assert "켜기: pr-proof rag on   끄기: pr-proof rag off" in unset
+    on = pure.rag_view(True, True, True, spec, "/d/models/x", "npx pr-proof")
+    assert "rag.allowed): 켬" in on and ": 깔림" in on and "받음 (/d/models/x)" in on
+    assert "rag.enabled(기본 auto)" in on and "npx pr-proof rag on" in on
+    off = pure.rag_view(False, True, True, spec, "/d/models/x", "pr-proof")
+    assert "rag.allowed): 끔" in off and "어느 repo도 검색하지 않습니다" in off
+
+
+def test_rag_size_says_both_the_packages_and_the_model() -> None:
+    text = pure.rag_size_text(EMBED_MODELS[E5_SMALL])
+    assert "패키지 수백 MB" in text and "약 487MB" in text
 
 
 @pytest.mark.parametrize("name", ["sonnet", "opus", "claude-sonnet-4-5", "sonnet[1m]"])

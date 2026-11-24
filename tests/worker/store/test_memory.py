@@ -217,10 +217,14 @@ def test_ensure_model_downloads_once_and_checks_hashes(tmp_path: Path) -> None:
         calls.append(file.path)
         dest.write_bytes(payload[file.path])
 
+    assert memory.model_ready(tmp_path / "models", spec) is False
     folder = memory.ensure_model(tmp_path / "models", spec, download)
     assert (folder / "model.onnx").read_bytes() == b"onnx-bytes"
+    assert memory.model_ready(tmp_path / "models", spec) is True
     memory.ensure_model(tmp_path / "models", spec, download)
     assert calls == [spec.tokenizer.path, spec.onnx.path]
+    (folder / "model.onnx").write_bytes(b"cut")  # 크기가 다르면 받은 것이 아니다
+    assert memory.model_ready(tmp_path / "models", spec) is False
 
 
 def test_download_rejects_wrong_hash_and_plain_http(tmp_path: Path, monkeypatch) -> None:

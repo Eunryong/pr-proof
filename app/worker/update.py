@@ -63,6 +63,7 @@ def flow_context(deps: Deps, run_id: int, comment_id: int | None) -> graph.FlowC
         backend=deps.backend,
         call_maxima=deps.settings.model.calls,
         rag_model=deps.settings.rag.embed_model,
+        rag_allowed=deps.settings.rag.allowed,
         default_model=deps.settings.model.default,
         sandbox_names=docker_cli.Names(
             image=deps.settings.sandbox.image,
