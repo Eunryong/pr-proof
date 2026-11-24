@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 import app.worker
-from app.worker.core.prompt_text_pure import PROMPT_FOLDER, load
+from app.worker.core.prompt_text_pure import PROMPT_FOLDER, fill, load
 
 WORKER = Path(app.worker.__file__).parent
 PROMPT_DIRS = sorted(p for p in WORKER.rglob(PROMPT_FOLDER) if p.is_dir())
@@ -89,3 +89,18 @@ def test_a_missing_file_fails_when_loaded(tmp_path: Path) -> None:
     """단계 모듈은 import할 때 읽으므로, 파일이 빠진 설치본은 워커가 시작할 때 멈춘다."""
     with pytest.raises(FileNotFoundError):
         load(_module(tmp_path, "x\n"), "judge")
+
+
+def test_pieces_fill_their_own_lines_and_an_empty_piece_removes_the_line() -> None:
+    text = "앞\n{{format}}\n\n- 제약\n{{records}}\n\n끝"
+    assert fill(text, format="형식 $A", records="- 기록") == "앞\n형식 $A\n\n- 제약\n- 기록\n\n끝"
+    assert fill(text, format="형식", records="") == "앞\n형식\n\n- 제약\n\n끝"
+
+
+def test_pieces_and_places_must_match() -> None:
+    with pytest.raises(ValueError, match="조각이 없는 자리: records"):
+        fill("{{format}}\n{{records}}", format="x")
+    with pytest.raises(ValueError, match="글에 없는 자리: other"):
+        fill("{{format}}", format="x", other="y")
+    with pytest.raises(ValueError, match="한 줄을 혼자"):
+        fill("앞 {{format}} 뒤", format="x")
