@@ -280,7 +280,7 @@ def test_answer_without_coverage_reads_as_all() -> None:
 
 def test_path_prompt_version_is_pinned_so_a_change_to_it_is_deliberate() -> None:
     # 이 값이 바뀌면 경로 검사기를 모두 다시 쓴다. 내용 규칙의 지시문만 고칠 때는 그대로여야 한다
-    assert PATH_PROMPT_VERSION == "7ec26be87193"
+    assert PATH_PROMPT_VERSION == "6117d2bfd661"
 
 
 def test_format_and_records_go_into_their_places_in_the_body() -> None:
