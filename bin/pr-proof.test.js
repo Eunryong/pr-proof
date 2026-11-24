@@ -102,6 +102,21 @@ test("사용법은 부른 방식의 명령으로 보이고 model이 있다", () 
   assert.match(result.stdout, /^사용법: node .*pr-proof\.js <명령>/);
 });
 
+test("rag 명령이 있고 사용법에 보인다", () => {
+  assert.match(entry.usage("pr-proof"), /rag \[on\|off\] +과거 수정 기록 검색/);
+  assert.match(entry.usage("pr-proof"), /--model, --rag\)/);
+});
+
+test("실행 환경을 새로 깔면 [run] 다음에 켬일 때 [rag]도 까는 Python 명령을 부른다", () => {
+  const [run, rag] = entry.installSteps("/pkg");
+  assert.deepEqual(run, {
+    args: ["-m", "pip", "install", "--quiet", "--disable-pip-version-check", "--editable", "/pkg[run]"],
+    required: true,
+  });
+  // 고른 값은 config.yaml에 있어 Python이 읽는다. 실패해도 본 명령은 이어 간다
+  assert.deepEqual(rag, { args: ["-m", "app.setup.cli", "rag", "sync"], required: false });
+});
+
 // --- 새 판 알림과 update ---
 
 test("판 견주기: 정식판끼리, 시험판끼리, 시험판과 정식판, 같은 판", () => {

@@ -1,9 +1,10 @@
 """configure·add·rm·list의 판정과 글 (외부 호출 없음).
 
 - repo 이름 확인
-- config.yaml 고치기: `repos`에 더하고 빼고, `model.default`를 적고 지우되 다른 설정과 주석을 지킨다
-  (글을 줄 단위로 고치고, 고친 뒤 YAML로 읽어 바뀐 것이 그 키뿐인지 확인한다)
+- config.yaml 고치기: `repos`에 더하고 빼고, `model.default`와 `rag.allowed`를 적고 지우되 다른
+  설정과 주석을 지킨다 (글을 줄 단위로 고치고, 고친 뒤 YAML로 읽어 바뀐 것이 그 키뿐인지 확인한다)
 - 모델 이름 확인과 단계별로 쓰일 모델의 글
+- 과거 수정 기록 검색(`rag`)의 상태 글과 받을 크기
 - 웹훅: 만들지 고칠지, 이벤트, 손으로 등록할 값
 - 빠진 프로그램 안내, 끝 확인 표, 토큰 권한 안내
 """
@@ -16,6 +17,7 @@ from typing import Any, Final, Literal
 
 import yaml
 
+from app.shared.embed_models_pure import EmbedModel
 from app.shared.model_names_pure import MODEL_NAME_PATTERN
 from app.worker.config.repo_config_pure import (
     STAGE_MODELS,
@@ -237,17 +239,15 @@ def remove_repos(text: str, repos: Sequence[str]) -> tuple[str, list[str]]:
     return _check(before, "".join(lines), left), gone
 
 
-# --- config.yaml의 model.default ---
+# --- config.yaml의 묶음 아래 한 키 (model.default, rag.allowed) ---
 #
-# `repos`와 같이 글을 줄 단위로 고친다(YAML로 읽어 다시 쓰면 주석과 순서가 사라진다). `model`은
-# 중첩된 키라 다루는 꼴을 좁힌다: 맨 위의 `model:` 줄이 블록의 머리(`model:` 뒤에 값이 없음)일 때
-# 그 바로 아래 들여쓴 키 중 `default:` 한 줄만 바꾸고, 넣고, 지운다. `model: {calls: ...}` 같은 한
-# 줄 꼴은 고치지 않고 손으로 고치라고 한다(configure가 쓰지 않는 꼴이다). 고친 뒤 YAML로 읽어
-# `model.default` 밖이 그대로인지 확인한다.
+# `repos`와 같이 글을 줄 단위로 고친다(YAML로 읽어 다시 쓰면 주석과 순서가 사라진다). 중첩된 키라
+# 다루는 꼴을 좁힌다: 맨 위의 `<묶음>:` 줄이 블록의 머리(`<묶음>:` 뒤에 값이 없음)일 때 그 바로 아래
+# 들여쓴 키 중 그 키 한 줄만 바꾸고, 넣고, 지운다. `model: {calls: ...}` 같은 한 줄 꼴은 고치지 않고
+# 손으로 고치라고 한다(configure가 쓰지 않는 꼴이다). 고친 뒤 YAML로 읽어 그 키 밖이 그대로인지
+# 확인한다.
 
-_MODEL_KEY: Final = re.compile(r"^model\s*:")
-_MODEL_HEAD: Final = re.compile(r"^model\s*:\s*(#.*)?$")
-_DEFAULT_LINE: Final = re.compile(r"^(\s+)default\s*:\s*(.*?)\s*(#.*)?$")
+RAG_ALLOWED_KEY: Final = "rag.allowed"  # 이 컴퓨터에서 검색을 쓸지 (`pr-proof rag on|off`)
 
 
 def model_name_problem(name: str) -> str | None:
@@ -261,25 +261,34 @@ def model_name_problem(name: str) -> str | None:
     )
 
 
-def _model_section(data: Mapping[str, Any]) -> dict[str, Any]:
-    model = data.get("model")
-    if model is None:
+def _section(data: Mapping[str, Any], name: str) -> dict[str, Any]:
+    value = data.get(name)
+    if value is None:
         return {}
-    if not isinstance(model, dict):
-        raise ConfigEditError("config.yaml의 model이 키와 값의 묶음이 아님")
-    return model
+    if not isinstance(value, dict):
+        raise ConfigEditError(f"config.yaml의 {name}이 키와 값의 묶음이 아님")
+    return value
 
 
 def config_default_model(text: str) -> str | None:
     """config.yaml의 `model.default`. 없으면 None. 글자가 아니면 ConfigEditError."""
-    value = _model_section(_load(text)).get("default")
+    value = _section(_load(text), "model").get("default")
     if value is not None and not isinstance(value, str):
         raise ConfigEditError(f"config.yaml의 model.default가 글자가 아님: {value!r}")
     return value
 
 
+def config_rag_allowed(text: str) -> bool | None:
+    """config.yaml의 `rag.allowed`. 없으면 None(묻기 전의 설치). true·false가 아니면
+    ConfigEditError."""
+    value = _section(_load(text), "rag").get("allowed")
+    if value is not None and not isinstance(value, bool):
+        raise ConfigEditError(f"config.yaml의 {RAG_ALLOWED_KEY}가 true나 false가 아님: {value!r}")
+    return value
+
+
 def _children(lines: list[str], head: int) -> list[tuple[int, str]]:
-    """`model:` 아래 들여쓴 줄의 (줄 번호, 들여쓰기). 빈 줄과 주석은 건너뛰고, 들여쓰지 않은 줄에서
+    """`<묶음>:` 아래 들여쓴 줄의 (줄 번호, 들여쓰기). 빈 줄과 주석은 건너뛰고, 들여쓰지 않은 줄에서
     멈춘다."""
     found = []
     for i in range(head + 1, len(lines)):
@@ -298,69 +307,93 @@ def _yaml_scalar(name: str) -> str:
     return name if yaml.safe_load(name) == name else f'"{name}"'
 
 
-def _without_default(data: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
-    rest = {k: v for k, v in data.items() if k != "model"}
-    model = {k: v for k, v in _model_section(data).items() if k != "default"}
-    return rest, model
+def _rendered(value: str | bool | None) -> str:
+    assert value is not None  # 지울 때는 값을 쓰지 않는다
+    return ("true" if value else "false") if isinstance(value, bool) else _yaml_scalar(value)
 
 
-def set_default_model(text: str, name: str | None) -> str:
-    """`model.default`를 name으로 적는다. None이면 지운다. 바뀔 것이 없으면 글을 그대로 돌려준다.
+def _without(
+    data: Mapping[str, Any], section: str, key: str
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    rest = {k: v for k, v in data.items() if k != section}
+    inner = {k: v for k, v in _section(data, section).items() if k != key}
+    return rest, inner
 
-    지워서 `model:` 아래가 비면 `model:` 줄도 지운다(`model:`만 남으면 null이라 서버가 시작하지
+
+def _same(a: object, b: object) -> bool:
+    return a == b and type(a) is type(b)  # True와 1을 같다고 보지 않는다
+
+
+def _set_child(text: str, section: str, key: str, value: str | bool | None) -> str:
+    """`<section>.<key>`를 value로 적는다. None이면 지운다. 바뀔 것이 없으면 글을 그대로 돌려준다.
+
+    지워서 `<section>:` 아래가 비면 그 줄도 지운다(`model:`만 남으면 null이라 서버가 시작하지
     못한다). 줄 단위로 고칠 수 없는 꼴이면 ConfigEditError.
     """
-    if name is not None and (problem := model_name_problem(name)):
-        raise ConfigEditError(problem)
     before = _load(text)
-    if _model_section(before).get("default") == name:
+    if _same(_section(before, section).get(key), value):
         return text
     lines = text.splitlines(keepends=True)
-    head = next((i for i, line in enumerate(lines) if _MODEL_KEY.match(line)), None)
+    head_key = re.compile(rf"^{section}\s*:")
+    head = next((i for i, line in enumerate(lines) if head_key.match(line)), None)
     if head is None:
         body = text if not text or text.endswith("\n") else text + "\n"
-        out = body + f"model:\n  default: {_yaml_scalar(name)}\n"  # name이 None이면 위에서 끝났다
-        return _check_model(before, out, name)
+        out = body + f"{section}:\n  {key}: {_rendered(value)}\n"  # None이면 위에서 끝났다
+        return _check_child(before, out, section, key, value)
     head_line = lines[head].rstrip("\n")
-    if not (head_match := _MODEL_HEAD.match(head_line)):
+    if not (head_match := re.match(rf"^{section}\s*:\s*(#.*)?$", head_line)):
         raise ConfigEditError(
-            f"config.yaml의 model 줄을 고칠 수 없음: {head_line!r}. 손으로 고친다 "
-            "(model 아래를 한 줄에 적은 꼴은 고치지 않는다)"
+            f"config.yaml의 {section} 줄을 고칠 수 없음: {head_line!r}. 손으로 고친다 "
+            f"({section} 아래를 한 줄에 적은 꼴은 고치지 않는다)"
         )
+    key_line = re.compile(rf"^(\s+){key}\s*:\s*(.*?)\s*(#.*)?$")
     children = _children(lines, head)
     indent = children[0][1] if children else "  "
     direct = [i for i, own in children if own == indent]
-    found = next((i for i in direct if _DEFAULT_LINE.match(lines[i].rstrip("\n"))), None)
-    if name is None:
+    found = next((i for i in direct if key_line.match(lines[i].rstrip("\n"))), None)
+    if value is None:
         assert found is not None  # 값이 있었으므로 그 줄이 있다. 없으면 아래 확인이 막는다
         del lines[found]
         if len(direct) == 1:
             comment = head_match.group(1)
             lines[head] = f"{comment}\n" if comment else ""
     elif found is not None:
-        line_match = _DEFAULT_LINE.match(lines[found].rstrip("\n"))
+        line_match = key_line.match(lines[found].rstrip("\n"))
         assert line_match is not None
         comment = line_match.group(3)
         lines[found] = (
-            f"{line_match.group(1)}default: {_yaml_scalar(name)}"
+            f"{line_match.group(1)}{key}: {_rendered(value)}"
             + (f"  {comment}" if comment else "")
             + "\n"
         )
     else:
         if not lines[head].endswith("\n"):
             lines[head] += "\n"
-        lines.insert(head + 1, f"{indent}default: {_yaml_scalar(name)}\n")
-    return _check_model(before, "".join(lines), name)
+        lines.insert(head + 1, f"{indent}{key}: {_rendered(value)}\n")
+    return _check_child(before, "".join(lines), section, key, value)
 
 
-def _check_model(before: dict[str, Any], text: str, name: str | None) -> str:
+def _check_child(
+    before: dict[str, Any], text: str, section: str, key: str, value: str | bool | None
+) -> str:
     after = _load(text)
-    if (
-        _without_default(after) != _without_default(before)
-        or _model_section(after).get("default") != name
+    if _without(after, section, key) != _without(before, section, key) or not _same(
+        _section(after, section).get(key), value
     ):
-        raise ConfigEditError("config.yaml의 model.default를 고치지 못함. 손으로 고친다")
+        raise ConfigEditError(f"config.yaml의 {section}.{key}를 고치지 못함. 손으로 고친다")
     return text
+
+
+def set_default_model(text: str, name: str | None) -> str:
+    """`model.default`를 name으로 적는다. None이면 지운다. 다른 설정과 주석은 둔다."""
+    if name is not None and (problem := model_name_problem(name)):
+        raise ConfigEditError(problem)
+    return _set_child(text, "model", "default", name)
+
+
+def set_rag_allowed(text: str, value: bool) -> str:
+    """`rag.allowed`를 적는다. 다른 설정(`rag.embed_model` 등)과 주석은 둔다."""
+    return _set_child(text, "rag", "allowed", value)
 
 
 def default_models_label() -> str:
@@ -389,6 +422,51 @@ def model_view(default: str | None, prefix: str) -> str:
         "저장소의 .pipeline.yaml에 단계별로 적은 모델(model.rules 등)은 이 값보다 앞섭니다.",
         f"바꾸기: {prefix} model <이름>   기본값으로: {prefix} model {DEFAULT_MODEL_WORD}",
     ]
+    return "\n".join(lines)
+
+
+# --- 과거 수정 기록 검색 (rag) ---
+
+RAG_EXTRAS: Final = "pr-proof[rag]"
+# chromadb, onnxruntime 등. 운영체제와 판마다 달라 어림만 적는다
+RAG_PACKAGES_SIZE: Final = "패키지 수백 MB"
+
+
+def model_megabytes(spec: EmbedModel) -> int:
+    """받을 임베딩 모델 파일(토크나이저와 ONNX)의 크기, MB."""
+    return round((spec.tokenizer.size + spec.onnx.size) / 1_000_000)
+
+
+def rag_size_text(spec: EmbedModel) -> str:
+    model = f"임베딩 모델(약 {model_megabytes(spec)}MB)"
+    return f"선택 의존성 {RAG_EXTRAS}({RAG_PACKAGES_SIZE})와 {model}"
+
+
+def rag_label(allowed: bool | None) -> str:
+    if allowed is None:
+        return "정하지 않음"
+    return "켬" if allowed else "끔"
+
+
+def rag_view(
+    allowed: bool | None, extras: bool, model: bool, spec: EmbedModel, model_dir: str, prefix: str
+) -> str:
+    """`rag`(보기)의 글: 고른 값, 선택 의존성이 깔렸는지, 임베딩 모델을 받았는지. prefix는 안내에 쓸
+    명령 앞부분이다."""
+    lines = [
+        f"과거 수정 기록 검색 (이 컴퓨터, config.yaml의 {RAG_ALLOWED_KEY}): {rag_label(allowed)}",
+        f"선택 의존성 {RAG_EXTRAS}: {'깔림' if extras else '없음'}",
+        f"임베딩 모델 {spec.name}: "
+        + (f"받음 ({model_dir})" if model else f"받지 않음 (약 {model_megabytes(spec)}MB)"),
+        "",
+    ]
+    if allowed is False:
+        lines.append("이 컴퓨터에서는 어느 repo도 검색하지 않습니다.")
+    else:
+        lines.append("repo마다 .pipeline.yaml의 rag.enabled(기본 auto)가 검색할지 정합니다.")
+        if not extras:
+            lines.append("선택 의존성이 없어 검색해야 할 때도 검색 없이 검사합니다.")
+    lines.append(f"켜기: {prefix} rag on   끄기: {prefix} rag off")
     return "\n".join(lines)
 
 

@@ -132,6 +132,18 @@ def test_missing_extras_keeps_checking_without_search(tmp_path: Path) -> None:
     assert (on.on, on.missing_extras) == (False, True)
 
 
+def test_machine_turned_off_reads_nothing_and_needs_no_extras(tmp_path: Path) -> None:
+    """이 컴퓨터의 `rag.allowed: false`는 저장소의 설정과 숫자보다 앞선다. SQLite도 읽지 않는다."""
+    store = _store(tmp_path)
+    _records(store, 25)
+    for mode in ("auto", "on"):
+        switch = memory.switch_for(store, REPO, mode, extras_missing=_never, allowed=False,
+                                   **LIMITS)  # fmt: skip
+        assert (switch.on, switch.why, switch.evidence) == (False, "machine", None)
+    on = memory.switch_for(store, REPO, "auto", extras_missing=_present, allowed=True, **LIMITS)
+    assert (on.on, on.why) == (True, "enough_records")
+
+
 def test_missing_extras_finds_without_importing(monkeypatch) -> None:
     assert memory.missing_extras(("json",)) is False
     assert memory.missing_extras(("json", "no_such_module_for_pr_proof")) is True

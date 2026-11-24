@@ -97,3 +97,12 @@ def test_rag_embed_model_must_be_a_pinned_model() -> None:
     assert config.PipelineConfig(repos=[]).rag.embed_model == E5_SMALL
     with pytest.raises(ValidationError):
         config.PipelineConfig(repos=[], rag={"embed_model": "someone/unpinned"})
+
+
+def test_rag_allowed_is_unset_on_old_installs_and_only_true_or_false() -> None:
+    from pydantic import ValidationError
+
+    assert config.PipelineConfig(repos=[]).rag.allowed is None
+    assert config.PipelineConfig(repos=[], rag={"allowed": False}).rag.allowed is False
+    with pytest.raises(ValidationError):
+        config.PipelineConfig(repos=[], rag={"allowed": "yes"})

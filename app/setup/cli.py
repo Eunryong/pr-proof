@@ -3,6 +3,8 @@
 - `configure`: 처음 설정 (`app/setup/configure.py`)
 - `add <repo>...`, `rm <repo>...`, `list`: 처리할 repo 목록과 그 웹훅
 - `model [이름 | default]`: 모든 단계에 쓸 모델 (config.yaml의 `model.default`)
+- `rag [on | off]`: 이 컴퓨터에서 과거 수정 기록 검색을 쓸지 (config.yaml의 `rag.allowed`).
+  `rag sync`는 입구가 실행 환경을 새로 깐 뒤 부른다
 - `start`: api, worker, (smee 주소가 있으면) smee-client를 띄운다 (`app/setup/start.py`)
 
 `update`(새 판 깔기)와 새 판 알림은 Python이 필요 없어 입구(bin/pr-proof.js)에서 끝나고
@@ -16,6 +18,7 @@ from typing import Final
 
 from app.setup import configure as flow
 from app.setup import files, github_setup, setup_pure, start
+from app.shared.embed_models_pure import E5_SMALL, EMBED_MODELS
 
 _REPO_HELP: Final = f"repo (예: {setup_pure.REPO_EXAMPLE})"
 
@@ -40,6 +43,10 @@ def _parser() -> argparse.ArgumentParser:
     conf.add_argument("--model", metavar="NAME",
                       help="모든 단계에 쓸 모델 (예: opus). default면 기본값으로. 주지 않으면 "
                       "터미널에서 묻고, 아니면 그대로 둔다")  # fmt: skip
+    conf.add_argument("--rag", choices=["on", "off"],
+                      help="과거 수정 기록 검색을 쓸지. on이면 선택 의존성을 깔고 임베딩 "
+                      "모델을 받는다. 주지 않으면 터미널에서 묻고(기본 아니오), 아니면 "
+                      "그대로 둔다")  # fmt: skip
     conf.add_argument("--dry-run", action="store_true",
                       help="파일과 GitHub에 쓰지 않고 할 일만 보인다")  # fmt: skip
 
@@ -75,6 +82,18 @@ def _parser() -> argparse.ArgumentParser:
     mdl.add_argument("name", nargs="?", metavar="NAME",
                      help=f"모델 이름 (예: {setup_pure.MODEL_EXAMPLES}) 또는 default")  # fmt: skip
 
+    pure_size = setup_pure.rag_size_text(EMBED_MODELS[E5_SMALL])
+    rg = commands.add_parser(
+        "rag", help="과거 수정 기록 검색을 보거나 켜고 끈다",
+        description="인자 없이: 이 컴퓨터의 설정, 선택 의존성이 깔렸는지, 임베딩 모델을 받았는지 "
+        f"보인다. on: 이 실행 환경에 {pure_size}을 받은 뒤 config.yaml의 rag.allowed를 true로. "
+        "off: false로만 적는다 "
+        "(깐 것은 지우지 않는다). repo마다 .pipeline.yaml의 rag.enabled가 검색할지 정하는 것은 "
+        "같다. sync: 입구가 실행 환경을 새로 깐 뒤 부른다(켬이면 선택 의존성을 다시 깐다).",
+    )  # fmt: skip
+    rg.add_argument("action", nargs="?", choices=["on", "off", "sync"], metavar="on|off",
+                    help="켜기 또는 끄기")  # fmt: skip
+
     run = commands.add_parser("start", help="서버 실행 (api, worker, smee에서 받아 오기)")
     run.add_argument("--node", help="입구가 넘기는 node 실행 파일")
     run.add_argument("--smee", help="입구가 넘기는 smee-client 실행 파일")
@@ -88,11 +107,16 @@ def main(argv: list[str] | None = None) -> int:
     io = flow.Io(interactive=sys.stdin.isatty() and sys.stdout.isatty())
     if args.command == "model":
         return flow.model(args.name, io)
+    if args.command == "rag":
+        if args.action == "sync":  # 입구의 설치 안내와 같이 stderr에
+            io.say = lambda text: print(text, file=sys.stderr)
+        return flow.rag(args.action, io, flow.real_rag_deps())
     deps = flow.real_deps(os.environ)
     if args.command == "configure":
         opts = flow.Options(repos=args.repo, auth=args.auth, webhook_url=args.webhook_url,
                             port=args.port, dry_run=args.dry_run,
-                            manual_webhook=args.manual_webhook, model=args.model)  # fmt: skip
+                            manual_webhook=args.manual_webhook, model=args.model,
+                            rag=args.rag)  # fmt: skip
         return flow.configure(opts, io, deps)
     if args.command == "add":
         opts = flow.Options(repos=args.repos, webhook_url=args.webhook_url, dry_run=args.dry_run,

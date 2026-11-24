@@ -37,7 +37,9 @@ pr-proof start
 
 설치 없이 한 번 써 보려면 `npx pr-proof configure`로 친다(그때는 화면의 안내도 `npx pr-proof …`로 나온다).
 
-`configure`는 처음 설정이다. 묻는 말 다섯에 답한다(처리할 repo, GitHub 인증 방식, 토큰, 쓸 모델, 웹훅 받는 주소). `start`는 서버 실행이다. api, worker, 웹훅 받아 오기가 함께 뜬다.
+`configure`는 처음 설정이다. 묻는 말 여섯에 답한다(처리할 repo, GitHub 인증 방식, 토큰, 쓸 모델, 과거 수정 기록 검색을 쓸지, 웹훅 받는 주소). `start`는 서버 실행이다. api, worker, 웹훅 받아 오기가 함께 뜬다.
+
+과거 수정 기록 검색은 고르는 기능이다(기본은 쓰지 않음). 나중에 켜려면 `pr-proof rag on`을 친다. 선택 의존성(패키지 수백 MB)과 임베딩 모델(약 490MB)을 받는다(아래 [rag](#rag)).
 
 처리할 repo를 더하고, 빼고, 본다.
 
@@ -282,13 +284,14 @@ access:
 2. GitHub 인증 방식: gh 로그인(`gh auth login`을 해 둔 계정) 또는 토큰
 3. 토큰. 토큰 방식일 때만 묻고, 화면에 보이지 않게 입력한다
 4. 쓸 모델. Enter면 그대로 둔다 (아래 [model](#model))
-5. 웹훅 받는 주소. 없으면 Enter
+5. 과거 수정 기록 검색을 쓸지. 기본은 아니오다. 예면 선택 의존성과 임베딩 모델을 받는다 (아래 [rag](#rag))
+6. 웹훅 받는 주소. 없으면 Enter
 
 나머지는 묻지 않고 한다: Python 실행 환경 설치, 포트(기본 8765. 쓰이고 있을 때만 다른 번호를 묻는다), Redis, 웹훅 비밀값, repo의 읽기·쓰기 권한 확인, 웹훅 등록, Claude 로그인 확인, 끝 확인 표(서버가 시작할 때 하는 확인과 같다: GitHub 인증, Claude 로그인, Docker, Redis).
 
 - 여러 번 돌려도 같다. 있는 설정과 비밀값은 덮어쓰지 않는다.
 - Claude 로그인이 안 되어 있으면 무엇을 치면 되는지 보이고, 로그인한 뒤 Enter를 누르면 그 자리에서 다시 확인한다.
-- 질문 없이 돌리기: `pr-proof configure --repo octocat/hello-world --auth gh`. 그 밖의 인자는 `--webhook-url`, `--port`, `--model`, `--dry-run`(파일과 GitHub에 쓰지 않고 할 일만 보인다), `--manual-webhook`(웹훅을 손으로 등록할 값만 보인다)이다. 명령마다 `--help`로 본다.
+- 질문 없이 돌리기: `pr-proof configure --repo octocat/hello-world --auth gh`. 그 밖의 인자는 `--webhook-url`, `--port`, `--model`, `--rag on|off`, `--dry-run`(파일과 GitHub에 쓰지 않고 할 일만 보인다), `--manual-webhook`(웹훅을 손으로 등록할 값만 보인다)이다. 명령마다 `--help`로 본다.
 
 ### 웹훅 받는 주소
 
@@ -338,6 +341,22 @@ gh 로그인 대신 토큰을 쓸 수 있다. 토큰은 설정 폴더의 `github
 - 저장한 판단은 저장 키에 모델이 들어 있어, 모델을 바꾸면 다음 검사에서 다시 묻는다(그만큼 사용량이 든다).
 - 서버는 `config.yaml`을 시작할 때만 읽으므로 바꾼 뒤에는 서버를 다시 띄운다.
 
+### rag
+
+과거 수정 기록 검색을 이 컴퓨터에서 쓸지 정한다. 머지하거나 닫은 수정안을 기록해 두고, 비슷한 위반을 고칠지 정하거나 고칠 때 찾아 참고하는 기능이다.
+
+| 명령 | 하는 일 |
+| --- | --- |
+| `pr-proof rag` | 고른 값, 선택 의존성이 깔렸는지, 임베딩 모델을 받았는지 보인다 |
+| `pr-proof rag on` | Python 실행 환경에 선택 의존성 `pr-proof[rag]`(chromadb, onnxruntime 등. 패키지 수백 MB)를 깔고, 임베딩 모델(약 490MB)을 데이터 폴더의 `models/`에 받은 뒤 켬으로 적는다 |
+| `pr-proof rag off` | 끔으로만 적는다. 깐 패키지와 받은 모델은 지우지 않는다 |
+
+- 값은 `config.yaml`의 `rag.allowed`(true, false)에 적는다. configure도 모델 다음에 묻는다(질문 없이 돌릴 때는 `--rag on` 또는 `--rag off`).
+- 끔이면 이 컴퓨터는 어느 repo도 검색하지 않는다. 켬이면 repo마다 `.pipeline.yaml`의 `rag.enabled`(기본 `auto`: 채택·거절 기록이 쌓이면 켠다)가 검색할지 정한다.
+- 켬이거나 정한 적이 없는데 선택 의존성이 없으면 검색 없이 검사하고, 결과 코멘트에 `pr-proof rag on`으로 켜라고 적는다.
+- 켜 두면 `update`로 새 판을 깐 뒤 Python 실행 환경을 다시 설치할 때 선택 의존성도 다시 깐다.
+- 서버는 `config.yaml`을 시작할 때만 읽으므로 바꾼 뒤에는 서버를 다시 띄운다.
+
 ### update
 
 `pr-proof update`는 npm의 더 새 판을 전역 설치에 깐다(시험판을 쓰면 꼬리표 `next`와 `latest` 중 더 새 것, 정식판이면 `latest`). `--check`는 깔지 않고 새 판이 있는지만 본다. 깐 뒤에는 서버를 다시 띄우고, 다음 실행에서 Python 실행 환경이 한 번 다시 설치된다. npx로 쓰면 npx가 부를 때마다 꼬리표의 판을 받으므로 깔 것이 없고(가장 새 시험판은 `npx pr-proof@next <명령>`), clone한 폴더는 `git pull`로 받는다.
@@ -350,7 +369,7 @@ gh 로그인 대신 토큰을 쓸 수 있다. 토큰은 설정 폴더의 `github
 | --- | --- |
 | 설정과 비밀값(`config.yaml`, `webhook_secret`, `github_token`, `webhook_url`, `pr-proof.env`) | `~/.config/pipeline/` (`PIPELINE_CONFIG_DIR`로 바꾼다) |
 | Python 실행 환경 | `~/.cache/pipeline/runtime/venv` (clone한 폴더에서 돌리면 그 폴더의 `.venv`) |
-| 데이터(DB, 저장소 캐시) | `~/.cache/pipeline/` (`config.yaml`의 `data_dir`) |
+| 데이터(DB, 저장소 캐시, 검색을 켜면 임베딩 모델) | `~/.cache/pipeline/` (`config.yaml`의 `data_dir`) |
 
 설정과 비밀값은 대상 저장소 밖에 둔다.
 

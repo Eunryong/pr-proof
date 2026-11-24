@@ -277,3 +277,11 @@ def test_flow_context_carries_the_pipeline_default_model(env) -> None:
     assert update.flow_context(deps, 0, None).default_model is None
     deps.settings = deps.settings.model_copy(update={"model": config.ModelConfig(default="opus")})
     assert update.flow_context(deps, 0, None).default_model == "opus"
+
+
+def test_flow_context_carries_the_machine_rag_setting(env) -> None:
+    """`config.yaml`의 `rag.allowed`(`pr-proof rag on|off`)가 검색을 정하는 곳까지 간다."""
+    deps = env["deps"]
+    assert update.flow_context(deps, 0, None).rag_allowed is None
+    deps.settings = deps.settings.model_copy(update={"rag": config.RagConfig(allowed=False)})
+    assert update.flow_context(deps, 0, None).rag_allowed is False

@@ -217,10 +217,14 @@ def test_ensure_model_downloads_once_and_checks_hashes(tmp_path: Path) -> None:
         calls.append(file.path)
         dest.write_bytes(payload[file.path])
 
+    assert memory.model_ready(tmp_path / "models", spec) is False
     folder = memory.ensure_model(tmp_path / "models", spec, download)
     assert (folder / "model.onnx").read_bytes() == b"onnx-bytes"
+    assert memory.model_ready(tmp_path / "models", spec) is True
     memory.ensure_model(tmp_path / "models", spec, download)
     assert calls == [spec.tokenizer.path, spec.onnx.path]
+    (folder / "model.onnx").write_bytes(b"cut")  # 크기가 다르면 받은 것이 아니다
+    assert memory.model_ready(tmp_path / "models", spec) is False
 
 
 def test_download_rejects_wrong_hash_and_plain_http(tmp_path: Path, monkeypatch) -> None:
@@ -297,3 +301,27 @@ def test_marked_time_is_kept(tmp_path: Path) -> None:
     assert db.pending_records(REPO) == []
     db.clear_embedded(REPO)
     assert len(db.pending_records(REPO)) == 1
+
+
+def test_tls_context_adds_certifi_when_system_has_no_ca(monkeypatch) -> None:
+    """python.org에서 깐 macOS의 Python처럼 시스템의 CA가 비어 있어도 확인할 기준이 있다
+    (pr-proof#121). 확인은 끄지 않는다."""
+    import ssl
+
+    empty = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    assert empty.get_ca_certs() == []
+    monkeypatch.setattr(memory.ssl, "create_default_context", lambda: empty)
+    context = memory._tls_context()
+    assert context.get_ca_certs()
+    assert context.verify_mode == ssl.CERT_REQUIRED
+    assert context.check_hostname
+
+
+def test_tls_context_without_certifi_is_the_system_one(monkeypatch) -> None:
+    import ssl
+    import sys
+
+    monkeypatch.setitem(sys.modules, "certifi", None)
+    context = memory._tls_context()
+    assert context.verify_mode == ssl.CERT_REQUIRED
+    assert context.check_hostname

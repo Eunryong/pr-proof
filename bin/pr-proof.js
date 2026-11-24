@@ -13,7 +13,7 @@ const path = require("node:path");
 
 const ROOT = path.resolve(__dirname, "..");
 const PACKAGE = "pr-proof";
-const COMMANDS = ["configure", "start", "add", "rm", "list", "model", "update"];
+const COMMANDS = ["configure", "start", "add", "rm", "list", "model", "rag", "update"];
 const PYTHONS = ["python3.14", "python3.13", "python3.12", "python3.11", "python3"];
 const OTHER_PROGRAMS = ["docker", "git", "gh", "claude"];
 const STAMP = ".pr-proof-install";
@@ -26,12 +26,13 @@ const DEFAULT_REGISTRY = "https://registry.npmjs.org";
 function usage(prefix) {
   return `사용법: ${prefix} <명령> [인자]
 
-  configure          처음 설정. 묻는 말에 답한다 (질문 없이: --repo, --auth, --webhook-url, --port, --model)
+  configure          처음 설정. 묻는 말에 답한다 (질문 없이: --repo, --auth, --webhook-url, --port, --model, --rag)
   start              서버 실행 (api, worker, smee에서 받아 오기)
   add <repo>...      처리할 repo를 더한다 (예: octocat/hello-world)
   rm <repo>...       처리할 repo를 뺀다
   list               처리하는 repo 목록 (--check: 웹훅까지 확인)
   model [이름]       모든 단계에 쓸 모델. 이름 없이: 지금 설정 보기, default: 기본값으로
+  rag [on|off]       과거 수정 기록 검색을 켜고 끈다. 인자 없이: 지금 상태 보기
   update             새 판으로 올린다 (--check: 깔지 않고 새 판이 있는지만 본다)
 
 명령마다 --help로 자세한 인자를 본다.`;
@@ -492,7 +493,19 @@ function run(cmd, args, options = {}) {
   }
 }
 
-function ensureVenv(python) {
+// 실행 환경을 새로 깔 때 차례로 부르는 것. 둘째는 과거 수정 기록 검색을 켠 컴퓨터(config.yaml의
+// rag.allowed: true)면 선택 의존성 [rag]도 깐다. 고른 값은 YAML이라 Python이 읽는다. 실패해도 본 명령은
+// 이어 간다(검색 없이 검사하고, 결과 코멘트가 켜는 방법을 알린다).
+function installSteps(root = ROOT) {
+  return [
+    // 편집 가능 설치: 코드가 패키지 폴더에 그대로 있어야 docker/sandbox 같은 파일을 찾는다
+    { args: ["-m", "pip", "install", "--quiet", "--disable-pip-version-check", "--editable", `${root}[run]`],
+      required: true },
+    { args: ["-m", "app.setup.cli", "rag", "sync"], required: false },
+  ];
+}
+
+function ensureVenv(python, prefix) {
   const venv = venvDir();
   const venvPython = path.join(venv, "bin", "python");
   const stampPath = path.join(venv, STAMP);
@@ -508,9 +521,11 @@ function ensureVenv(python) {
     run(python, ["-m", "venv", venv]);
   }
   console.error("pr-proof: Python 패키지를 설치합니다 (처음 한 번, 몇 분 걸릴 수 있다)");
-  // 편집 가능 설치: 코드가 패키지 폴더에 그대로 있어야 docker/sandbox 같은 파일을 찾는다
-  run(venvPython, ["-m", "pip", "install", "--quiet", "--disable-pip-version-check",
-    "--editable", `${ROOT}[run]`]);
+  const env = { ...process.env, PR_PROOF_COMMAND: prefix };
+  for (const step of installSteps()) {
+    if (step.required) run(venvPython, step.args);
+    else spawnSync(venvPython, step.args, { stdio: "inherit", env });
+  }
   fs.writeFileSync(stampPath, stamp + "\n");
   return venvPython;
 }
@@ -549,7 +564,7 @@ function main(argv) {
     console.error(missingMessage(missing, installHints()));
     return 1;
   }
-  const venvPython = ensureVenv(python);
+  const venvPython = ensureVenv(python, prefix);
   const args = ["-m", "app.setup.cli", command, ...rest];
   if (command === "start" && !rest.includes("--help") && !rest.includes("-h")) {
     args.push("--node", process.execPath, "--smee", smeeBin());
@@ -574,7 +589,7 @@ module.exports = {
   missingMessage, platformKey, venvDir, installStamp, runtimeHome, commandPrefix, usage,
   parseVersion, isPrerelease, compareVersions, tagsToCheck, newerRelease, globalPrefix, installKind,
   noticeEnabled, checkDue, readCache, writeCache, fetchDistTags, noticeLine, refreshCache,
-  prepareNotice, updateCommand, npmInstallArgs,
+  prepareNotice, updateCommand, npmInstallArgs, installSteps,
 };
 
 if (require.main === module) {

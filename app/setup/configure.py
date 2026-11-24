@@ -1,20 +1,21 @@
-"""`pr-proof configure | add | rm | list | model`의 흐름.
+"""`pr-proof configure | add | rm | list | model | rag`의 흐름.
 
 configure의 단계 (docs/design/08-security.md "설치와 인증"):
 1 프로그램 확인 → 2 Docker가 켜져 있는지 → 3 설치(포트, Redis. venv는 입구가 만든다) →
-4 GitHub 인증 → 5 Claude 로그인 → 6 모델 → 7 repo 등록과 권한 확인 →
-8 웹훅(비밀값, 받는 주소, 등록) → 9 끝 확인 표.
+4 GitHub 인증 → 5 Claude 로그인 → 6 모델 → 7 과거 수정 기록 검색 → 8 repo 등록과 권한 확인 →
+9 웹훅(비밀값, 받는 주소, 등록) → 10 끝 확인 표.
 
-묻는 것은 다섯이다: 인증 방식, 토큰(토큰 방식일 때), 모델, repo, 웹훅 받는 주소. 터미널이 아니면
-묻지 않고, 필요한 값이 없으면 무엇이 없는지 말하고 실패한다. 여러 번 돌려도 같다: 목록에 없는 repo만
-더하고, 있는 비밀값과 저장한 주소는 덮어쓰지 않는다. `dry_run`이면 파일도 GitHub도 쓰지 않고 할 일만
-보인다(GitHub 읽기는 한다).
+묻는 것은 여섯이다: 인증 방식, 토큰(토큰 방식일 때), 모델, 검색, repo, 웹훅 받는 주소. 터미널이
+아니면 묻지 않고, 필요한 값이 없으면 무엇이 없는지 말하고 실패한다. 여러 번 돌려도 같다: 목록에
+없는 repo만 더하고, 있는 비밀값과 저장한 주소는 덮어쓰지 않는다. `dry_run`이면 파일도 GitHub도 쓰지
+않고 할 일만 보인다(GitHub 읽기는 한다).
 
-바깥(프로그램 찾기, gh, Docker, Redis, smee.io, 포트, claude)은 `Deps`로 받는다. 테스트가 바꿔
-끼운다.
+바깥(프로그램 찾기, gh, Docker, Redis, smee.io, 포트, claude)은 `Deps`로, 검색에 필요한 것(이 실행
+환경에 pip으로 `[rag]` 깔기, 임베딩 모델 받기)은 `RagDeps`로 받는다. 테스트가 바꿔 끼운다.
 """
 
 import getpass
+import importlib
 import json
 import secrets
 import shutil
@@ -35,16 +36,19 @@ from app.setup import files
 from app.setup import github_setup as gh
 from app.setup import setup_pure as pure
 from app.shared import config, github_auth
+from app.shared.embed_models_pure import EMBED_MODELS, EmbedModel
 from app.worker import preflight
 from app.worker.sandbox.docker_cli import minimal_env
+from app.worker.store import memory
 
 PROGRAMS: Final = ("docker", "git", "gh", "claude")
 OPERATIONS_URL: Final = "https://github.com/Eunryong/pr-proof/blob/main/docs/OPERATIONS.md"
 CONFIG_HEADER: Final = (
     f"# pr-proof 설정 (configure가 만들었다). repos는 {files.FILE_COMMAND} add / rm으로, "
-    f"model.default는 {files.FILE_COMMAND} model로 고친다.\n"
+    f"model.default는 {files.FILE_COMMAND} model로, rag.allowed는 {files.FILE_COMMAND} rag로 "
+    "고친다.\n"
 )
-STEPS: Final = 9
+STEPS: Final = 10
 RESTART: Final = "도는 서버는 config.yaml을 시작할 때만 읽습니다. 서버가 돌고 있으면 다시 띄우세요."
 LEFT_ALONE: Final = (
     "그 repo의 PR 코멘트, 열린 수정안 PR, 데이터 폴더의 기록(DB, 캐시)은 그대로 둡니다."
@@ -65,6 +69,17 @@ class Io:
 
 
 @dataclass
+class RagDeps:
+    """과거 수정 기록 검색을 켤 때의 바깥. 테스트는 pip과 내려받기를 하지 않는 것을 넘긴다."""
+
+    install: Callable[[], bool]  # 이 실행 환경에 `[rag]`를 깐다. 성공하면 참
+    extras_missing: Callable[[], bool]  # `[rag]`의 모듈이 없는지 (import하지 않고 찾기만)
+    # 고정한 판의 임베딩 모델을 받아 맞춰 본다 (`memory.ensure_model`). 실패하면 SearchUnavailable
+    fetch_model: Callable[[Path, EmbedModel], object]
+    model_ready: Callable[[Path, EmbedModel], bool]  # 받아 맞춰 봤는지 (받지 않는다)
+
+
+@dataclass
 class Deps:
     which: Callable[[str], bool]
     docker_ok: Callable[[], bool]
@@ -76,6 +91,7 @@ class Deps:
     pr_proof_on: Callable[[int], bool]
     smee_new: Callable[[], str]
     checks: Callable[[str], list[preflight.Check]]
+    rag: RagDeps
     new_secret: Callable[[], str] = lambda: secrets.token_hex(32)
     environ: Mapping[str, str] = field(default_factory=dict)
     platform: str = sys.platform
@@ -93,6 +109,8 @@ class Options:
     yes: bool = False  # rm: 확인을 묻지 않는다
     # configure: 모든 단계에 쓸 모델. "default"면 지운다. None이면 터미널에서 묻고, 아니면 그대로
     model: str | None = None
+    # configure: 과거 수정 기록 검색 "on" | "off". None이면 터미널에서 묻고, 아니면 그대로
+    rag: str | None = None
     check: bool = False  # list: 웹훅까지 본다
 
 
@@ -149,6 +167,32 @@ def _claude_ok() -> bool:
     return preflight.claude_login_ok(preflight._claude_auth_status(), datetime.now(UTC))
 
 
+def _pip_install_rag() -> bool:
+    """이 Python(실행 환경)에 `[rag]`를 깐다. 입구가 `[run]`을 까는 것과 같은 편집 가능 설치다."""
+    args = [sys.executable, "-m", "pip", "install", "--quiet", "--disable-pip-version-check",
+            "--editable", f"{files.PACKAGE_ROOT}[rag]"]  # fmt: skip
+    sys.stdout.flush()  # 앞에 보인 안내가 pip의 출력보다 먼저 나오게
+    sys.stderr.flush()
+    try:
+        return subprocess.run(args, check=False).returncode == 0
+    except OSError:
+        return False
+
+
+def _extras_missing() -> bool:
+    importlib.invalidate_caches()  # 같은 프로세스에서 방금 깐 것도 보이게
+    return memory.missing_extras()
+
+
+def real_rag_deps() -> RagDeps:
+    return RagDeps(
+        install=_pip_install_rag,
+        extras_missing=_extras_missing,
+        fetch_model=memory.ensure_model,
+        model_ready=memory.model_ready,
+    )
+
+
 def real_deps(environ: Mapping[str, str]) -> Deps:
     hints = json.loads((Path(__file__).with_name("install_hints.json")).read_text())
     return Deps(
@@ -163,6 +207,7 @@ def real_deps(environ: Mapping[str, str]) -> Deps:
         # 입구(bin/pr-proof.js)가 자기 node를 PR_PROOF_NODE로 넘긴다
         smee_new=lambda: gh.new_smee_url(environ.get("PR_PROOF_NODE") or shutil.which("node")),
         checks=_checks,
+        rag=real_rag_deps(),
         environ=environ,
         hints=hints,
     )
@@ -551,8 +596,118 @@ def _model_step(directory: Path, io: Io, opts: Options) -> None:
     io.say(f"  {SAVED_JUDGMENTS}")
 
 
+# --- 과거 수정 기록 검색 ---
+
+
+def current_rag(directory: Path, io: Io) -> bool | None:
+    """config.yaml의 `rag.allowed`. 읽지 못하면 이유를 말하고 Stop."""
+    try:
+        return pure.config_rag_allowed(_config_text(directory))
+    except pure.ConfigEditError as e:
+        io.say(f"  {e}")
+        raise Stop from e
+
+
+def _rag_target(directory: Path, io: Io) -> tuple[Path, EmbedModel]:
+    """임베딩 모델을 받을 곳(`data_dir/models`, 워커가 찾는 곳)과 설정의 모델."""
+    try:
+        data = {"repos": [], **pure.config_data(_config_text(directory))}
+        settings = config.PipelineConfig.model_validate(data)
+    except (pure.ConfigEditError, ValueError) as e:
+        io.say(f"  config.yaml을 읽지 못했습니다: {e}")
+        raise Stop from e
+    return settings.data_dir / memory.MODEL_DIR, EMBED_MODELS[settings.rag.embed_model]
+
+
+def save_rag(directory: Path, allowed: bool, io: Io, dry_run: bool) -> None:
+    """config.yaml의 `rag.allowed`를 적는다. 다른 설정과 주석은 둔다."""
+    text = _config_text(directory) or CONFIG_HEADER
+    try:
+        new_text = pure.set_rag_allowed(text, allowed)
+    except pure.ConfigEditError as e:
+        io.say(f"  {e}")
+        raise Stop from e
+    if dry_run:
+        value = "true" if allowed else "false"
+        path = directory / files.CONFIG_FILE
+        io.say(f"  (dry-run) {path}의 {pure.RAG_ALLOWED_KEY}를 {value}로 적는다")
+    else:
+        _write_config(directory, new_text)
+
+
+def _enable_rag(directory: Path, io: Io, deps: RagDeps, dry_run: bool) -> bool:
+    """이 실행 환경에 `[rag]`를 깔고(없을 때만) 임베딩 모델을 받은 뒤 `rag.allowed: true`를 적는다.
+    어느 하나가 실패하면 적지 않고 거짓(다시 할 명령을 말한다)."""
+    model_dir, spec = _rag_target(directory, io)
+    again = f"다시 하려면 {files.command('rag on')}"
+    if dry_run:
+        io.say(f"  (dry-run) {pure.RAG_EXTRAS}가 없으면 이 실행 환경에 깔고, 임베딩 모델을 "
+               f"{model_dir}에 받는다")  # fmt: skip
+        save_rag(directory, True, io, dry_run=True)
+        return True
+    if deps.extras_missing():
+        io.say(f"  {pure.RAG_EXTRAS}를 깝니다 ({pure.RAG_PACKAGES_SIZE}, 몇 분 걸릴 수 있다)")
+        if not deps.install() or deps.extras_missing():
+            io.say(f"  {pure.RAG_EXTRAS}를 깔지 못했습니다. 네트워크를 확인하세요. {again}")
+            return False
+    else:
+        io.say(f"  {pure.RAG_EXTRAS}: 깔려 있음")
+    if not deps.model_ready(model_dir, spec):
+        io.say(f"  임베딩 모델 {spec.name}을 받습니다 (약 {pure.model_megabytes(spec)}MB)")
+    try:
+        deps.fetch_model(model_dir, spec)
+    except (memory.SearchUnavailable, OSError) as e:
+        io.say(f"  임베딩 모델을 받지 못했습니다: {e}. {again}")
+        return False
+    io.say(f"  임베딩 모델: {memory.model_folder(model_dir, spec)}")
+    save_rag(directory, True, io, dry_run=False)
+    return True
+
+
+def _ask_rag(io: Io, current: bool | None, spec: EmbedModel) -> bool:
+    """터미널에서 고른 값. Enter면 지금 값이고, 정한 적이 없으면 아니오다."""
+    io.say("  수정할지 정하거나 고칠 때, 그 repo에서 머지하거나 닫은 지난 수정안을 찾아 "
+           "참고합니다.")  # fmt: skip
+    io.say(f"  쓰면 이 컴퓨터에 {pure.rag_size_text(spec)}을 받습니다.")
+    io.say("  쓰더라도 repo마다 .pipeline.yaml의 rag.enabled(기본 auto)가 검색할지 정합니다.")
+    io.say(f"  지금: {pure.rag_label(current)}")
+    choices = "Y/n" if current else "y/N"
+    answer = _ask_until(
+        io, f"  과거 수정 기록 검색을 쓸까요? [{choices}]: ",
+        lambda a: None if a.lower() in ("", "y", "yes", "n", "no") else "y나 n을 적습니다",
+    )  # fmt: skip
+    if answer == "":
+        return bool(current)
+    return answer.lower() in ("y", "yes")
+
+
+def _rag_step(directory: Path, io: Io, deps: Deps, opts: Options) -> bool:
+    """검색을 켜다 실패하면 거짓. 실패해도 configure는 이어 간다(검색 없이 검사할 수 있다)."""
+    _step(io, 7, "과거 수정 기록 검색")
+    current = current_rag(directory, io)
+    if opts.rag is not None:
+        wanted = opts.rag == "on"
+    elif io.interactive:
+        wanted = _ask_rag(io, current, _rag_target(directory, io)[1])
+    else:
+        io.say(f"  과거 수정 기록 검색: {pure.rag_label(current)} "
+               "(바꾸려면 --rag on 또는 --rag off)")  # fmt: skip
+        return True
+    if wanted:
+        if _enable_rag(directory, io, deps.rag, opts.dry_run):
+            io.say("  과거 수정 기록 검색: 켬")
+            return True
+        return False
+    if current is False:
+        io.say("  과거 수정 기록 검색: 끔 (그대로)")
+        return True
+    save_rag(directory, False, io, opts.dry_run)
+    io.say("  과거 수정 기록 검색: 끔")
+    return True
+
+
 def _repos(directory: Path, io: Io, run: gh.Runner, opts: Options) -> list[str]:
-    _step(io, 7, "repo 등록과 권한 확인")
+    _step(io, 8, "repo 등록과 권한 확인")
     repos = list(dict.fromkeys(pure.repo_name(r) for r in opts.repos))
     try:
         existing = pure.config_repos(_config_text(directory))
@@ -624,7 +779,7 @@ def _webhook_url(directory: Path, io: Io, deps: Deps, opts: Options) -> str:
 
 def _webhook(directory: Path, io: Io, deps: Deps, run: gh.Runner, repos: Sequence[str],
              opts: Options) -> bool:  # fmt: skip
-    _step(io, 8, "웹훅")
+    _step(io, 9, "웹훅")
     secret_path = directory / config.WEBHOOK_SECRET
     if secret_path.exists():
         io.say(f"  비밀값: {secret_path} (있는 것을 씁니다)")
@@ -638,7 +793,7 @@ def _webhook(directory: Path, io: Io, deps: Deps, run: gh.Runner, repos: Sequenc
 
 
 def _final(io: Io, deps: Deps, redis_url: str) -> bool:
-    _step(io, 9, "끝 확인 (서버가 시작할 때 하는 확인과 같다)")
+    _step(io, 10, "끝 확인 (서버가 시작할 때 하는 확인과 같다)")
     checks = deps.checks(redis_url)
     io.say(pure.check_table([(c.name, c.ok, c.hint) for c in checks]))
     return all(c.ok for c in checks)
@@ -662,6 +817,7 @@ def configure(opts: Options, io: Io, deps: Deps, directory: Path | None = None) 
         run = _auth(directory, io, deps, opts)
         _claude(io, deps)
         _model_step(directory, io, opts)
+        rag_ok = _rag_step(directory, io, deps, opts)
         repos = _repos(directory, io, run, opts)
         hooks_ok = _webhook(directory, io, deps, run, repos, opts)
     except Stop:
@@ -672,13 +828,15 @@ def configure(opts: Options, io: Io, deps: Deps, directory: Path | None = None) 
         io.say("웹훅은 위의 값으로 손으로 등록하세요.")
     elif not hooks_ok:
         io.say("웹훅을 모두 등록하지는 못했습니다. 위의 값으로 손으로 등록하세요.")
+    if not rag_ok:
+        io.say(f"과거 수정 기록 검색을 켜지 못했습니다. 다시 하려면 {files.command('rag on')}")
     if not checks_ok:
         io.say(f"끝 확인에 실패한 줄이 있습니다. 고친 뒤 {files.command('configure')}를 다시 "
                "실행하세요.")  # fmt: skip
     io.say(f"다음: {files.command('start')}")
     io.say(f"계속 띄워 두려면: {OPERATIONS_URL}")
     # 손으로 등록하라고 한 것(--manual-webhook)은 실패가 아니다
-    return 0 if checks_ok and (hooks_ok or opts.manual_webhook) else 1
+    return 0 if checks_ok and rag_ok and (hooks_ok or opts.manual_webhook) else 1
 
 
 # --- add / rm / list ---
@@ -871,3 +1029,72 @@ def model(name: str | None, io: Io, directory: Path | None = None) -> int:
     io.say(SAVED_JUDGMENTS)
     io.say(RESTART)
     return 0
+
+
+# --- rag ---
+
+
+def rag(action: str | None, io: Io, deps: RagDeps, directory: Path | None = None) -> int:
+    """`rag`: 보기. `rag on`: 이 실행 환경에 `[rag]`를 깔고 임베딩 모델을 받고 켬으로 적는다.
+    `rag off`: 끔으로만 적는다(깐 패키지와 받은 모델은 둔다). `rag sync`: 입구가 부른다
+    (`rag_sync`)."""
+    directory = directory or files.config_dir()
+    if action == "sync":
+        return rag_sync(io, deps, directory)
+    if not (directory / files.CONFIG_FILE).is_file():
+        io.say(_need_configure())
+        return 1
+    try:
+        current = current_rag(directory, io)
+        model_dir, spec = _rag_target(directory, io)
+    except Stop:
+        return 1
+    if action is None:
+        ready = deps.model_ready(model_dir, spec)
+        folder = str(memory.model_folder(model_dir, spec))
+        io.say(pure.rag_view(current, not deps.extras_missing(), ready, spec, folder,
+                             files.command_prefix()))  # fmt: skip
+        return 0
+    if action == "off":
+        if current is False:
+            io.say("이미 끔입니다. 바꾸지 않았습니다.")
+            return 0
+        try:
+            save_rag(directory, False, io, dry_run=False)
+        except Stop:
+            return 1
+        io.say("이 컴퓨터에서 과거 수정 기록 검색을 껐습니다 "
+               f"(config.yaml의 {pure.RAG_ALLOWED_KEY}: false). 깐 패키지와 받은 임베딩 모델은 "
+               "그대로 둡니다.")  # fmt: skip
+        io.say(RESTART)
+        return 0
+    io.say(f"과거 수정 기록 검색을 켭니다: {pure.rag_size_text(spec)}")
+    try:
+        ok = _enable_rag(directory, io, deps, dry_run=False)
+    except Stop:
+        return 1
+    if not ok:
+        return 1
+    io.say("이 컴퓨터에서 과거 수정 기록 검색을 켰습니다 "
+           f"(config.yaml의 {pure.RAG_ALLOWED_KEY}: true). repo마다 .pipeline.yaml의 "
+           "rag.enabled(기본 auto)가 검색할지 정합니다.")  # fmt: skip
+    io.say(RESTART)
+    return 0
+
+
+def rag_sync(io: Io, deps: RagDeps, directory: Path) -> int:
+    """입구(bin/pr-proof.js)가 실행 환경에 `[run]`을 새로 깐 뒤 부른다. `rag.allowed`가 true면
+    `[rag]`도 다시 깐다(새 판의 pyproject.toml이 판을 바꿨을 수 있다). 설정이 없거나 읽지 못하면
+    아무것도 하지 않는다(본 명령이 알린다). 깔지 못하면 1이지만 입구는 본 명령을 이어 간다."""
+    try:
+        allowed = pure.config_rag_allowed(_config_text(directory))
+    except (pure.ConfigEditError, OSError):
+        return 0
+    if allowed is not True:
+        return 0
+    io.say(f"pr-proof: 과거 수정 기록 검색을 켜 두어 {pure.RAG_EXTRAS}도 깝니다")
+    if deps.install():
+        return 0
+    io.say(f"pr-proof: {pure.RAG_EXTRAS}를 깔지 못했습니다. 검사는 검색 없이 합니다. "
+           f"다시 하려면 {files.command('rag on')}")  # fmt: skip
+    return 1
