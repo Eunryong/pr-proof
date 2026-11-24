@@ -242,6 +242,11 @@ def bare_lines(
         return None
 
 
+def bare_merge_base(bare: Path, base_sha: str, head_sha: str) -> str:
+    """worktree 없이 bare 캐시에서 두 커밋이 갈라진 커밋."""
+    return _git("merge-base", base_sha, head_sha, cwd=bare).strip()
+
+
 def bare_pr_facts(
     bare: Path, base_sha: str, head_sha: str, *, limit: int
 ) -> tuple[list[str], list[str]]:
@@ -249,7 +254,7 @@ def bare_pr_facts(
 
     `fetch_pr`로 두 커밋을 받아 둔 bare 캐시에서 읽는다. 제목은 작성자의 글이라 자료로만 쓴다.
     """
-    fork = _git("merge-base", base_sha, head_sha, cwd=bare).strip()
+    fork = bare_merge_base(bare, base_sha, head_sha)
     subjects = _git(
         "log", f"--max-count={limit}", "--format=%s", f"{fork}..{head_sha}", cwd=bare
     ).splitlines()

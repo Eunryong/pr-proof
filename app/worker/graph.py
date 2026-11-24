@@ -50,6 +50,7 @@ from app.shared.embed_models_pure import E5_SMALL, EMBED_MODELS
 from app.shared.job_pure import PRJob
 from app.worker import records
 from app.worker.config import base_config
+from app.worker.config.access_pure import Author, is_trusted
 from app.worker.config.base_config import BaseConfig
 from app.worker.config.repo_config_pure import call_limits
 from app.worker.core.bundle_pure import MECHANICAL_BUNDLE, MODEL_BUNDLE
@@ -252,6 +253,9 @@ class FlowContext:
     rag_allowed: bool | None = None
     # 파이프라인 쪽 `model.default`. 저장소의 `.pipeline.yaml`이 적지 않은 단계의 모델이다
     default_model: str | None = None
+    # 이 작업의 승인 확인이 GitHub에서 읽은 PR 작성자. 규칙 문서를 PR의 것으로 읽을지 정하는 데
+    # 쓴다. 없으면 믿지 않는 작성자로 본다
+    author: Author | None = None
 
 
 def timed(
@@ -422,7 +426,8 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
         return {"doc_rules": result}
 
     def load_rules(state: FlowState) -> FlowState:
-        """base의 규칙 문서와 도구 설정을 읽는다 (5.1 load_rules). 규칙이 없으면 여기서 끝난다."""
+        """규칙 문서와 base의 도구 설정을 읽는다 (5.1 load_rules). 규칙이 없으면 여기서 끝난다.
+        믿는 작성자의 PR이 규칙 문서를 고쳤으면 그 PR의 문서를 읽는다 (4.3)."""
         job = state["job"]
         progress(job, "규칙 읽기")
         ctx.first_call = doc_rules.last_call_id(ctx.store, job.repo, job.pr_number)
@@ -430,7 +435,11 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
         rt = doc_runtime({**state, "rag_switch": switch})
         if rt.retriever is not None:  # 검색을 켠 첫 검사에서 폴더를 만들고 밀린 기록을 넣는다 (6.5)
             rt.retriever.prepare()
-        read = doc_rules.read(ctx.worktree, job.base_sha, ctx.base.repo.rules, rt, ctx.changes_diff)
+        read = doc_rules.read(
+            ctx.worktree, job.base_sha, ctx.base.repo.rules, rt, ctx.changes_diff,
+            head_sha=job.head_sha, fork_sha=ctx.merge_base,
+            trusted=is_trusted(ctx.author, ctx.base.access),
+        )  # fmt: skip
         if isinstance(read, RulesRead):
             return {"rules_read": read, "rag_switch": switch}
         return {**doc_rules_done(read), "rag_switch": switch}

@@ -7,11 +7,13 @@ import pytest
 from app.worker.config.access_pure import (
     AccessSettings,
     Allowed,
+    Author,
     BadCommit,
     Commit,
     NeedsApproval,
     NoCommit,
     approval_arg,
+    is_trusted,
     may_approve,
     may_run,
     parse_access,
@@ -161,3 +163,13 @@ def test_unknown_values_and_non_bot_logins_are_dropped_with_a_note() -> None:
 def test_malformed_access_falls_back_to_defaults_with_a_note(text: str) -> None:
     access, notes = parse_access(text)
     assert access == DEFAULT and len(notes) == 1
+
+
+def test_trusted_author_follows_the_trusted_list_and_unknown_is_not_trusted() -> None:
+    default = AccessSettings()
+    assert is_trusted(Author("OWNER", "kim"), default)
+    assert not is_trusted(Author("CONTRIBUTOR", "lee"), default)
+    assert not is_trusted(None, default)
+    bots = AccessSettings(bots=frozenset({"x[bot]"}))
+    assert not is_trusted(Author("NONE", "x[bot]"), bots)  # 검사는 돌지만 믿는 작성자는 아니다
+    assert is_trusted(Author("CONTRIBUTOR", "lee"), AccessSettings(frozenset({"CONTRIBUTOR"})))

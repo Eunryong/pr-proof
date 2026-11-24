@@ -373,3 +373,24 @@ def test_linked_issues_check_is_on_by_default_and_can_be_turned_off() -> None:
     assert config.pr_description.enabled is True  # 서로 따로 끈다
     _, problem = parse_repo_config("linked_issues:\n  enabled: maybe\n")
     assert problem is not None and "linked_issues.enabled" in problem
+
+
+def test_rules_from_defaults_to_pr_and_reads_base() -> None:
+    assert parse_repo_config(None)[0].rules.docs_from == "pr"
+    assert parse_repo_config("rules:\n  docs: [A.md]\n")[0].rules.docs_from == "pr"
+    config, problem = parse_repo_config("rules:\n  from: base\n")
+    assert (config.rules.docs_from, problem) == ("base", None)
+    assert settings_notes("rules:\n  from: base\n") == []
+    assert settings_notes("rules:\n  from: pr\n") == []
+
+
+@pytest.mark.parametrize("value", ["head", "true", "[pr]", "''"])
+def test_unknown_rules_from_reads_only_that_value_as_default_with_a_note(value: str) -> None:
+    text = f"rules:\n  from: {value}\n  docs: [A.md]\nsandbox: {{memory_gb: 2}}\n"
+    config, problem = parse_repo_config(text)
+    assert problem is None
+    assert (config.rules.docs_from, config.rules.docs, config.sandbox.memory_gb) == (
+        "pr", ["A.md"], 2,
+    )  # fmt: skip
+    (note,) = settings_notes(text)
+    assert note == "`rules.from`은 pr, base 중 하나여야 합니다. 기본값 pr로 읽었습니다"

@@ -25,6 +25,11 @@ from app.shared.model_names_pure import MODEL_NAME_PATTERN
 RagMode = Literal["auto", "on", "off"]
 MODES: Final = ("auto", "on", "off")
 DEFAULT_MODE: Final = "auto"
+# `rules.from`의 값 (10절, 4.3 "규칙 문서의 원천"): PR이 규칙 문서를 고쳤을 때 어느 커밋의 문서로
+# 규칙을 읽는가. 판단은 app/worker/rules/rule_docs_source_pure.py
+RulesFrom = Literal["pr", "base"]
+RULES_FROM: Final = ("pr", "base")
+DEFAULT_RULES_FROM: Final = "pr"
 # docker가 받는 최소 메모리보다 넉넉히 크게. 너무 작으면 컨테이너가 뜨지 않아 환경 오류로 보인다
 MIN_MEMORY_GB: Final = 0.5
 DEFAULT_MAX_RETRIES: Final = 3
@@ -63,6 +68,13 @@ def parse_mode(value: object) -> RagMode | None:
     return None
 
 
+def parse_rules_from(value: object) -> RulesFrom | None:
+    """`.pipeline.yaml`의 `rules.from` 값. 모르는 값은 None (기본값으로 읽고 알린다)."""
+    if isinstance(value, str) and value in RULES_FROM:
+        return value  # type: ignore[return-value]
+    return None
+
+
 def _check_doc_path(path: str) -> str:
     """루트 기준 상대 경로만. git 인자와 문서 경계 표시에 그대로 들어가므로 이상한 글자를 막는다."""
     parts = path.split("/")
@@ -83,11 +95,21 @@ RuleId = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 class RulesSettings(BaseModel):
     """규칙 문서와 끈 규칙 (DESIGN.md 4.3, 10절 `rules`). docs를 적으면 기본 목록을 대신한다."""
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
     docs: list[DocPath] = Field(
         default_factory=lambda: list(DEFAULT_RULE_DOCS), max_length=MAX_RULE_DOCS
     )
     disabled: list[RuleId] = Field(default_factory=list)
+    # YAML 키는 `from`이다(파이썬 예약어라 이름만 다르다). PR이 규칙 문서를 고쳤을 때 믿는 작성자의
+    # PR을 그 PR의 문서로 검사할지(pr), 늘 base의 문서로 검사할지(base)
+    docs_from: RulesFrom = Field(default=DEFAULT_RULES_FROM, alias="from")
+
+    @field_validator("docs_from", mode="before")
+    @classmethod
+    def _docs_from(cls, value: object) -> RulesFrom:
+        """모르는 값은 설정 전체를 버리지 않고 이 값만 기본값으로 읽는다 ("설정:"의 알림은
+        `settings_notes`가 단다)."""
+        return parse_rules_from(value) or DEFAULT_RULES_FROM
 
 
 class SandboxSettings(BaseModel):
@@ -256,6 +278,12 @@ def settings_notes(text: str | None) -> list[str]:
         notes.append(
             f"`rag.enabled`는 {', '.join(MODES)} 중 하나여야 합니다. 기본값 {DEFAULT_MODE}로 "
             "읽었습니다"
+        )
+    rules = data.get("rules")
+    if isinstance(rules, dict) and "from" in rules and parse_rules_from(rules["from"]) is None:
+        notes.append(
+            f"`rules.from`은 {', '.join(RULES_FROM)} 중 하나여야 합니다. 기본값 "
+            f"{DEFAULT_RULES_FROM}로 읽었습니다"
         )
     enabled = skills.get("enabled") if isinstance(skills, dict) else None
     if isinstance(enabled, list) and LINT in enabled:

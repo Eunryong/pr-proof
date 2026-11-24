@@ -36,11 +36,16 @@ from app.worker.rules.doc_rules_pure import (
     outcomes_by_rule,
 )
 from app.worker.rules.pr_check_pure import PrChecks
+from app.worker.rules.rule_docs_source_pure import DocsSource, RuleChange
 from app.worker.store.rag_pure import KIND_LABEL, SITE_LABEL, Retrieval, merge_retrievals
 from app.worker.store.rag_switch_pure import RagSwitch, comment_line
 from app.worker.testing.test_lines import generated_lines, runs_without_new_tests, status_lines
 
 TITLE: Final = "**규칙:**"
+SOURCE_TITLE: Final = "**규칙 문서:**"
+# 규칙 문서를 고친 PR의 줄에 적는 문서 수와 접는 블록에 한쪽마다 싣는 규칙 수
+MAX_LISTED_DOCS: Final = 5
+MAX_LISTED_CHANGES: Final = 30
 VIOLATION: Final = "⚠️"
 CLEAN: Final = "✅"
 NO_RULES: Final = "규칙을 찾지 못해 규칙 검사를 하지 않음"
@@ -291,6 +296,50 @@ def title(
             return line + (f" · 수정안 {', '.join(f'#{n}' for n in numbers)}" if numbers else "")
 
 
+def source_line(result: DocRules | None) -> str | None:
+    """ "규칙:" 줄 아래의 "규칙 문서:" 줄. PR이 규칙 문서를 고쳤을 때만 있다 (4.3 "규칙 문서의
+    원천"). 어느 쪽 문서로 읽은 규칙으로 검사했는지 말한다."""
+    source = result.source if result is not None else None
+    if source is None:
+        return None
+    docs = [inline_code(p, 200) for p in source.changed[:MAX_LISTED_DOCS]]
+    if len(source.changed) > MAX_LISTED_DOCS:
+        docs.append(f"외 {len(source.changed) - MAX_LISTED_DOCS}개")
+    line = f"{SOURCE_TITLE} 이 PR이 규칙 문서를 바꿉니다 ({', '.join(docs)})."
+    # 규칙 경로를 끝까지 돌지 못했거나 규칙 문서를 읽지 못했으면 그 규칙으로 검사했다고 적지 않는다
+    done = not isinstance(result, NotRun) and not (isinstance(result, Found) and result.note)
+    if source.read_from == "base":
+        how = "했습니다" if done else "하려 했습니다"
+        return f"{line} 이번 검사는 base의 규칙으로 {how}. 머지된 뒤부터 새 규칙으로 검사합니다."
+    line += " 이 PR의 문서로 읽은 규칙으로 " + ("검사했습니다." if done else "검사하려 했습니다.")
+    if source.compare_skipped:
+        why = inline_code(source.compare_skipped, MAX_DETAIL_CHARS)
+        line += f" base의 규칙과는 견주지 못했습니다 ({why})."
+    return line
+
+
+def source_changes(source: DocsSource | None) -> list[str]:
+    """PR의 문서로 읽었을 때 없어지는 규칙과 새로 생기는 규칙의 접는 블록. 없으면 줄도 없다. 규칙의
+    원문은 PR이 쓴 글이라 코드 스팬 안에만 넣는다."""
+    if source is None or not (source.removed or source.added):
+        return []
+    summary = f"없어지는 규칙 {len(source.removed)}개, 새로 생기는 규칙 {len(source.added)}개"
+    lines = ["", f"<details><summary>{summary}</summary>"]
+    for label, changes in (("없어지는 규칙", source.removed), ("새로 생기는 규칙", source.added)):
+        if changes:
+            lines += ["", f"{label}:", *_change_lines(changes)]
+    return [*lines, "", "</details>"]
+
+
+def _change_lines(changes: Sequence[RuleChange]) -> list[str]:
+    lines = [
+        f"- `{c.id}` {inline_code(c.text, MAX_QUOTE_CHARS)}" for c in changes[:MAX_LISTED_CHANGES]
+    ]
+    if len(changes) > MAX_LISTED_CHANGES:
+        lines.append(f"- 외 {len(changes) - MAX_LISTED_CHANGES}개")
+    return lines
+
+
 def _proposal_number(view: FixView) -> int | None:
     """이 커밋의 그 묶음 수정안 PR 번호 (이번에 열었거나 이미 열려 있음)."""
     if view.proposal is not None and view.proposal.number is not None:
@@ -317,17 +366,18 @@ def section(
     위반과 확인하지 못한 규칙, 할 일은 펼친 채로 두고, 규칙별 확인 방법과 사용량은 접는 블록 하나에
     넣는다. 위반이 없으면 펼친 부분이 거의 없다 (4.9).
     """
+    changes = source_changes(result.source) if result is not None else []
     match result:
         case None | NotRun():
-            return _details(list(more))
+            return changes + _details(list(more))
         case NoRuleDocs(unread=unread):
-            lines = ["", HOW_TO_WRITE]
+            lines = [*changes, "", HOW_TO_WRITE]
             if unread:
                 lines += ["", "읽지 못한 규칙 문서:"]
                 lines += [f"- {inline_code(d.path)}: {inline_code(d.reason)}" for d in unread]
             return lines + _details(list(more))
         case NoRulesFound():
-            return ["", HOW_TO_WRITE, *_details(list(more))]
+            return [*changes, "", HOW_TO_WRITE, *_details(list(more))]
         case Found():
             return _found(result, checkers, decisions, fixes or {}, rag, pr, more)
 
@@ -342,7 +392,8 @@ def _found(
     more: Sequence[str] = (),
 ) -> list[str]:
     found, set_aside = dismissed(found, decisions)
-    head = (
+    head = source_changes(found.source)
+    head += (
         ["", f"규칙 문서를 읽지 못해 도구 설정의 규칙만 검사함 "
          f"({inline_code(found.note, MAX_DETAIL_CHARS)})"]
         if found.note else []

@@ -15,6 +15,7 @@ from app.worker.core.rule_pure import Rule, UnreadDoc
 from app.worker.core.violation_pure import Violation
 from app.worker.rules.checker_authoring_pure import JudgeRoute, UncheckedKind
 from app.worker.rules.judge_pure import JudgeUsage
+from app.worker.rules.rule_docs_source_pure import DocsSource
 from app.worker.store.rag_pure import Retrieval
 
 # 규칙 읽기와 검사기 작성 (규칙 묶음 상한에서 세는 단계)
@@ -98,6 +99,7 @@ class RulesRead:
     # 도구 설정의 규칙만으로 검사할 때 규칙 문서를 읽지 못한 이유 (4.3 "실패 시")
     note: str = ""
     sections: tuple[str, ...] = ()  # 규칙 문서가 커서 관련 절만 읽었으면 그 절 (6.3)
+    source: DocsSource | None = None  # PR이 규칙 문서를 고쳤을 때만 (4.3 "규칙 문서의 원천")
 
 
 @dataclass(frozen=True)
@@ -117,16 +119,19 @@ class NotRun:
     """이 경로를 끝까지 돌지 못했다. v1 결과와 테스트는 그대로 나온다."""
 
     reason: str
+    source: DocsSource | None = None  # RulesRead.source
 
 
 @dataclass(frozen=True)
 class NoRuleDocs:
     unread: tuple[UnreadDoc, ...] = ()  # 있었지만 읽지 못한 문서
+    source: DocsSource | None = None  # RulesRead.source
 
 
 @dataclass(frozen=True)
 class NoRulesFound:
     dropped: int = 0  # 모델이 답했지만 원문 확인에서 버린 규칙 수
+    source: DocsSource | None = None  # RulesRead.source
 
 
 @dataclass(frozen=True)
@@ -140,6 +145,7 @@ class Found:
     retrievals: tuple[Retrieval, ...] = ()  # 검사기 작성이 넣은 과거 기록 (검색을 켠 저장소)
     sections: tuple[str, ...] = ()  # RulesRead.sections
     runs: tuple[RunJudged, ...] = ()  # run 규칙의 답. 테스트 뒤에 채운다
+    source: DocsSource | None = None  # RulesRead.source
 
 
 DocRules = NotRun | NoRuleDocs | NoRulesFound | Found
@@ -158,6 +164,8 @@ STATE_TYPES: Final = (
     ("app.worker.rules.doc_rules_pure", "NoRuleDocs"),
     ("app.worker.rules.doc_rules_pure", "NoRulesFound"),
     ("app.worker.rules.doc_rules_pure", "Found"),
+    ("app.worker.rules.rule_docs_source_pure", "DocsSource"),
+    ("app.worker.rules.rule_docs_source_pure", "RuleChange"),
     ("app.worker.core.rule_pure", "Rule"),
     ("app.worker.core.rule_pure", "RuleSource"),
     ("app.worker.core.rule_pure", "CheckMethod"),

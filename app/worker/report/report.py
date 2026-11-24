@@ -154,6 +154,9 @@ def _compose(
     rules_line = doc_rules_report.title(doc_rules, fixes, pr, decisions)
     if rules_line is not None:
         lines.append(rules_line)
+    source_line = doc_rules_report.source_line(doc_rules)
+    if source_line is not None:
+        lines.append(source_line)
     pr_line = pr_check_report_pure.title(pr) if isinstance(doc_rules, Found) else None
     if pr_line is not None:
         lines.append(pr_line)

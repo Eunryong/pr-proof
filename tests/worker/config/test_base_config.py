@@ -192,6 +192,15 @@ def test_old_skills_enabled_without_lint_disables_the_ruff_rule_set(repo_dir: Pa
     assert "`rules.disabled: [ruff]`로 바꿔 주세요" in note
 
 
+def test_load_carries_the_access_of_base(repo_dir: Path) -> None:
+    """규칙 문서를 PR의 것으로 읽을지 정하는 믿는 작성자의 기준도 base에서 온다."""
+    base = _commit(repo_dir, {".pipeline.yaml": "access:\n  trusted: [OWNER]\n"})
+    _commit(repo_dir, {".pipeline.yaml": "access:\n  trusted: [NONE]\n"})
+    assert base_config.load(repo_dir, base, max_memory_gb=4).access == AccessSettings(
+        frozenset({"OWNER"})
+    )
+
+
 # --- 가드레일의 access: 체크아웃 전에 bare 캐시에서 읽는다 (8.6) ---
 
 

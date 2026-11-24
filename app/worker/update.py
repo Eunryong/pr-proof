@@ -64,7 +64,11 @@ def admit(job: PRJob, deps: Deps, final: bool) -> PullRefs | str:
     return refs
 
 
-def flow_context(deps: Deps, run_id: int, comment_id: int | None) -> graph.FlowContext:
+def flow_context(
+    deps: Deps, run_id: int, comment_id: int | None, author: Author | None = None
+) -> graph.FlowContext:
+    """author는 이 작업의 가드레일(8.6)이 GitHub에서 읽은 PR 작성자다. 규칙을 읽지 않는 흐름은
+    넘기지 않는다."""
     return graph.FlowContext(
         store=deps.store,
         github=deps.github,
@@ -77,6 +81,7 @@ def flow_context(deps: Deps, run_id: int, comment_id: int | None) -> graph.FlowC
         rag_model=deps.settings.rag.embed_model,
         rag_allowed=deps.settings.rag.allowed,
         default_model=deps.settings.model.default,
+        author=author,
         sandbox_names=docker_cli.Names(
             image=deps.settings.sandbox.image,
             container_prefix=deps.settings.sandbox.container_prefix,
@@ -98,7 +103,7 @@ def resume_fix(job: PRJob, deps: Deps, approval: dict[str, Any], author: Author)
     _, final = retry.attempt()
     store.set_latest_head(job.repo, job.pr_number, job.head_sha)
     run_id = store.start_run(job, kind="fix", author=author)
-    ctx = flow_context(deps, run_id, store.last_comment_id(job.repo, job.pr_number))
+    ctx = flow_context(deps, run_id, store.last_comment_id(job.repo, job.pr_number), author)
     try:
         result = graph.resume_fix(job, ctx, approval)
     # 수정 뒤 테스트의 설치 실패는 수정 전에 설치가 됐으므로 환경 쪽으로 본다
@@ -168,7 +173,7 @@ def run_admitted(
         comment_id = found.id if found is not None else None
     else:
         comment_id = store.last_comment_id(job.repo, job.pr_number)
-    ctx = flow_context(deps, run_id, comment_id)
+    ctx = flow_context(deps, run_id, comment_id, guard.author(refs))
     try:
         ctx.comment_id = github.upsert_comment(
             job.repo, job.pr_number, report.render_progress(job.head_sha, "체크아웃"), comment_id,

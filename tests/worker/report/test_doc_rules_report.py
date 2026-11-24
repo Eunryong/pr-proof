@@ -14,7 +14,7 @@ from app.worker.fix.fix_pure import MechanicalFix
 from app.worker.fix.model_fix_pure import ModelFix, Verification
 from app.worker.fix.proposal_pure import ProposalResult
 from app.worker.report import doc_rules_report, report
-from app.worker.report.doc_rules_report import NO_RULES, FixView, section, title
+from app.worker.report.doc_rules_report import NO_RULES, FixView, section, source_line, title
 from app.worker.rules.doc_rules_pure import (
     CallUsage,
     CheckerRef,
@@ -28,6 +28,7 @@ from app.worker.rules.doc_rules_pure import (
     RunJudged,
 )
 from app.worker.rules.judge_pure import JudgeUsage
+from app.worker.rules.rule_docs_source_pure import DocsSource, RuleChange
 from app.worker.testing.test_run_pure import PytestRun, ReportSummary
 
 USAGE: Final = CallUsage(calls=3, limit=14, cache_hits=1, models=("claude-haiku-5-5",),
@@ -751,3 +752,102 @@ def test_reasked_pairs_with_a_prior_answer_get_one_folded_line() -> None:
     assert "모델 판단: 지난 판단을 주고 다시 물음 2쌍, 그중 유지 1쌍" in details
     plain = _text(replace(found, judge=replace(usage, reasked=0, kept_prior=0)))
     assert "지난 판단을 주고" not in plain and "모델 판단: 규칙 1개" in plain
+
+
+# --- 규칙 문서를 고친 PR (4.3 "규칙 문서의 원천") ---
+
+FROM_PR: Final = DocsSource(("README.md",), "pr")
+FROM_BASE: Final = DocsSource(("README.md",), "base", "author")
+PR_LINE: Final = (
+    "**규칙 문서:** 이 PR이 규칙 문서를 바꿉니다 (`README.md`). "
+    "이 PR의 문서로 읽은 규칙으로 검사했습니다."
+)
+BASE_LINE: Final = (
+    "**규칙 문서:** 이 PR이 규칙 문서를 바꿉니다 (`README.md`). "
+    "이번 검사는 base의 규칙으로 했습니다. 머지된 뒤부터 새 규칙으로 검사합니다."
+)
+RESULTS: Final = (
+    Found(outcomes=(RuleChecked(RULE, REF),), violations=(), disabled=0, usage=USAGE),
+    NoRuleDocs(),
+    NoRulesFound(),
+    NotRun("규칙을 읽지 않음: 호출 상한"),
+)
+
+
+def _comment(result) -> str:
+    run = PytestRun(exit_code=0, summary=ReportSummary(passed=1, total=1))
+    return report.render_result(run, "a" * 40, 1.0, doc_rules=result)
+
+
+def test_pr_that_leaves_rule_documents_alone_has_no_source_line() -> None:
+    for result in RESULTS:
+        assert result.source is None and source_line(result) is None
+        assert "규칙 문서:" not in _comment(result)
+        assert "없어지는 규칙" not in _comment(result)
+    assert source_line(None) is None
+
+
+def test_source_line_sits_right_under_the_rules_line_for_every_result() -> None:
+    for result in RESULTS[:3]:
+        from_pr = _comment(replace(result, source=FROM_PR))
+        from_base = _comment(replace(result, source=FROM_BASE))
+        rules_line = title(result)
+        assert f"{rules_line}\n{PR_LINE}\n" in from_pr
+        assert f"{rules_line}\n{BASE_LINE}\n" in from_base
+        # 줄 하나만 더해진다
+        assert from_pr.replace(f"{PR_LINE}\n", "") == _comment(result)
+        assert from_base.replace(f"{BASE_LINE}\n", "") == _comment(result)
+
+
+def test_source_line_does_not_claim_a_check_that_did_not_finish() -> None:
+    not_run = RESULTS[3]
+    assert source_line(replace(not_run, source=FROM_PR)) == (
+        "**규칙 문서:** 이 PR이 규칙 문서를 바꿉니다 (`README.md`). "
+        "이 PR의 문서로 읽은 규칙으로 검사하려 했습니다."
+    )
+    assert "base의 규칙으로 하려 했습니다. 머지된 뒤부터" in source_line(
+        replace(not_run, source=FROM_BASE)
+    )
+
+
+def test_base_line_is_the_same_for_setting_and_author() -> None:
+    by_setting = replace(RESULTS[0], source=DocsSource(("README.md",), "base", "setting"))
+    assert source_line(by_setting) == BASE_LINE
+
+
+def test_changed_rules_are_folded_with_quotes_in_code_spans() -> None:
+    evil = "규칙 </details> @everyone <img src=x> `백틱`"
+    source = replace(
+        FROM_PR,
+        removed=(RuleChange("R-readme-aaaaaaaa", "`print`를 쓰지 않는다."),),
+        added=(RuleChange("R-readme-bbbbbbbb", evil), RuleChange("R-readme-cccccccc", "셋째")),
+    )
+    for result in RESULTS:
+        text = _text(replace(result, source=source))
+        assert (
+            "\n<details><summary>없어지는 규칙 1개, 새로 생기는 규칙 2개</summary>\n\n"
+            "없어지는 규칙:\n- `R-readme-aaaaaaaa` `` `print`를 쓰지 않는다. ``\n\n"
+            f"새로 생기는 규칙:\n- `R-readme-bbbbbbbb` {inline_code(evil)}\n"
+            "- `R-readme-cccccccc` `셋째`\n\n</details>"
+        ) in text
+        outside = _outside_code(text)
+        assert "@everyone" not in outside and "<img" not in outside
+    only_added = replace(FROM_PR, added=source.added)
+    text = _text(replace(RESULTS[0], source=only_added))
+    assert "없어지는 규칙 0개, 새로 생기는 규칙 2개" in text and "없어지는 규칙:" not in text
+    assert "없어지는 규칙" not in _text(replace(RESULTS[0], source=FROM_PR))
+
+
+def test_many_documents_and_rules_are_cut_and_skipped_comparison_is_told() -> None:
+    docs = tuple(f"docs/{n}.md" for n in range(8))
+    many = tuple(RuleChange(f"R-x-{n:08d}", f"규칙 {n}") for n in range(40))
+    source = DocsSource(docs, "pr", removed=many, compare_skipped="")
+    line = source_line(replace(RESULTS[0], source=source))
+    assert "(`docs/0.md`, `docs/1.md`, `docs/2.md`, `docs/3.md`, `docs/4.md`, 외 3개)" in line
+    text = _text(replace(RESULTS[0], source=source))
+    assert "없어지는 규칙 40개, 새로 생기는 규칙 0개" in text
+    assert "- `R-x-00000029` `규칙 29`\n- 외 10개" in text and "R-x-00000030" not in text
+    skipped = replace(FROM_PR, compare_skipped="규칙을 읽지 않음: 호출 상한")
+    assert source_line(replace(RESULTS[0], source=skipped)) == (
+        f"{PR_LINE} base의 규칙과는 견주지 못했습니다 (`규칙을 읽지 않음: 호출 상한`)."
+    )
