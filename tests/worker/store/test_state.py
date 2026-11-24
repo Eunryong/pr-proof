@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -357,3 +358,13 @@ def test_feedback_table_is_added_to_an_existing_database(tmp_path: Path) -> None
     store = Store(db, MemoryKeys())
     assert "feedback" in inspect(store.engine).get_table_names()
     assert store.command_handled(1)
+
+
+def test_stage_times_pile_up_in_order_on_the_run(store: Store) -> None:
+    run_id = store.start_run(_job())
+    store.add_stage_time(run_id, "checkout", 1.234)
+    store.add_stage_time(run_id, "test", 20.0)
+    store.add_stage_time(run_id, "checkout", 0.5)  # 수정이 새로 받으면 한 번 더 들어간다
+    (run,) = store.runs("o/r", 1, "abc")
+    assert json.loads(run.stage_seconds) == [["checkout", 1.23], ["test", 20.0], ["checkout", 0.5]]
+    store.add_stage_time(0, "checkout", 1.0)  # runs 기록이 없는 작업은 남길 줄이 없다
