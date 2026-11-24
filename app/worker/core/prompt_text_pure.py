@@ -37,28 +37,25 @@ def load(module_file: str, name: str, **values: object) -> str:
     return template.substitute(values)
 
 
-def fill(text: str, **pieces: str) -> str:
-    """글의 `{{이름}}` 자리에 조각을 끼운다. 자리는 한 줄을 혼자 차지한다. 조각이 빈 글이면 그
-    줄을 없앤다. 줄 가운데에 있는 자리, 조각이 없는 자리, 자리가 없는 조각은 오류다.
+def fill(text: str, **pieces: object) -> str:
+    """글의 `{{이름}}` 자리에 조각이나 값을 끼운다. 한 줄을 혼자 차지한 자리의 조각이 빈 글이면 그
+    줄을 없애고, 그래서 빈 줄이 겹치면 하나로 줄인다. 조각이 없는 자리와 자리가 없는 조각은 오류다.
 
-    `load`의 `$이름`과 따로다. 조각의 글에 `$`가 있어도(ast-grep의 `$A`) 그대로 둔다.
+    `load`의 `$이름`과 따로다. 조각의 글에 `$`가 있어도(ast-grep의 `$A`) 그대로 두고, 끼운 조각
+    안의 `{{이름}}`은 다시 채우지 않는다.
     """
-    lines: list[str] = []
-    used: set[str] = set()
-    for line in text.split("\n"):
-        slot = _SLOT.fullmatch(line.strip())
-        if slot is None:
-            if _SLOT.search(line):
-                raise ValueError(f"자리는 한 줄을 혼자 차지해야 한다: {line.strip()!r}")
-            lines.append(line)
-            continue
-        name = slot.group(1)
-        if name not in pieces:
-            raise ValueError(f"조각이 없는 자리: {name}")
-        used.add(name)
-        if pieces[name]:
-            lines.append(pieces[name])
-    unused = set(pieces) - used
+    missing = sorted(set(_SLOT.findall(text)) - set(pieces))
+    if missing:
+        raise ValueError(f"조각이 없는 자리: {', '.join(missing)}")
+    unused = sorted(set(pieces) - set(_SLOT.findall(text)))
     if unused:
-        raise ValueError(f"글에 없는 자리: {', '.join(sorted(unused))}")
+        raise ValueError(f"글에 없는 자리: {', '.join(unused)}")
+    lines: list[str] = []
+    for line in text.split("\n"):
+        alone = _SLOT.fullmatch(line.strip())
+        if alone is not None and not str(pieces[alone.group(1)]):
+            if lines and not lines[-1].strip():
+                lines.pop()  # 없앤 줄 앞의 빈 줄. 뒤의 빈 줄 하나는 남는다
+            continue
+        lines.append(_SLOT.sub(lambda m: str(pieces[m.group(1)]), line))
     return "\n".join(lines)
