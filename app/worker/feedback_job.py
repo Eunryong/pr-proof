@@ -23,6 +23,7 @@ from typing import Final, Literal
 
 from app.shared.feedback_pure import handled, resolution_reason
 from app.shared.job_pure import PRJob
+from app.shared.other_server_pure import skips
 from app.worker import graph, retry, update
 from app.worker.config import base_config
 from app.worker.config.repo_config_pure import RepoConfig, call_limits
@@ -94,6 +95,12 @@ def process_feedback(job: PRJob, deps: Deps) -> str:
         items = collect(deps.github, deps.store, job.repo, job.pr_number, admitted.head_sha)
         if not items:
             return "no_feedback"
+        # 판이 같거나 높은 다른 서버가 결과 코멘트의 주인이면 그 서버가 이 PR의 코멘트도 다룬다.
+        # 기록을 남기지 않으므로 이 서버가 넘겨받으면 그때 다룬다
+        current = job.model_copy(update={"head_sha": admitted.head_sha})
+        found = deps.github.result_comment(job.repo, job.pr_number)
+        if skips(update.other_server(current, deps, found)):
+            return "other_server"
         return handle_items(job, deps, admitted, items)
     except Exception:  # 환경 오류든 버그든 재시도는 RQ가 한다
         if final:

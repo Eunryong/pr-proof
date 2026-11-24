@@ -8,8 +8,9 @@ from dataclasses import dataclass
 from typing import Final
 
 from app.shared import config, github_auth
-from app.shared.comment_pure import COMMENT_MARKER, REPLY_MARKER
+from app.shared.comment_pure import COMMENT_MARKER, REPLY_MARKER, result_marker
 from app.shared.feedback_pure import FEEDBACK_MARKER
+from app.shared.other_server_pure import Server
 from app.worker.git import git_pure
 from app.worker.git.git_pure import Linked
 
@@ -93,6 +94,14 @@ class ReviewBody:
     login: str
     association: str
     body: str
+
+
+@dataclass(frozen=True)
+class ResultComment:
+    """이 계정이 단 결과 코멘트. marker는 그 첫 줄(표시)이다."""
+
+    id: int
+    marker: str
 
 
 @dataclass(frozen=True)
@@ -188,9 +197,12 @@ def run_gh(args: list[str], stdin: str | None = None) -> str:
 
 
 class GitHub:
-    def __init__(self, runner: GhRunner = run_gh) -> None:
+    def __init__(self, runner: GhRunner = run_gh, server: Server | None = None) -> None:
+        """server는 결과 코멘트의 표시에 싣는 이 서버의 id와 판이다. 없으면 서버 정보가 없는 표시만
+        단다(다른 서버에게는 주인을 모르는 코멘트로 보인다)."""
         self._run = runner
         self._login: str | None = None
+        self.server = server
 
     def login(self) -> str:
         if self._login is None:
@@ -466,26 +478,57 @@ class GitHub:
         if errors:
             raise GitHubError(f"스레드 해결 실패: {repo} {thread_id}: {errors}")
 
-    def find_comment(self, repo: str, pr_number: int) -> int | None:
-        """이 계정이 단, 파이프라인 표시가 있는 코멘트의 ID."""
-        jq = f'.[] | select(.body | contains("{COMMENT_MARKER}")) | [.id, .user.login] | @tsv'
+    def result_comment(self, repo: str, pr_number: int) -> ResultComment | None:
+        """이 계정이 단, 파이프라인 표시가 있는 결과 코멘트의 ID와 첫 줄(표시).
+
+        다른 계정의 코멘트는 보지 않는다. 표시는 누구나 흉내 낼 수 있어, 다른 사람의 글이 이 서버를
+        양보하게 만들지 못하게 한다.
+        """
+        jq = (
+            f'.[] | select(.body | contains("{COMMENT_MARKER}")) '
+            '| [.id, .user.login, (.body | split("\\n") | .[0])] | @tsv'
+        )
         out = self._run(
             ["api", "--paginate", f"repos/{repo}/issues/{pr_number}/comments", "--jq", jq], None
         )
         me = self.login()
         for line in out.splitlines():
-            comment_id, _, author = line.partition("\t")
+            comment_id, author, marker = (line.split("\t") + ["", ""])[:3]
             if author == me:
-                return int(comment_id)
+                return ResultComment(int(comment_id), marker)
         return None
 
-    def upsert_comment(self, repo: str, pr_number: int, body: str, comment_id: int | None) -> int:
-        """코멘트를 고치거나, 없으면 단다. 본문에 파이프라인 표시를 붙인다."""
-        payload = json.dumps({"body": f"{COMMENT_MARKER}\n{body}"})
+    def find_comment(self, repo: str, pr_number: int) -> int | None:
+        """이 계정이 단, 파이프라인 표시가 있는 코멘트의 ID."""
+        found = self.result_comment(repo, pr_number)
+        return found.id if found is not None else None
+
+    def marker(self, head_sha: str) -> str:
+        """결과 코멘트의 첫 줄: 이 서버의 id와 판, 코멘트가 말하는 커밋을 실은 표시."""
+        if self.server is None:
+            return COMMENT_MARKER
+        return result_marker(self.server.id, self.server.version, head_sha)
+
+    def upsert_comment(
+        self,
+        repo: str,
+        pr_number: int,
+        body: str,
+        comment_id: int | None,
+        *,
+        head_sha: str,
+        search: bool = True,
+    ) -> int:
+        """코멘트를 고치거나, 없으면 단다. 본문 앞에 이 서버와 head_sha를 실은 표시를 붙인다.
+
+        search가 False면 comment_id가 없거나 지워졌을 때 GitHub에서 다시 찾지 않고 새로 단다(방금
+        `result_comment`로 찾아 본 경우).
+        """
+        payload = json.dumps({"body": f"{self.marker(head_sha)}\n{body}"})
         if comment_id is not None and self._patch(repo, comment_id, payload):
             return comment_id
         # 저장한 ID가 없거나 코멘트가 지워졌으면 다시 찾고, 그래도 없으면 새로 단다
-        comment_id = self.find_comment(repo, pr_number)
+        comment_id = self.find_comment(repo, pr_number) if search else None
         if comment_id is not None and self._patch(repo, comment_id, payload):
             return comment_id
         out = self._run(

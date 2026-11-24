@@ -364,8 +364,9 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
 
     def progress(job: PRJob, step: str) -> None:
         ctx.comment_id = ctx.github.upsert_comment(
-            job.repo, job.pr_number, report.render_progress(job.head_sha, step), ctx.comment_id
-        )
+            job.repo, job.pr_number, report.render_progress(job.head_sha, step), ctx.comment_id,
+            head_sha=job.head_sha,
+        )  # fmt: skip
 
     def tests_for(job: PRJob, worktree: Path | None = None, *, contexts: bool = False) -> PytestRun:
         return pr_tests(ctx, job, worktree, contexts=contexts)
@@ -679,7 +680,7 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
     def comment(state: FlowState) -> FlowState:
         job = state["job"]
         ctx.comment_id = ctx.github.upsert_comment(
-            job.repo, job.pr_number, render(state), ctx.comment_id
+            job.repo, job.pr_number, render(state), ctx.comment_id, head_sha=job.head_sha
         )
         return {"commented": True}
 
@@ -821,7 +822,7 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
     def fix_comment(state: FlowState) -> FlowState:
         job = state["job"]
         ctx.comment_id = ctx.github.upsert_comment(
-            job.repo, job.pr_number, render(state), ctx.comment_id
+            job.repo, job.pr_number, render(state), ctx.comment_id, head_sha=job.head_sha
         )
         return {}
 

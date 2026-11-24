@@ -9,8 +9,10 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 
+from app.shared.other_server_pure import DEFER_WAIT, DEFERRED, ELSEWHERE
+
 EnqueueReason = Literal[
-    "no_record", "env_error_backoff", "dead_worker", "cancelled", "new_pipeline"
+    "no_record", "env_error_backoff", "dead_worker", "cancelled", "new_pipeline", "deferred"
 ]
 
 
@@ -61,6 +63,14 @@ def enqueue_reason(
     if last.state == "error":
         # 파이프라인 버그나 시간 초과는 같은 커밋으로 다시 돌려도 같은 결과다. 새 커밋 때만 검사한다
         return None
+    if last.state == ELSEWHERE:
+        # 같은 저장소를 보는 다른 서버가 이 커밋을 이미 처리했다. 새 커밋 때만 다시 본다
+        return None
+    if last.state == DEFERRED:
+        # 다른 서버가 이 커밋을 처리하기를 기다린다. 시간이 지나면 한 번 더 넣어, 워커가 그 서버가
+        # 처리했는지 보고 아니면 넘겨받게 한다
+        finished = _utc(last.finished_at or last.heartbeat_at)
+        return "deferred" if now - finished >= DEFER_WAIT else None
     if last.state == "env_error":
         finished = _utc(last.finished_at or last.heartbeat_at)
         return "env_error_backoff" if now - finished >= env_error_backoff else None

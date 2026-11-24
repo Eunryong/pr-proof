@@ -320,9 +320,11 @@ gh 로그인 대신 토큰을 쓸 수 있다. 토큰은 설정 폴더의 `github
 | --- | --- |
 | `pr-proof add <repo>` | 허용 목록에 더하고 권한을 확인하고 웹훅을 등록한다 |
 | `pr-proof rm <repo>` | 허용 목록에서 빼고 pr-proof가 등록한 웹훅만 지운다 |
-| `pr-proof list` | 처리하는 repo 목록. `--check`를 주면 웹훅까지 확인한다 |
+| `pr-proof list` | 처리하는 repo 목록. `--check`를 주면 웹훅과, 같은 repo를 처리하는 다른 pr-proof 서버까지 확인한다 |
 
 `rm`은 그 repo의 PR 코멘트, 열린 수정안 PR, 데이터 폴더의 기록(DB, 캐시)은 그대로 둔다. 도는 서버는 목록을 시작할 때만 읽으므로 `add`와 `rm` 뒤에는 서버를 다시 띄운다.
+
+한 repo는 한 서버만 보게 한다. 다른 컴퓨터의 pr-proof 서버가 같은 repo를 처리하고 있으면 결과 코멘트의 숨은 표시로 알아채, 판이 같거나 높은 서버에게 양보하고 한 서버에서 `pr-proof rm <repo>`로 빼라고 macOS 알림으로 권한다(저절로 빼지 않는다. docs/OPERATIONS.md).
 
 ### model
 

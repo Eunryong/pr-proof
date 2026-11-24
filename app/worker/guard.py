@@ -59,7 +59,7 @@ def block(job: PRJob, deps: Deps, refs: PullRefs) -> str:
     store = deps.store
     comment_id = deps.github.upsert_comment(
         job.repo, job.pr_number, approval_guide(refs.head_sha),
-        store.last_comment_id(job.repo, job.pr_number),
+        store.last_comment_id(job.repo, job.pr_number), head_sha=refs.head_sha,
     )  # fmt: skip
     store.record_blocked(job, refs.head_sha, author(refs), comment_id)
     return NEEDS_APPROVAL

@@ -61,6 +61,8 @@ def unexpected_error(
 
 def _show(job: PRJob, ctx: graph.FlowContext, body: str) -> None:
     try:
-        ctx.comment_id = ctx.github.upsert_comment(job.repo, job.pr_number, body, ctx.comment_id)
+        ctx.comment_id = ctx.github.upsert_comment(
+            job.repo, job.pr_number, body, ctx.comment_id, head_sha=job.head_sha
+        )
     except GitHubError:
         log.warning("오류 표시를 PR에 남기지 못함")  # gh 자체가 원인일 수 있다

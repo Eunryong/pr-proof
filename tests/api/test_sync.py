@@ -94,6 +94,21 @@ def test_blocked_head_is_not_queued_again(env) -> None:
     assert _sync(env, [_pr()]).enqueued == []
 
 
+def test_head_another_server_did_is_not_queued_again(env) -> None:
+    run = env["store"].start_run(_job())
+    env["store"].finish_run(run, "elsewhere")
+    assert _sync(env, [_pr()]).enqueued == []
+    assert _sync(env, [_pr()], now=datetime.now(UTC) + timedelta(days=1)).enqueued == []
+
+
+def test_deferred_head_is_queued_once_more_after_the_wait(env) -> None:
+    run = env["store"].start_run(_job())
+    env["store"].finish_run(run, "deferred")
+    assert _sync(env, [_pr()], now=datetime.now(UTC) + timedelta(minutes=29)).enqueued == []
+    later = datetime.now(UTC) + timedelta(minutes=31)
+    assert _sync(env, [_pr()], now=later).enqueued == [("o/r", 1, "deferred")]
+
+
 def test_done_head_is_not_queued_again(env) -> None:
     run = env["store"].start_run(_job())
     env["store"].finish_run(run, "done", test_status="passed")
@@ -378,6 +393,15 @@ def test_blocked_pr_gets_no_feedback_job(env) -> None:
     """승인을 기다리는 PR에 넣으면 주기마다 승인 안내를 다시 달고 blocked 기록이 쌓인다."""
     run = env["store"].start_run(_job())
     env["store"].finish_run(run, "blocked")
+    _sync(env, [_pr()], feedback=[_item(1)])
+    assert _jobs(env, "feedback") == []
+
+
+@pytest.mark.parametrize("state", ["elsewhere", "deferred"])
+def test_pr_another_server_handles_gets_no_feedback_job(env, state: str) -> None:
+    """그 서버가 코멘트도 다룬다. 넣으면 주기마다 워커가 표시만 읽고 끝난다."""
+    run = env["store"].start_run(_job())
+    env["store"].finish_run(run, state)
     _sync(env, [_pr()], feedback=[_item(1)])
     assert _jobs(env, "feedback") == []
 

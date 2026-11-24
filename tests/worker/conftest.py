@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from app.shared import config, state_keys_pure
+from app.shared.other_server_pure import Server
 from app.worker.config import base_config
 from app.worker.config.access_pure import AccessSettings
 from app.worker.deps import Deps
@@ -17,7 +18,7 @@ from app.worker.store.state import Store
 
 from ..redis_stand_ins import MemoryKeys
 from .git.test_github import FakeGh
-from .helpers import BASE, HEAD
+from .helpers import BASE, HEAD, ME, ME_VERSION
 
 
 @pytest.fixture
@@ -35,7 +36,7 @@ def _env(tmp_path: Path, monkeypatch, redis):
     gh = FakeGh()
     deps = Deps(
         store=Store(tmp_path / "pipeline.db", redis),
-        github=GitHub(gh),
+        github=GitHub(gh, server=Server(ME, ME_VERSION)),
         settings=config.PipelineConfig(repos=["o/r"], data_dir=tmp_path / "data"),
     )
 

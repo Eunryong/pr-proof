@@ -16,7 +16,8 @@ from app.setup import configure as flow
 from app.setup import files
 from app.setup import github_setup as gh
 from app.setup import setup_pure as pure
-from app.shared import config, github_auth
+from app.shared import config, github_auth, server
+from app.shared.comment_pure import COMMENT_MARKER, result_marker
 from app.shared.embed_models_pure import E5_SMALL, EmbedModel
 from app.worker import preflight
 
@@ -24,6 +25,7 @@ REPO: Final = "octocat/hello-world"
 OTHER: Final = "octocat/spoon-knife"
 SMEE: Final = "https://smee.io/FAKEnewchannel"
 TOKEN: Final = "github_pat_FAKE2222222222222222222222"
+HEAD: Final = "a" * 40
 HINTS: Final = json.loads((Path(flow.__file__).with_name("install_hints.json")).read_text())
 
 
@@ -38,6 +40,10 @@ class FakeGitHub:
         self.payloads: list[dict[str, object]] = []
         self.tokens_seen: list[str | None] = []
         self.next_id = 100
+        # 열린 PR 번호와 PR마다 결과 코멘트 (작성자, 고친 때, 첫 줄)
+        self.pulls: dict[str, list[int]] = {}
+        self.result_comments: dict[tuple[str, int], list[tuple[str, str, str]]] = {}
+        self.pulls_error = False
 
     def runner(self, token: str | None) -> gh.Runner:
         self.tokens_seen.append(token)
@@ -74,6 +80,14 @@ class FakeGitHub:
                 return ""
         path = next(a for a in args if a.startswith("repos/"))
         repo = "/".join(path.split("/")[1:3])
+        if "/pulls?state=open" in path:
+            if self.pulls_error:
+                raise gh.SetupGitHubError("gh api repos 실패: HTTP 502")
+            return "".join(f"{n}\n" for n in self.pulls.get(repo, []))
+        if path.endswith("/comments"):
+            number = int(path.split("/")[-2])
+            rows = self.result_comments.get((repo, number), [])
+            return "".join("\t".join(row) + "\n" for row in rows)
         if path.endswith("/hooks"):
             if not self.hook_admin:
                 raise gh.NoPermission("gh api --paginate 실패: HTTP 404")
@@ -718,6 +732,38 @@ def test_list_check_shows_hook_state_and_survives_failures(env) -> None:
     env["gh"].hook_admin = False
     code, lines = _list(env, check=True)
     assert code == 0 and all("권한 없음" in line for line in lines)
+
+
+def test_list_check_shows_other_servers_in_open_prs(env, tmp_path: Path) -> None:
+    """이 계정이 단 결과 코멘트의 표시에서 다른 서버를 찾는다. 이 서버의 표시, 서버 정보가 없는 옛
+    표시, 다른 계정이 흉내 낸 표시는 세지 않는다."""
+    _configure(env, repos=[REPO, OTHER], auth="gh")
+    data = tmp_path / "data"
+    with (env["dir"] / "config.yaml").open("a") as f:
+        f.write(f"data_dir: {data}\n")
+    mine = server.load_id(data)
+    env["gh"].hook(REPO, SMEE)
+    env["gh"].hook(OTHER, SMEE)
+    env["gh"].pulls = {REPO: [12, 11]}
+    env["gh"].result_comments = {
+        (REPO, 12): [("me", "2026-11-24T10:05:00Z", result_marker("bbbb2222", "0.2.0", HEAD)),
+                     ("someone", "2026-11-24T11:00:00Z", result_marker("dddd4444", "9.0.0", HEAD))],
+        (REPO, 11): [("me", "2026-11-23T09:00:00Z", result_marker("bbbb2222", "0.1.9", HEAD)),
+                     ("me", "2026-11-23T09:30:00Z", result_marker(mine, "0.1.3", HEAD)),
+                     ("me", "2026-11-23T09:40:00Z", COMMENT_MARKER)],
+    }  # fmt: skip
+    code, lines = _list(env, check=True)
+    assert code == 0
+    assert lines == [
+        f"{REPO}  웹훅 있음, 이벤트 맞음",
+        f"{REPO}  다른 pr-proof 서버가 처리하고 있음: 서버 bbbb2222 (판 0.2.0, 마지막 처리 "
+        f"2026-11-24 10:05 UTC PR #12). 한 서버에서 npx . rm {REPO}로 빼세요",
+        f"{OTHER}  웹훅 있음, 이벤트 맞음",
+    ]
+    assert [p.name for p in data.iterdir()] == [server.ID_FILE]  # list는 데이터 폴더에 쓰지 않는다
+    env["gh"].pulls_error = True
+    code, lines = _list(env, check=True)
+    assert code == 0 and f"{OTHER}  다른 pr-proof 서버를 확인하지 못함 (GitHub 조회 실패)" in lines
 
 
 def test_add_and_rm_ignore_case_and_take_addresses(env) -> None:

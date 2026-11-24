@@ -1,9 +1,11 @@
 """macOS 알림 한 줄 띄우기 (DESIGN.md 13절 6단계, 완료 기준 6-4).
 
-웹(동기화)과 워커가 같이 쓴다. 사람이 해야 풀리는 환경 오류에만 부른다(`app/shared/ops_alert_pure`).
+웹(동기화)과 워커가 같이 쓴다. 사람이 해야 풀리는 일(환경 오류, 같은 저장소를 보는 다른 서버)에만
+부른다(`app/shared/ops_alert_pure`).
 `osascript`의 `display notification`을 셸 없이 인자 목록으로 부르고, 글은 AppleScript 소스가 아니라
 `on run argv`의 인자로 넘긴다. macOS가 아니거나 `osascript`가 없거나 실패하면 아무것도 하지 않는다.
-같은 종류는 `data_dir/alerts/<종류>`의 시각으로 30분에 한 번만 띄운다. 표시가 파일이라 프로세스를
+같은 종류는 `data_dir/alerts/<종류>`의 시각으로 30분에 한 번만 띄운다(다른 서버의 권고는 저장소·서버
+짝마다 하루에 한 번). 표시가 파일이라 프로세스를
 다시 띄워도, Redis가 꺼져도 센다. 무엇이 잘못돼도 예외를 올리지 않는다. 알림은 아무것도 고치지
 않는다(다시 시작, Docker 켜기, 로그인을 하지 않는다).
 """
@@ -70,13 +72,26 @@ def send(
     window_seconds: int = WINDOW_SECONDS,
     show: Show | None = None,
 ) -> Outcome:
-    """이 종류의 알림을 띄운다. 같은 종류를 창 안에 이미 띄웠으면 띄우지 않는다.
+    """이 종류의 알림을 띄운다. 같은 종류를 창 안에 이미 띄웠으면 띄우지 않는다."""
+    return send_text(kind, TEXT[kind], data_dir, now=now, window_seconds=window_seconds, show=show)
+
+
+def send_text(
+    key: str,
+    text: str,
+    data_dir: Path,
+    *,
+    now: float | None = None,
+    window_seconds: int = WINDOW_SECONDS,
+    show: Show | None = None,
+) -> Outcome:
+    """글 한 줄을 띄운다. 같은 key를 창 안에 이미 띄웠으면 띄우지 않는다.
 
     워커와 웹이 동시에 부를 수 있어 표시 폴더의 잠금 안에서 확인하고 띄우고 적는다. 띄우지 못하면
     표시를 적지 않아 다음 오류가 다시 띄운다.
     """
     folder = data_dir / MARKER_DIR
-    marker = folder / kind
+    marker = folder / key
     show = show or show_notification
     try:
         folder.mkdir(parents=True, exist_ok=True)
@@ -85,13 +100,13 @@ def send(
             moment = time.time() if now is None else now
             if not due(_last_shown(marker), moment, window_seconds):
                 return "duplicate"
-            if not show(TEXT[kind]):
+            if not show(text):
                 return "failed"
             try:
                 marker.write_text(f"{moment}\n")
             except OSError:
-                log.warning("운영 알림: 표시를 적지 못해 다음 오류가 다시 띄운다 (%s)", kind)
+                log.warning("운영 알림: 표시를 적지 못해 다음 오류가 다시 띄운다 (%s)", key)
     except OSError:
-        log.warning("운영 알림: 표시 폴더를 쓰지 못해 띄우지 않음 (%s)", kind)
+        log.warning("운영 알림: 표시 폴더를 쓰지 못해 띄우지 않음 (%s)", key)
         return "failed"
     return "shown"

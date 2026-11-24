@@ -20,7 +20,7 @@ from app.api import cli, signature, sync, webhook
 from app.api.github import OpenPR
 from app.api.history import History
 from app.shared import state_keys_pure
-from app.shared.comment_pure import COMMENT_MARKER
+from app.shared.comment_pure import result_marker
 from app.shared.db_pure import Approval, Run
 from app.shared.job_pure import PRJob
 from app.worker import graph, guard, main, retry
@@ -34,7 +34,7 @@ from app.worker.sandbox import docker_cli
 from app.worker.sandbox.docker_cli import SandboxError
 
 from .git.test_github import is_reply
-from .helpers import HEAD, PASSED, use_runner
+from .helpers import HEAD, ME, ME_VERSION, PASSED, use_runner
 
 NEW_HEAD: Final = "c" * 40
 BASE_SHA: Final = "b" * 40
@@ -95,7 +95,7 @@ def _assert_only_the_guide(gh, head: str, since: int = 0) -> None:
     args, stdin = writes[0]
     assert "issues/1/comments" in " ".join(args) or "issues/comments/" in " ".join(args)
     body = json.loads(stdin)["body"]
-    assert body.split("\n") == [COMMENT_MARKER, guard.approval_guide(head)]
+    assert body.split("\n") == [result_marker(ME, ME_VERSION, head), guard.approval_guide(head)]
     assert f"`/recheck {head}`" in body  # 승인에 그대로 복사할 수 있는 전체 해시
     # PR의 제목·본문(작성자의 글)은 가드레일이 들인 작업의 PR 단위 확인만 읽는다 (4.5 끝, T27)
     assert gh.text_lookups == 0
