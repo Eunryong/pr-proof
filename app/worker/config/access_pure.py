@@ -78,6 +78,12 @@ def may_run(
     return NeedsApproval(head_sha)
 
 
+def is_trusted(author: Author | None, access: AccessSettings) -> bool:
+    """PR 작성자가 `access.trusted`에 드는지. 작성자를 모르면 믿지 않는다. 봇(`access.bots`)과
+    커밋 승인은 검사를 돌려도 된다는 뜻일 뿐이라 여기에 들지 않는다."""
+    return author is not None and author.association in access.trusted
+
+
 def may_approve(association: str | None, login: str | None, access: AccessSettings) -> bool:
     """승인 명령을 단 사람이 승인할 수 있는지. 값은 워커가 GitHub에서 읽은 코멘트의 것이다.
 

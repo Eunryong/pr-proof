@@ -25,6 +25,7 @@ from app.shared.feedback_pure import handled, resolution_reason
 from app.shared.job_pure import PRJob
 from app.worker import graph, retry, update
 from app.worker.config import base_config
+from app.worker.config.access_pure import Author, is_trusted
 from app.worker.config.repo_config_pure import RepoConfig, call_limits
 from app.worker.core.bundle_pure import FEEDBACK_BUNDLE
 from app.worker.core.rule_pure import Rule
@@ -53,6 +54,7 @@ from app.worker.rules import detect, doc_rules, rules
 from app.worker.rules.checker_authoring_pure import Checked
 from app.worker.rules.detect import Detection, source_lines
 from app.worker.rules.doc_rules_pure import Found
+from app.worker.rules.rule_docs_source_pure import read_commit, source_for
 from app.worker.store.budget import CallBudget
 from app.worker.store.records_pure import targets_from_json
 from app.worker.store.state import Store
@@ -146,10 +148,18 @@ def _head_text(bare, head_sha: str, path: str) -> str:
         return ""
 
 
-def read_material(deps: Deps, work: PRJob, items: Sequence[Item], ask: AskModel) -> Material:
-    """판단 자료를 읽는다. 규칙 묶음은 규칙 검사가 저장한 것을 쓰고(키는 base의 규칙 문서), 없으면
-    그때만 체크아웃해 규칙 읽기를 한 번 한다(테스트는 돌리지 않는다). 그 결과도 같은 키로 저장돼
-    규칙 검사가 다시 쓴다."""
+def read_material(
+    deps: Deps,
+    work: PRJob,
+    items: Sequence[Item],
+    ask: AskModel,
+    *,
+    author: Author | None = None,
+) -> Material:
+    """판단 자료를 읽는다. 규칙 묶음은 규칙 검사가 저장한 것을 쓰고(키는 규칙 검사가 읽은 커밋의
+    규칙 문서), 없으면 그때만 체크아웃해 규칙 읽기를 한 번 한다(테스트는 돌리지 않는다). 그 결과도
+    같은 키로 저장돼 규칙 검사가 다시 쓴다. author는 GitHub에서 읽은 PR 작성자다. 규칙 문서를 읽는
+    커밋을 규칙 검사와 같은 기준으로 정하는 데 쓴다."""
     data_dir, store = deps.settings.data_dir, deps.store
     bare = repo.ensure_bare(data_dir, work.repo)
     repo.fetch_pr(bare, work.pr_number, work.base_sha)
@@ -157,12 +167,20 @@ def read_material(deps: Deps, work: PRJob, items: Sequence[Item], ask: AskModel)
         data_dir, work.repo, work.base_sha, default_model=deps.settings.model.default
     )
     model = config.model.rules
-    saved = rules.saved_rules(bare, work.base_sha, config.rules, model=model, store=store)
+    access = base_config.load_access(data_dir, work.repo, work.base_sha)
+    source = source_for(
+        config.rules.docs,
+        repo.bare_entries(bare, work.base_sha, config.rules.docs),
+        repo.bare_entries(bare, work.head_sha, config.rules.docs),
+        trusted=is_trusted(author, access), rules_from=config.rules.docs_from,
+    )  # fmt: skip
+    docs_sha = read_commit(source, work.base_sha, work.head_sha)
+    saved = rules.saved_rules(bare, docs_sha, config.rules, model=model, store=store)
     if saved is None:
         with repo.checkout(data_dir, work.repo, work.pr_number, work.head_sha,
                            work.base_sha) as co:  # fmt: skip
             saved = rules.load_rules(
-                co.path, work.base_sha, config.rules, model=model, store=store,
+                co.path, docs_sha, config.rules, model=model, store=store,
                 budget=_budget(deps, work, config), ask=ask,
             )  # fmt: skip
     found, note = _rules_of(saved)
@@ -396,7 +414,8 @@ def handle_items(
             finish(item, Handled(o.kind, number=o.number))
     rest = [i for i in items if i.item_id not in covered]
     if rest:
-        material = read_material(deps, work, rest, ask)
+        author = Author(refs.author_association, refs.author_login)
+        material = read_material(deps, work, rest, ask, author=author)
         decided = feedback_triage.triage(
             rest, rules=material.rules, rules_note=material.rules_note, facts=material.facts,
             code=material.code, fixes=fixes, store=store,

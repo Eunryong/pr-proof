@@ -1,10 +1,12 @@
 """규칙 경로 (docs/DESIGN.md 5.1): 규칙 읽기 → 검사 방법 정하기(도구, 검사기 작성) → 위반 찾기.
 
-규칙은 base의 문서(모델이 읽음)와 도구 설정(ruff 설정, 결정적으로 읽음)에서 나온다. 둘 다 없으면
-규칙 검사를 하지 않는다 (2.2). 찾기만 한다(수정은 app/worker/fix/mechanical_fix.py,
-app/worker/fix/model_fix.py). 이 경로의 실패(모델 호출 실패, 호출 상한, 도구 준비 실패, 샌드박스
-오류)는 작업을 실패시키지 않고 `NotRun`이나 규칙별 "검사하지 못함"으로 남는다. 규칙 문서를 읽지
-못해도 도구 설정의 규칙은 검사한다 (4.3 "실패 시"). 테스트 결과는 그대로 나온다.
+규칙은 문서(모델이 읽음)와 base의 도구 설정(ruff 설정, 결정적으로 읽음)에서 나온다. 문서는 base
+커밋의 것을 읽고, 믿는 작성자의 PR이 규칙 문서를 고쳤으면 그 PR의 것을 읽는다
+(app/worker/rules/rule_docs_source_pure.py). 둘 다 없으면 규칙 검사를 하지 않는다 (2.2). 찾기만
+한다(수정은 app/worker/fix/mechanical_fix.py, app/worker/fix/model_fix.py). 이 경로의 실패(모델
+호출 실패, 호출 상한, 도구 준비 실패, 샌드박스 오류)는 작업을 실패시키지 않고 `NotRun`이나 규칙별
+"검사하지 못함"으로 남는다. 규칙 문서를 읽지 못해도 도구 설정의 규칙은 검사한다 (4.3 "실패 시").
+테스트 결과는 그대로 나온다.
 """
 
 import logging
@@ -15,7 +17,7 @@ from pathlib import Path
 from app.worker.config.repo_config_pure import ModelSettings, RulesSettings
 from app.worker.core.checker_pure import TOOL_KINDS, Checker, tool_codes
 from app.worker.core.diff_pure import added_lines, new_files
-from app.worker.core.rule_pure import checked_exclude
+from app.worker.core.rule_pure import Rule, checked_exclude
 from app.worker.core.tools_pure import RuffSetup, config_rule
 from app.worker.git import repo
 from app.worker.git.repo import GitError
@@ -45,6 +47,12 @@ from app.worker.rules.doc_rules_pure import (
     call_usage,
     with_run_failures,
 )
+from app.worker.rules.rule_docs_source_pure import (
+    DocsSource,
+    read_commit,
+    source_for,
+    with_comparison,
+)
 from app.worker.rules.rule_reading_pure import apply_disabled
 from app.worker.rules.tool_choice_pure import choice_key
 from app.worker.sandbox import docker_cli
@@ -72,36 +80,84 @@ class Runtime:
 
 
 def read(
-    worktree: Path, base_sha: str, settings: RulesSettings, rt: Runtime, changes_diff: bytes = b""
+    worktree: Path,
+    base_sha: str,
+    settings: RulesSettings,
+    rt: Runtime,
+    changes_diff: bytes = b"",
+    *,
+    head_sha: str | None = None,
+    trusted: bool = False,
 ) -> RulesRead | DocRules:
-    """base의 규칙 문서와 도구 설정을 읽는다. 검사할 규칙이 있으면 RulesRead, 없으면 끝난 결과.
+    """규칙 문서와 base의 도구 설정을 읽는다. 검사할 규칙이 있으면 RulesRead, 없으면 끝난 결과.
 
-    changes_diff(PR의 diff)는 규칙 문서가 400KB를 넘는 저장소에서 관련 절을 찾는 데 쓴다 (6.3).
+    head_sha는 PR의 커밋이고 trusted는 PR 작성자가 믿는 작성자인지다. PR이 규칙 문서를 고쳤으면
+    이 둘과 `rules.from`으로 문서를 읽는 커밋을 정하고 결과의 source에 싣는다. head_sha가 없으면
+    base의 문서를 읽는다. changes_diff(PR의 diff)는 규칙 문서가 400KB를 넘는 저장소에서 관련 절을
+    찾는 데 쓴다 (6.3).
     """
     configured = (config_rule(rt.ruff.config),) if rt.ruff and rt.ruff.config else ()
     tool_rules = apply_disabled(configured, settings.disabled)
-    docs = _read_documents(worktree, base_sha, settings, rt, changes_diff)
+    docs = _read_documents(worktree, base_sha, head_sha, settings, rt, changes_diff, trusted)
     if isinstance(docs, RulesRead):
         return replace(docs, rules=(*docs.rules, *tool_rules),
                        disabled=docs.disabled + len(configured) - len(tool_rules))  # fmt: skip
     if not tool_rules:
         return docs
     note = docs.reason if isinstance(docs, NotRun) else ""
-    return RulesRead("", tool_rules, disabled=0, note=note)
+    return RulesRead("", tool_rules, disabled=0, note=note, source=docs.source)
+
+
+def docs_source(
+    worktree: Path, base_sha: str, head_sha: str, settings: RulesSettings, trusted: bool
+) -> DocsSource | None:
+    """PR이 규칙 문서를 고쳤으면 어느 쪽 문서로 읽을지, 고치지 않았으면 None. 두 커밋의 트리만
+    읽는다."""
+    return source_for(
+        settings.docs,
+        repo.list_base_entries(worktree, base_sha, settings.docs),
+        repo.list_base_entries(worktree, head_sha, settings.docs),
+        trusted=trusted, rules_from=settings.docs_from,
+    )  # fmt: skip
+
+
+def _load(
+    worktree: Path, sha: str, settings: RulesSettings, rt: Runtime, changes_diff: bytes
+) -> rules.RulesResult:
+    return rules.load_rules(
+        worktree, sha, settings, model=rt.models.rules, store=rt.store,
+        budget=rt.budget, ask=rt.backend.ask, sections=rt.retriever, changes_diff=changes_diff,
+    )  # fmt: skip
 
 
 def _read_documents(
-    worktree: Path, base_sha: str, settings: RulesSettings, rt: Runtime, changes_diff: bytes
+    worktree: Path,
+    base_sha: str,
+    head_sha: str | None,
+    settings: RulesSettings,
+    rt: Runtime,
+    changes_diff: bytes,
+    trusted: bool,
 ) -> RulesRead | DocRules:
     """규칙 문서를 모델로 읽는다. 규칙이 있으면 RulesRead, 없거나 못 읽었으면 끝난 결과."""
+    source = None
     try:
-        result = rules.load_rules(
-            worktree, base_sha, settings, model=rt.models.rules, store=rt.store,
-            budget=rt.budget, ask=rt.backend.ask, sections=rt.retriever, changes_diff=changes_diff,
-        )  # fmt: skip
+        if head_sha is not None:
+            source = docs_source(worktree, base_sha, head_sha, settings, trusted)
+        docs_sha = read_commit(source, base_sha, head_sha or base_sha)
+        result = _load(worktree, docs_sha, settings, rt, changes_diff)
     except GitError as e:
         log.warning("규칙 문서를 읽지 못함: %s", e)
-        return NotRun(f"base의 규칙 문서를 읽지 못함: {_first_line(str(e))}")
+        where = "이 PR" if source is not None and source.read_from == "pr" else "base"
+        return NotRun(f"{where}의 규칙 문서를 읽지 못함: {_first_line(str(e))}", source=source)
+    if source is not None and source.read_from == "pr":
+        source = _compared(source, result, worktree, base_sha, settings, rt, changes_diff)
+    return replace(_documents_result(result, worktree, base_sha), source=source)
+
+
+def _documents_result(
+    result: rules.RulesResult, worktree: Path, base_sha: str
+) -> RulesRead | DocRules:
     match result:
         case rules.RulesFound(key=key, ruleset=ruleset, rules=found, sections=read_sections):
             if any(r.exclude for r in found):
@@ -124,6 +180,54 @@ def _read_documents(
             return NotRun(f"규칙을 읽지 않음: {denied.reason}")
 
 
+def _compared(
+    source: DocsSource,
+    head: rules.RulesResult,
+    worktree: Path,
+    base_sha: str,
+    settings: RulesSettings,
+    rt: Runtime,
+    changes_diff: bytes,
+) -> DocsSource:
+    """PR의 문서로 읽은 규칙을 base의 규칙과 견주어 source에 싣는다. base의 규칙 묶음은 대개 저장돼
+    있어 모델을 부르지 않는다. PR의 문서를 읽지 못했으면 견주지 않고(그 까닭은 결과가 말한다),
+    base의 규칙을 얻지 못했으면 견주지 않고 까닭을 남긴다. 검사는 그대로 한다."""
+    head_rules = _all_rules(head)
+    if head_rules is None:
+        return source
+    try:
+        base = _load(worktree, base_sha, settings, rt, changes_diff)
+    except GitError as e:
+        log.warning("base의 규칙 문서를 읽지 못해 규칙을 견주지 못함: %s", e)
+        why = f"base의 규칙 문서를 읽지 못함: {_first_line(str(e))}"
+        return replace(source, compare_skipped=why)
+    base_rules = _all_rules(base)
+    if base_rules is None:
+        return replace(source, compare_skipped=_unread_reason(base))
+    return with_comparison(source, base_rules, head_rules)
+
+
+def _all_rules(result: rules.RulesResult) -> tuple[Rule, ...] | None:
+    """읽은 규칙 묶음의 규칙 전부(`rules.disabled`를 빼기 전). 읽지 못했으면 None."""
+    match result:
+        case rules.RulesFound(ruleset=ruleset) | rules.NoRules(ruleset=ruleset):
+            return ruleset.rules
+        case rules.NoRuleDocuments():
+            return ()
+        case _:
+            return None
+
+
+def _unread_reason(result: rules.RulesResult) -> str:
+    match result:
+        case rules.CapReached(denied=denied):
+            return f"규칙을 읽지 않음: {denied.reason}"
+        case rules.ModelFailed(reason=reason):
+            return f"규칙 읽기의 모델 호출이 실패함: {_first_line(reason)}"
+        case _:
+            return ""
+
+
 def author(
     read: RulesRead,
     rt: Runtime,
@@ -142,7 +246,8 @@ def author(
         )  # fmt: skip
     except SandboxError as e:
         log.warning("검사기 확인 샌드박스 실패: %s", e)
-        return NotRun(f"검사기를 확인하는 샌드박스가 실패함: {_first_line(str(e))}")
+        return NotRun(f"검사기를 확인하는 샌드박스가 실패함: {_first_line(str(e))}",
+                      source=read.source)  # fmt: skip
     return tuple(_outcome(c, rt.models, rt.ruff) for c in checks)
 
 
@@ -193,7 +298,8 @@ def find(
         )  # fmt: skip
     except SandboxError as e:
         log.warning("검사기 실행 샌드박스 실패: %s", e)
-        return NotRun(f"검사기를 돌리는 샌드박스가 실패함: {_first_line(str(e))}")
+        return NotRun(f"검사기를 돌리는 샌드박스가 실패함: {_first_line(str(e))}",
+                      source=read.source)  # fmt: skip
     failed = [RuleUnchecked(u.rule, u.kind, u.detail) for u in found.unchecked]
     limit = limits_for(rt.budget.settings, RulesetScope(read.key, len(read.rules))).scope
     calls = [
@@ -208,6 +314,7 @@ def find(
         note=read.note,
         retrievals=merge_retrievals(retrievals),
         sections=read.sections,
+        source=read.source,
     )
 
 

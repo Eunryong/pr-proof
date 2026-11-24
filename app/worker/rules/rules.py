@@ -1,6 +1,8 @@
-"""규칙 읽기 (docs/DESIGN.md 4.3): base의 규칙 문서를 모델로 읽어 원문을 확인한 규칙 묶음을 만든다.
+"""규칙 읽기 (docs/DESIGN.md 4.3): 규칙 문서를 모델로 읽어 원문을 확인한 규칙 묶음을 만든다.
 
-문서는 PR head가 아니라 base 커밋의 blob에서 읽는다. 결과는 `rulesets`에 캐시 키별로 저장해
+문서는 worktree의 파일이 아니라 부르는 쪽이 정한 커밋의 blob에서 읽는다. 그 커밋은 base이고, 믿는
+작성자의 PR이 규칙 문서를 고쳤으면 PR의 커밋이다
+(app/worker/rules/rule_docs_source_pure.py). 결과는 `rulesets`에 캐시 키별로 저장해
 같은 문서에는 모델을 다시 부르지 않는다. 호출은 규칙 묶음 상한(9.2)에서 센다. 모델 호출이
 실패하거나 상한에 걸리면 저장하지 않으므로 다음 검사가 다시 시도한다.
 """
@@ -51,7 +53,7 @@ class RulesFound:
 
 @dataclass(frozen=True)
 class NoRuleDocuments:
-    """base에 읽을 규칙 문서가 없다. 있었지만 읽지 못한 문서는 unread에 이유와 함께 있다."""
+    """읽는 커밋에 읽을 규칙 문서가 없다. 있었지만 읽지 못한 문서는 unread에 이유와 함께 있다."""
 
     unread: tuple[UnreadDoc, ...]
 
@@ -90,12 +92,13 @@ class FindsSections(Protocol):
 
 
 def saved_rules(
-    bare: Path, base_sha: str, settings: RulesSettings, *, model: str, store: Store
+    bare: Path, docs_sha: str, settings: RulesSettings, *, model: str, store: Store
 ) -> RulesResult | None:
-    """worktree 없이 base의 규칙 문서 목록으로 저장된 규칙 묶음을 찾는다 (4.11). 저장된 것이 없으면
-    None. 모델을 부르지 않고 문서도 읽지 않는다. 키는 `load_rules`와 같다(문서의 blob 해시와 모델).
+    """worktree 없이 docs_sha(규칙 문서를 읽는 커밋)의 규칙 문서 목록으로 저장된 규칙 묶음을 찾는다
+    (4.11). 저장된 것이 없으면 None. 모델을 부르지 않고 문서도 읽지 않는다. 키는 `load_rules`와
+    같다(문서의 blob 해시와 모델).
     """
-    selection = select_documents(settings.docs, repo.bare_entries(bare, base_sha, settings.docs))
+    selection = select_documents(settings.docs, repo.bare_entries(bare, docs_sha, settings.docs))
     if not selection.listed:
         return NoRuleDocuments(unread=())
     key = ruleset_key(selection.listed, model)
@@ -107,7 +110,7 @@ def saved_rules(
 
 def load_rules(
     worktree: Path,
-    base_sha: str,
+    docs_sha: str,
     settings: RulesSettings,
     *,
     model: str,
@@ -117,13 +120,14 @@ def load_rules(
     sections: FindsSections | None = None,
     changes_diff: bytes = b"",
 ) -> RulesResult:
-    """base_sha의 규칙 문서를 읽어 규칙 묶음을 돌려준다. model은 `model.rules`다.
+    """docs_sha(규칙 문서를 읽는 커밋)의 규칙 문서를 읽어 규칙 묶음을 돌려준다. model은
+    `model.rules`다.
 
     문서 합계가 400KB를 넘고 sections(검색)가 있으면 그 PR과 관련된 절만 읽는다 (6.3,
     `_load_sections`). changes_diff는 PR의 diff이고 관련 절을 찾는 질의가 된다. 검색이 없으면
     400KB를 넘는 문서는 읽지 않고 이유를 남긴다.
     """
-    entries = repo.list_base_entries(worktree, base_sha, settings.docs)
+    entries = repo.list_base_entries(worktree, docs_sha, settings.docs)
     selection = select_documents(settings.docs, entries)
     if not selection.listed:
         return NoRuleDocuments(unread=())

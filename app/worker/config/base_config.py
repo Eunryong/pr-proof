@@ -45,6 +45,7 @@ class BaseConfig:
     max_memory_gb: float
     ruff: RuffSetup  # 이 저장소의 ruff 버전과 설정. 받는 것은 규칙이 ruff를 쓸 때뿐이다
     problems: tuple[str, ...] = ()  # 읽지 못했거나 바꿔 읽은 설정. 코멘트의 "설정:"에 적는다
+    access: AccessSettings = AccessSettings()  # 믿는 작성자의 기준 (8.6)
 
 
 def _wanted(name: str) -> bool:
@@ -136,7 +137,8 @@ def load(
     if problem:
         problems.append(f"`{PIPELINE_YAML}`을 읽지 못해 기본값을 씀: {problem}")
     problems += settings_notes(files.get(PIPELINE_YAML))
-    problems += parse_access(files.get(PIPELINE_YAML))[1]
+    access, access_notes = parse_access(files.get(PIPELINE_YAML))
+    problems += access_notes
     fix = fix_limits(repo_config.fix)
     if fix != repo_config.fix:
         problems.append(
@@ -168,6 +170,7 @@ def load(
         max_memory_gb=max_memory_gb,
         ruff=ruff,
         problems=tuple(problems),
+        access=access,
     )
 
 

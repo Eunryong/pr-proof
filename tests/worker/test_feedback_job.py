@@ -136,7 +136,7 @@ def material(fb):
     """판단 자료 읽기(bare 캐시)를 바꿔 넣는다. 부른 횟수를 센다."""
     calls: list[int] = []
 
-    def read(deps, work, items, ask):
+    def read(deps, work, items, ask, *, author=None):
         calls.append(len(items))
         return feedback_job.Material(RepoConfig(), (), "규칙 문서가 없음",
                                  Facts("제목", "", ("pr",), ("src/a.py",)), {})  # fmt: skip

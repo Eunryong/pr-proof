@@ -7,6 +7,9 @@ rules:
   docs: [README.md, CONTRIBUTING.md]   # 규칙 문서 경로 (루트 기준). 다른 문서에 규칙을 적는 팀만 고친다
   disabled: []                         # 적용하지 않을 규칙 id. 코멘트의 "읽은 규칙"에 보이는 id를 적는다
                                        # 예: [R-readme-3fa9c2d1, PLR2004]. `ruff`는 ruff 설정의 규칙 묶음 전체
+  from: pr                             # pr | base. PR이 규칙 문서를 고쳤을 때 읽는 쪽 (4.3 "규칙 문서의 원천").
+                                       # pr: 믿는 작성자(`access.trusted`)의 PR은 그 PR의 문서로 읽은 규칙으로 검사한다.
+                                       # base: 늘 base의 문서로 검사한다. 모르는 값은 pr로 읽고 "설정:"에 알린다
 
 fix:
   require_approval: false              # 기본: 검사 뒤 바로 수정안 PR까지. true면 /fix를 기다린다 (interrupt)

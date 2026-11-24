@@ -41,7 +41,7 @@
 | T10 | 파일 이름·커밋 메시지·코드 줄 | 팀원·외부 | 코멘트에 들어간 글이 마크다운을 깨거나 `@`로 사람을 부르거나 지시처럼 보인다 | 저장소 | 긴 글(출력, diff, 검사기 본문)은 내용이 닫을 수 없는 코드 블록 안에 넣음. 커밋 메시지와 PR 글은 PR 단위 확인(4.5 끝)만 읽고, 코멘트에는 커밋의 짧은 해시와 함께 코드 스팬 안에만 넣는다(2026-11-20, `test_author_text_stays_inside_code_spans`). 승인 안내에는 작성자가 고를 수 있는 글을 넣지 않음 (4.9, 8.6). 한 줄로 보이는 글(파일 이름, 메시지)의 멘션·HTML 막기는 v1 절에서 확인하지 않았다 | 지금 | 코드 블록은 있음. 한 줄 글은 2026-11-19에 확인: 문서 규칙 절은 모든 글이 코드 스팬 안이고(`test_untrusted_text_cannot_escape_code`), v1 절의 파일 이름과 테스트 이름은 백틱으로 스팬을 닫을 수 있어 고쳤다(`test_file_and_test_names_cannot_leave_their_code_span`). ruff의 메시지는 3단계에 코드 스팬 안으로 옮겼다(2026-11-20, `test_file_names_and_tool_messages_cannot_leave_their_code_span`) |
 | T11 | base README | 팀원 | README의 문장이 규칙 읽기 모델에게 지시로 읽힌다 | 호출·저장소 | 문서는 자료로만 넣고 지시는 `--append-system-prompt`로만. 도구 없는 호출, 빈 작업 폴더. 모델이 지어낸 규칙은 원문 인용 확인에서 버림 (4.3, 8.4) | 지금 | 있음 |
 | T12 | base README | 팀원 | 모델이 규칙의 범위를 넓히거나 "추정"으로 규칙을 통째로 끈다 | 저장소 | 범위 추정은 빼는 목록으로만 받아 넓힐 수 없음. 적용되는 파일의 50% 이상을 빼는 glob은 base 파일 목록으로 효과를 확인해 버림. 추정과 버린 사실은 코멘트에 보임 (4.3) | 지금 | 있음 (효과 확인 포함, 2026-11-19) |
-| T13 | base README | 팀원·외부 | PR이 README를 고쳐 자기 PR에 적용될 규칙을 지운다 | 저장소 | 규칙 문서·도구 설정·`.pipeline.yaml`은 base 커밋에서만 읽음 (8.3) | 지금 | 있음 |
+| T13 | base README | 팀원·외부 | PR이 README를 고쳐 자기 PR에 적용될 규칙을 지운다 | 저장소 | 도구 설정·`.pipeline.yaml`은 base 커밋에서만 읽음. 규칙 문서도 base 커밋에서 읽고, 믿는 작성자(`access.trusted`)의 PR만 그 PR의 문서로 읽으며 그때는 없어지는 규칙을 결과 코멘트에 보인다. `rules.from: base`면 누구의 PR이든 base에서만 읽음 (8.3) | 지금 | 있음 |
 | T14 | base README | 팀원 | 긴 문서나 많은 규칙으로 모델 호출을 다 쓰게 한다 | 호출 | 문서 크기 상한, 규칙 묶음 상한, 저장소 하루 상한, 저장소 설정 위의 파이프라인 쪽 최대치 (9.2) | 지금 | 있음 |
 | T15 | PR 코드·base README | 본인·팀원 | 모델이 쓴 검사기가 파일을 고치거나 네트워크를 쓰거나 끝나지 않는다 | 파일 | 본문을 실행 전에 확인(`fix`·`rewriters` 등 거부), 읽기 전용·네트워크 없는 컨테이너, 시간 제한, 출력 크기 상한 (8.1) | 지금 | 있음 |
 | T16 | 도구 받기 | 외부(공급망) | 받은 도구 바이너리나 런타임이 바뀌어 있다 | 파일 | 버전과 SHA256을 고정하고 호스트에서 해시를 확인한 뒤에만 캐시에 둠. 받는 컨테이너에는 출력 폴더만 붙이고 https만 받음. 압축 파일에서는 실행 파일 하나만, 일반 파일인 항목만 꺼냄. 런타임은 정한 폴더 아래의 일반 파일만 풀고, 그 밖이나 경로가 빠져나가는 항목이 있으면 압축 파일 전체를 거절 (2.3, 8.1) | 지금 | 있음. ast-grep(1단계)과 ruff(3단계, 2026-11-20: 버전 다섯 개를 arm64·amd64로 고정. 저장소가 고정한 버전이 목록에 없으면 받지 않는다. `test_unknown_tool_version_and_platform_are_unavailable`, `test_tar_member_that_is_a_link_is_rejected`). Python 런타임(3단계, 2026-11-20: 3.11.18을 arm64·amd64로 고정. `test_tree_member_outside_prefix_rejects_whole_archive`, `test_tree_tool_extracts_regular_files_and_skips_links`, `test_fetch_is_curl_over_https_only`, `test_fetch_container_gets_only_the_output_folder`) |
@@ -105,10 +105,10 @@
 
 ### 8.3 base에서만 읽는 것
 
-- 규칙 문서, 도구 설정, `.pipeline.yaml`은 base 브랜치의 지금 커밋에서 읽는다. PR head의 것은 쓰지 않는다.
+- 규칙 문서, 도구 설정, `.pipeline.yaml`은 base 브랜치의 지금 커밋에서 읽는다. PR head의 것은 쓰지 않는다. 예외는 하나다: 믿는 작성자(`access.trusted`, 8.6)의 PR이 규칙 문서를 고쳤으면 규칙 문서의 본문만 그 PR의 커밋에서 읽는다(4.3 "규칙 문서의 원천"). 읽을 문서의 목록과 `rules.from`, `access`는 그때도 base의 `.pipeline.yaml`에서 오고, 그 본문은 다른 규칙 문서와 같이 믿지 않는 글로 다룬다. `rules.from: base`로 끈다.
 - 설정 파일은 저장소 루트의 일반 파일만 읽는다. 심볼릭 링크, 폴더, 서브모듈인 설정은 읽지 않고 "설정:"에 알린다(T24).
 - base의 ruff 설정은 worktree에 꺼내지 않는다. ruff를 돌리는 컨테이너마다 검사할 폴더 밖의 임시 폴더에 사본을 두고 읽기 전용으로 붙인다. PR 코드나 모델이 바꿀 수 없다(4.8의 2번).
-- 규칙 문서를 바꾸는 PR은 그 PR 자신에게는 옛 규칙이 적용되고, 머지된 뒤의 PR부터 새 규칙이 적용된다.
+- 믿는 작성자가 아닌 사람의 PR이나 `rules.from: base`인 저장소에서 규칙 문서를 바꾸는 PR은 그 PR 자신에게는 옛 규칙이 적용되고, 머지된 뒤의 PR부터 새 규칙이 적용된다. 믿는 작성자의 PR은 그 PR의 규칙으로 검사하고, 결과 코멘트에 없어지는 규칙과 새로 생기는 규칙을 보인다.
 
 ### 8.4 모델의 권한
 
