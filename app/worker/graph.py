@@ -604,10 +604,10 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
         )
         doc = out.get("doc_rules", doc)
         if isinstance(doc, Found) and run_check_pure.run_rules(doc):
-            # 실행 결과의 규칙은 테스트와 커버리지를 보고 모델이 정한다 (4.5)
+            # 실행 결과의 규칙은 테스트와 정적 검사의 결과를 보고 모델이 정한다 (4.5)
             progress(job, "실행 결과의 규칙")
             runs = run_check.judge_runs(
-                doc, run, ctx.changes_diff, doc_runtime(state),
+                doc, run, doc_runtime(state),
                 is_stale=lambda: ctx.store.is_stale(job),
             )  # fmt: skip
             ctx.doc_rules = out["doc_rules"] = replace(doc, runs=runs)

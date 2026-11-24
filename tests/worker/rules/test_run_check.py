@@ -26,16 +26,13 @@ RULE: Final = Rule(
 )  # fmt: skip
 FOUND: Final = Found((RuleUnchecked(RULE, "run", ""),), (), 0, CallUsage(0, 10, 0, (), 0, 0))
 RUN: Final = PytestRun(exit_code=0, summary=ReportSummary(passed=6, total=6))
-DIFF: Final = (
-    b"diff --git a/gen.py b/gen.py\n--- /dev/null\n+++ b/gen.py\n@@ -0,0 +1,1 @@\n+x = 1\n"
-)
 
 
 def _answer(verdict: str = "broken", ok: bool = True) -> StructuredResult:
     return StructuredResult(
         ok=ok, error=None if ok else AIErrorKind.TIMEOUT, model_id="claude-sonnet-5",
         input_tokens=10, output_tokens=5, cost_usd=0.0, permission_denials=0,
-        data={"verdict": verdict, "why": "생성기를 실행하는 테스트가 없음", "files": ["gen.py"]},
+        data={"verdict": verdict, "why": "테스트 6개 중 2개가 실패함"},
         detail="" if ok else "느림",
     )  # fmt: skip
 
@@ -57,25 +54,26 @@ def _rt(
 
 
 def test_answer_is_stored_by_the_results_and_reused(store: Store) -> None:
-    (first,) = judge_runs(FOUND, RUN, DIFF, _rt(store, [_answer()]))
+    (first,) = judge_runs(FOUND, RUN, _rt(store, [_answer()]))
     assert (first.rule_id, first.verdict) == ("R-readme-run", "broken")
-    assert first.why == "생성기를 실행하는 테스트가 없음 (테스트가 필요한 파일: gen.py)"
+    assert first.why == "테스트 6개 중 2개가 실패함"
+    assert first.facts == "테스트 통과 (6개) · 정적 검사 저장소에 린트 설정이 없어 돌리지 않음"
     assert "테스트 통과 (6개)" in first.facts
-    (again,) = judge_runs(FOUND, RUN, DIFF, _rt(store, []))
+    (again,) = judge_runs(FOUND, RUN, _rt(store, []))
     assert again == first
     assert [c.stage for c in store.model_calls("o/r", 1) if not c.cache_hit] == ["run_judge"]
 
 
 def test_cap_and_failure_leave_the_rule_unanswered_and_unsaved(store: Store) -> None:
     capped = _rt(store, [], CallSettings(pr_base=0, pr_max=0))
-    (left,) = judge_runs(FOUND, RUN, DIFF, capped)
+    (left,) = judge_runs(FOUND, RUN, capped)
     assert left.verdict == "left" and "PR 상한" in left.why
-    (failed,) = judge_runs(FOUND, RUN, DIFF, _rt(store, [_answer(ok=False)]))
+    (failed,) = judge_runs(FOUND, RUN, _rt(store, [_answer(ok=False)]))
     assert failed.verdict == "left"
-    (later,) = judge_runs(FOUND, RUN, DIFF, _rt(store, [_answer("kept")]))
+    (later,) = judge_runs(FOUND, RUN, _rt(store, [_answer("kept")]))
     assert later.verdict == "kept"
 
 
 def test_no_run_rules_means_no_call(store: Store) -> None:
     empty = Found((), (), 0, CallUsage(0, 10, 0, (), 0, 0))
-    assert judge_runs(empty, RUN, DIFF, _rt(store, [])) == ()
+    assert judge_runs(empty, RUN, _rt(store, [])) == ()
