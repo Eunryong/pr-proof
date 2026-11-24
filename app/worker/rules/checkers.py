@@ -55,7 +55,6 @@ from app.worker.rules import tool_choice_pure
 from app.worker.rules.checker_authoring_pure import (
     ENGINE_VERSION,
     MAX_ATTEMPTS,
-    RECORDS_NOTE,
     Answer,
     Checked,
     Draft,
@@ -547,7 +546,7 @@ class _Author:
                 raise _CapHit(call)
             answer = self.ask(
                 build_prompt(rule, need, feedback, shown),
-                system_prompt=system_prompt(kind) + (RECORDS_NOTE if shown else ""),
+                system_prompt=system_prompt(kind, records=bool(shown)),
                 schema=answer_schema(kind),
                 model=model,
                 max_budget_usd=CALL_BUDGET_USD[tier],

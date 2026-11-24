@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 import app.worker
-from app.worker.core.prompt_text_pure import PROMPT_FOLDER, load
+from app.worker.core.prompt_text_pure import PROMPT_FOLDER, fill, load
 
 WORKER = Path(app.worker.__file__).parent
 PROMPT_DIRS = sorted(p for p in WORKER.rglob(PROMPT_FOLDER) if p.is_dir())
@@ -89,3 +89,29 @@ def test_a_missing_file_fails_when_loaded(tmp_path: Path) -> None:
     """단계 모듈은 import할 때 읽으므로, 파일이 빠진 설치본은 워커가 시작할 때 멈춘다."""
     with pytest.raises(FileNotFoundError):
         load(_module(tmp_path, "x\n"), "judge")
+
+
+def test_pieces_fill_their_places_and_an_empty_piece_removes_its_line() -> None:
+    text = "앞\n{{format}}\n\n- 제약\n{{records}}\n\n끝"
+    assert fill(text, format="형식 $A", records="- 기록") == "앞\n형식 $A\n\n- 제약\n- 기록\n\n끝"
+    assert fill(text, format="형식", records="") == "앞\n형식\n\n- 제약\n\n끝"
+
+
+def test_values_fill_places_in_the_middle_of_a_line() -> None:
+    assert fill('{{tool}}(code="now")로 {{limit}}번', tool="run_tests", limit=3) == (
+        'run_tests(code="now")로 3번'
+    )
+
+
+def test_removed_lines_do_not_leave_doubled_blank_lines() -> None:
+    text = "제약\n\n{{feedback}}\n\n{{records}}\n\n## 답"
+    assert fill(text, feedback="", records="") == "제약\n\n## 답"
+    assert fill(text, feedback="", records="기록") == "제약\n\n기록\n\n## 답"
+    assert fill(text, feedback="코멘트", records="") == "제약\n\n코멘트\n\n## 답"
+
+
+def test_pieces_and_places_must_match() -> None:
+    with pytest.raises(ValueError, match="조각이 없는 자리: records"):
+        fill("{{format}}\n{{records}}", format="x")
+    with pytest.raises(ValueError, match="글에 없는 자리: other"):
+        fill("{{format}}", format="x", other="y")

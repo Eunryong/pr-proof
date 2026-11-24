@@ -278,6 +278,30 @@ def test_answer_without_coverage_reads_as_all() -> None:
         parse_answer({"checker": "", "examples": [], "coverage": "most"})
 
 
-def test_path_prompt_version_did_not_change_so_path_checkers_are_kept() -> None:
-    # coverage를 더하기 전(a5e721e)의 값. 내용 규칙의 PROMPT_VERSION만 바뀌어 그 검사기만 다시 쓴다
-    assert PATH_PROMPT_VERSION == "d8878de23426"
+def test_path_prompt_version_is_pinned_so_a_change_to_it_is_deliberate() -> None:
+    # 이 값이 바뀌면 경로 검사기를 모두 다시 쓴다. 내용 규칙의 지시문만 고칠 때는 그대로여야 한다
+    assert PATH_PROMPT_VERSION == "6117d2bfd661"
+
+
+def test_format_and_records_go_into_their_places_in_the_body() -> None:
+    for kind in ("ast-grep", "python-ast"):
+        plain, with_records = system_prompt(kind), system_prompt(kind, records=True)
+        assert "{{" not in plain and "{{" not in with_records
+        assert "<<<RECORDS" not in plain and "<<<RECORDS" in with_records
+        # 형식 조각은 "검사기를 쓴다" 절 안에, 제약보다 앞에 들어간다
+        assert (
+            plain.index("### 4. 검사기를 쓴다")
+            < plain.index("검사기의 형식은")
+            < plain.index("## 제약")
+        )
+    assert "ast-grep 규칙(YAML 문서 하나)" in system_prompt("ast-grep")
+    assert "Python 스크립트 하나" in system_prompt("python-ast")
+    assert "$$$ARGS" in system_prompt("ast-grep")  # 조각의 `$`는 그대로다
+
+
+def test_the_path_prompt_stands_alone_and_takes_the_records_note_too() -> None:
+    plain, with_records = system_prompt("path-pattern"), system_prompt("path-pattern", records=True)
+    assert "{{" not in plain and "<<<RECORDS" not in plain
+    assert "<<<RECORDS" in with_records and with_records.index("<<<RECORDS") > with_records.index(
+        "## 제약"
+    )

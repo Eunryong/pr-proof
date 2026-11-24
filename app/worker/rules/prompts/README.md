@@ -6,8 +6,8 @@
 | --- | --- | --- |
 | 규칙 문서 읽기 | `rule_reading.md` | `rule_reading_pure.py` |
 | 검사 도구 고르기 | `tool_choice.md` | `tool_choice_pure.py` |
-| 검사기 작성 (ast-grep) | `checker_authoring.common.md` + `checker_authoring.ast_grep.md` | `checker_authoring_pure.py` |
-| 검사기 작성 (Python ast) | `checker_authoring.common.md` + `checker_authoring.python_ast.md` | `checker_authoring_pure.py` |
+| 검사기 작성 (ast-grep) | `checker_authoring.md` + `checker_authoring.ast_grep.md` | `checker_authoring_pure.py` |
+| 검사기 작성 (Python ast) | `checker_authoring.md` + `checker_authoring.python_ast.md` | `checker_authoring_pure.py` |
 | 검사기 작성 (경로 패턴) | `checker_authoring.path.md` | `checker_authoring_pure.py` |
 | 위반 판단 | `judge.md` | `judge_pure.py` |
 | PR 단위 확인: 계획 | `pr_check.plan.md` | `pr_check_pure.py` |
@@ -16,8 +16,9 @@
 | 연결된 이슈 확인 | `linked_issues.md` | `linked_issues_pure.py` |
 | 실행 결과의 규칙 | `run_check.md` | `run_check_pure.py` |
 
-`checker_authoring.records.md`는 지난 기록을 자료로 줄 때만 검사기 작성 지시문 끝에 빈 줄 하나를
-두고 붙는다.
+`checker_authoring.md`는 본문이고 `{{format}}` 자리에 형식 조각(`checker_authoring.ast_grep.md`나
+`checker_authoring.python_ast.md`)이 들어간다. `checker_authoring.records.md`는 지난 기록을 자료로 줄
+때만 본문과 `checker_authoring.path.md`의 `{{records}}` 자리에 들어가고, 주지 않을 때는 그 줄이 없다.
 
 ## 고칠 때
 

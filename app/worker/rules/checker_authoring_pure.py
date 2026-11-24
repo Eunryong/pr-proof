@@ -19,7 +19,7 @@ from pydantic import BaseModel, ConfigDict, TypeAdapter
 
 from app.worker.core.cache_key_pure import Part, model_cache_key, prompt_version, text_hash
 from app.worker.core.checker_pure import Checker, CheckerKind, is_repo_path
-from app.worker.core.prompt_text_pure import load
+from app.worker.core.prompt_text_pure import fill, load
 from app.worker.core.rule_pure import (
     CheckMethod,
     Example,
@@ -180,17 +180,32 @@ def draft_key(
 
 # --- 프롬프트 ---
 
-_COMMON: Final = load(__file__, "checker_authoring.common")
+# 본문의 `{{format}}` 자리에 형식 조각을, `{{records}}` 자리에 지난 기록의 안내를 끼운다. 기록의
+# 안내는 검색으로 비슷한 규칙의 검사기 기록을 넣은 호출에만 넣는다 (6.2). 기록이 없는 호출의
+# 프롬프트와 저장 키는 기록의 안내와 무관하다
+_BODY: Final = load(__file__, "checker_authoring")
+_FORMAT: Final[Mapping[str, str]] = {
+    "ast-grep": load(__file__, "checker_authoring.ast_grep"),
+    "python-ast": load(__file__, "checker_authoring.python_ast"),
+}
+_PATH_BODY: Final = load(__file__, "checker_authoring.path")
+_RECORDS: Final = load(__file__, "checker_authoring.records")
+RECORDS_VERSION: Final = text_hash(_RECORDS)[:12]
 
 SYSTEM_PROMPT: Final[Mapping[str, str]] = {
-    "ast-grep": _COMMON + "\n\n" + load(__file__, "checker_authoring.ast_grep"),
-    "python-ast": _COMMON + "\n\n" + load(__file__, "checker_authoring.python_ast"),
+    kind: fill(_BODY, format=text, records="") for kind, text in _FORMAT.items()
+}
+SYSTEM_PROMPT_PATH: Final = fill(_PATH_BODY, records="")
+_WITH_RECORDS: Final[Mapping[str, str]] = {
+    **{kind: fill(_BODY, format=text, records=_RECORDS) for kind, text in _FORMAT.items()},
+    "path-pattern": fill(_PATH_BODY, records=_RECORDS),
 }
 
-SYSTEM_PROMPT_PATH: Final = load(__file__, "checker_authoring.path")
 
-
-def system_prompt(kind: CheckerKind) -> str:
+def system_prompt(kind: CheckerKind, *, records: bool = False) -> str:
+    """records는 사용자 메시지에 지난 검사기 기록을 넣은 호출이다."""
+    if records:
+        return _WITH_RECORDS[kind]
     return SYSTEM_PROMPT_PATH if kind == "path-pattern" else SYSTEM_PROMPT[kind]
 
 
@@ -254,12 +269,6 @@ def shortfall(examples: Sequence[Example]) -> Shortfall:
     bad = sum(1 for e in examples if e.expect_lines)
     good = len(examples) - bad
     return Shortfall(max(0, MIN_VIOLATING - bad), max(0, MIN_PASSING - good))
-
-
-# 검색으로 비슷한 규칙의 검사기 기록을 넣은 호출에만 시스템 프롬프트 뒤에 붙인다 (6.2). 기록이
-# 없는 호출의 프롬프트와 저장 키는 검색을 켜기 전과 같다
-RECORDS_NOTE: Final = "\n\n" + load(__file__, "checker_authoring.records")
-RECORDS_VERSION: Final = text_hash(RECORDS_NOTE)[:12]
 
 
 def build_prompt(rule: Rule, need: Shortfall, feedback: Sequence[str], records: str = "") -> str:

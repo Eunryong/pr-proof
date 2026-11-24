@@ -15,6 +15,7 @@ from typing import Final
 
 PROMPT_FOLDER: Final = "prompts"
 _NAME: Final = re.compile(r"[a-z_]+(\.[a-z_]+)?")
+_SLOT: Final = re.compile(r"\{\{([a-z_]+)\}\}")
 
 
 def load(module_file: str, name: str, **values: object) -> str:
@@ -34,3 +35,27 @@ def load(module_file: str, name: str, **values: object) -> str:
     if unused:
         raise ValueError(f"프롬프트 {name}에 없는 자리: {', '.join(sorted(unused))}")
     return template.substitute(values)
+
+
+def fill(text: str, **pieces: object) -> str:
+    """글의 `{{이름}}` 자리에 조각이나 값을 끼운다. 한 줄을 혼자 차지한 자리의 조각이 빈 글이면 그
+    줄을 없애고, 그래서 빈 줄이 겹치면 하나로 줄인다. 조각이 없는 자리와 자리가 없는 조각은 오류다.
+
+    `load`의 `$이름`과 따로다. 조각의 글에 `$`가 있어도(ast-grep의 `$A`) 그대로 두고, 끼운 조각
+    안의 `{{이름}}`은 다시 채우지 않는다.
+    """
+    missing = sorted(set(_SLOT.findall(text)) - set(pieces))
+    if missing:
+        raise ValueError(f"조각이 없는 자리: {', '.join(missing)}")
+    unused = sorted(set(pieces) - set(_SLOT.findall(text)))
+    if unused:
+        raise ValueError(f"글에 없는 자리: {', '.join(unused)}")
+    lines: list[str] = []
+    for line in text.split("\n"):
+        alone = _SLOT.fullmatch(line.strip())
+        if alone is not None and not str(pieces[alone.group(1)]):
+            if lines and not lines[-1].strip():
+                lines.pop()  # 없앤 줄 앞의 빈 줄. 뒤의 빈 줄 하나는 남는다
+            continue
+        lines.append(_SLOT.sub(lambda m: str(pieces[m.group(1)]), line))
+    return "\n".join(lines)
