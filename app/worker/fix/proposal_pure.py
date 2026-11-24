@@ -26,22 +26,42 @@ def review_marker(patch: str) -> str:
     return f"<!-- pr-proof:review {text_hash(patch)[:16]} -->"
 
 
-def changed_line_count(patch: str) -> int:
-    return sum(
-        1
-        for line in patch.splitlines()
-        if (line.startswith("+") and not line.startswith("+++"))
-        or (line.startswith("-") and not line.startswith("---"))
-    )
+_NEW_SIDE: Final = "+++ b/"
 
 
-def push_blocker(patch: str, files: Sequence[str], literals: Iterable[str] = ()) -> str | None:
-    """제안 PR을 올리면 안 되는 이유. 올려도 되면 None."""
+def changed_line_count(patch: str, skip: Iterable[str] = ()) -> int:
+    """패치에서 더하거나 뺀 줄 수. skip의 파일(패치의 새 쪽 경로)에 든 줄은 세지 않는다."""
+    skipped = frozenset(skip)
+    count, counting = 0, True
+    for line in patch.splitlines():
+        if line.startswith(_NEW_SIDE):
+            counting = line[len(_NEW_SIDE) :].rstrip("\t") not in skipped
+        elif line.startswith(("+++", "---")):
+            continue
+        elif counting and line.startswith(("+", "-")):
+            count += 1
+    return count
+
+
+def push_blocker(
+    patch: str,
+    files: Sequence[str],
+    literals: Iterable[str] = (),
+    test_files: Iterable[str] = (),
+) -> str | None:
+    """제안 PR을 올리면 안 되는 이유. 올려도 되면 None.
+
+    test_files는 출구 검사가 받아들인 만든 테스트 파일이다. 수정의 크기 상한은 이 파일과 그 줄을
+    빼고 센다. 만든 테스트의 상한은 `generated_tests_pure`가 따로 건다. 비밀값은 패치 전체에서
+    찾는다.
+    """
     if not files or not patch.strip():
         return "바뀐 내용이 없음"
-    if len(files) > MAX_FILES:
-        return f"바뀐 파일이 {len(files)}개로 상한({MAX_FILES}개)을 넘음"
-    lines = changed_line_count(patch)
+    tests = frozenset(test_files)
+    code_files = [f for f in files if f not in tests]
+    if len(code_files) > MAX_FILES:
+        return f"바뀐 파일이 {len(code_files)}개로 상한({MAX_FILES}개)을 넘음"
+    lines = changed_line_count(patch, tests)
     if lines > MAX_CHANGED_LINES:
         return f"바뀐 줄이 {lines}줄로 상한({MAX_CHANGED_LINES}줄)을 넘음"
     kind = find_secret(patch, literals)
