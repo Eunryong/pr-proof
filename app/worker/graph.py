@@ -254,6 +254,28 @@ class FlowContext:
     default_model: str | None = None
 
 
+def timed(
+    ctx: "FlowContext", name: str, node: Callable[[Any], Any],
+    clock: Callable[[], float] = time.monotonic,
+) -> Callable[[Any], Any]:  # fmt: skip
+    """단계가 끝날 때(실패해 예외로 나갈 때도) 걸린 시간을 로그와 그 검사의 줄에 남긴다. 시간을
+    남기다 실패하면 로그에만 적는다. 단계의 결과와 단계가 낸 예외는 그대로 나간다."""
+
+    def run(state: Any) -> Any:
+        start = clock()
+        try:
+            return node(state)
+        finally:
+            seconds = clock() - start
+            log.info("단계 %s: %.1f초", name, seconds)
+            try:
+                ctx.store.add_stage_time(ctx.run_id, name, seconds)
+            except Exception:  # noqa: BLE001 (기록의 실패가 검사를 바꾸지 않는다)
+                log.warning("단계 %s의 시간을 남기지 못함", name, exc_info=True)
+
+    return run
+
+
 def _is_stale_for(ctx: FlowContext, job: PRJob) -> Callable[[], bool]:
     def is_stale() -> bool:
         ctx.store.heartbeat(ctx.run_id)  # 10초마다 불리므로 생존 확인도 같이 남긴다
@@ -810,23 +832,23 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
 
     fix_targets = [AWAIT_FIX, FIX_MECHANICAL, FIX_MODEL, END]
     graph = StateGraph(FlowState)
-    graph.add_node("checkout", checkout)
-    graph.add_node(LOAD_RULES, load_rules)
-    graph.add_node(AUTHOR_CHECKERS, author_checkers)
-    graph.add_node(DETECT, detect_rules)
-    graph.add_node(JUDGE, judge_rules)
-    graph.add_node(PR_CHECK, pr_check_rules)
-    graph.add_node(PR_DESCRIPTION, describe_pr)
-    graph.add_node(LINKED_ISSUES, check_issues)
-    graph.add_node(TEST, test)
-    graph.add_node(DECIDE, decide_fixes)
-    graph.add_node("comment", comment)
-    graph.add_node(AWAIT_FIX, await_fix)
-    graph.add_node(FIX_MECHANICAL, fix_mechanical)
-    graph.add_node(DELIVER_MECHANICAL, deliver_mechanical)
-    graph.add_node(FIX_MODEL, fix_model)
-    graph.add_node(DELIVER_MODEL, deliver_model)
-    graph.add_node(FIX_COMMENT, fix_comment)
+    graph.add_node("checkout", timed(ctx, "checkout", checkout))
+    graph.add_node(LOAD_RULES, timed(ctx, LOAD_RULES, load_rules))
+    graph.add_node(AUTHOR_CHECKERS, timed(ctx, AUTHOR_CHECKERS, author_checkers))
+    graph.add_node(DETECT, timed(ctx, DETECT, detect_rules))
+    graph.add_node(JUDGE, timed(ctx, JUDGE, judge_rules))
+    graph.add_node(PR_CHECK, timed(ctx, PR_CHECK, pr_check_rules))
+    graph.add_node(PR_DESCRIPTION, timed(ctx, PR_DESCRIPTION, describe_pr))
+    graph.add_node(LINKED_ISSUES, timed(ctx, LINKED_ISSUES, check_issues))
+    graph.add_node(TEST, timed(ctx, TEST, test))
+    graph.add_node(DECIDE, timed(ctx, DECIDE, decide_fixes))
+    graph.add_node("comment", timed(ctx, "comment", comment))
+    graph.add_node(AWAIT_FIX, timed(ctx, AWAIT_FIX, await_fix))
+    graph.add_node(FIX_MECHANICAL, timed(ctx, FIX_MECHANICAL, fix_mechanical))
+    graph.add_node(DELIVER_MECHANICAL, timed(ctx, DELIVER_MECHANICAL, deliver_mechanical))
+    graph.add_node(FIX_MODEL, timed(ctx, FIX_MODEL, fix_model))
+    graph.add_node(DELIVER_MODEL, timed(ctx, DELIVER_MODEL, deliver_model))
+    graph.add_node(FIX_COMMENT, timed(ctx, FIX_COMMENT, fix_comment))
     graph.add_edge(START, "checkout")
     graph.add_conditional_edges("checkout", route, {"next": LOAD_RULES, "stop": END})
     graph.add_conditional_edges(

@@ -1,5 +1,6 @@
 """워커의 상태 읽기·쓰기: 처리 기록(SQLite), 최신 head 확인과 작업 키 정리(Redis)."""
 
+import json
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -174,6 +175,18 @@ class Store:
             if run is None:
                 return
             run.heartbeat_at = _now()
+            session.commit()
+
+    def add_stage_time(self, run_id: int, stage: str, seconds: float) -> None:
+        """끝난 단계와 걸린 시간을 그 검사의 줄에 쌓는다. runs 기록이 없는 작업(run_id 0)은 남길
+        줄이 없어 아무것도 하지 않는다."""
+        with Session(self.engine) as session:
+            run = session.get(Run, run_id)
+            if run is None:
+                return
+            times = json.loads(run.stage_seconds) if run.stage_seconds else []
+            times.append([stage, round(seconds, 2)])
+            run.stage_seconds = json.dumps(times, ensure_ascii=False)
             session.commit()
 
     def finish_run(

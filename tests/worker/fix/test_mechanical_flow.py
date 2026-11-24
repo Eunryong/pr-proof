@@ -201,6 +201,12 @@ def test_ruff_settings_become_a_rule_set_and_fixable_violations_go_to_a_fix_pr(m
     (record,) = mech_env["deps"].store.proposals("o/r", 1)
     assert (record.skill, record.state, record.attempt_id) == ("mechanical", "open", 1)
     assert mech_env["deps"].store.fix_attempt(1).bundle == "mechanical"
+    # 단계마다 걸린 시간이 돈 순서대로 그 검사의 줄에 남는다
+    (run,) = mech_env["deps"].store.runs("o/r", 1, mech_env["gh"].head)
+    stages = [name for name, _ in json.loads(run.stage_seconds)]
+    assert stages[0] == "checkout" and stages[-3:] == [
+        "fix_mechanical", "deliver_mechanical", "fix_comment",
+    ]  # fmt: skip
 
 
 def test_no_ruff_settings_and_no_rule_docs_means_no_rule_check(mech_env) -> None:
