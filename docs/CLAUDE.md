@@ -118,7 +118,7 @@ tests/          코드와 같은 이름의 폴더 (tests/api, tests/worker, test
 
 **워커 (`app/worker/`).**
 
-- 맨 위(뼈대): 진입점(`main.py`), 작업 흐름(`graph.py`, LangGraph), 작업 종류(`update.py`: 규칙 검사, `command.py`와 `command_pure.py`: PR 코멘트 명령, `feedback_job.py`: 리뷰 코멘트 작업과 머지 뒤 스레드 해결), 가드레일(`guard.py`), 재시도와 실패 기록(`retry.py`), 작업이 쓰는 의존 객체(`deps.py`), 시작 점검(`preflight.py`), 단계의 결과를 기록으로 바꾸기(`records.py`), 수동 명령(`cli.py`: reindex, eval). 단계를 부르기만 한다
+- 맨 위(뼈대): 진입점(`main.py`), 작업 흐름(`graph.py`, `flow_state.py`, `flow_nodes.py`, LangGraph), 작업 종류(`update.py`: 규칙 검사, `command.py`와 `command_pure.py`: PR 코멘트 명령, `feedback_job.py`: 리뷰 코멘트 작업과 머지 뒤 스레드 해결), 가드레일(`guard.py`), 재시도와 실패 기록(`retry.py`), 작업이 쓰는 의존 객체(`deps.py`), 시작 점검(`preflight.py`), 단계의 결과를 기록으로 바꾸기(`records.py`), 수동 명령(`cli.py`: reindex, eval). 단계를 부르기만 한다
 - `rules/`: 규칙 경로(`doc_rules.py`) → 규칙 읽기(`rules.py`) → 검사 방법 정하기(`checkers.py`: 도구 설정의 규칙 묶음, 문서 규칙의 도구 선택, 검사기 작성) → 위반 찾기(`detect.py`) · 모델의 직접 판단(`judge.py`) · PR 단위 확인(`pr_check.py`, 알리기만) · PR 설명 확인(`pr_description.py`) · 이슈 확인(`linked_issues.py`)
 - `fix/`: 수정 판단(`decide.py`) → 기계적 수정(`mechanical_fix.py`) · 모델 수정(`model_fix.py`: 수정 작성과 도구 둘의 구현, 출구 검사) · 허용 범위(`scope.py`) → 수정안 PR(`proposal.py`). 만든 테스트의 판정은 `app/worker/testing/generated_tests_pure.py`, 만든 테스트의 자리는 `scope_pure.is_generated_test`
 - `feedback/`: 리뷰 코멘트 가리기(`feedback_triage.py`)와 답글 만들기(`feedback_report_pure.py`). 코멘트 작업의 흐름은 맨 위의 `feedback_job.py`다. 뼈대를 import하지 않는다
