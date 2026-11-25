@@ -74,14 +74,15 @@ def test_could_not_compare_says_why() -> None:
 
 def test_what_was_not_seen_is_noted() -> None:
     d = LinkedIssues("checked", issues=(1, 2, 3, 4, 5), other_repo=("x/y#9",), over=2,
-                     unreadable=1, text_cut=True, files=3, shown=2)  # fmt: skip
+                     unreadable=1, text_cut=True, files=3, shown=2, batches=2,
+                     left=("big.lock",))  # fmt: skip
     lines = expanded(d)
     assert "- 다른 저장소의 이슈라 보지 않음: `x/y#9`" in lines
     assert lines[-1] == (
         "연결된 이슈가 많아 앞의 5개만 견줬습니다 (보지 않은 이슈 2개). "
         "읽지 못한 연결된 이슈 1개는 보지 않았습니다. "
-        "변경이 커서 바뀐 파일 3개 중 1개는 diff를 다 보이지 못했습니다. "
-        "그 파일은 모델이 필요할 때 작업 폴더에서 읽었습니다. "
+        "변경이 커서 바뀐 파일 3개를 묶음 2개로 나눠 견줬습니다. "
+        "바뀐 파일 3개 중 1개는 바뀐 내용을 다 보지 못했습니다: `big.lock`. "
         "이슈 글이나 댓글이 길어 일부만 견줬습니다."
     )
 

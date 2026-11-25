@@ -7,10 +7,14 @@
 연결된 이슈는 GitHub의 `closingIssuesReferences`(본문의 `Closes #N`과 PR 화면에서 연결한 것)로
 받는다(`GitHub.linked_issues`). 연결된 이슈가 없으면 모델을 부르지 않는다. 모델은 PR 설명 확인과
 같은 장치로 부른다: `judge.CodeReader`(읽기 도구만 주는 모델 폴더, 읽은 경로의 해시, 앞 커밋 뒤 바뀐
-파일). 호출은 PR 한 번에 하나이고(이슈가 여럿이어도 한 호출에 묶는다) PR 상한(9.2)에서 센다. 답은
+파일). 이슈가 여럿이어도 한 호출에 묶고 PR 상한(9.2)에서 센다. 답은
 (보인 이슈 글, diff, 모델, 프롬프트 판)의 키로 모델이 읽은 경로의 해시와 함께 저장하고, 그 경로가
 모두 그대로일 때만 다시 쓴다. 호출 상한, 실패는 저장하지 않는다. PR마다 바로 앞 결과도 한 줄 둔다
 (`earlier_key`, PR 설명 확인과 같다).
+
+번호를 붙인 diff가 호출 하나에 들어가지 않으면 diff 대신 묶음마다의 요약을 준다(`_check_digest`,
+app/worker/rules/diff_batches.py). 요약은 PR 설명 확인이 저장한 것을 쓰고, 없는 묶음만 요약을 받는
+호출을 같이 돌린다.
 """
 
 import logging
@@ -25,11 +29,15 @@ from app.worker.git.git_pure import Linked
 from app.worker.git.github import GitHub, GitHubError
 from app.worker.model.model_backend import ReadCode
 from app.worker.rules.checkers import STALE
+from app.worker.rules.diff_batches import ask_digests, begin_calls, finish_call, saved_digests
+from app.worker.rules.diff_batches_pure import Split, split, unseen_paths
 from app.worker.rules.judge import CodeReader
 from app.worker.rules.judge_pure import pr_label, reads_from_json
 from app.worker.rules.linked_issues_pure import (
     ANSWER_SCHEMA,
     CALL_BUDGET_USD,
+    DIGEST_PROMPT_VERSION,
+    DIGEST_SYSTEM_PROMPT,
     MAX_TOOL_USES,
     PROMPT_VERSION,
     SYSTEM_PROMPT,
@@ -37,6 +45,7 @@ from app.worker.rules.linked_issues_pure import (
     IssuesEarlier,
     LinkedIssues,
     Shown,
+    build_digest_prompt,
     build_prompt,
     earlier_from_json,
     earlier_key,
@@ -102,9 +111,15 @@ def check(
     files = parse_diff(changes_diff)
     if not files:
         return from_shown(shown, "unchecked", gap="no_diff")
+    parts = split(files)
     view = render_view(files)
-    base = from_shown(shown, files=view.files, shown=view.shown)
-    key = issues_key(shown, changes_diff, tools.model)
+    if parts.single:
+        base = from_shown(shown, files=view.files, shown=view.shown)
+    else:
+        base = from_shown(shown, files=parts.files, shown=parts.files - len(parts.left),
+                          batches=len(parts.batches), left=parts.left)  # fmt: skip
+    key = issues_key(shown, changes_diff, tools.model,
+                     "" if parts.single else DIGEST_PROMPT_VERSION)  # fmt: skip
     head = tools.budget.head_sha
     pointer = earlier_key(pr_label(tools.budget.repo, tools.budget.pr_number), tools.model)
     with ExitStack() as stack:
@@ -123,6 +138,8 @@ def check(
                 return replace(base, items=verified.kept, usage=usage)
         if is_stale():
             return replace(base, status="unchecked", gap="cap", detail=STALE)
+        if not parts.single:
+            return _check_digest(base, shown, parts, key, pointer, code, tools, known)
         call = tools.budget.with_targets(known).begin(
             PrScope(), stage=STAGE, tier="light", model=tools.model
         )
@@ -179,6 +196,83 @@ def check(
         _remember(tools.store, pointer, verified.kept, head, shown, model_id)
         usage = replace(usage, dropped=len(verified.dropped), kept_earlier=verified.same)
         return replace(base, items=verified.kept, usage=usage)
+
+
+def _check_digest(
+    base: LinkedIssues, shown: Shown, parts: Split, key: str, pointer: str, code: CodeReader,
+    tools: Tools, known: int,
+) -> LinkedIssues:  # fmt: skip
+    """변경이 커서 diff를 묶음으로 나눈 PR을 견준다. 묶음마다의 요약을 모아 호출 하나에 diff 대신
+    준다. 요약은 PR 설명 확인이 묶음을 읽으며 저장한 것을 쓰고, 없는 묶음만 요약을 받는 호출을 같이
+    돌린다. 호출 상한이 모자라 요약을 받지 못한 묶음과 실패한 묶음의 파일은 결과의 left에 둔다.
+    모든 묶음의 요약으로 견준 결과만 저장한다."""
+    head = tools.budget.head_sha
+    budget = tools.budget.with_targets(known)
+    changes = saved_digests(tools.store, parts, tools.model)
+    lacking = [i for i, got in enumerate(changes) if got is None]
+    calls, denied = begin_calls(budget, len(lacking) + 1, stage=STAGE, model=tools.model)
+    if not calls:
+        reason = denied.reason if denied is not None else ""
+        log.info("이슈 확인을 하지 않음: %s", reason)
+        return replace(base, status="unchecked", gap="cap", detail=reason)
+    asked = lacking[: len(calls) - 1]
+    got, answers = ask_digests(
+        parts, asked, calls[:-1], code.worktree, store=tools.store, budget=budget,
+        read_code=tools.read_code, model=tools.model,
+    )  # fmt: skip
+    for index, lines in got.items():
+        changes[index] = lines
+    earlier = _earlier(tools.store, pointer, shown, code, head)
+    answer = code.ask(
+        build_digest_prompt(shown, parts, changes, earlier),
+        system_prompt=DIGEST_SYSTEM_PROMPT,
+        schema=ANSWER_SCHEMA,
+        model=tools.model,
+        max_budget_usd=CALL_BUDGET_USD,
+        max_tool_uses=MAX_TOOL_USES,
+    )
+    log.info(
+        "이슈 확인 호출(묶음 %d개의 요약, 새로 받은 요약 %d개): 이슈 %s, 도구 %d회, 읽은 경로 %s, "
+        "입력 %s, 출력 %s토큰",
+        len(parts.batches), len(got), list(shown.numbers), answer.tool_uses, list(answer.reads),
+        answer.input_tokens, answer.output_tokens,
+    )  # fmt: skip
+    failure = None if answer.ok else f"{answer.error}: {answer.detail}"
+    items, reads = None, {}
+    if failure is None:
+        try:
+            items = parse_answer(answer.data or {})
+            reads = code.digests(answer.reads)
+        except ValueError as e:
+            failure = f"답의 형식이 틀림: {str(e).splitlines()[0]}"
+        except repo.GitError as e:
+            failure = f"모델이 읽은 파일을 확인하지 못함: {e}"
+    finish_call(budget, calls[-1], answer, failure)
+    spent = [*answers, answer]
+    model_id = answer.model_id or tools.model
+    usage = DescriptionUsage(
+        calls=len(spent), tool_uses=sum(a.tool_uses for a in spent),
+        input_tokens=sum(a.input_tokens or 0 for a in spent),
+        output_tokens=sum(a.output_tokens or 0 for a in spent),
+        models=tuple(dict.fromkeys(a.model_id or tools.model for a in spent)),
+        earlier=int(earlier is not None), earlier_items=len(earlier.items) if earlier else 0,
+    )  # fmt: skip
+    if failure is not None or items is None:
+        log.warning("이슈 확인 실패: %s", failure)
+        return replace(base, status="unchecked", gap="model_failed", detail=failure or "",
+                       usage=usage)  # fmt: skip
+    verified = verify(items, shown, earlier.items if earlier else ())
+    for reason in verified.dropped:
+        log.info("이슈 확인의 답을 버림: %s", reason)
+    left = unseen_paths(parts, changes)
+    if left == parts.left:  # 나눈 묶음의 요약을 모두 받았다
+        tools.store.save_result(key, stage=STAGE, model=model_id,
+                                prompt_version=DIGEST_PROMPT_VERSION,
+                                result_json=items_to_json(verified.kept, reads))  # fmt: skip
+    _remember(tools.store, pointer, verified.kept, head, shown, model_id)
+    usage = replace(usage, dropped=len(verified.dropped), kept_earlier=verified.same)
+    return replace(base, items=verified.kept, usage=usage, left=left,
+                   shown=parts.files - len(left))  # fmt: skip
 
 
 def _earlier(
