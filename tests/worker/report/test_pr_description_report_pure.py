@@ -82,9 +82,22 @@ def test_cut_diff_and_text_are_noted() -> None:
     lines = expanded(PrDescription("checked", files=5, shown=3, text_cut=True))
     assert lines == [
         "",
-        "변경이 커서 바뀐 파일 5개 중 2개는 diff를 다 보이지 못했습니다. 그 파일은 모델이 "
-        "필요할 때 작업 폴더에서 읽었습니다. PR 글이 길어 앞부분만 견줬습니다.",
+        "바뀐 파일 5개 중 2개는 바뀐 내용을 다 보지 못했습니다. PR 글이 길어 앞부분만 견줬습니다.",
     ]
+
+
+def test_large_change_names_the_batches_and_the_files_not_seen() -> None:
+    whole = PrDescription("checked", files=81, shown=81, batches=6)
+    assert expanded(whole) == ["", "변경이 커서 바뀐 파일 81개를 묶음 6개로 나눠 견줬습니다."]
+    left = tuple(f"gen/f{n}.lock" for n in range(12))
+    cut = PrDescription("checked", files=81, shown=69, batches=8, left=("a`b.py", *left[1:]))
+    (_, line) = expanded(cut)
+    assert line.startswith(
+        "변경이 커서 바뀐 파일 81개를 묶음 8개로 나눠 견줬습니다. 바뀐 파일 81개 중 12개는 "
+        "바뀐 내용을 다 보지 못했습니다: ``a`b.py``, `gen/f1.lock`, "
+    )
+    assert line.endswith("`gen/f9.lock` 외 2개.")
+    assert expanded(PrDescription("checked", files=3, shown=3)) == []
 
 
 def test_usage_goes_to_the_folded_block() -> None:

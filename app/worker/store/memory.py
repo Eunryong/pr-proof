@@ -61,13 +61,14 @@ INDEX_BATCH: Final = 32
 DOWNLOAD_TIMEOUT: Final = 60
 _CHUNK: Final = 1 << 20
 _VERIFIED: Final = ".verified.json"
-# 컬렉션의 거리 함수와 근사 검색의 넓이. 기본값(ef_search 100, 이웃 16)은 비슷한 글이 몰린
-# 컬렉션(같은 모양의 문서 절 수백 개)에서 가장 가까운 조각을 놓쳤다 (5단계 작업, 11.1)
+# 컬렉션의 거리 함수와 근사 검색의 넓이. 기본값(ef_search 100, 이웃 16)과 ef_search 400 모두
+# 비슷한 글이 몰린 컬렉션(같은 모양의 문서 절 수백 개)에서 가장 가까운 조각을 놓치는 경우가 있었다
+# (5단계 작업, 11.1)
 HNSW: Final[Mapping[str, object]] = {
     "space": "cosine",
-    "ef_search": 400,
+    "ef_search": 1000,
     "ef_construction": 400,
-    "max_neighbors": 32,
+    "max_neighbors": 48,
 }
 
 

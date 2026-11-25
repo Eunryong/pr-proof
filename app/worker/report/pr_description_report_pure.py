@@ -7,7 +7,7 @@
 안에만 넣는다 (app/worker/core/markdown_pure.py).
 """
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Final
 
 from app.worker.core.markdown_pure import inline_code
@@ -30,6 +30,8 @@ _GAP_TEXT: Final[Mapping[str, str]] = {
 }
 MAX_SUMMARY_CHARS: Final = 300
 MAX_DETAIL_CHARS: Final = 300
+MAX_LEFT_SHOWN: Final = 10  # 보지 못한 파일을 이름으로 적는 수
+MAX_PATH_CHARS: Final = 200
 # PR 제목·본문만 고친 것(pull_request.edited)은 다시 보지 않는다 (4.5 끝)
 RECHECK_HINT: Final = (
     "PR 제목·본문을 고쳤으면 `/recheck`를 달아 다시 견주세요. 커밋 없이 고친 것은 저절로 다시 "
@@ -68,17 +70,28 @@ def expanded(d: PrDescription | None) -> list[str]:
         return lines
     if d.items:
         lines += ["", HEAD, *(_item(m) for m in d.items), RECHECK_HINT]
-    notes = []
-    if d.diff_cut:
-        notes.append(
-            f"변경이 커서 바뀐 파일 {d.files}개 중 {d.files - d.shown}개는 diff를 다 보이지 "
-            "못했습니다. 그 파일은 모델이 필요할 때 작업 폴더에서 읽었습니다."
-        )
+    notes = large_change_notes(d.files, d.shown, d.batches, d.left)
     if d.text_cut:
         notes.append("PR 글이 길어 앞부분만 견줬습니다.")
     if notes:
         lines += ["", " ".join(notes)]
     return lines
+
+
+def large_change_notes(files: int, shown: int, batches: int, left: Sequence[str]) -> list[str]:
+    """변경이 커서 나눠 본 것과 보지 못한 파일을 알리는 문장들. 이슈 확인의 절도 쓴다. 파일 경로는
+    믿지 않는 글이라 코드 스팬 안에만 넣는다."""
+    notes = []
+    if batches > 1:
+        notes.append(f"변경이 커서 바뀐 파일 {files}개를 묶음 {batches}개로 나눠 견줬습니다.")
+    if shown < files:
+        note = f"바뀐 파일 {files}개 중 {files - shown}개는 바뀐 내용을 다 보지 못했습니다"
+        if left:
+            named = ", ".join(inline_code(p, MAX_PATH_CHARS) for p in left[:MAX_LEFT_SHOWN])
+            more = len(left) - MAX_LEFT_SHOWN
+            note += f": {named}{f' 외 {more}개' if more > 0 else ''}"
+        notes.append(note + ".")
+    return notes
 
 
 def folded(d: PrDescription | None) -> list[str]:

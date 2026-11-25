@@ -1,6 +1,8 @@
 """서버 id(데이터 폴더의 파일)와 패키지의 판."""
 
 import json
+import re
+import tomllib
 from pathlib import Path
 
 from app.shared import server, version
@@ -31,6 +33,20 @@ def test_broken_id_file_is_replaced(tmp_path: Path) -> None:
 def test_package_version_is_the_package_json_version() -> None:
     data = json.loads((version.REPO_ROOT / "package.json").read_text())
     assert version.package() == data["version"]
+
+
+def test_pyproject_version_matches_package_json() -> None:
+    """npm 판(`0.1.4-beta.0`)과 PEP 440 판(`0.1.4b0`)이 어긋나지 않는다."""
+    npm_version = version.package()
+    py_version = tomllib.loads((version.REPO_ROOT / "pyproject.toml").read_text())["project"][
+        "version"
+    ]
+    expected = re.sub(
+        r"-(alpha|beta|rc)\.(\d+)$",
+        lambda m: {"alpha": "a", "beta": "b", "rc": "rc"}[m.group(1)] + m.group(2),
+        npm_version,
+    )
+    assert py_version == expected
 
 
 def test_current_server(tmp_path: Path) -> None:

@@ -6,28 +6,47 @@
 
 모델은 위반 판단과 같은 장치로 부른다: worktree의 일반 파일을 복사한 모델 폴더를 읽을 수 있게 하고
 (`ModelBackend.reading`, claude 구현은 읽기 도구 Read, Grep, Glob만 준다, 8.4), 폴더는 물을 때만
-연다. 호출은 PR 한 번에 하나이고 PR 상한(9.2)에서 센다. 답은 (보인 PR 글, diff, 파이프라인 수정안의
+연다. 호출은 PR 상한(9.2)에서 센다. 답은 (보인 PR 글, diff, 파이프라인 수정안의
 변경, 모델, 프롬프트 판)의 키로 모델이 읽은 경로의 해시와 함께 저장하고, 그 경로가 모두 그대로일
 때만 다시 쓴다. 호출 상한, 실패는 저장하지 않는다.
 
 PR마다 바로 앞 견주기 결과도 한 줄 둔다(`earlier_key`). 커밋이 올라와 다시 견줄 때 그 결과와, PR
 글이 바뀌었는지, 그 커밋과 지금 커밋 사이에 바뀐 파일(`CodeReader.changed_since`, 위반 판단과 같은
 장치)을 자료로 같이 준다. 모델이 그대로라고 답한 어긋남은 지난 설명 글을 그대로 쓴다.
+
+번호를 붙인 diff가 호출 하나에 들어가지 않으면 묶음으로 나눠 묶음마다 호출 하나를 같이 돌리고
+(`_check_batches`, app/worker/rules/diff_batches.py), 마지막 호출 하나가 묶음들의 요약을 모아 "없는
+변경"을 본다. 호출은 묶음 수 + 1이고 모두 PR 상한에서 센다.
 """
 
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import ExitStack
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Final
 
 from app.worker.git import repo
-from app.worker.model.model_backend import ReadCode
+from app.worker.model.model_backend import ReadCode, StructuredResult
 from app.worker.rules.checkers import STALE
+from app.worker.rules.diff_batches import UNUSED, ask_all, begin_calls, finish_call, save_digest
+from app.worker.rules.diff_batches_pure import Split, parse_changes, split, unseen_paths
 from app.worker.rules.judge import CodeReader
 from app.worker.rules.judge_pure import pr_label, reads_from_json
 from app.worker.rules.pr_check_pure import PrFacts
+from app.worker.rules.pr_description_batch_pure import (
+    BATCH_SCHEMA,
+    BATCH_SYSTEM,
+    BATCH_VERSION,
+    MISSING_SCHEMA,
+    MISSING_SYSTEM,
+    build_batch_prompt,
+    build_missing_prompt,
+    earlier_for_batch,
+    earlier_missing,
+    merge,
+    only_kinds,
+)
 from app.worker.rules.pr_description_pure import (
     ANSWER_SCHEMA,
     CALL_BUDGET_USD,
@@ -108,11 +127,19 @@ def check(
     files = parse_diff(changes_diff)
     if not files:
         return PrDescription("unchecked", gap="no_diff", text_cut=described.cut)
+    parts = split(files)
     view = render_view(files)
     shown_pipeline = pipeline_text(pipeline)
-    base = PrDescription("checked", files=view.files, shown=view.shown, text_cut=described.cut)
+    if parts.single:
+        base = PrDescription("checked", files=view.files, shown=view.shown, text_cut=described.cut)
+    else:
+        base = PrDescription(
+            "checked", files=parts.files, shown=parts.files - len(parts.left),
+            text_cut=described.cut, batches=len(parts.batches), left=parts.left,
+        )  # fmt: skip
     changed, by_pipeline = changed_lines(files), pipeline_lines(pipeline)
-    key = description_key(described, changes_diff, shown_pipeline, tools.model)
+    key = description_key(described, changes_diff, shown_pipeline, tools.model,
+                          "" if parts.single else BATCH_VERSION)  # fmt: skip
     head = tools.budget.head_sha
     pointer = earlier_key(pr_label(tools.budget.repo, tools.budget.pr_number), tools.model)
     with ExitStack() as stack:
@@ -131,6 +158,9 @@ def check(
                 return _with(base, items=verified.kept, usage=usage)
         if is_stale():
             return _with(base, status="unchecked", gap="cap", detail=STALE)
+        if not parts.single:
+            return _check_batches(base, described, parts, shown_pipeline, changed, by_pipeline,
+                                  key, pointer, code, tools, known)  # fmt: skip
         call = tools.budget.with_targets(known).begin(
             PrScope(), stage=STAGE, tier="light", model=tools.model
         )
@@ -187,6 +217,126 @@ def check(
         _remember(tools.store, pointer, verified.kept, head, described, model_id)
         usage = replace(usage, dropped=len(verified.dropped), kept_earlier=verified.same)
         return _with(base, items=verified.kept, usage=usage)
+
+
+def _check_batches(
+    base: PrDescription, described: Described, parts: Split, shown_pipeline: str,
+    changed: Mapping[tuple[str, str, int], str],
+    by_pipeline: Mapping[str, frozenset[tuple[str, str]]], key: str, pointer: str,
+    code: CodeReader, tools: Tools, known: int,
+) -> PrDescription:  # fmt: skip
+    """변경이 커서 diff를 묶음으로 나눈 PR을 견준다. 묶음마다 호출 하나를 같이 돌려 "관련 없는
+    수정"과 "설명과 다름", 그 묶음의 요약을 받고, 마지막 호출 하나가 요약을 모아 "설명에는 있는데
+    코드에 없음"을 본다. 호출 상한이 모자라면 앞의 묶음부터 되는 만큼 보고, 보지 못한 묶음과 실패한
+    묶음의 파일은 결과의 left에 둔다. 모든 묶음을 본 결과만 저장한다."""
+    head = tools.budget.head_sha
+    budget = tools.budget.with_targets(known)
+    calls, denied = begin_calls(budget, len(parts.batches) + 1, stage=STAGE, model=tools.model)
+    if len(calls) < 2:  # 묶음 하나와 마지막 호출도 부를 수 없다
+        for call in calls:
+            budget.finish(call, ok=False, error=UNUSED)
+        reason = denied.reason if denied is not None else ""
+        log.info("PR 설명 확인을 하지 않음: %s", reason)
+        return _with(base, status="unchecked", gap="cap", detail=reason)
+    earlier = _earlier(tools.store, pointer, described, code, head)
+    asked = len(calls) - 1
+    scoped = [earlier_for_batch(earlier, batch) for batch in parts.batches[:asked]]
+    asking = {"model": tools.model, "max_budget_usd": CALL_BUDGET_USD,
+              "max_tool_uses": MAX_TOOL_USES}  # fmt: skip
+    answers = ask_all(
+        tools.read_code, code.worktree,
+        [build_batch_prompt(described, parts, i, shown_pipeline, scoped[i]) for i in range(asked)],
+        system_prompt=BATCH_SYSTEM, schema=BATCH_SCHEMA, **asking,
+    )  # fmt: skip
+    changes: list[tuple[str, ...] | None] = [None] * len(parts.batches)
+    groups: list[tuple[Mismatch, ...]] = []
+    reads: dict[str, str] = {}
+    dropped = same = 0
+    for i, (call, answer) in enumerate(zip(calls, answers, strict=False)):
+        failure = None if answer.ok else f"{answer.error}: {answer.detail}"
+        if failure is None:
+            try:
+                items = only_kinds(parse_answer(answer.data or {}), missing=False)
+                summary = parse_changes(answer.data or {})
+                reads.update(code.digests(answer.reads))
+            except ValueError as e:
+                failure = f"답의 형식이 틀림: {str(e).splitlines()[0]}"
+            except repo.GitError as e:
+                failure = f"모델이 읽은 파일을 확인하지 못함: {e}"
+        finish_call(budget, call, answer, failure)
+        log.info(
+            "PR 설명 확인 묶음 %d/%d: 도구 %d회, 입력 %s, 출력 %s토큰%s",
+            i + 1, len(parts.batches), answer.tool_uses, answer.input_tokens, answer.output_tokens,
+            f", 실패: {failure}" if failure else "",
+        )  # fmt: skip
+        if failure is not None:
+            continue
+        priors = scoped[i].items if scoped[i] is not None else ()
+        verified = verify(items, described, changed, by_pipeline, priors)
+        for reason in verified.dropped:
+            log.info("PR 설명 확인의 답을 버림: %s", reason)
+        groups.append(verified.kept)
+        dropped, same = dropped + len(verified.dropped), same + verified.same
+        changes[i] = summary
+        save_digest(tools.store, parts.batches[i], summary, tools.model, answer.model_id)
+    usage = _usage(answers, earlier, tools.model)
+    last = calls[-1]
+    if not groups:
+        budget.finish(last, ok=False, error=UNUSED)
+        return _with(base, status="unchecked", gap="model_failed", usage=usage,
+                     detail="묶음을 읽은 호출이 모두 실패함")  # fmt: skip
+    missing_earlier = earlier_missing(earlier)
+    answer = code.ask(
+        build_missing_prompt(described, parts, changes, missing_earlier),
+        system_prompt=MISSING_SYSTEM, schema=MISSING_SCHEMA, **asking,
+    )  # fmt: skip
+    failure = None if answer.ok else f"{answer.error}: {answer.detail}"
+    if failure is None:
+        try:
+            items = only_kinds(parse_answer(answer.data or {}), missing=True)
+            reads.update(code.digests(answer.reads))
+        except ValueError as e:
+            failure = f"답의 형식이 틀림: {str(e).splitlines()[0]}"
+        except repo.GitError as e:
+            failure = f"모델이 읽은 파일을 확인하지 못함: {e}"
+    finish_call(budget, last, answer, failure)
+    log.info(
+        "PR 설명 확인 요약 모으기: 도구 %d회, 읽은 경로 %s, 입력 %s, 출력 %s토큰",
+        answer.tool_uses, list(answer.reads), answer.input_tokens, answer.output_tokens,
+    )  # fmt: skip
+    usage = _usage([*answers, answer], earlier, tools.model)
+    if failure is not None:
+        log.warning("PR 설명 확인 실패: %s", failure)
+        return _with(base, status="unchecked", gap="model_failed", detail=failure, usage=usage)
+    priors = missing_earlier.items if missing_earlier is not None else ()
+    verified = verify(items, described, changed, by_pipeline, priors)
+    for reason in verified.dropped:
+        log.info("PR 설명 확인의 답을 버림: %s", reason)
+    kept = merge([*groups, verified.kept])
+    left = unseen_paths(parts, changes)
+    model_id = answer.model_id or tools.model
+    if left == parts.left:  # 나눈 묶음을 모두 봤다
+        tools.store.save_result(key, stage=STAGE, model=model_id, prompt_version=BATCH_VERSION,
+                                result_json=items_to_json(kept, reads))  # fmt: skip
+    _remember(tools.store, pointer, kept, head, described, model_id)
+    usage = replace(usage, dropped=dropped + len(verified.dropped),
+                    kept_earlier=same + verified.same)  # fmt: skip
+    return _with(base, items=kept, usage=usage, left=left, shown=parts.files - len(left))
+
+
+def _usage(
+    answers: Sequence[StructuredResult], earlier: Earlier | None, model: str
+) -> DescriptionUsage:
+    """호출 여러 개가 쓴 양의 합."""
+    return DescriptionUsage(
+        calls=len(answers),
+        tool_uses=sum(a.tool_uses for a in answers),
+        input_tokens=sum(a.input_tokens or 0 for a in answers),
+        output_tokens=sum(a.output_tokens or 0 for a in answers),
+        models=tuple(dict.fromkeys(a.model_id or model for a in answers)),
+        earlier=int(earlier is not None),
+        earlier_items=len(earlier.items) if earlier else 0,
+    )
 
 
 def _earlier(

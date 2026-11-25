@@ -13,12 +13,20 @@
 | PR 단위 확인: 계획 | `pr_check.plan.md` | `pr_check_pure.py` |
 | PR 단위 확인: 판단 | `pr_check.judge.md` | `pr_check_pure.py` |
 | PR 설명과 diff 견주기 | `pr_description.md` | `pr_description_pure.py` |
+| PR 설명과 diff 견주기 (큰 변경의 묶음 하나) | `pr_description.md` + `pr_description.batch.md` | `pr_description_batch_pure.py` |
+| PR 설명과 diff 견주기 (큰 변경의 요약 모으기) | `pr_description.md` + `pr_description.missing.md` | `pr_description_batch_pure.py` |
 | 연결된 이슈 확인 | `linked_issues.md` | `linked_issues_pure.py` |
+| 연결된 이슈 확인 (큰 변경의 요약으로) | `linked_issues.md` + `linked_issues.digest.md` | `linked_issues_pure.py` |
+| 큰 변경의 묶음 요약 | `diff_digest.md` | `diff_batches_pure.py` |
 | 실행 결과의 규칙 | `run_check.md` | `run_check_pure.py` |
 
 `checker_authoring.md`는 본문이고 `{{format}}` 자리에 형식 조각(`checker_authoring.ast_grep.md`나
 `checker_authoring.python_ast.md`)이 들어간다. `checker_authoring.records.md`는 지난 기록을 자료로 줄
 때만 본문과 `checker_authoring.path.md`의 `{{records}}` 자리에 들어가고, 주지 않을 때는 그 줄이 없다.
+
+`pr_description.batch.md`, `pr_description.missing.md`, `linked_issues.digest.md`는 본문 뒤에 붙는 조각이고
+변경이 커서 diff를 묶음으로 나눌 때만 쓴다. `diff_digest.changes.md`(요약을 적는 법)는 `diff_digest.md`와
+`pr_description.batch.md`의 `{{changes}}` 자리에 들어간다.
 
 ## 고칠 때
 

@@ -11,6 +11,7 @@ from collections.abc import Mapping, Sequence
 from typing import Final
 
 from app.worker.core.markdown_pure import inline_code
+from app.worker.report.pr_description_report_pure import large_change_notes
 from app.worker.rules.linked_issues_pure import MAX_ISSUES, IssueGap, LinkedIssues
 
 TITLE: Final = "**이슈:**"
@@ -87,11 +88,7 @@ def expanded(d: LinkedIssues | None) -> list[str]:
         )
     if d.unreadable and d.status != "unchecked":
         notes.append(f"읽지 못한 연결된 이슈 {d.unreadable}개는 보지 않았습니다.")
-    if d.diff_cut:
-        notes.append(
-            f"변경이 커서 바뀐 파일 {d.files}개 중 {d.files - d.shown}개는 diff를 다 보이지 "
-            "못했습니다. 그 파일은 모델이 필요할 때 작업 폴더에서 읽었습니다."
-        )
+    notes += large_change_notes(d.files, d.shown, d.batches, d.left)
     if d.text_cut:
         notes.append("이슈 글이나 댓글이 길어 일부만 견줬습니다.")
     if notes:
