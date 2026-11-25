@@ -254,7 +254,12 @@ test("뒤의 확인이 실패해도 확인한 때를 적고 지난 꼬리표를 
 
 test("레지스트리 조회는 시간 상한을 넘으면 throw한다", async () => {
   const slow = (url, { signal }) => new Promise((resolve, reject) => {
-    signal.addEventListener("abort", () => reject(signal.reason));
+    // Node 20의 AbortSignal.timeout은 타이머를 unref하므로, 실제 소켓처럼 이벤트 루프를 붙잡아 둔다
+    const pending = setTimeout(() => resolve({ ok: true, json: async () => ({}) }), 5000);
+    signal.addEventListener("abort", () => {
+      clearTimeout(pending);
+      reject(signal.reason);
+    });
   });
   const started = Date.now();
   await assert.rejects(entry.fetchDistTags({}, 50, slow));
