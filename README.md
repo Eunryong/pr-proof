@@ -2,6 +2,7 @@
 
 # pr-proof
 
+[![CI](https://github.com/Eunryong/pr-proof/actions/workflows/ci.yml/badge.svg)](https://github.com/Eunryong/pr-proof/actions/workflows/ci.yml)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![npm](https://img.shields.io/npm/v/pr-proof/next?label=npm)](https://www.npmjs.com/package/pr-proof)
 [![python](https://img.shields.io/badge/python-3.11%2B-blue)](pyproject.toml)
@@ -20,6 +21,34 @@ PR 하나에 네 가지를 한다.
 지금은 Python 저장소와 GitHub만 지원한다.
 
 > **써 보고 알려 주세요.** 이 프로젝트는 실제 저장소에서 어디가 부족한지 듣고 싶어서 공개했다. 규칙을 잘못 읽었거나, 위반이 아닌 것을 잡았거나, 수정안이 쓸모없었다면 [이슈](https://github.com/Eunryong/pr-proof/issues/new/choose)로 알려 주면 된다. 무엇을 적으면 좋은지는 [후기와 제보](#후기와-제보)에 있다.
+
+---
+
+## 실제 동작 예시
+
+<!--
+포트폴리오·방문자용 시각 자료 자리입니다. 아래 주석을 풀어 실제 화면을 연결하세요.
+추천 구성:
+1. 결과 코멘트 + 수정안 PR 생성 화면 GIF 또는 스크린샷 (예: docs/assets/demo.gif)
+2. 실제 동작을 볼 수 있는 공개 데모 PR 링크 (예: 결과 코멘트, 수정안 PR, Copilot 리뷰 답글)
+
+![pr-proof 동작 예시](docs/assets/demo.gif)
+- 공개 데모 PR: [예시 PR #1](https://github.com/...) · [수정안 PR #2](https://github.com/...)
+-->
+
+실제 결과 코멘트와 수정안 PR·리뷰 답글의 출력 형식은 아래 [하는 일](#하는-일)에 그대로 실려 있다.
+
+---
+
+## 검증과 평가
+
+| 항목 | 내용 |
+| --- | --- |
+| 자동 테스트 | Python 단위·흐름 테스트 2,430+ (`pytest`, Docker 제외) · Docker 통합 테스트 128 · CLI 입구 테스트 30 (`node --test`) |
+| 평가 케이스 | YAML 회귀·평가 세트 71건 (`eval/`: 규칙 35, RAG 12, 판단 6, PR 6, 린트 5, 도구 4, 피드백 2 등) |
+| 보안 위협 모델 | 39개 위협(`T1`–`T39`)을 공격자·자산·방어 장치·검증 테스트와 1:1 매핑 ([docs/design/08-security.md](docs/design/08-security.md)) |
+| 실제 모델 평가 (`0.1.4-beta.0`, PR 5건 × 4개 모델 구성) | 규칙 위반 탐지 **6/6** (오탐 0, 함정 오탐 0) · PR 설명 불일치 **2/2** (오탐 0) · 수정안 해결 **5/6** (나머지 1건은 타 파일 수정 필요로 `직접 고쳐야 함` 분류) · 범위 외 수정 **0** · 출구 검사 통과 **3/3** |
+| 대형 PR 분할 처리 (`eval-large`, 50개 파일 · 277,506자 diff, sonnet) | 20만 자·항목별 묶음 기준 설명 불일치 **4/4** · 연결 이슈 누락 **1/1** (오탐 0) |
 
 ---
 
@@ -455,6 +484,12 @@ flowchart LR
 2. **판단.** 남은 코멘트를 팀의 규칙, PR의 제목·본문·커밋, 지금 코드와 함께 모델이 본다.
 3. **수정.** 받아들인 것만 위의 8–10과 같은 방식으로 고쳐 수정안 PR 하나로 올린다.
 4. **답글과 해결.** 코멘트마다 답글을 달고, 수정안이 머지되면 스레드를 해결됨으로 바꾼다.
+
+**데이터와 상태 관리.** API와 워커는 메모리를 공유하지 않고 Redis와 SQLite(SQLModel · SQLAlchemy)로 상태를 나눈다.
+
+- **읽기/쓰기 분리.** 테이블 스키마([app/shared/db_pure.py](app/shared/db_pure.py), 15개 테이블)만 공유하고, API([app/api/history.py](app/api/history.py))는 읽기 전용 조회만, 워커([app/worker/store/state.py](app/worker/store/state.py))는 단일 쓰기를 맡는다. 워커 시작 시 `NULL` 허용 열만 트랜잭션 안에서 자동 추가한다.
+- **2계층 멱등성.** 수신 계층에서는 Redis의 원자적 `SET NX EX`로 웹훅 `delivery_id`와 작업 `dedup_key` 중복을 막고, 영속 계층에서는 PK(`comment_id`, 입력 해시 키)와 복합 `UniqueConstraint`(리뷰 코멘트·과거 기록), 단일 트랜잭션 교체(`replace_violations`)로 재시도 시에도 중복 실행을 막는다.
+- **장애 복구와 비용 추적.** LLM 호출은 시작 시점에 `ai_calls`에 선기록해 중단 시에도 호출 상한이 누락되지 않으며, PR 생성(`deliver_*`) 실패 후 재시도는 LangGraph SQLite 체크포인트와 `fix_attempts`에 저장한 패치·파일 해시를 재사용해 모델을 다시 부르지 않는다.
 
 파이프라인을 새 판으로 올리면 열린 PR을 다시 검사한다. 설계의 까닭과 세부는 [docs/DESIGN.md](docs/DESIGN.md)의 표에서 필요한 절만 찾아 읽으면 된다.
 
