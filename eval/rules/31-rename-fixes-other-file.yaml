@@ -4,7 +4,8 @@ description: >-
   함수 이름은 `calc_`로 시작한다" 규칙의 검사기가 PR이 더한 `bulk_discount`를 잡는다. 같은 PR이
   `orders/api/handlers.py`에서 그 이름을 import하므로 이름을 바꾸려면 위반이 있는 파일 밖도 바꿔야 한다.
   수정 판단은 fix로 정하고, 수정 작성은 `pricing.py`의 이름과 `handlers.py`의 import를 같이 바꾼다.
-  수정안 PR의 검증 절은 위반이 없는 파일이 같이 바뀌었음을 적는다.
+  수정안 PR의 검증 절은 위반이 없는 파일이 같이 바뀌었음을 적는다. 실제 모델로만 돈다(가짜 답이 없다).
+real_only: true
 base:
   - file: README.md
     find: "### 테스트\n\n- 테스트 파일 이름은 `test_<모듈>.py`다.\n"
@@ -15,44 +16,6 @@ pr:
   - file: orders/api/handlers.py
     find: "from orders.services.pricing import total\n"
     replace: "from orders.services.pricing import bulk_discount, total\n"
-model:
-  rules:
-    - section: 코드 규칙 > 이름
-      quote: "`orders/services/`의 공개 함수 이름은 `calc_`로 시작한다."
-      scope: ["orders/services/**"]
-      checker:
-        body: |
-          id: services-fn-prefix
-          language: python
-          severity: error
-          message: orders/services의 공개 함수 이름은 calc_로 시작한다
-          rule:
-            kind: function_definition
-            inside:
-              kind: module
-            has:
-              field: name
-              kind: identifier
-              not:
-                regex: "^(calc_|_)"
-        examples:
-          - {code: "def total(x):\n    return x\n", violates: true, lines: [1]}
-          - {code: "def quote(p):\n    return 1\n", violates: true, lines: [1]}
-          - {code: "def calc_total(x):\n    return x\n", violates: false, lines: []}
-          - {code: "def _helper(x):\n    return x\n", violates: false, lines: []}
-fix:
-  edits:
-    - - file: orders/services/pricing.py
-        find: "def bulk_discount(order: Order) -> int:"
-        replace: "def calc_bulk_discount(order: Order) -> int:"
-      - file: orders/api/handlers.py
-        find: "from orders.services.pricing import bulk_discount, total\n"
-        replace: "from orders.services.pricing import calc_bulk_discount, total\n"
-  answer:
-    summary: 공개 함수 이름을 calc_로 시작하게 바꾸고 그 이름을 import하는 곳을 같이 고침
-    changes:
-      - {file: orders/services/pricing.py, rule: 0, why: 함수 이름을 calc_bulk_discount로 바꿨다}
-      - {file: orders/api/handlers.py, rule: 0, why: 바뀐 이름을 import하게 고쳤다}
 expect:
   violations: ["orders/services/pricing.py:30"]
   contains:

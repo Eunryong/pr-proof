@@ -111,3 +111,25 @@ def test_clip_result_truncates_long_text() -> None:
     assert openai_pure.clip_result("abc", max_chars=10) == "abc"
     clipped = openai_pure.clip_result("a" * 20, max_chars=5)
     assert clipped.startswith("aaaaa") and "잘림" in clipped
+
+
+def test_reading_turns_get_read_tools_only_and_the_final_turn_forces_the_schema() -> None:
+    """읽는 턴에는 읽기 도구만 주고, 최종 답은 도구 없이 스키마를 강제한 턴에서 받는다."""
+    assert [t["function"]["name"] for t in openai_pure.reading_tools()] == [
+        "read_file",
+        "grep",
+        "glob",
+    ]
+    assert "읽기 끝" in openai_pure.reading_system_prompt(
+        "지시"
+    ) and "지시" in openai_pure.reading_system_prompt("지시")
+    history = [{"role": "system", "content": "s"}, {"role": "assistant", "content": "읽기 끝"}]
+    asked = openai_pure.final_answer_messages(history)
+    assert asked[:-1] == history and asked[-1] == {
+        "role": "user",
+        "content": openai_pure.FINAL_ANSWER_PROMPT,
+    }
+    schema = {"type": "object", "properties": {"seen": {"type": "string"}}}
+    request = openai_pure.build_chat_request(model="m", messages=asked, json_schema=schema)
+    assert "tools" not in request
+    assert request["response_format"]["json_schema"]["schema"] == schema
