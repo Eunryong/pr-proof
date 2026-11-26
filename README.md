@@ -365,7 +365,7 @@ gh 로그인 대신 토큰을 쓸 수 있다. 토큰은 설정 폴더의 `github
 | --- | --- |
 | `pr-proof model` | 지금 설정과 단계별로 쓰일 모델을 보인다 |
 | `pr-proof model opus` | 모든 단계를 그 모델로 |
-| `pr-proof model default` | 지워서 기본값(판단 sonnet, 수정 haiku→sonnet)으로 되돌린다 |
+| `pr-proof model default` | 지워서 기본값(모든 단계 sonnet)으로 되돌린다 |
 
 - 값은 `config.yaml`의 `model.default`에 적는다. 다른 설정과 주석은 그대로 둔다. configure도 Claude 로그인 확인 다음에 한 번 묻는다(질문 없이 돌릴 때는 `--model <이름>`).
 - 대상 repo의 `.pipeline.yaml`에 단계별로 적은 모델(`model.rules` 등)이 이 값보다 앞선다.
@@ -374,6 +374,14 @@ gh 로그인 대신 토큰을 쓸 수 있다. 토큰은 설정 폴더의 `github
 - 저장한 판단은 저장 키에 모델이 들어 있어, 모델을 바꾸면 다음 검사에서 다시 묻는다(그만큼 사용량이 든다).
 - 서버는 `config.yaml`을 시작할 때만 읽으므로 바꾼 뒤에는 서버를 다시 띄운다.
 - 로컬 모델로 돌리려면 `config.yaml`의 `model`에 `backend: local-openai`와 `base_url`(기본 `http://127.0.0.1:8080/v1`)을 적고 `default`에 그 서버의 모델 이름을 적는다. OpenAI 호환 `/v1/chat/completions`을 여는 로컬 서버(llama-server, Ollama, LM Studio)에 붙고, 주소는 이 컴퓨터(`127.0.0.1`, `localhost`, `[::1]`)만 받는다. 호출 하나의 시간 상한은 20분이다. 생각을 길게 하는 모델은 서버에서 생각의 세기와 생성 길이를 낮춰 띄운다.
+- Claude 계정의 사용량 한도에 닿았을 때 로컬 모델로 이어서 돌게 하려면 `model.fallback`에 로컬 서버를 적는다. claude CLI가 한도에 닿았다고 알리면 그 작업은 잠시 뒤 다시 돌고, 한도가 풀리는 시각까지 들어오는 작업은 처음부터 로컬 모델로 돈다. 한도가 풀리면 다시 Claude로 돈다. 결과 코멘트에 답한 모델의 이름이 남는다.
+
+  ```yaml
+  model:
+    fallback:
+      base_url: http://127.0.0.1:8080/v1   # 이 컴퓨터의 주소만
+      model: unsloth/Inkling-2-Mini-GGUF:UD-Q4_K_M
+  ```
 
 ### rag
 

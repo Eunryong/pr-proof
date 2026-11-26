@@ -469,7 +469,7 @@ def test_steps_are_numbered_out_of_ten_with_the_model_and_search_after_claude(en
 def test_without_model_option_nothing_is_asked_or_written(env) -> None:
     code, out = _configure(env, repos=[REPO], auth="gh")
     assert code == 0, out
-    assert "모델: 기본값 (판단 sonnet, 수정 haiku→sonnet) (바꾸려면 --model <이름>)" in out
+    assert "모델: 기본값 (모든 단계 sonnet) (바꾸려면 --model <이름>)" in out
     assert "model" not in yaml.safe_load((env["dir"] / "config.yaml").read_text())
     assert flow.SAVED_JUDGMENTS not in out
 
@@ -512,7 +512,7 @@ def test_interactive_model_choice(env, answers: list[str], expected: str) -> Non
     code, out = _configure(env, interactive=True, answers=["", *answers, "", REPO, ""])
     assert code == 0, out
     assert config.load_config(env["dir"]).model.default == expected
-    assert "1) 기본값 (판단 sonnet, 수정 haiku→sonnet)" in out and "5) 직접 입력" in out
+    assert "1) 기본값 (모든 단계 sonnet)" in out and "5) 직접 입력" in out
 
 
 def test_interactive_model_shows_the_saved_one_and_enter_keeps_it(env) -> None:
@@ -819,7 +819,7 @@ def test_model_shows_sets_and_resets_keeping_other_settings(env) -> None:
     assert code == 0 and "이미 opus입니다" in out and flow.RESTART not in out
 
     code, out = _model(env, "default")
-    assert code == 0 and "단계별 기본값(판단 sonnet, 수정 haiku→sonnet)으로 되돌렸습니다" in out
+    assert code == 0 and "단계별 기본값(모든 단계 sonnet)으로 되돌렸습니다" in out
     assert (d / "config.yaml").read_text() == original
     code, out = _model(env, "default")
     assert code == 0 and "이미 기본값" in out

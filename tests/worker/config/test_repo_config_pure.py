@@ -114,7 +114,7 @@ def test_stage3_defaults() -> None:
     assert problem is None
     assert config.fix.max_retries == 3
     assert config.fix.require_approval is False  # 기본: 검사 뒤 바로 수정안까지 간다
-    assert (config.model.light, config.model.heavy) == ("haiku", "sonnet")
+    assert (config.model.light, config.model.heavy) == ("sonnet", "sonnet")
 
 
 def test_decision_model_is_its_own_setting() -> None:
@@ -144,8 +144,8 @@ def test_pipeline_default_model_fills_only_stages_the_repo_did_not_write() -> No
 
 def test_repo_that_writes_the_default_value_still_wins_over_the_pipeline() -> None:
     """저장소가 기본값과 같은 값을 적어도 적은 것이다 (`model_fields_set`으로 가린다)."""
-    config, _ = parse_repo_config("model: {light: haiku}\n")
-    assert with_default_model(config, "opus").model.light == "haiku"
+    config, _ = parse_repo_config("model: {light: sonnet}\n")
+    assert with_default_model(config, "opus").model.light == "sonnet"
 
 
 @pytest.mark.parametrize("text", [None, "", "sandbox: {memory_gb: 2}\n", "model: {calls: {}}\n"])
@@ -159,7 +159,7 @@ def test_without_a_pipeline_default_the_code_defaults_are_unchanged() -> None:
     assert with_default_model(config, None) is config
     assert _stage_models(with_default_model(RepoConfig(), None)) == {
         "rules": "sonnet", "checker": "sonnet", "judge": "sonnet", "decide": "sonnet",
-        "light": "haiku", "heavy": "sonnet",
+        "light": "sonnet", "heavy": "sonnet",
     }  # fmt: skip
 
 
@@ -227,7 +227,7 @@ def test_old_skills_fix_key_is_read_and_noted_during_stage_2() -> None:
 def test_stage3_bad_values_fall_back_to_defaults(text: str, where: str) -> None:
     config, problem = parse_repo_config(text)
     assert problem is not None and f"`{where}`" in problem
-    assert config.model.light == "haiku" and config.fix.max_retries == 3
+    assert config.model.light == "sonnet" and config.fix.max_retries == 3
 
 
 @pytest.mark.parametrize(
@@ -394,3 +394,14 @@ def test_unknown_rules_from_reads_only_that_value_as_default_with_a_note(value: 
     )  # fmt: skip
     (note,) = settings_notes(text)
     assert note == "`rules.from`은 pr, base 중 하나여야 합니다. 기본값 pr로 읽었습니다"
+
+
+def test_forced_model_overrides_even_the_stages_the_repo_wrote() -> None:
+    """사용량 한도로 로컬 모델에 넘긴 작업은 저장소가 적은 단계까지 그 모델로 돈다."""
+    from app.worker.config.repo_config_pure import ForcedModel
+
+    config, _ = parse_repo_config("model: {judge: opus, light: haiku}\n")
+    forced = with_default_model(config, ForcedModel("inkling-2-mini"))
+    assert set(_stage_models(forced).values()) == {"inkling-2-mini"}
+    assert with_default_model(forced, ForcedModel("inkling-2-mini")) is forced
+    assert with_default_model(config, "inkling-2-mini").model.judge == "opus"  # 보통 값은 그대로

@@ -61,7 +61,7 @@ def test_suite_runs_every_docker_test_with_a_minimal_environment(tmp_path: Path)
     assert [c.case for c in summary.cases] == ["rules/01-print-in-orders",
                                                "test_tools_off_eval::test_tools"]  # fmt: skip
     assert summary.tools_off == BY_METHOD
-    assert summary.prompts["fix"] and summary.models["light"] == "haiku"
+    assert summary.prompts["fix"] and summary.models["light"] == "sonnet"
 
 
 def test_real_model_is_passed_only_when_asked(tmp_path: Path) -> None:

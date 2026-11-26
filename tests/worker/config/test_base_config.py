@@ -268,7 +268,7 @@ def test_pipeline_default_model_fills_stages_the_base_config_leaves_out(repo_dir
     assert (config.repo.model.judge, config.repo.model.rules) == ("haiku", "opus")
     assert (config.repo.model.light, config.repo.model.heavy) == ("opus", "opus")
     plain = base_config.load(repo_dir, base, max_memory_gb=4)
-    assert (plain.repo.model.rules, plain.repo.model.light) == ("sonnet", "haiku")
+    assert (plain.repo.model.rules, plain.repo.model.light) == ("sonnet", "sonnet")
 
 
 def test_comment_path_settings_take_the_pipeline_default_model(

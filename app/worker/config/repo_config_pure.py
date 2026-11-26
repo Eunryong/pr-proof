@@ -150,8 +150,9 @@ class ModelSettings(BaseModel):
     checker: str = Field(default="sonnet", pattern=MODEL_NAME_PATTERN)
     decide: str = Field(default="sonnet", pattern=MODEL_NAME_PATTERN)  # 수정 판단 (4.6)
     judge: str = Field(default="sonnet", pattern=MODEL_NAME_PATTERN)  # 모델의 직접 판단 (4.5)
-    # 수정 경로의 모델: 가벼운 모델로 시작하고 실패가 이어지면 무거운 모델로 한 번 올린다
-    light: str = Field(default="haiku", pattern=MODEL_NAME_PATTERN)
+    # 수정 경로의 모델: 가벼운 모델로 시작하고 실패가 이어지면 무거운 모델로 한 번 올린다. 둘이
+    # 같으면 올리지 않는다
+    light: str = Field(default="sonnet", pattern=MODEL_NAME_PATTERN)
     heavy: str = Field(default="sonnet", pattern=MODEL_NAME_PATTERN)
     calls: CallSettings = CallSettings()
 
@@ -294,8 +295,15 @@ def settings_notes(text: str | None) -> list[str]:
     return notes
 
 
+class ForcedModel(str):
+    """저장소가 단계별로 적은 값보다 앞서는 모델 이름. claude의 사용량 한도 때문에 로컬 모델로
+    넘긴 작업에서 모든 단계를 그 모델로 돌리는 데 쓴다. 저장한 답의 키에 실제로 답한 모델의 이름이
+    들어가게 하려는 것이다."""
+
+
 def with_default_model(config: RepoConfig, default: str | None) -> RepoConfig:
     """파이프라인 쪽 `model.default`를 저장소가 적지 않은 단계에만 채운다 (10절 "앞서는 순서").
+    default가 `ForcedModel`이면 저장소가 적은 단계까지 모두 그 모델로 바꾼다.
 
     앞서는 순서: 저장소의 `.pipeline.yaml`이 단계별로 적은 값 → 파이프라인 쪽 값 → 코드의 기본값.
     적었는지는 pydantic의 `model_fields_set`으로 가린다(기본값으로 채운 필드는 들지 않는다). 파일을
@@ -303,6 +311,11 @@ def with_default_model(config: RepoConfig, default: str | None) -> RepoConfig:
     """
     if default is None:
         return config
+    if isinstance(default, ForcedModel):
+        forced = {stage: str(default) for stage in STAGE_MODELS}
+        if all(getattr(config.model, stage) == str(default) for stage in STAGE_MODELS):
+            return config
+        return config.model_copy(update={"model": config.model.model_copy(update=forced)})
     unset = {stage: default for stage in STAGE_MODELS if stage not in config.model.model_fields_set}
     if not unset:
         return config

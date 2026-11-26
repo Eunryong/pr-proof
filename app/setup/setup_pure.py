@@ -398,8 +398,12 @@ def set_rag_allowed(text: str, value: bool) -> str:
 
 
 def default_models_label() -> str:
-    """파이프라인 쪽 값이 없을 때의 단계별 기본값을 짧게 (예: 판단 sonnet, 수정 haiku→sonnet)."""
+    """파이프라인 쪽 값이 없을 때의 단계별 기본값을 짧게. 모든 단계가 같으면 "모든 단계 sonnet",
+    다르면 "판단 sonnet, 수정 haiku→sonnet" 꼴이다."""
     models = ModelSettings()
+    stages = (models.rules, models.checker, models.decide, models.judge, models.light, models.heavy)
+    if len(set(stages)) == 1:
+        return f"모든 단계 {models.judge}"
     return f"판단 {models.judge}, 수정 {models.light}→{models.heavy}"
 
 

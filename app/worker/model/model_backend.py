@@ -56,6 +56,7 @@ class AIErrorKind(StrEnum):
     TOOLS = "tools"
     TOOL_CAP = "tool_cap"  # 읽기 도구를 부른 횟수가 호출 하나의 상한을 넘음
     APPLY = "apply"  # 모델 폴더의 변경을 worktree에 적용하지 못함
+    USAGE_LIMIT = "usage_limit"  # 계정의 사용량 한도에 닿아 답하지 못함
 
 
 @dataclass(frozen=True)
@@ -92,6 +93,8 @@ class EditResult:
     tool_usage: ToolUsage = ToolUsage()  # 파이프라인 도구를 부른 횟수와 시간
     # PR과 관계없이 구현을 쓸 수 없는 상태면 그 까닭(로그인 풀림 등). 호출하는 쪽은 환경 오류로 본다
     environment: str = ""
+    # error가 USAGE_LIMIT일 때 한도가 풀리는 시각(초 단위 epoch). 모르면 None
+    limit_resets_at: float | None = None
 
 
 @dataclass(frozen=True)
@@ -118,6 +121,8 @@ class StructuredResult:
     reads: tuple[str, ...] = ()
     unexpected_tools: tuple[tuple[str, int], ...] = ()  # 목록 밖 도구의 (이름, 횟수)
     num_turns: int = 0
+    # error가 USAGE_LIMIT일 때 한도가 풀리는 시각(초 단위 epoch). 모르면 None
+    limit_resets_at: float | None = None
 
 
 class AIEnvironmentError(RuntimeError):

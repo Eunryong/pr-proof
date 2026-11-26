@@ -26,7 +26,7 @@ model:
   checker: sonnet                      # 검사기 작성. 3회 모두 이 모델이고 더 높은 모델로 올리지 않는다 (11.2 D7)
   decide: sonnet                       # 수정 판단 (4.6). 남은 위반을 묶어 한 번에 묻는다
   judge: sonnet                        # 모델의 직접 판단 (4.5). 검사기를 만들지 못한 규칙 (4단계)
-  light: haiku                         # 수정 작성의 가벼운 모델
+  light: sonnet                        # 수정 작성의 가벼운 모델. heavy와 같으면 올리지 않는다
   heavy: sonnet                        # 수정 작성에서 실패가 이어지면 한 번 올리는 모델
   calls:                               # 모델 호출 수 상한 (9.2). 넉넉한 초깃값이고 측정 뒤 조정한다
     pr_base: 20                        # PR 상한 = pr_base + 대상 위반 수 × per_violation, 최대 pr_max

@@ -5,8 +5,9 @@ from dataclasses import dataclass, field
 from redis import Redis
 
 from app.shared import config, server
+from app.worker.config.repo_config_pure import ForcedModel
 from app.worker.git.github import GitHub
-from app.worker.model import backends
+from app.worker.model import backends, usage_fallback
 from app.worker.model.model_backend import ModelBackend
 from app.worker.store.state import Store
 
@@ -24,9 +25,14 @@ class Deps:
         settings = config.load_config()
         redis = Redis.from_url(settings.redis_url)
         github = GitHub(server=server.current(settings.data_dir))
-        return cls(
-            Store(settings.db_path, redis),
-            github,
-            settings,
-            backends.from_config(settings.model),
+        backend, fallen = usage_fallback.active(
+            settings.model, settings.data_dir, backends.from_config(settings.model)
         )
+        if fallen and settings.model.fallback is not None:
+            # 모든 단계를 로컬 모델의 이름으로 돌려, 저장한 답의 키에 실제로 답한 모델이
+            # 들어가게 한다
+            forced = ForcedModel(settings.model.fallback.model)
+            settings = settings.model_copy(
+                update={"model": settings.model.model_copy(update={"default": forced})}
+            )
+        return cls(Store(settings.db_path, redis), github, settings, backend)
