@@ -137,6 +137,10 @@ class Capabilities:
     reports_reads: bool  # `reading`의 결과에 읽은 경로를 하나하나 적는다 (못 하면 "."만 적는다)
     edits: bool  # `fix`: 폴더에서 고친다
     pipeline_tools: bool  # `fix`에 파이프라인 도구(규칙 검사, 테스트)를 줄 수 있다
+    # 호출 하나에 자르지 않고 통째로 넣을 수 있는 번호 붙인 diff의 글자 수 상한 (pr-proof#156)
+    max_diff_chars: int = 120_000
+    # 검사기 작성 최대 시도 횟수. 로컬/경량 모델은 1회 실패 시 바로 모델 판단으로 넘긴다
+    max_checker_attempts: int = 3
 
 
 @dataclass(frozen=True)

@@ -42,7 +42,7 @@ from app.worker.model.model_backend import (
 
 NAME: Final = "claude-cli"
 CAPABILITIES: Final = Capabilities(
-    reads_code=True, reports_reads=True, edits=True, pipeline_tools=True
+    reads_code=True, reports_reads=True, edits=True, pipeline_tools=True, max_diff_chars=400_000
 )
 LOGIN_CHECK: Final = "Claude 로그인"
 LOGIN_HINT: Final = "claude 실행 후 /login"

@@ -30,7 +30,7 @@ MAX_BATCHES: Final = 8  # 한 PR의 diff를 나누는 묶음 수. 넘는 만큼�
 MAX_ROW_CHARS: Final = 2_000  # diff의 한 줄을 보이는 글자 수
 MAX_CHANGES: Final = 60  # 묶음 하나의 요약 줄 수
 MAX_CHANGE_CHARS: Final = 200  # 요약 한 줄의 글자 수
-MAX_PATHS_SHOWN: Final = 40  # 요약 블록에서 묶음마다 적는 파일 이름 수
+MAX_PATHS_SHOWN: Final = 200  # 요약 블록에서 묶음마다 적는 파일 이름 수
 CONTINUED: Final = "앞 묶음에서 이어짐"
 
 
@@ -242,6 +242,19 @@ def unseen_paths(parts: Split, changes: Sequence[Sequence[str] | None]) -> tuple
     return tuple(seen)
 
 
+def ensure_all_paths(batch: Batch, changes: Sequence[str]) -> tuple[str, ...]:
+    """묶음 요약에 모델이 여러 파일을 한 줄로 합치며 빠뜨린 파일 경로를 결정적으로 보완한다."""
+    if not changes:
+        return ()
+    out = list(changes)
+    joined = "\n".join(out)
+    for path in dict.fromkeys(batch.paths):
+        if path in joined:
+            continue
+        out.append(f"{path}: 변경 포함 (요약에서 경로 생략됨)")
+    return tuple(out)
+
+
 def changes_blocks(parts: Split, changes: Sequence[Sequence[str] | None], tag: str) -> list[str]:
     """묶음마다의 요약을 모은 블록(CHANGES)과, 바뀐 내용을 보지 못한 파일의 블록(NOT_SEEN)."""
     lines = []
@@ -251,7 +264,8 @@ def changes_blocks(parts: Split, changes: Sequence[Sequence[str] | None], tag: s
         shown = ", ".join(batch.paths[:MAX_PATHS_SHOWN])
         more = len(batch.paths) - MAX_PATHS_SHOWN
         lines.append(f"묶음 {n} (파일: {shown}{f' 외 {more}개' if more > 0 else ''})")
-        lines += [f"- {c}" for c in got] or ["- (요약 없음)"]
+        complete = ensure_all_paths(batch, got)
+        lines += [f"- {c}" for c in complete] or ["- (요약 없음)"]
     blocks = [
         f"\n<<<CHANGES tag={tag}>>>\n이 PR이 바꾼 내용을 묶음 {len(parts.batches)}개로 나눠 다른 "
         "호출들이 읽고 묶음마다 요약한 글이다.\n"

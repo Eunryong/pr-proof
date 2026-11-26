@@ -58,7 +58,12 @@ from app.worker.rules.linked_issues_pure import (
     select,
     verify,
 )
-from app.worker.rules.pr_description_pure import DescriptionUsage, parse_diff, render_view
+from app.worker.rules.pr_description_pure import (
+    MAX_DIFF_CHARS,
+    DescriptionUsage,
+    parse_diff,
+    render_view,
+)
 from app.worker.store.budget import CallBudget
 from app.worker.store.call_budget_pure import Denied, PrScope
 from app.worker.store.state import Store
@@ -74,6 +79,7 @@ class Tools:
     budget: CallBudget
     read_code: ReadCode  # 코드를 읽을 수 있게 하고 묻는 폴더를 연다(`ModelBackend.reading`)
     model: str  # `model.judge` (PR 설명 확인과 같은 몫)
+    max_diff_chars: int = MAX_DIFF_CHARS  # 모델 구현의 단일 호출 diff 글자 수 상한 (pr-proof#156)
 
 
 def read(github: GitHub, repo_name: str, pr_number: int) -> Linked | str:
@@ -111,8 +117,8 @@ def check(
     files = parse_diff(changes_diff)
     if not files:
         return from_shown(shown, "unchecked", gap="no_diff")
-    parts = split(files)
-    view = render_view(files)
+    parts = split(files, limit=tools.max_diff_chars)
+    view = render_view(files, limit=tools.max_diff_chars)
     if parts.single:
         base = from_shown(shown, files=view.files, shown=view.shown)
     else:

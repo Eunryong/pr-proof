@@ -165,7 +165,11 @@ def test_claude_can_do_everything_the_pipeline_asks() -> None:
     backend = ClaudeCliBackend()
     assert backend.name == "claude-cli"
     assert backend.capabilities == Capabilities(
-        reads_code=True, reports_reads=True, edits=True, pipeline_tools=True
+        reads_code=True,
+        reports_reads=True,
+        edits=True,
+        pipeline_tools=True,
+        max_diff_chars=400_000,
     )
     assert fix_unavailable(backend) == ""
 

@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Final
 
 from app.worker.git import repo
+from app.worker.lang.python import read_sources
 from app.worker.model.model_backend import ReadCode, StructuredResult
 from app.worker.rules.checkers import STALE
 from app.worker.rules.diff_batches import UNUSED, ask_all, begin_calls, finish_call, save_digest
@@ -50,6 +51,7 @@ from app.worker.rules.pr_description_batch_pure import (
 from app.worker.rules.pr_description_pure import (
     ANSWER_SCHEMA,
     CALL_BUDGET_USD,
+    MAX_DIFF_CHARS,
     MAX_TOOL_USES,
     PROMPT_VERSION,
     SYSTEM_PROMPT,
@@ -73,6 +75,7 @@ from app.worker.rules.pr_description_pure import (
     pipeline_lines,
     pipeline_text,
     render_view,
+    unwired_symbol_facts,
     verify,
 )
 from app.worker.store.budget import CallBudget
@@ -90,6 +93,23 @@ class Tools:
     budget: CallBudget
     read_code: ReadCode  # 코드를 읽을 수 있게 하고 묻는 폴더를 연다(`ModelBackend.reading`)
     model: str  # `model.judge` (위반 판단과 같은 몫)
+    max_diff_chars: int = MAX_DIFF_CHARS  # 모델 구현의 단일 호출 diff 글자 수 상한 (pr-proof#156)
+
+
+MAX_SCAN_PY_FILES: Final = 300
+
+
+def _python_sources(worktree: Path) -> Mapping[str, str]:
+    """worktree의 Python 파일(상한까지)을 안전하게 읽어 정적 심볼 참조 확인에 쓴다."""
+    try:
+        paths = [
+            p.relative_to(worktree).as_posix()
+            for p in sorted(worktree.rglob("*.py"))
+            if ".git" not in p.parts and ".venv" not in p.parts
+        ][:MAX_SCAN_PY_FILES]
+    except OSError:
+        return {}
+    return read_sources(worktree, paths) if paths else {}
 
 
 def pipeline_diffs(worktree: Path, facts: PrFacts) -> tuple[str, ...]:
@@ -127,8 +147,8 @@ def check(
     files = parse_diff(changes_diff)
     if not files:
         return PrDescription("unchecked", gap="no_diff", text_cut=described.cut)
-    parts = split(files)
-    view = render_view(files)
+    parts = split(files, limit=tools.max_diff_chars)
+    view = render_view(files, limit=tools.max_diff_chars)
     shown_pipeline = pipeline_text(pipeline)
     if parts.single:
         base = PrDescription("checked", files=view.files, shown=view.shown, text_cut=described.cut)
@@ -168,8 +188,9 @@ def check(
             log.info("PR 설명 확인을 하지 않음: %s", call.reason)
             return _with(base, status="unchecked", gap="cap", detail=call.reason)
         earlier = _earlier(tools.store, pointer, described, code, head)
+        static_facts = unwired_symbol_facts(files, _python_sources(worktree))
         answer = code.ask(
-            build_prompt(described, view, shown_pipeline, earlier),
+            build_prompt(described, view, shown_pipeline, earlier, static_facts),
             system_prompt=SYSTEM_PROMPT,
             schema=ANSWER_SCHEMA,
             model=tools.model,
