@@ -73,7 +73,7 @@ expect:
 model:
   skip:                    # 수정 판단이 skip으로 답할 위반과 이유. 나머지는 fix
     orders/services/pricing.py:21: 이유            # 이유 글만 (skip 이유 이름 없음)
-    orders/services/pricing.py:30: {reason: needs_other_file, why: 이유}
+    orders/services/pricing.py:30: {reason: changes_behavior, why: 이유}
 fix:                       # 가짜 수정 모델 (실제 모델로 돌리면 쓰지 않는다)
   edits:                   # 회차마다 모델 폴더에 적용할 편집 (모자라면 마지막 것을 다시 쓴다)
     - - {file: 경로, find: 바꿀 문자열, replace: 바꿀 내용}
@@ -82,7 +82,8 @@ fix:                       # 가짜 수정 모델 (실제 모델로 돌리면 �
     changes: [{file: 경로, rule: 0, why: 이유}]  # (파일, 규칙)마다 하나. 줄은 파이프라인이 diff에서 채운다. line을 넣어도 읽지 않는다
 expect:
   fix: ready               # ready | failed | budget | none (budget: 호출 상한, none: 부르지 않음)
-  fix_file: 경로           # ready일 때 수정안 브랜치에서 바뀐 유일한 파일
+  fix_file: 경로           # ready일 때 수정안 브랜치에서 바뀐, 위반이 있는 파일
+  fix_also: [경로, ...]    # (선택) 위반을 고치며 같이 바뀐, 위반이 없는 파일
   generated_tests: true    # (선택) fix_file과 함께 만든 테스트(tests/test_pipeline_*.py)가 올라가야 한다
   same_as_base: true       # 그 파일이 base와 같아야 함
   pushed_contains: [...]   # 그 파일에 있어야 할 글

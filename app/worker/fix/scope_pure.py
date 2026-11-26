@@ -114,13 +114,20 @@ class ScopePolicy:
     test_files_allowed: frozenset[str] = frozenset()
     # 새로 만들어도 되는 테스트 파일의 폴더 (`is_generated_test`). None이면 만들 수 없다
     generated_test_dir: str | None = None
+    # 허용 목록(위반이 있는 파일) 밖의 파일도, 있던 파일의 내용 수정이고 확장자가 허용 목록의 어느
+    # 파일과 같으면 받는다. 부르는 쪽을 같이 고쳐야 지킬 수 있는 규칙을 고치려는 것이다. 목록 밖의
+    # 새 파일·삭제·이름 변경과 설정 파일(pytest.ini, .gitignore 등)은 여전히 밖이다
+    other_files: bool = False
 
 
 # 기계적 수정: 위반이 있는 파일의 내용만 바꾼다. 파일을 만들거나 지울 이유가 없다.
 # 테스트 파일의 위반도 고치므로 테스트 파일을 막지 않는다 (결과는 테스트 비교로 검증, 4.8의 1번)
 MECHANICAL_POLICY: Final = ScopePolicy(modify_only=True, protect_tests=False, protect_github=False)
-# 모델 수정: 허용 파일 안에서 새 파일·삭제·이름 변경까지 허락한다
-AI_POLICY: Final = ScopePolicy(modify_only=False, protect_tests=True, protect_github=True)
+# 모델 수정: 허용 파일 안에서 새 파일·삭제·이름 변경까지 허락하고, 위반을 고치는 데 같이 바꾼 다른
+# 코드 파일의 수정도 받는다
+AI_POLICY: Final = ScopePolicy(
+    modify_only=False, protect_tests=True, protect_github=True, other_files=True
+)
 
 
 @dataclass(frozen=True)
@@ -158,14 +165,22 @@ def _new_generated_test(e: StatusEntry, policy: ScopePolicy) -> bool:
     )
 
 
-def _path_reason(path: str, allowed: set[str], policy: ScopePolicy) -> str | None:
+def _path_reason(path: str, code: str, allowed: set[str], policy: ScopePolicy) -> str | None:
     if policy.protect_github and path.startswith(GITHUB_DIR):
         return "`.github/` 변경"
     if policy.protect_tests and is_test_file(path) and path not in policy.test_files_allowed:
         return "테스트 파일 변경"
-    if path not in allowed:
-        return "허용 목록 밖"
-    return None
+    if path in allowed:
+        return None
+    if policy.other_files and code == "M" and _same_kind(path, allowed):
+        return None
+    return "허용 목록 밖"
+
+
+def _same_kind(path: str, allowed: set[str]) -> bool:
+    """path의 확장자가 허용 목록의 어느 파일과 같은지. 확장자가 없으면 아니다."""
+    suffix = PurePosixPath(path).suffix
+    return bool(suffix) and any(PurePosixPath(a).suffix == suffix for a in allowed)
 
 
 def _entry_reason(e: StatusEntry, symlinks: frozenset[str]) -> str | None:
@@ -190,6 +205,8 @@ def judge_scope(
     """허용 범위 밖의 변경을 모두 모은다. 하나라도 있으면 수정안 전체를 버린다.
 
     - 이름 변경·복사는 옛 경로와 새 경로가 둘 다 허용 범위 안이어야 한다.
+    - policy.other_files면 허용 목록 밖이라도 있던 파일의 수정(M)이고 확장자가 허용 목록의 어느
+      파일과 같으면 받는다. 테스트 파일과 `.github/`는 그래도 밖이다.
     - symlinks: 바뀐 경로 중 지금 심볼릭 링크인 것 (worker가 확인해 넘긴다). 링크는 worktree 밖을
       가리킬 수 있어 허용 파일이라도 버린다.
     - new_ignored: AI 실행 직전 스냅샷에 없던 무시된 파일. 경로와 무관하게 버린다.
@@ -214,7 +231,7 @@ def judge_scope(
         if _new_generated_test(e, policy):
             continue
         for p in paths:
-            if reason := _path_reason(p, allowed_set, policy):
+            if reason := _path_reason(p, code, allowed_set, policy):
                 bad.append(ScopeViolation(code, p, reason))
     for p in sorted(new_ignored):
         if not is_pipeline_output(p):

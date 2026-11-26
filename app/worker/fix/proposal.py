@@ -217,14 +217,24 @@ def model_fix_body(job: PRJob, fix: ModelFix, found: Found, skipped: int) -> str
     if check is not None:
         kept = [t for t in fix.generated if t.accepted]
         made = {t.file for t in kept}
-        files = ", ".join(inline_code(f, 200) for f in fix.changed_files if f not in made)
+        code_files = [f for f in fix.changed_files if f not in made]
+        files = ", ".join(inline_code(f, 200) for f in code_files)
+        targets = set(fix.targets)
+        violating = {v.file for v in found.violations if v.id in targets}
+        others = ", ".join(inline_code(f, 200) for f in code_files if f not in violating)
+        changed = (
+            f"위반이 있는 파일과, 그 위반을 고치는 데 같이 바꾼 파일이 바뀜 ({files}. 위반이 없는 "
+            f"파일: {others})"
+            if others
+            else f"위반이 있는 파일만 바뀜 ({files})"
+        )
         recheck = f"도구·검사기 {check.rules_rechecked}개"
         new_tests = (
             f"만든 테스트 파일 {len(kept)}개는 테스트 폴더의 새 파일. "
             if kept else ""
         )  # fmt: skip
         lines += [
-            f"- 허용 범위: 위반이 있는 파일만 바뀜 ({files}). {new_tests}있던 테스트 파일, "
+            f"- 허용 범위: {changed}. {new_tests}있던 테스트 파일, "
             "`.github/`, 새로 생긴 무시된 파일 없음",
             f"- 규칙 재검사: 대상 위반 {check.resolved}건 해소, 새 위반 없음 "
             f"({recheck}를 다시 돌림)",
@@ -404,7 +414,7 @@ def feedback_fix_body(job: PRJob, fix: ModelFix, found: Found, accepted: Sequenc
             else "이 커밋의 규칙 검사 결과가 없어 도구·검사기를 다시 돌리지 않음"
         )
         lines += [
-            f"- 허용 범위: 판단이 정한 파일만 바뀜 ({files}). {new_tests}있던 테스트 파일, "
+            f"- 허용 범위: 바뀐 코드 파일 {files}. {new_tests}있던 테스트 파일, "
             "`.github/`, 새로 생긴 무시된 파일 없음",
             f"- 코멘트 반영: 검사기가 없어 그 파일이 바뀐 것까지만 확인했습니다 "
             f"({check.resolved}건). 반영 여부는 리뷰어가 확인해 주세요",

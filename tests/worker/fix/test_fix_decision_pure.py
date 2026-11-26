@@ -119,14 +119,14 @@ Q: Final = Question(V, RULE, HUNK)
 def test_answer_becomes_model_decisions() -> None:
     answers = parse_answer({"decisions": [
         {"id": "v1", "action": "fix", "reason": "", "why": "로거로 바꾸면 된다"},
-        {"id": "v2", "action": "skip", "reason": "needs_other_file",
+        {"id": "v2", "action": "skip", "reason": "needs_other_file",  # 모델이 고르는 이유가 아니다
          "why": "  여러 줄에\n걸친   이유  "},
         {"id": "v3", "action": "skip", "reason": "changes_behavior", "why": "반환값이 바뀐다"},
         {"id": "v4", "action": "skip", "reason": "not_a_violation", "why": "상수다"},
     ]})  # fmt: skip
     assert answers == (
         FixDecision("v1", "fix", "model", method="model", why="로거로 바꾸면 된다"),
-        FixDecision("v2", "skip", "model", reason="needs_other_file", why="여러 줄에 걸친 이유"),
+        FixDecision("v2", "skip", "model", reason="risky", why="여러 줄에 걸친 이유"),
         FixDecision("v3", "skip", "model", reason="changes_behavior", why="반환값이 바뀐다"),
         FixDecision("v4", "skip", "model", reason="not_a_violation", why="상수다"),
     )
@@ -147,10 +147,13 @@ def test_fix_ignores_a_skip_reason() -> None:
 
 
 def test_prompt_makes_fix_the_default_and_names_the_skip_reasons() -> None:
-    """수정 판단의 지시 (4.6): 기본은 fix, skip은 세 이유뿐, 방법이 여럿이면 가장 작은 변경."""
+    """수정 판단의 지시 (4.6): 기본은 fix, skip은 두 이유뿐, 다른 파일을 같이 바꾸는 수정도 fix."""
     from app.worker.fix.fix_decision_pure import ANSWER_SCHEMA, MODEL_SKIP_REASONS
 
-    assert "가장 작은 변경" in " ".join(SYSTEM_PROMPT.split())
+    flat = " ".join(SYSTEM_PROMPT.split())
+    assert "다른 파일을 같이 바꿔야 하는 수정" in flat and "도 fix다" in flat
+    assert "needs_other_file" not in SYSTEM_PROMPT
+    assert MODEL_SKIP_REASONS == ("changes_behavior", "not_a_violation")
     assert "확실하지 않으면" not in SYSTEM_PROMPT
     assert all(f"- {r}:" in SYSTEM_PROMPT for r in MODEL_SKIP_REASONS)
     item = ANSWER_SCHEMA["properties"]["decisions"]["items"]  # type: ignore[index]

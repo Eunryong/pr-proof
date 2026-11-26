@@ -20,14 +20,14 @@ from app.worker.core.violation_pure import Violation
 from app.worker.store.rag_pure import Retrieval, cited
 from app.worker.testing.test_run_pure import RunStatus
 
-# needs_other_file·changes_behavior·not_a_violation은 모델이 고르는 skip 이유다. risky는 모델이
-# 이유를 고르지 않은 skip이다
+# changes_behavior·not_a_violation은 모델이 고르는 skip 이유다. risky는 모델이 이유를 고르지 않은
+# skip이다. needs_other_file은 저장된 옛 판단에만 있다
 SkipReason = Literal[
     "rejected_before", "notify_only", "tests_failed", "no_safety_net", "team_pattern",
     "needs_other_file", "changes_behavior", "not_a_violation", "risky", "call_limit",
     "undecided",
 ]  # fmt: skip
-ModelSkipReason = Literal["needs_other_file", "changes_behavior", "not_a_violation"]
+ModelSkipReason = Literal["changes_behavior", "not_a_violation"]
 FixMethod = Literal["mechanical", "model", "none"]
 
 _TESTS_BROKEN: Final[Mapping[str, str]] = {
@@ -199,7 +199,7 @@ class Question:
 
 SYSTEM_PROMPT: Final = load(__file__, "fix_decision")
 
-MODEL_SKIP_REASONS: Final = ("needs_other_file", "changes_behavior", "not_a_violation")
+MODEL_SKIP_REASONS: Final = ("changes_behavior", "not_a_violation")
 
 ANSWER_SCHEMA: Final[Mapping[str, object]] = {
     "type": "object",
