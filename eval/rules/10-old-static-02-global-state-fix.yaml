@@ -1,9 +1,7 @@
 name: old-static-02-global-state-fix
 description: >-
-  옛 static 02(모듈 수준 상태)를 README 규칙 케이스로 옮긴 것 (완료 기준 2-1). README의 "함수는 모듈
-  수준 변수를 바꾸지 않는다" 규칙의 검사기가 함수 안의 `_seen_orders.append(order)`를 잡고, 가짜
-  모델이 상태를 없앤 수정안(줄을 지우기만 함)이 재검사와 테스트를 통과해 수정안 PR로 올라간다. 지우기만
-  한 곳의 줄 리뷰 코멘트는 파이프라인이 지운 자리의 앞줄에 단다.
+  모듈 수준 상태 (완료 기준 2-1). README의 "함수는 모듈 수준 변수를 바꾸지 않는다" 규칙이 함수 안의 `_seen_orders.append(order)`를 잡는다.
+  고칠지, 이유와 함께 사람에게 남길지는 수정 판단의 모델이 정한다.
 pr:
   - file: orders/services/pricing.py
     find: "MAX_COUPON_PERCENT = 50\n"
@@ -11,51 +9,5 @@ pr:
   - file: orders/services/pricing.py
     find: "def subtotal(order: Order) -> int:\n"
     replace: "def subtotal(order: Order) -> int:\n    _seen_orders.append(order)\n"
-model:
-  rules:
-    - section: 코드 규칙 > 상수
-      quote: "함수는 모듈 수준 변수를 바꾸지 않는다. `global` 문을 쓰지 않는다."
-      scope: []
-      checker:
-        body: |
-          id: no-module-state-mutation
-          language: python
-          severity: error
-          message: 함수는 모듈 수준 변수를 바꾸지 않는다
-          rule:
-            any:
-              - kind: global_statement
-              - all:
-                  - kind: call
-                  - has:
-                      field: function
-                      kind: attribute
-                      has:
-                        field: object
-                        kind: identifier
-                        regex: "^_[a-z_]+$"
-                  - inside:
-                      kind: function_definition
-                      stopBy: end
-        examples:
-          - {code: "_seen = []\n\n\ndef f(x):\n    _seen.append(x)\n", violates: true, lines: [5]}
-          - {code: "count = 0\n\n\ndef bump():\n    global count\n    count += 1\n", violates: true, lines: [5]}
-          - {code: "def f(items):\n    items.append(1)\n    return items\n", violates: false, lines: []}
-          - {code: "_cache = []\n_cache.append(1)\n", violates: false, lines: []}
-fix:
-  edits:
-    - - file: orders/services/pricing.py
-        find: "_seen_orders = []\n"
-        replace: ""
-      - file: orders/services/pricing.py
-        find: "    _seen_orders.append(order)\n"
-        replace: ""
-  answer:
-    summary: subtotal이 바꾸던 모듈 수준 리스트를 없앰
-    changes:
-      - {file: orders/services/pricing.py, rule: 0, why: 함수가 바꾸던 모듈 수준 리스트를 지움}
 expect:
   violations: ["orders/services/pricing.py:10"]
-  fix: ready
-  fix_file: orders/services/pricing.py
-  same_as_base: true

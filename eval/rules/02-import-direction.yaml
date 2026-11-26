@@ -9,28 +9,6 @@ pr:
   - file: orders/api/handlers.py
     find: "from orders.services.pricing import total\n"
     replace: "from orders.services.pricing import shipping_fee, total\n"
-model:
-  rules:
-    - section: 코드 규칙 > 의존 방향
-      quote: "`orders/services`는 `orders/api`를 import하지 않는다."
-      scope: ["orders/services/**"]
-      checker:
-        body: |
-          id: services-no-api
-          language: python
-          severity: error
-          message: orders/services는 orders/api를 import하지 않는다
-          rule:
-            any:
-              - kind: import_statement
-                regex: "orders\\.api"
-              - kind: import_from_statement
-                regex: "^from\\s+orders\\.api"
-        examples:
-          - {code: "import orders.api.handlers\n", violates: true, lines: [1]}
-          - {code: "from orders.api.handlers import quote\n", violates: true, lines: [1]}
-          - {code: "from orders.models.order import Order\n", violates: false, lines: []}
-          - {code: "import orders.models\n", violates: false, lines: []}
 expect:
   violations: ["orders/services/pricing.py:2", "orders/services/pricing.py:3"]
   not_flagged: ["orders/api/handlers.py:2"]

@@ -73,13 +73,10 @@ def add_eval_run(engine: Engine, run: EvalRun) -> int:
         return run.id
 
 
-def latest_baseline(
-    engine: Engine, real_model: bool, before_id: int | None = None
-) -> EvalRun | None:
-    """가장 최근의 기준선. 가짜 모델의 실행과 실제 모델의 실행은 서로의 기준선이 아니다. before_id를
-    주면 그보다 앞선 것."""
+def latest_baseline(engine: Engine, before_id: int | None = None) -> EvalRun | None:
+    """가장 최근의 기준선. before_id를 주면 그보다 앞선 것."""
     with Session(engine) as session:
-        stmt = select(EvalRun).where(EvalRun.baseline == True, EvalRun.real_model == real_model)  # noqa: E712
+        stmt = select(EvalRun).where(EvalRun.baseline == True, EvalRun.real_model == True)  # noqa: E712
         if before_id is not None:
             stmt = stmt.where(EvalRun.id < before_id)
         return session.exec(stmt.order_by(EvalRun.id.desc())).first()

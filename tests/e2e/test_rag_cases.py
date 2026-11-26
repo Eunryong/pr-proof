@@ -1,16 +1,15 @@
 """과거 기록 검색 E2E (eval/rag/*.yaml, 13절 5단계의 5-1–5-13).
 
 문서 규칙 케이스와 같은 방식이다: 예제 리포의 로컬 git 원격, 실제 샌드박스 테스트, 실제 ast-grep,
-실제 Chroma(데이터 폴더의 `chroma/`), GitHub만 가짜. 모델은 케이스의 답을 돌려주는 가짜이고, 임베딩
-모델도 기본으로 가짜(글자 3-gram, tests/worker/rag_helpers.py)라 `pytest -m docker`가 결정적이고
-470MB를 받지 않는다. `PR_PROOF_REAL_EMBED=1`과 `PR_PROOF_EMBED_DIR`(고정한 판의
-multilingual-e5-small 파일이 든 폴더)을 주면 실제 임베딩 모델을 쓴다. 그때
-`fake_embed_only: true`인 케이스는 건너뛴다(가짜 모델의 유사도에 맞춘 기준값을 쓰는 케이스).
+실제 Chroma(데이터 폴더의 `chroma/`), GitHub만 가짜. 설정된 모델을 실제로 부르므로
+`PR_PROOF_REAL_MODEL=1`일 때만 돈다. 임베딩도 실제 모델이다: `PR_PROOF_REAL_EMBED=1`과
+`PR_PROOF_EMBED_DIR`(고정한 판의 multilingual-e5-small 파일이 든 폴더)이 있어야 한다. 검색을 쓰지
+않는 것을 보는 케이스(`expect.blocked_imports`)는 임베딩 모델 없이 돈다.
 
 케이스 형식은 문서 규칙 케이스에 아래를 더한다.
 
-    records: 검사 전에 SQLite에 넣을 과거 기록. rule은 `model.rules`의 순번(그 규칙의 원문과 id를
-        쓴다)이고, 없으면 rule_text·rule_id를 그대로 쓴다. repo를 주면 그 저장소의 기록이다
+    records: 검사 전에 SQLite에 넣을 과거 기록. rule_text는 규칙의 원문이고 rule_id가 없으면 그
+        원문으로 만든다. repo를 주면 그 저장소의 기록이다
     expect.prompt_records: {decide, fix} 그 단계의 프롬프트 하나에 들어간 기록 수의 최댓값
     expect.chroma, models_dir: 데이터 폴더에 `chroma/`, `models/`가 있어야 하는지
     expect.embedded: 이 저장소 기록 중 임베딩된 수. other_embedded: 다른 저장소 기록 중 임베딩된 수
@@ -41,18 +40,15 @@ from app.worker.store import memory
 from app.worker.store.rag_pure import collection_name
 from app.worker.store.records_pure import NewRecord
 
-from ..worker.store.rag_helpers import FAKE_SPEC, FakeEncoder
+from .conftest import needs_model
 from .test_lint_cases import _bodies, _git, shared_venvs  # noqa: F401
 from .test_rules_cases import (
-    REAL_MODEL_ENV,
     _check,
     _check_fix,
     _remote,
     deps_for,  # noqa: F401
     doc_rules_section,
     flagged,
-    scripted_fixer,
-    scripted_model,
 )
 
 CASES_DIR: Final = Path(__file__).resolve().parents[2] / "eval" / "rag"
@@ -69,29 +65,23 @@ def real_embed() -> bool:
     return os.environ.get(REAL_EMBED_ENV) == "1"
 
 
+def needs_embedder() -> None:
+    if not real_embed():
+        pytest.skip(f"임베딩 모델을 쓰는 테스트 ({REAL_EMBED_ENV}=1, {EMBED_DIR_ENV})")
+
+
 def use_embedder(monkeypatch) -> None:
-    """검색의 임베딩 모델: 기본은 가짜, PR_PROOF_REAL_EMBED=1이면 받아 둔 실제 모델 폴더."""
-    if real_embed():
-        folder = Path(os.environ[EMBED_DIR_ENV])
-        spec = EMBED_MODELS[E5_SMALL]
-        for f in (spec.tokenizer, spec.onnx):
-            data = (folder / Path(f.path).name).read_bytes()
-            assert hashlib.sha256(data).hexdigest() == f.sha256, f.path
-        monkeypatch.setattr(memory, "ensure_model", lambda *a, **k: folder)
-        return
-
-    def open_retriever(data_dir, db, repo, settings, spec, download=None):
-        vectors = memory.VectorStore(data_dir / memory.CHROMA_DIR, FAKE_SPEC.name, FAKE_SPEC.dim)
-        return memory.Retriever(db, repo, settings, vectors, FakeEncoder())
-
-    monkeypatch.setattr(memory, "open_retriever", open_retriever)
+    """검색이 받아 둔 임베딩 모델 폴더(`PR_PROOF_EMBED_DIR`)를 쓰게 한다. 다시 받지 않는다."""
+    folder = Path(os.environ[EMBED_DIR_ENV])
+    spec = EMBED_MODELS[E5_SMALL]
+    for f in (spec.tokenizer, spec.onnx):
+        data = (folder / Path(f.path).name).read_bytes()
+        assert hashlib.sha256(data).hexdigest() == f.sha256, f.path
+    monkeypatch.setattr(memory, "ensure_model", lambda *a, **k: folder)
 
 
 def encoder_for_reindex():
-    if real_embed():
-        spec = EMBED_MODELS[E5_SMALL]
-        return memory.OnnxEncoder(spec, Path(os.environ[EMBED_DIR_ENV]))
-    return FakeEncoder()
+    return memory.OnnxEncoder(EMBED_MODELS[E5_SMALL], Path(os.environ[EMBED_DIR_ENV]))
 
 
 def expand(edits: list[dict] | None) -> list[dict]:
@@ -114,9 +104,8 @@ def expand(edits: list[dict] | None) -> list[dict]:
 
 
 def seed(case: dict, store) -> None:
-    rules = case["model"]["rules"]
     for n, r in enumerate(case.get("records") or ()):
-        quote = rules[r["rule"]]["quote"] if "rule" in r else r["rule_text"]
+        quote = r["rule_text"]
         store.add_record(NewRecord(
             repo=r.get("repo", REPO), kind=r["kind"], origin=r.get("origin", "fix_pr"),
             source_id=f"eval:{n}", rule_id=r.get("rule_id") or rule_id("README.md", quote),
@@ -127,16 +116,21 @@ def seed(case: dict, store) -> None:
 
 
 class Prompts:
-    """단계별로 모델에 간 프롬프트. 수정 판단은 가짜 모델을 감싸 남기고, 수정 작성은 가짜 수정
-    모델이 남긴 것을 읽는다."""
+    """수정 판단과 수정 작성의 모델 호출에 간 프롬프트를 남긴다. 호출은 그대로 넘긴다."""
 
-    def __init__(self, ask) -> None:
-        self.ask, self.decide = ask, []
+    def __init__(self, ask, write) -> None:
+        self._ask, self._write = ask, write
+        self.decide: list[str] = []
+        self.fix: list[str] = []
 
-    def __call__(self, prompt: str, *, schema, **kw):
+    def ask(self, prompt: str, *, schema, **kw):
         if schema is fix_decision_pure.ANSWER_SCHEMA:
             self.decide.append(prompt)
-        return self.ask(prompt, schema=schema, **kw)
+        return self._ask(prompt, schema=schema, **kw)
+
+    def write(self, work, prompt: str, **kw):
+        self.fix.append(prompt)
+        return self._write(work, prompt, **kw)
 
 
 def _most_records(prompts: list[str]) -> int:
@@ -156,24 +150,20 @@ def _collections(data: Path) -> set[str]:
 @pytest.mark.parametrize("case_path", CASES, ids=[p.stem for p in CASES])
 def test_rag_case(case_path: Path, eval_repo: Path, deps_for, tmp_path: Path,  # noqa: F811
                   monkeypatch) -> None:  # fmt: skip
+    needs_model()
     case = yaml.safe_load(case_path.read_text())
     case["base"] = expand(case.get("base"))
     expect = case["expect"]
-    if os.environ.get(REAL_MODEL_ENV) == "1":
-        pytest.skip("검색 케이스는 가짜 모델로 연결을 본다. 실제 모델 비교는 test_rag_compare.py")
-    if real_embed() and case.get("fake_embed_only"):
-        pytest.skip("가짜 임베딩 모델의 유사도에 맞춘 케이스")
-    if not expect.get("blocked_imports"):
-        pytest.importorskip("chromadb")
-    fixer = scripted_fixer(case) if "fix" in case else None
-    prompts = Prompts(scripted_model(case))
-    monkeypatch.setattr(claude_cli, "run_structured", prompts)
-    if fixer is not None:
-        monkeypatch.setattr(claude_cli, "run_claude", fixer)
-    use_embedder(monkeypatch)
+    prompts = Prompts(claude_cli.run_structured, claude_cli.run_claude)
+    monkeypatch.setattr(claude_cli, "run_structured", prompts.ask)
+    monkeypatch.setattr(claude_cli, "run_claude", prompts.write)
     if expect.get("blocked_imports"):
         for name in HEAVY:
             monkeypatch.setitem(sys.modules, name, None)
+    else:
+        needs_embedder()
+        pytest.importorskip("chromadb")
+        use_embedder(monkeypatch)
     remote = _remote(tmp_path, eval_repo, case)
     deps, gh, redis = deps_for(remote)
     seed(case, deps.store)
@@ -186,11 +176,10 @@ def test_rag_case(case_path: Path, eval_repo: Path, deps_for, tmp_path: Path,  #
     for text in expect.get("absent", ()):
         assert text not in section, (text, section)
     if "fix" in expect:
-        _check_fix(expect, section, gh, remote, fixer, real_model=False)
+        _check_fix(expect, section, gh, remote, deps)
     if "prompt_records" in expect:
         want = expect["prompt_records"]
-        got = {"decide": _most_records(prompts.decide),
-               "fix": _most_records(fixer.calls if fixer is not None else [])}  # fmt: skip
+        got = {"decide": _most_records(prompts.decide), "fix": _most_records(prompts.fix)}
         assert {k: got[k] for k in want} == want, (got, prompts.decide)
     if "chroma" in expect:
         assert (data / memory.CHROMA_DIR).is_dir() == expect["chroma"]
@@ -237,7 +226,8 @@ def test_case_files_are_well_formed() -> None:
     assert CASES
     for path in CASES:
         case = yaml.safe_load(path.read_text())
-        assert {"name", "description", "pr", "model", "expect"} <= case.keys(), path
+        assert {"name", "description", "pr", "expect"} <= case.keys(), path
+        assert not {"model", "fix"} & case.keys(), path  # 모델의 답을 케이스에 적지 않는다
         for record in case.get("records") or ():
             assert record["kind"] in {"adopted", "rejected", "failed", "checker"}, path
-            assert ("rule" in record) != ("rule_text" in record), path
+            assert "rule_text" in record, path

@@ -4,10 +4,9 @@ description: >-
   4.8의 6번). PR이 더한 `is_bulk`의 `> 10`은 README의 상수 규칙을 어기고, 있던 테스트는 이 함수를 부르지
   않는다. 수정을 쓰는 모델은 고치기 전에 그 줄을 실행하는 테스트를 tests/test_pipeline_<이름>.py로 쓰고
   파이프라인 도구로 돌려 본 뒤 고친다. 출구 검사가 그 테스트를 받아들여 수정안 PR에 같이 올라가고, 표시는
-  "만든 테스트가 실행함"이다. 실제 모델로만 돈다(가짜 답이 없다). 규칙 읽기와 검사기 작성의 호출을 줄이려고
+  "만든 테스트가 실행함"이다. 규칙 읽기와 검사기 작성의 호출을 줄이려고
   base의 README를 상수 규칙 하나로 바꾸고 모든 단계를 가벼운 모델로 둔다. 기대는 글이 아니라 결과다:
   위반 위치, 수정안이 올라갔는가, 만든 테스트가 올라갔는가, 대상 위반의 실행 상태.
-real_only: true
 pipeline:
   model: {rules: haiku, checker: haiku, decide: haiku, judge: haiku, light: haiku, heavy: haiku}
 base:

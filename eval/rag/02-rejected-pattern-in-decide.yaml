@@ -1,12 +1,9 @@
 name: rejected-pattern-in-decide
 description: >-
-  5-2. 같은 규칙의 위반을 상수로 바꾼 수정안을 사람이 닫은 거절 기록(다른 파일, shipping.py)을 넣고
-  검색을 켠다. PR의 `> 50`과 `>= 50_000`을 묻는 수정 판단의 프롬프트에 그 거절 기록이 참고 자료로
-  들어간다. 가짜 모델은 13번 줄을 "기록 1"을 들어 skip하고, 파이프라인은 그 이유를 "팀이 닫은 수정과
-  비슷함"(team_pattern)으로 센다. 실제 모델이 그쪽으로 기우는지는 tests/e2e/test_rag_compare.py가 잰다.
-fake_embed_only: true
+  5-2. 같은 규칙의 위반을 상수로 바꾼 수정안을 사람이 닫은 거절 기록(다른 파일, shipping.py)을 넣고 검색을 켠다. PR의 `> 50`과 `>= 50_000`을
+  묻는 수정 판단의 프롬프트에 그 거절 기록이 참고 자료로 들어간다. 모델이 그 기록 쪽으로 기우는지는 tests/e2e/test_rag_compare.py가 잰다.
 pipeline:
-  rag: {enabled: true, min_similarity: 0.6}
+  rag: {enabled: true}
 pr:
   - file: orders/services/pricing.py
     find: "order.coupon_percent > MAX_COUPON_PERCENT"
@@ -16,7 +13,7 @@ pr:
     replace: "discount(order) >= 50_000"
 records:
   - kind: rejected
-    rule: 0
+    rule_text: "비교에 쓰는 기준값(금액, 비율의 상한)은 숫자를 직접 쓰지 않고 대문자 이름의 모듈 상수로 둔다. `0`, `1`, 퍼센트 계산의 `100`은 예외다."
     file: orders/services/shipping1.py
     line_text: "if order.weight > 31:"
     context: |
@@ -28,38 +25,8 @@ records:
       +    if order.weight > MAX_WEIGHT_KG_1:
     pr_number: 61
     fix_pr_number: 71
-model:
-  rules:
-    - section: 코드 규칙 > 상수
-      quote: "비교에 쓰는 기준값(금액, 비율의 상한)은 숫자를 직접 쓰지 않고 대문자 이름의 모듈 상수로 둔다. `0`, `1`, 퍼센트 계산의 `100`은 예외다."
-      scope: []
-      scope_exclude: ["tests/**"]
-      scope_reason: 테스트는 기대값을 숫자로 직접 적는 코드라 이 규칙의 대상이 아니다
-      checker:
-        body: |
-          id: no-magic-number-in-comparison
-          language: python
-          severity: error
-          message: 비교의 기준값은 대문자 이름의 모듈 상수로 둔다
-          rule:
-            any:
-              - kind: integer
-              - kind: float
-            inside:
-              kind: comparison_operator
-            not:
-              regex: "^(0|1|100)$"
-        examples:
-          - {code: "if price > 50:\n    pass\n", violates: true, lines: [1]}
-          - {code: "ok = total >= 50_000\n", violates: true, lines: [1]}
-          - {code: "if n > 0:\n    pass\n", violates: false, lines: []}
-          - {code: "full = percent == 100\n", violates: false, lines: []}
-  skip:
-    orders/services/pricing.py:13: 기록 1과 같은 방식으로 고치는 수정안을 팀이 닫았다
 expect:
   violations: ["orders/services/pricing.py:13", "orders/services/pricing.py:21"]
-  prompt_records: {decide: 1}
   contains:
-    - "팀이 닫은 수정과 비슷함 1건"
     - "- 기록 1 · 거절 · 원래 PR #61 · 수정안 PR #71 · 규칙 `R-readme-"
     - "· 수정 판단"

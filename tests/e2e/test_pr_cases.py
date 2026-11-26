@@ -1,17 +1,14 @@
 """PR 단위 확인 E2E (eval/pr/*.yaml, 13절 4단계의 4-11–4-14).
 
 문서 규칙 케이스와 같은 방식이다: 예제 리포의 로컬 git 원격, 실제 샌드박스(테스트, PR 패턴의 고정
-스크립트), GitHub만 가짜(PR의 제목과 본문은 케이스가 정한다). 모델은 기본으로 케이스의 답을 돌려주는
-가짜라 `pytest -m docker`가 결정적이다. PR 패턴의 예시 확인과 이 PR의 사실에 맞추기, 모델 판단의 답
-확인은 모두 진짜다. `PR_PROOF_REAL_MODEL=1`이면 로그인된 claude를 부르고(규칙 읽기, PR 패턴 작성,
-PR 단위 판단), `PR_PROOF_RECORD_DIR`을 주면 케이스마다 결과를 JSON으로 남긴다.
+스크립트), GitHub만 가짜(PR의 제목과 본문은 케이스가 정한다). 설정된 모델을 실제로 부르므로
+`PR_PROOF_REAL_MODEL=1`일 때만 돈다(규칙 읽기, PR 패턴 작성, PR 단위 판단). `PR_PROOF_RECORD_DIR`을
+주면 케이스마다 결과를 JSON으로 남긴다.
 
-케이스 형식: 문서 규칙 케이스의 `base`, `pipeline`, `model.rules`(코드 규칙), `fix`에 더해
+케이스 형식: 문서 규칙 케이스의 `base`, `pipeline`에 더해
 
     pr_commits: [{message, edits}] PR 브랜치의 커밋들 (차례로)
     pr_text: {title, body} GitHub이 돌려주는 PR 제목과 본문
-    model.pr_rules[]: {section, quote, examples, plan, judge} 확인 대상이 `pr`인 규칙. plan은 PR
-        패턴 작성의 답(회차마다면 목록), judge는 PR 단위 판단의 답(sha의 "commit:N"은 N번째 커밋)
     expect.pr_flagged: PR 단위 위반의 자리 ("commit:N", "pr_body", "pr_title", "branch")
     expect.code_flagged: 코드 위반의 `파일:줄`
     expect.no_fix: 수정 판단을 부르지 않고 수정안 PR도 브랜치도 없다 (4-13)
@@ -30,32 +27,17 @@ import pytest
 import yaml
 from sqlmodel import Session, select
 
-from app.shared import config
 from app.shared.db_pure import ModelCacheEntry
-from app.worker.deps import Deps
-from app.worker.fix import fix_decision_pure
-from app.worker.git import repo
-from app.worker.git.github import GitHub
-from app.worker.model.claude import claude_cli
-from app.worker.rules import judge_pure, pr_check_pure, rule_reading_pure
-from app.worker.store.state import Store
-from tests.sandbox_names import TEST_NAMES
 
-from ..redis_stand_ins import MemoryKeys
-from ..worker.git.test_github import FakeGh
-from ..worker.rules.test_pr_check import _agree
+from .conftest import needs_model
 from .test_lint_cases import _bodies, _git, shared_venvs  # noqa: F401
 from .test_rules_cases import (
     BRANCH,
-    REAL_MODEL_ENV,
-    _answer,
     _apply,
     _check,
     deps_for,  # noqa: F401
     doc_rules_section,
     flagged,
-    scripted_fixer,
-    scripted_model,
 )
 
 CASES_DIR: Final = Path(__file__).resolve().parents[2] / "eval" / "pr"
@@ -122,58 +104,6 @@ def pr_flagged(section: str, commits: list[str]) -> list[str]:
     return sorted(out)
 
 
-def pr_model(case: dict, commits: list[str], prompts: list[dict] | None = None):
-    """규칙 읽기에는 코드 규칙과 PR 규칙을, PR 패턴 작성과 PR 단위 판단에는 케이스의 답을, 나머지는
-    문서 규칙 케이스의 가짜 모델에 맡긴다. prompts를 주면 모든 호출을 남긴다(4-14)."""
-    model = case["model"]
-    code = scripted_model({**case, "model": {"rules": [], **model}})
-    pr_rules = model.get("pr_rules", [])
-    reading = code("", schema=rule_reading_pure.ANSWER_SCHEMA).data["rules"] + [
-        {"file": "README.md", "section": r["section"], "quote": r["quote"], "target": "pr",
-         "scope": [], "scope_exclude": [], "scope_reason": "", "examples": r.get("examples", []),
-         "check": "none", "reason": "PR 규칙", "fix": "none"}
-        for r in pr_rules
-    ]  # fmt: skip
-    plans_asked: dict[str, int] = {}
-
-    def ask(prompt: str, *, schema, **kw):
-        if prompts is not None:
-            prompts.append({"schema": _stage(schema), "prompt": prompt,
-                            "system": kw.get("system_prompt", "")})  # fmt: skip
-        if schema is rule_reading_pure.ANSWER_SCHEMA:
-            return _answer({"rules": reading})
-        if schema is pr_check_pure.PLAN_SCHEMA:
-            (rule,) = [r for r in pr_rules if r["quote"] in prompt]
-            plans = rule["plan"] if isinstance(rule["plan"], list) else [rule["plan"]]
-            n = plans_asked[rule["quote"]] = plans_asked.get(rule["quote"], 0) + 1
-            return _answer(plans[min(n, len(plans)) - 1])
-        if schema is pr_check_pure.JUDGE_SCHEMA:
-            (rule,) = [r for r in pr_rules if r["quote"] in prompt]
-            if (
-                "judge" not in rule
-            ):  # PR 패턴의 후보를 확인할 때: 보인 커밋을 모두 위반이라고 답한다
-                return _answer({"violations": _agree(prompt)})
-            answers = [
-                {**a, "sha": commits[int(a["sha"].split(":")[1])] if a.get("sha") else ""}
-                for a in rule.get("judge", [])
-            ]  # fmt: skip
-            return _answer({"violations": answers})
-        return code(prompt, schema=schema, **kw)
-
-    return ask
-
-
-def _stage(schema) -> str:
-    names = {
-        id(rule_reading_pure.ANSWER_SCHEMA): "rules",
-        id(judge_pure.ANSWER_SCHEMA): "judge",
-        id(fix_decision_pure.ANSWER_SCHEMA): "decide",
-        id(pr_check_pure.PLAN_SCHEMA): "pr_plan",
-        id(pr_check_pure.JUDGE_SCHEMA): "pr_judge",
-    }
-    return names.get(id(schema), "checker")
-
-
 def _record(case_path: Path, deps, body: str, remote: dict, suffix: str = "") -> None:
     folder = os.environ.get(RECORD_ENV)
     if not folder:
@@ -191,64 +121,17 @@ def _record(case_path: Path, deps, body: str, remote: dict, suffix: str = "") ->
     )
 
 
-@pytest.fixture
-def fresh_deps(shared_venvs: Path, tool_cache: Path, monkeypatch):  # noqa: F811
-    """데이터 폴더를 부르는 쪽이 정하는 deps_for. 4-14는 두 실행이 저장한 답을 나누지 않게 한다."""
-
-    def make(remote: dict, data: Path):
-        monkeypatch.setenv(config.CONFIG_DIR_ENV, str(data.parent / "config"))
-        data.mkdir(parents=True)
-        (data / "venvs").symlink_to(shared_venvs, target_is_directory=True)
-        (data / "tools").symlink_to(tool_cache, target_is_directory=True)
-        monkeypatch.setattr(repo, "remote_url", lambda name: str(remote["path"]))
-        redis = MemoryKeys()
-        gh = FakeGh(head=remote["head"], base=remote["base"])
-        settings = config.PipelineConfig(
-            repos=[REPO], data_dir=data,
-            sandbox=config.SandboxConfig(image=TEST_NAMES.image,
-                                         container_prefix=TEST_NAMES.container_prefix),
-        )  # fmt: skip
-        deps = Deps(store=Store(data / "pipeline.db", redis), github=GitHub(gh), settings=settings)
-        return deps, gh, redis
-
-    return make
-
-
-def _setup(case: dict, tmp_path: Path, eval_repo: Path, deps_for, monkeypatch,  # noqa: F811
-           *, messages=None, text=None, prompts=None, data: Path | None = None):  # fmt: skip
-    remote = _pr_remote(tmp_path, eval_repo, case, messages)
-    deps, gh, redis = deps_for(remote) if data is None else deps_for(remote, data)
-    pr_text = text or case.get("pr_text") or {}
-    gh.title, gh.body = pr_text.get("title", "PR"), pr_text.get("body", "")
-    fixer = scripted_fixer(case) if "fix" in case else None
-    if os.environ.get(REAL_MODEL_ENV) != "1":
-        monkeypatch.setattr(
-            claude_cli, "run_structured", pr_model(case, remote["commits"], prompts)
-        )
-        if fixer is not None:
-            if prompts is not None:
-                real_fixer = fixer
-
-                def recording(work, prompt, **kw):
-                    prompts.append({"schema": "fix", "prompt": prompt,
-                                    "system": kw.get("system_prompt", "")})  # fmt: skip
-                    return real_fixer(work, prompt, **kw)
-
-                monkeypatch.setattr(claude_cli, "run_claude", recording)
-            else:
-                monkeypatch.setattr(claude_cli, "run_claude", fixer)
-    return remote, deps, gh, redis, fixer
-
-
 @pytest.mark.docker
 @pytest.mark.parametrize("case_path", CASES, ids=[p.stem for p in CASES])
-def test_pr_case(case_path: Path, eval_repo: Path, deps_for, tmp_path: Path,  # noqa: F811
-                 monkeypatch) -> None:  # fmt: skip
+def test_pr_case(case_path: Path, eval_repo: Path, deps_for,  # noqa: F811
+                 tmp_path: Path) -> None:  # fmt: skip
+    needs_model()
     case = yaml.safe_load(case_path.read_text())
     expect = case["expect"]
-    if os.environ.get(REAL_MODEL_ENV) == "1" and case.get("scripted_only"):
-        pytest.skip("가짜 모델로만 확인하는 케이스")
-    remote, deps, gh, redis, _ = _setup(case, tmp_path, eval_repo, deps_for, monkeypatch)
+    remote = _pr_remote(tmp_path, eval_repo, case)
+    deps, gh, redis = deps_for(remote)
+    pr_text = case.get("pr_text") or {}
+    gh.title, gh.body = pr_text.get("title", "PR"), pr_text.get("body", "")
     body = _check(deps, gh, redis, remote, pr=1)
     try:
         section = pr_section(body)
@@ -308,72 +191,6 @@ def _strip_shas(text: str, remote: dict) -> str:
     return re.sub(r"\d+\.\d+초", "<초>", text)
 
 
-def _run_isolation(case, tmp, eval_repo, fresh_deps, monkeypatch, *, planted: bool):
-    prompts: list[dict] = []
-    planted_text = case["isolation"]
-    messages = (
-        [c["message"] for c in case["pr_commits"][:-1]] + [planted_text["message"]]
-        if planted else None
-    )  # fmt: skip
-    text = {"title": planted_text["title"], "body": planted_text["body"]} if planted else None
-    remote, deps, gh, redis, _ = _setup(case, tmp, eval_repo, fresh_deps, monkeypatch,
-                                        messages=messages, text=text, prompts=prompts,
-                                        data=tmp / "data")  # fmt: skip
-    body = _check(deps, gh, redis, remote, pr=1)
-    pushed = _git(remote["path"], "diff", remote["head"], BRANCH) if gh.pulls else ""
-    return {
-        "prompts": prompts,
-        "keys": _cache_keys(deps),
-        "body": body,
-        "remote": remote,
-        "pulls": [
-            {k: _strip_shas(str(v), remote) for k, v in p.items()} for p in gh.pulls.values()
-        ],
-        "pushed": pushed,
-        "deps": deps,
-    }
-
-
-@pytest.mark.docker
-def test_pr_text_isolation(eval_repo: Path, fresh_deps, tmp_path: Path, monkeypatch) -> None:
-    """4-14: 같은 PR을 중립인 글과, 제목·본문·커밋 메시지에 지시문을 심은 글로 두 번 돌린다. PR 단위
-    확인 밖의 모든 프롬프트, 모든 저장 키, 모든 결과가 바이트 단위로 같다. 가짜 모델은 따로 된
-    데이터 폴더에서 두 번 부른다(저장한 답을 쓰지 않고 실제로 묻는다)."""
-    if os.environ.get(REAL_MODEL_ENV) == "1":
-        pytest.skip("실제 모델은 test_pr_text_isolation_real_model이 본다")
-    case = yaml.safe_load(ISOLATION.read_text())
-    neutral = _run_isolation(
-        case, tmp_path / "a", eval_repo, fresh_deps, monkeypatch, planted=False
-    )
-    planted = _run_isolation(case, tmp_path / "b", eval_repo, fresh_deps, monkeypatch, planted=True)
-
-    def others(run: dict) -> list[dict]:
-        return [p for p in run["prompts"] if p["schema"] not in PR_STAGES]
-
-    assert [p["schema"] for p in others(neutral)] == [p["schema"] for p in others(planted)]
-    assert others(neutral) == others(planted)
-    assert {"rules", "checker", "judge", "decide", "fix"} <= {p["schema"] for p in others(neutral)}
-    for p in others(planted):
-        for needle in case["isolation"]["needles"]:
-            assert needle not in p["prompt"] and needle not in p["system"], (p["schema"], needle)
-    # PR 패턴 작성도 PR의 글을 보지 않는다. 그 글이 들어가는 곳은 PR 단위 판단뿐이다
-    plans = [p for p in planted["prompts"] if p["schema"] == "pr_plan"]
-    assert plans == [p for p in neutral["prompts"] if p["schema"] == "pr_plan"]
-    judged = [p for p in planted["prompts"] if p["schema"] == "pr_judge"]
-    assert any(case["isolation"]["needles"][0] in p["prompt"] for p in judged)
-    keys_a, keys_b = neutral["keys"], planted["keys"]
-    assert {k: v for k, v in keys_a.items() if k != "pr_judge"} == {
-        k: v for k, v in keys_b.items() if k != "pr_judge"
-    }
-    assert keys_a["pr_judge"] != keys_b["pr_judge"]
-    sections = [doc_rules_section(r["body"]) for r in (neutral, planted)]
-    code_parts = [_strip_shas(code_part(s), r["remote"])
-                  for s, r in zip(sections, (neutral, planted), strict=True)]  # fmt: skip
-    assert code_parts[0] == code_parts[1]
-    assert neutral["pulls"] == planted["pulls"] and neutral["pushed"] == planted["pushed"]
-    assert neutral["pulls"], "코드 위반의 수정안 PR이 열려야 한다"
-
-
 def _code_results(body: str, remote: dict) -> list[str]:
     """코드 쪽의 결과: 위반 목록(수정 판단 포함)과 수정안의 결과 문장. 같은 데이터 폴더의 두 번째
     실행은 저장한 답을 써서 호출 수 줄과 수정안 PR 번호(새 커밋이라 새 PR)가 다르므로 뺀다."""
@@ -387,13 +204,12 @@ def _code_results(body: str, remote: dict) -> list[str]:
 
 
 @pytest.mark.docker
-def test_pr_text_isolation_real_model(eval_repo: Path, deps_for, tmp_path: Path,  # noqa: F811
-                                      monkeypatch) -> None:  # fmt: skip
-    """4-14를 실제 모델로 한 번 (opt-in). 같은 데이터 폴더에서 중립인 글 다음에 지시문을 심은 글로
-    돈다. PR 단위 확인 밖의 단계는 모두 저장한 답을 써야 하고(새 호출 0, 저장 키가 같음) 코드 결과가
-    같아야 한다. 지시문을 받은 PR 단위 판단의 답은 기록만 한다."""
-    if os.environ.get(REAL_MODEL_ENV) != "1":
-        pytest.skip("PR_PROOF_REAL_MODEL=1일 때만")
+def test_pr_text_isolation(eval_repo: Path, deps_for, tmp_path: Path) -> None:  # noqa: F811
+    """4-14: PR의 글이 다른 결과를 바꾸지 않는다. 같은 데이터 폴더에서 중립인 글 다음에 제목·본문·
+    커밋 메시지에 지시문을 심은 글로 돈다. PR 단위 확인 밖의 단계는 모두 저장한 답을 써야 하고(새
+    호출 0, 저장 키가 같음) 코드 결과가 같아야 한다. 지시문을 받은 PR 단위 판단의 답은 기록만
+    한다."""
+    needs_model()
     case = yaml.safe_load(ISOLATION.read_text())
     remote = _pr_remote(tmp_path / "a", eval_repo, case)
     deps, gh, redis = deps_for(remote)
@@ -426,12 +242,11 @@ def test_case_files_are_well_formed() -> None:
     assert CASES, "eval/pr 케이스가 없다"
     for path in CASES:
         case = yaml.safe_load(path.read_text())
-        assert {"name", "description", "pr_commits", "model", "expect"} <= case.keys(), path
+        assert {"name", "description", "pr_commits", "expect"} <= case.keys(), path
+        assert not {"model", "fix"} & case.keys(), path  # 모델의 답을 케이스에 적지 않는다
         assert "pr_flagged" in case["expect"], path
         for token in case["expect"]["pr_flagged"]:
             assert re.fullmatch(r"commit:\d+|pr_body|pr_title|branch|changed_paths", token), path
-        for rule in case["model"].get("pr_rules", []):
-            assert {"section", "quote", "plan"} <= rule.keys(), (path, rule)
 
 
 def test_pr_flagged_reads_places_from_the_section() -> None:

@@ -1,6 +1,6 @@
-"""E2E 공용: 예제 리포의 README에는 규칙이 있으므로 문서 규칙 경로가 모델을 부른다. 실제 claude를
-부르지 않도록 기본으로 막는다(도구 없는 호출과 파일 도구 호출 둘 다). 케이스 파일은 가짜 모델로
-바꾸고, `PR_PROOF_REAL_MODEL=1`이면 막지 않는다. 그때 `PR_PROOF_MODEL_MEMO`가 있으면 호출을 그
+"""E2E 공용. 모델이 필요한 테스트는 `PR_PROOF_REAL_MODEL=1`일 때만 돈다(`needs_model`). 그 값이
+없으면 모델을 부르는 순간 테스트가 실패한다. `PR_PROOF_BACKEND=local-openai`면 로컬 모델 서버를
+쓰고(`PR_PROOF_LOCAL_BASE_URL`, `PR_PROOF_LOCAL_MODEL`), `PR_PROOF_MODEL_MEMO`가 있으면 호출을 그
 파일에 남기고 같은 입력의 도구 없는 호출은 저장한 답을 다시 쓴다(`model_memo.py`)."""
 
 import os
@@ -9,46 +9,34 @@ from pathlib import Path
 import pytest
 
 from app.shared.model_names_pure import DEFAULT_LOCAL_OPENAI_URL, LOCAL_OPENAI_BACKEND
-from app.worker.evaluation.evaluation import MODEL_MEMO_ENV
+from app.worker.evaluation.evaluation import MODEL_MEMO_ENV, REAL_MODEL_ENV
 from app.worker.model import backends
 from app.worker.model.claude import claude_cli
-from app.worker.model.claude.claude_cli import AIErrorKind, ClaudeResult, StructuredResult
 from app.worker.model.local import openai_client
 from app.worker.model.local.local_backend import LocalOpenAIBackend
-from app.worker.model.local.openai_client import LocalApiError
 
 from .model_memo import Memo
 
 
-def _no_real_model(*args, **kwargs) -> StructuredResult:
-    return StructuredResult(
-        ok=False, error=AIErrorKind.LAUNCH, data=None, model_id="", input_tokens=None,
-        output_tokens=None, cost_usd=None, permission_denials=0,
-        detail="E2E에서 실제 모델을 부르지 않음",
-    )  # fmt: skip
+def model_allowed() -> bool:
+    return os.environ.get(REAL_MODEL_ENV) == "1"
 
 
-def _no_real_fix(*args, **kwargs) -> ClaudeResult:
-    return ClaudeResult(
-        ok=False, error=AIErrorKind.EXIT, cost_usd=None, num_turns=0, permission_denials=(),
-        text="", detail="E2E에서 실제 모델을 부르지 않음",
-    )  # fmt: skip
+def needs_model() -> None:
+    if not model_allowed():
+        pytest.skip(f"모델을 부르는 테스트 ({REAL_MODEL_ENV}=1)")
 
 
-def _no_real_local(*args, **kwargs):
-    raise LocalApiError(AIErrorKind.LAUNCH, "E2E에서 실제 로컬 모델을 부르지 않음")
-
-
-def block_model(monkeypatch) -> None:
-    monkeypatch.setattr(claude_cli, "run_structured", _no_real_model)
-    monkeypatch.setattr(claude_cli, "run_claude", _no_real_fix)
-    monkeypatch.setattr(openai_client, "post_chat", _no_real_local)
+def _refuse(*args, **kwargs):
+    pytest.fail(f"{REAL_MODEL_ENV}=1 없이 모델을 불렀다")
 
 
 @pytest.fixture(autouse=True)
-def no_real_model(monkeypatch, request) -> None:
-    if os.environ.get("PR_PROOF_REAL_MODEL") != "1":
-        block_model(monkeypatch)
+def model_calls(monkeypatch, request) -> None:
+    if not model_allowed():
+        monkeypatch.setattr(claude_cli, "run_structured", _refuse)
+        monkeypatch.setattr(claude_cli, "run_claude", _refuse)
+        monkeypatch.setattr(openai_client, "post_chat", _refuse)
         return
     if os.environ.get("PR_PROOF_BACKEND") == LOCAL_OPENAI_BACKEND:
         base_url = os.environ.get("PR_PROOF_LOCAL_BASE_URL", DEFAULT_LOCAL_OPENAI_URL)
@@ -65,9 +53,3 @@ def no_real_model(monkeypatch, request) -> None:
         monkeypatch.setattr(claude_cli, "run_structured",
                             memo.structured(claude_cli.run_structured, test))  # fmt: skip
         monkeypatch.setattr(claude_cli, "run_claude", memo.fix(claude_cli.run_claude, test))
-
-
-@pytest.fixture
-def no_model(monkeypatch) -> None:
-    """실제 모델로 도는 평가에서도 모델을 부르지 않는다(도구 설정의 규칙만 보는 lint 케이스)."""
-    block_model(monkeypatch)

@@ -1,13 +1,12 @@
 """저장소의 도구 연결 E2E (eval/tools/*.yaml, 13절 3단계의 3-2–3-5).
 
 문서 규칙 케이스와 같은 방식이다: 예제 리포의 로컬 git 원격, 실제 샌드박스 테스트, 실제
-ruff·ast-grep(케이스마다 빈 도구 캐시에 받는다), GitHub만 가짜. 모델은 케이스의 `model` 답을
-돌려주는 가짜다.
+ruff·ast-grep(케이스마다 빈 도구 캐시에 받는다), GitHub만 가짜. 설정된 모델을 실제로 부르므로
+`PR_PROOF_REAL_MODEL=1`일 때만 돈다.
 도구 캐시를 케이스마다 비워 두고 무엇을 받았는지(`fetched`, `not_fetched`) 본다.
 
 케이스 형식은 문서 규칙 케이스(eval/README.md)에 아래를 더한다.
 
-    model.rules[].tool: 도구 선택의 답 ({tool, codes, reason, examples}). 없으면 맞는 도구 없음
     expect.rule_line: 코멘트 맨 위의 "규칙:" 줄
     expect.fetched / not_fetched: 도구 캐시의 `<도구>/<버전>` (not_fetched는 `<도구>`도 된다)
     expect.branch, fix_file, same_as_base, pr_contains: 기계적 수정안 PR
@@ -26,15 +25,15 @@ from app.worker import main
 from app.worker.deps import Deps
 from app.worker.git import repo
 from app.worker.git.github import GitHub
-from app.worker.model.claude import claude_cli
 from app.worker.sandbox import toolcache
 from app.worker.store.state import Store
 from tests.sandbox_names import TEST_NAMES
 
 from ..redis_stand_ins import MemoryKeys
 from ..worker.git.test_github import FakeGh
+from .conftest import needs_model
 from .test_lint_cases import _bodies, _git, shared_venvs  # noqa: F401
-from .test_rules_cases import _remote, doc_rules_section, scripted_model
+from .test_rules_cases import _remote, doc_rules_section
 
 CASES_DIR: Final = Path(__file__).resolve().parents[2] / "eval" / "tools"
 CASES: Final = sorted(CASES_DIR.glob("*.yaml"))
@@ -63,9 +62,9 @@ def _check(deps: Deps, gh: FakeGh, redis, remote: dict, pr: int) -> str:
 @pytest.mark.parametrize("case_path", CASES, ids=[p.stem for p in CASES])
 def test_tool_case(case_path: Path, eval_repo: Path, shared_venvs: Path,  # noqa: F811
                    tmp_path: Path, monkeypatch) -> None:  # fmt: skip
+    needs_model()
     case = yaml.safe_load(case_path.read_text())
     expect = case["expect"]
-    monkeypatch.setattr(claude_cli, "run_structured", scripted_model(case))
     downloads: list[str] = []
     real_download = toolcache.docker_download
 

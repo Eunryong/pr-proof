@@ -190,7 +190,7 @@ def ensure_model(model_dir: Path, spec: EmbedModel, download: Downloader = _down
 
 
 class Encoder(Protocol):
-    """글 목록 → 벡터 목록. 정규화와 접두어는 `embed`가 맡는다. 테스트는 가짜를 넘긴다."""
+    """글 목록 → 벡터 목록. 정규화와 접두어는 `embed`가 맡는다."""
 
     spec: EmbedModel
 
@@ -438,7 +438,7 @@ def switch_for(
 
 
 class FindsRecords(Protocol):
-    """쓰는 곳(수정 판단, 수정 작성, 검사기 작성)이 보는 검색. 테스트는 가짜를 넘긴다."""
+    """쓰는 곳(수정 판단, 수정 작성, 검사기 작성)이 보는 검색."""
 
     error: str
 

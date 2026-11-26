@@ -1,4 +1,4 @@
-"""app/worker/model/loop.py: 가짜 write·verify로 틀의 분기만 확인한다 (모델·Docker 없음)."""
+"""app/worker/model/loop.py: 회차마다 정해 둔 write·verify 결과를 넣어 틀의 분기만 확인한다."""
 
 import json
 import sqlite3

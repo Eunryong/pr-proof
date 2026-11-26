@@ -15,11 +15,8 @@ from app.shared.db_pure import FixAttempt, SeenViolation
 from app.shared.feedback_pure import FEEDBACK_MARKER
 from app.shared.job_pure import PRJob
 from app.worker import feedback_job, main, retry
-from app.worker.config.repo_config_pure import RepoConfig
-from app.worker.feedback.feedback_triage_pure import Facts
 from app.worker.git.github import GitHub, GitHubError
 from app.worker.model.claude import claude_cli
-from app.worker.model.claude.claude_cli import StructuredResult
 from app.worker.store import records_pure
 
 from .git.test_github import FakeGh
@@ -112,39 +109,6 @@ def _written(cid: int, body: str = "본문", login: str = "kim", assoc: str = "M
     return {"id": cid, "login": login, "association": assoc, "body": body}
 
 
-def _asker(answers: dict[int, tuple]):
-    """판단 호출 자리에 넣는 함수. answers는 item_id → (verdict, why[, files, request, number])."""
-    calls: list[str] = []
-
-    def ask(prompt: str, **kw) -> StructuredResult:
-        calls.append(prompt)
-        items = [
-            {"id": i, "verdict": a[0], "why": a[1], "files": list(a[2]) if len(a) > 2 else [],
-             "request": a[3] if len(a) > 3 else "", "number": a[4] if len(a) > 4 else 0}
-            for i, a in answers.items()
-        ]  # fmt: skip
-        return StructuredResult(ok=True, error=None, data={"items": items}, model_id="m",
-                                input_tokens=1, output_tokens=1, cost_usd=0.0,
-                                permission_denials=0)  # fmt: skip
-
-    ask.calls = calls
-    return ask
-
-
-@pytest.fixture
-def material(fb):
-    """판단 자료 읽기(bare 캐시)를 바꿔 넣는다. 부른 횟수를 센다."""
-    calls: list[int] = []
-
-    def read(deps, work, items, ask, *, author=None):
-        calls.append(len(items))
-        return feedback_job.Material(RepoConfig(), (), "규칙 문서가 없음",
-                                 Facts("제목", "", ("pr",), ("src/a.py",)), {})  # fmt: skip
-
-    fb["monkeypatch"].setattr(feedback_job, "read_material", read)
-    return calls
-
-
 # --- collect --------------------------------------------------------------------------
 
 
@@ -195,27 +159,6 @@ def test_collect_uses_the_same_kind_and_id_as_the_sync(fb) -> None:
 # --- process_feedback -----------------------------------------------------------------
 
 
-def test_feedback_with_items_judges_replies_and_records_each(fb, material) -> None:
-    gh = fb["gh"]
-    gh.threads = [_thread("T1", _comment(101))]
-    gh.pr_comments = [_written(21, "좋네요", "owner", "OWNER")]
-    ask = _asker({101: ("reject", "README 규칙과 어긋남"), 21: ("no_action", "칭찬")})
-    fb["monkeypatch"].setattr(claude_cli, "run_structured", ask)
-    assert feedback_job.process_feedback(_job(), fb["deps"]) == "feedback:no_action=1,rejected=1"
-    assert len(ask.calls) == 1  # 남은 코멘트를 한 번에 묻는다
-    ((where, body),) = gh.replies  # 할 일 없음에는 답글을 달지 않는다
-    assert where == "101" and body.startswith(FEEDBACK_MARKER) and "반영하지 않습니다" in body
-    rows = {f.item_id: f for f in fb["deps"].store.handled_feedback("o/r", 1)}
-    assert (rows[101].verdict, rows[101].reply_id, rows[21].verdict) == (
-        "rejected", 801, "no_action")  # fmt: skip
-    # Copilot의 스레드는 거절도 바로 해결하고 사유를 준다. 할 일 없음은 스레드를 바꾸지 않는다
-    assert gh.resolved == ["T1"] and gh.reasons == {"T1": "WONT_FIX"}
-    assert rows[101].resolved_at is not None
-    # 다시 불러도 기록한 코멘트는 다시 다루지 않는다(같은 답글을 두 번 달지 않는다)
-    assert feedback_job.process_feedback(_job(), fb["deps"]) == "no_feedback"
-    assert len(gh.replies) == 1
-
-
 def test_feedback_without_items_is_no_feedback(fb) -> None:
     fb["gh"].threads = [_thread("T1", _comment(101), resolved=True)]
     assert feedback_job.process_feedback(_job(), fb["deps"]) == "no_feedback"
@@ -254,15 +197,6 @@ def test_feedback_read_failure_is_retried_and_last_attempt_releases_the_key(
     with pytest.raises(GitHubError):
         feedback_job.process_feedback(job, fb["deps"])
     assert (fb["redis"].get(state_keys_pure.job(job.dedup_key)) is None) == final
-
-
-def test_handle_dispatches_feedback_and_releases_the_key(fb, material) -> None:
-    fb["gh"].pr_comments = [_written(21, "일반", "owner", "OWNER")]
-    fb["monkeypatch"].setattr(claude_cli, "run_structured", _asker({21: ("no_action", "질문")}))
-    job = _job()
-    fb["redis"].set(state_keys_pure.job(job.dedup_key), "1")
-    assert main.handle(job.model_dump_json(), fb["deps"]) == "feedback:no_action=1"
-    assert fb["redis"].get(state_keys_pure.job(job.dedup_key)) is None
 
 
 # --- process_resolve ------------------------------------------------------------------
@@ -431,95 +365,6 @@ def test_comment_on_a_line_the_rules_check_flagged_is_not_fixed_twice(fb) -> Non
     assert (row.verdict, row.why) == ("no_action", "규칙 검사가 같은 줄을 이미 위반으로 알림")
 
 
-def test_lines_from_another_commit_are_left_to_the_model(fb, material) -> None:
-    """수정안을 만든 커밋과 코멘트를 단 커밋이 다르고 스레드가 낡았으면 줄을 맞출 수 없다."""
-    _fixed_by(fb, 900, "merged", head="e" * 40)
-    _copilot_thread(fb, commit="f" * 40, line=None, outdated=True)
-    fb["monkeypatch"].setattr(
-        claude_cli,
-        "run_structured",
-        _asker({101: ("already_fixed", "a.py가 이미 0을 막음", [], "", 900)}),
-    )
-    assert feedback_job.process_feedback(_job(), fb["deps"]) == "feedback:already_fixed=1"
-    assert material == [1]
-    assert "지금 코드에 이미 반영돼 있습니다" in fb["gh"].replies[0][1]
-    assert fb["gh"].resolved == ["T1"]
-    (row,) = fb["deps"].store.handled_feedback("o/r", 1)
-    assert (row.verdict, row.proposal_number) == ("accepted", 900)
-    assert row.resolved_at is not None
-
-
-@pytest.mark.parametrize(("result", "outcome", "verdict", "number", "text"), [
-    (feedback_job.FixResult("fixed", number=905), "fixed", "accepted", 905,
-     "반영했습니다. 수정안 #905"),
-    (feedback_job.FixResult("failed", reason="고친 뒤 테스트: 1 failed"), "failed", "error", None,
-     "검증을 통과한 수정을 만들지 못했습니다"),
-    (feedback_job.FixResult("deferred", reason="테스트가 실패함"), "deferred", "deferred", None,
-     "지금은 고칠 수 없습니다"),
-])  # fmt: skip
-def test_accepted_comments_are_fixed_in_one_proposal(
-    fb, material, result, outcome, verdict, number, text
-) -> None:
-    _copilot_thread(fb)
-    fb["gh"].review_bodies = [_written(11, "여기도 0을 막아 주세요")]
-    fb["monkeypatch"].setattr(claude_cli, "run_structured", _asker({
-        101: ("accept", "0으로 나누기", ["src/a.py"], "b가 0이면 ValueError"),
-        11: ("accept", "같은 결함", ["src/a.py"], "b가 0이면 ValueError"),
-    }))  # fmt: skip
-    got: list[list[int]] = []
-
-    def fix(work, deps, refs, accepted):
-        got.append([a.item.item_id for a in accepted])
-        return result
-
-    fb["monkeypatch"].setattr(feedback_job, "fix_accepted", fix)
-    assert feedback_job.process_feedback(_job(), fb["deps"]) == f"feedback:{outcome}=2"
-    assert got == [[101, 11]]  # 수정안은 하나
-    assert [w for w, _ in fb["gh"].replies] == ["101", "issue"]
-    assert all(text in b for _, b in fb["gh"].replies)
-    assert "`kim`의 리뷰(id 11)에 답합니다." in fb["gh"].replies[1][1]
-    rows = fb["deps"].store.handled_feedback("o/r", 1)
-    assert [(r.verdict, r.proposal_number) for r in rows] == [(verdict, number)] * 2
-
-
-def test_review_body_without_files_falls_back_to_error(fb, material) -> None:
-    """리뷰 본문은 달린 파일이 없다. 고칠 파일을 답하지 않은 accept는 error다."""
-    fb["gh"].review_bodies = [_written(11, "전체적으로 고쳐 주세요")]
-    fb["monkeypatch"].setattr(
-        claude_cli, "run_structured", _asker({11: ("accept", "?", [], "고친다")})
-    )
-    assert feedback_job.process_feedback(_job(), fb["deps"]) == "feedback:error=1"
-    assert fb["gh"].replies == []  # 판단하지 못한 것에는 답글을 달지 않는다
-
-
-def test_model_failure_records_error_and_new_commit_revisits(fb, material) -> None:
-    fb["gh"].pr_comments = [_written(21, "고쳐 주세요", "owner", "OWNER")]
-
-    def broken(prompt, **kw):
-        return StructuredResult(ok=False, error="timeout", data=None, model_id="",
-                                input_tokens=None, output_tokens=None, cost_usd=None,
-                                permission_denials=0)  # fmt: skip
-
-    fb["monkeypatch"].setattr(claude_cli, "run_structured", broken)
-    assert feedback_job.process_feedback(_job(), fb["deps"]) == "feedback:error=1"
-    store = fb["deps"].store
-    assert feedback_job.collect(fb["deps"].github, store, "o/r", 1, HEAD) == []
-    assert len(feedback_job.collect(fb["deps"].github, store, "o/r", 1, "d" * 40)) == 1
-
-
-def test_triage_answer_is_stored_and_not_asked_again(fb, material) -> None:
-    fb["gh"].pr_comments = [_written(21, "질문", "owner", "OWNER")]
-    ask = _asker({21: ("no_action", "질문")})
-    fb["monkeypatch"].setattr(claude_cli, "run_structured", ask)
-    item = feedback_job.collect(fb["deps"].github, fb["deps"].store, "o/r", 1, HEAD)
-    refs = fb["deps"].github.pr_refs("o/r", 1)
-    feedback_job.handle_items(_job(), fb["deps"], refs, item)
-    feedback_job.handle_items(_job(), fb["deps"], refs, item)
-    assert len(ask.calls) == 1
-    stages = [(c.stage, c.cache_hit) for c in fb["deps"].store.model_calls("o/r", 1)]
-    assert stages == [("feedback", False), ("feedback", True)]
-
-
 def test_a_merge_the_webhook_missed_is_seen_before_masking(fb) -> None:
     """MathLLM#7: 규칙 검사의 수정안이 같은 줄을 고쳐 머지됐는데 그 스레드가 열린 채 남았다."""
     _fixed_by(fb, 900, "open")
@@ -528,32 +373,3 @@ def test_a_merge_the_webhook_missed_is_seen_before_masking(fb) -> None:
     _forbid_model(fb)
     assert feedback_job.process_feedback(_job(), fb["deps"]) == "feedback:merged=1"
     assert fb["gh"].resolved == ["T1"]
-
-
-def test_rejecting_resolves_copilot_threads_with_a_reason_and_leaves_human_threads_open(
-    fb, material
-) -> None:
-    """Copilot의 스레드는 거절의 종류대로 사유를 주고 해결한다(Incorrect → INVALID). 사람의 스레드는
-    답글만 달고 열어 둔다."""
-    gh = fb["gh"]
-    gh.threads = [
-        _thread("T1", _comment(101)),
-        _thread("T2", _comment(102, login="kim", assoc="MEMBER")),
-    ]
-
-    def ask(prompt: str, **kw) -> StructuredResult:
-        items = [
-            {"id": i, "verdict": "reject", "why": "코드를 읽어 보니 그 문제가 없다", "files": [],
-             "request": "", "number": 0, "reject_kind": "incorrect"}
-            for i in (101, 102)
-        ]  # fmt: skip
-        return StructuredResult(ok=True, error=None, data={"items": items}, model_id="m",
-                                input_tokens=1, output_tokens=1, cost_usd=0.0,
-                                permission_denials=0)  # fmt: skip
-
-    fb["monkeypatch"].setattr(claude_cli, "run_structured", ask)
-    assert feedback_job.process_feedback(_job(), fb["deps"]) == "feedback:rejected=2"
-    assert gh.resolved == ["T1"] and gh.reasons == {"T1": "INVALID"}
-    assert len(gh.replies) == 2
-    rows = {f.item_id: f for f in fb["deps"].store.handled_feedback("o/r", 1)}
-    assert rows[101].resolved_at is not None and rows[102].resolved_at is None

@@ -10,8 +10,6 @@ pr:
   - file: orders/services/pricing.py
     find: "from orders.models.order import Order\n"
     replace: "import os\n\nfrom orders.models.order import Order\n"
-model:
-  rules: []
 expect:
   rule_line: "**규칙:** 규칙을 찾지 못해 규칙 검사를 하지 않음"
   contains: ["ruff 설정(`ruff.toml`, `pyproject.toml`의 `[tool.ruff]`)을 두면"]

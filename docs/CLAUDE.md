@@ -62,7 +62,7 @@ BACKLOG.md 형식:
 - 수정 작성(DESIGN 4.7)은 모델이 한 호출 안에서 한다: 있던 테스트가 위반 줄을 실행하지 않으면 테스트(`tests/test_pipeline_<이름>.py`)를 먼저 쓰고, 도구 `run_tests`(샌드박스)와 `check_rules`(검사기)로 돌려 보며 고치고 다시 확인한다.
 - 출구 검사(DESIGN 4.8)는 프로그램이 같은 검사를 한 번 더 돌린다: 허용 범위, 비밀값, 설명 확인, 규칙 재검사, 만든 테스트의 조건(고치기 전 통과, 위반 줄 실행, 겹치지 않음, 고친 뒤 통과, 빈 테스트 아님), 테스트, 크기. 맞지 않는 만든 테스트는 그 파일만 뺀다.
 - 모델이 코드를 보는 방식은 단계마다 다르다(DESIGN 8.4). 수정 작성은 저장소를 읽고 쓰는 도구와 파이프라인 도구를 받는다. 위반 찾기의 모델 판단(DESIGN 4.5)과 PR 설명 확인(DESIGN 4.5 끝)은 읽기 도구(Read, Grep, Glob)로 PR의 코드에서 필요한 곳을 찾아 읽는다(2026-11-22). 규칙 읽기, 검사기 작성, 수정 판단, PR 단위 확인은 도구 없이 프로그램이 골라 준 자료만 받는다.
-- 확인은 실제 모델로 한다. 가짜 모델은 없애는 중이고(2026-11-22, DESIGN 11.1) 남은 곳은 DESIGN 12.2에 있다. 새 테스트에 가짜 모델을 만들지 않는다.
+- 모델이 끼는 흐름의 확인은 실제 모델로 한다(DESIGN 11.1). 모델 자리에 정해진 답을 내는 가짜 모델은 없고, 만들지 않는다. 모델 없이 볼 수 있는 부분은 그 부분만 떼어 입력 값으로 시험한다. 평가 케이스(`eval/`)에는 모델의 답을 적지 않고 기대를 결과로 적는다.
 - 대상 저장소: 예제 `Eunryong/eval`, 저장소 주인이 쓰는 `Eunryong/MathLLM`(둘 다 비공개). 이 리포(`pr-proof`)는 자기 PR을 검사하지 않는다. 실제 모델 확인은 `PR_PROOF_REAL_AI=1`(CLI)과 `PR_PROOF_REAL_MODEL=1`(평가 케이스)로 켠다.
 - 열려 있는 완료 기준은 `docs/DESIGN.md` 13절, 문서와 코드가 다른 곳은 12.2, 주인에게 물은 것은 11.3에 있다. 코드 주석의 "DESIGN.md F7" 같은 번호는 v1의 절이고 12.3으로 읽는다.
 - 지나간 작업의 기록(지난 기록 `HISTORY.md`, 날짜별 문제 해결 일지 `JOURNAL.md`와 `journal/`)은 저장소에 두지 않는다(2026-11-23에 공개 저장소에서 뺐다). 저장소 주인의 작업 폴더 `.audit/records/`에 있고 git에 올리지 않는다. 설계 문서가 `docs/JOURNAL.md`나 `docs/HISTORY.md`를 가리키면 그곳의 파일이다. 지금의 지시가 아니다.
@@ -82,7 +82,7 @@ pytest                # 파이프라인 자체 테스트 (Docker 없이)
 pytest -m docker      # 실제 Docker·예제 리포가 필요한 통합 테스트 (이미지 빌드와 Python 런타임·ast-grep·ruff 받기에 네트워크가 필요하다)
 pip install -e '.[rag]'   # 과거 기록 검색을 쓸 때만(rag.enabled: on, 또는 auto가 켤 때). chromadb·onnxruntime·tokenizers·numpy
 python -m app.worker.cli reindex # 벡터 저장소(data_dir/chroma/)를 SQLite의 기록으로 다시 만든다
-python -m app.worker.cli eval --baseline --db <경로>  # 평가 세트 전부를 돌려 eval_runs에 기준선으로 남긴다. --baseline 없이 돌리면 기준선과 비교 (--real-model은 claude를 부른다. --out <폴더>는 junit·호출 기록을 남기고 그 폴더의 memo.jsonl을 다시 쓴다)
+python -m app.worker.cli eval --baseline --db <경로>  # 평가 세트 전부를 돌려 eval_runs에 기준선으로 남긴다. --baseline 없이 돌리면 기준선과 비교 (설정된 모델을 실제로 부른다. --out <폴더>는 junit·호출 기록을 남기고 그 폴더의 memo.jsonl을 다시 쓴다)
 PR_PROOF_REAL_EMBED=1 PR_PROOF_EMBED_DIR=<모델 폴더> pytest tests/worker/test_real_embed.py  # 실제 임베딩 모델의 recall@k
 ```
 

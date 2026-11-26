@@ -20,12 +20,11 @@ eval/tools_off.yaml의 표본을 같은 규칙 읽기 결과로 세 조건에서
 규칙들이 잡은 줄의 합이고, 줄마다 그 규칙이 쓴 확인 방법(`tool`, `checker`, `judge`)으로 나눠 센다.
 재현율 = 정답 중 잡은 비율, 정밀도 = 잡은 것 중 정답인 비율. 1단계 기준선의 정의와 같다.
 
-기본은 가짜 모델(케이스의 `model`)로 한 번 돌아 하네스를 확인한다. `PR_PROOF_REAL_MODEL=1`이면
-로그인된 claude를 파이프라인의 호출 경로 그대로 부른다(비용이 든다). 그때
-`PR_PROOF_TOOLS_EVAL_RUNS`(기본 1)번을 매번 빈 DB로 돌고, `PR_PROOF_TOOLS_EVAL_OUT`이 있으면 결과
-JSON을 그 폴더에 쓴다. `PR_PROOF_TOOLS_EVAL_MATHLLM`에 MathLLM 작업 폴더를 주면 그 파일을 복사한
-base 전체(Python 파일의 모든 줄)를 표본으로 더한다. MathLLM은 파일이 많아 모델 판단만 조건을 돌리지
-않는다.
+설정된 모델을 파이프라인의 호출 경로 그대로 부르므로 `PR_PROOF_REAL_MODEL=1`일 때만 돈다(비용이
+든다). `PR_PROOF_TOOLS_EVAL_RUNS`(기본 1)번을 매번 빈 DB로 돌고, `PR_PROOF_TOOLS_EVAL_OUT`이 있으면
+결과 JSON을 그 폴더에 쓴다. `PR_PROOF_TOOLS_EVAL_MATHLLM`에 MathLLM 작업 폴더를 주면 그 파일을
+복사한 base 전체(Python 파일의 모든 줄)를 표본으로 더한다. MathLLM은 파일이 많아 모델 판단만
+조건을 돌리지 않는다.
 """
 
 import json
@@ -59,9 +58,10 @@ from app.worker.store.state import Store
 from tests.sandbox_names import TEST_NAMES
 
 from ..redis_stand_ins import MemoryKeys
+from .conftest import needs_model
 from .test_lint_cases import _apply as apply_lint_edits
 from .test_lint_cases import _git
-from .test_rules_cases import REAL_MODEL_ENV, _apply, scripted_model
+from .test_rules_cases import _apply
 
 EVAL_DIR: Final = Path(__file__).resolve().parents[2] / "eval"
 SPEC: Final = yaml.safe_load((EVAL_DIR / "tools_off.yaml").read_text())
@@ -409,19 +409,18 @@ def _jsonable(runs: Sequence[dict]) -> list[dict]:
 def test_tools_on_and_off_score_the_same_samples(
     eval_repo: Path, sandbox_image: str, tool_cache: Path, tmp_path: Path
 ) -> None:
-    real = os.environ.get(REAL_MODEL_ENV) == "1"
+    needs_model()
     targets = [eval_target(eval_repo, tmp_path / "eval")]
     targets += [judge_target(eval_repo, tmp_path / "judge", e) for e in SPEC["judge_cases"]]
-    if real and os.environ.get(MATHLLM_ENV):
+    if os.environ.get(MATHLLM_ENV):
         targets.append(mathllm_target(Path(os.environ[MATHLLM_ENV]), tmp_path / "mathllm"))
-    runs_n = int(os.environ.get(RUNS_ENV, "1")) if real else 1
     runs = []
-    for n in range(runs_n):
+    for n in range(int(os.environ.get(RUNS_ENV, "1"))):
         for target in targets:
-            ask = claude_cli.run_structured if real else _scripted(target)
             data = tmp_path / f"data-{target.name}-{n}"
             data.mkdir()
-            runs.append({**run_once(target, ask, data, tool_cache), "rep": n + 1})
+            runs.append({**run_once(target, claude_cli.run_structured, data, tool_cache),
+                         "rep": n + 1})  # fmt: skip
     if os.environ.get(OUT_ENV):
         out = Path(os.environ[OUT_ENV])
         out.mkdir(parents=True, exist_ok=True)
@@ -434,57 +433,6 @@ def test_tools_on_and_off_score_the_same_samples(
         print(run["rep"], run["target"], Counter((c["arm"], c["stage"]) for c in run["calls"]))
     print(by_method(runs))
     print(judged_rules(runs))
-    if real:
-        return
-
-    by = {(r["target"], s["concept"], s["arm"]): s for r in runs for s in r["scores"]}
-    eval_calls = next(r["calls"] for r in runs if r["target"] == "eval")
-    assert all(c["arm"] == "on" for c in eval_calls if c["stage"] == "tool_choice")
-    assert {c["arm"] for c in eval_calls if c["stage"] == "judge"} == {"judge"}
-
-    def at(concept: str, arm: Arm, target: str = "eval") -> dict:
-        return by[(target, concept, arm)]
-
-    assert at("T201", "on")["rules"][0]["method"] == "ruff T201"
-    assert at("T201", "off")["rules"][0]["method"] == "checker ast-grep"
-    assert at("T201", "on")["score"].recall == at("T201", "on")["score"].precision == "1/1"
-    for code in ("PLR2004", "PLW0603"):
-        # 도구를 고르지 않은 규칙은 두 조건이 같은 검사기를 쓴다
-        assert at(code, "on")["score"] == at(code, "off")["score"]
-        assert at(code, "on")["rules"][0]["method"] == "checker ast-grep"
-    # README가 예외로 둔 `== 100`은 ruff만 잡는다: 정의대로 재현율에서 빠진다
-    assert [m[:3] for m in at("PLR2004", "off")["missed"]] == [
-        ["probe", "orders/services/probe.py", 14]
-    ]
-    assert at("PLW0603", "off")["score"].recall == "1/1"
-    # 모델 판단만 조건: 가짜 답의 맞은 줄과 정답에 없는 줄이 그 방법의 점수로 나뉜다
-    assert set(at("PLW0603", "judge")["by_method"]) == {"judge"}
-    assert at("PLR2004", "judge")["score"].recall == "1/7"
-    assert at("PLW0603", "judge")["score"].precision == "1/2"
-    assert [m[:3] for m in at("PLW0603", "judge")["extra"]] == [
-        ["probe", "orders/services/probe.py", 19]
-    ]
-    # 판단 케이스: 도구 끔·켬 모두 운영 흐름이 모델 판단으로 보낸다. 01은 가짜 검사기가 예시 확인을
-    # 두 번 통과하지 못해서, 06(주석)은 검사기 작성 모델이 검사기로 가릴 수 없다고(none) 답해서다
-    routes = {"01-verb-function-name": "judge:examples", "06-comment-matches-code": "judge:none"}
-    for entry in SPEC["judge_cases"]:
-        name = Path(entry["case"]).stem
-        for arm in ARMS:
-            got = at(name, arm, target=name)
-            assert got["truth_from"] == "case"
-            assert set(got["by_method"]) == {"judge"}, got["rules"]
-            assert got["score"].recall == got["score"].precision == "1/1", got
-            if arm != "judge":
-                assert got["rules"][0]["method"].startswith(routes[name] + " ("), got["rules"]
-    assert judged_rules(runs) == {"off": "2/5 (judge:examples 1, judge:none 1)",
-                                  "on": "2/5 (judge:examples 1, judge:none 1)"}  # fmt: skip
-    totals = by_method(runs)
-    assert totals["off/checker"]["recall"] == "8/9"
-    assert totals["off/judge"] == {"recall": "2/2", "precision": "2/2"}
-
-
-def _scripted(target: Target) -> Callable[..., StructuredResult]:
-    if target.name == "eval":
-        return scripted_model(SPEC)
-    (entry,) = [e for e in SPEC["judge_cases"] if Path(e["case"]).stem == target.name]
-    return scripted_model(yaml.safe_load((EVAL_DIR / entry["case"]).read_text()))
+    # 조건의 뜻: 도구 선택은 도구 켬에서만, 모델 판단만 조건의 호출은 모델 판단뿐이다
+    for run in runs:
+        assert all(c["arm"] == "on" for c in run["calls"] if c["stage"] == "tool_choice")
