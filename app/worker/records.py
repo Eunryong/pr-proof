@@ -57,7 +57,7 @@ def after_failed_fix(
         new = records_pure.failure_records(
             repo=job.repo, pr_number=job.pr_number, head_sha=job.head_sha,
             attempt_id=fix.attempt_id, targets=notes, patch=repo.head_diff(worktree),
-            detail=fix.detail,
+            detail=fix.detail, status=fix.status,
         )  # fmt: skip
         save(store, new, secrets)
     except _RECORD_ERRORS:

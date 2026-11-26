@@ -205,8 +205,10 @@ def describe_pr(ctx: FlowContext, state: FlowState) -> FlowState:
     pipeline = () if isinstance(facts, str) else pr_description.pipeline_diffs(ctx.worktree, facts)
     result = pr_description.check(
         facts, ctx.changes_diff.decode("utf-8", errors="replace"), ctx.worktree,
-        pr_description.Tools(store=rt.store, budget=rt.budget,
-                             read_code=rt.backend.reading, model=rt.models.judge),
+        pr_description.Tools(
+            store=rt.store, budget=rt.budget, read_code=rt.backend.reading,
+            model=rt.models.judge, max_diff_chars=rt.backend.capabilities.max_diff_chars,
+        ),
         pipeline=pipeline, known=len(found.violations) if isinstance(found, Found) else 0,
         is_stale=lambda: ctx.store.is_stale(job),
     )  # fmt: skip
@@ -235,8 +237,10 @@ def check_issues(ctx: FlowContext, state: FlowState) -> FlowState:
     result = linked_issues.check(
         linked, job.repo,
         ctx.changes_diff.decode("utf-8", errors="replace"), ctx.worktree,
-        linked_issues.Tools(store=rt.store, budget=rt.budget,
-                            read_code=rt.backend.reading, model=rt.models.judge),
+        linked_issues.Tools(
+            store=rt.store, budget=rt.budget, read_code=rt.backend.reading,
+            model=rt.models.judge, max_diff_chars=rt.backend.capabilities.max_diff_chars,
+        ),
         known=len(found.violations) if isinstance(found, Found) else 0,
         is_stale=lambda: ctx.store.is_stale(job),
     )  # fmt: skip
@@ -288,6 +292,7 @@ def decide_fixes(ctx: FlowContext, state: FlowState) -> FlowState:
         found, SafetyNet(run.status, flaky=bool(run.flaky)), ctx.changes_diff, store=rt.store,
         budget=rt.budget, model=rt.models.decide, ask=rt.backend.ask, retriever=rt.retriever,
         context_of=records.context_of(ctx.worktree),
+        manual=bool(state.get("model_requested")), current_pr=job.pr_number,
     )  # fmt: skip
     return {"fix_decisions": decided}
 

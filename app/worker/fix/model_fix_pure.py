@@ -5,6 +5,7 @@ JSON 읽기와 확인, 재검사 비교, 캐시 키. 판단만 하고 모델을 
 `fix`·`model`로 정한 위반뿐이다. `skip`한 위반은 여기 들어오지 않는다.
 """
 
+import ast
 import base64
 import json
 import re
@@ -197,10 +198,26 @@ _BASELINE: Final[Mapping[bool | None, str]] = {
 }
 
 
+def added_branch_count(before: str, after: str) -> int:
+    """수정 전후 Python 소스에서 새로 늘어난 조건·예외 분기(`if`, `try`, 삼항식) 수.
+
+    단순 연산자/표현식 교체가 목표인 수정에서 불필요한 분기를 덧붙였는지 감지할 때 쓴다.
+    """
+    try:
+        before_tree, after_tree = ast.parse(before), ast.parse(after)
+    except (SyntaxError, ValueError, RecursionError, MemoryError):
+        return 0
+    branch_nodes = (ast.If, ast.Try, ast.IfExp)
+    before_n = sum(1 for n in ast.walk(before_tree) if isinstance(n, branch_nodes))
+    after_n = sum(1 for n in ast.walk(after_tree) if isinstance(n, branch_nodes))
+    return max(0, after_n - before_n)
+
+
 def build_prompt(
     targets: Sequence[Target],
     *,
     constants: Mapping[str, Sequence[str]] | None = None,
+    helpers: Mapping[str, Sequence[str]] | None = None,
     feedback: Sequence[str] = (),
     current_diff: str = "",
     records: str = "",
@@ -234,6 +251,13 @@ def build_prompt(
     hints = [f"- {f}: {', '.join(names)}" for f, names in (constants or {}).items() if names]
     if hints:
         data += ["", "파일에 이미 있는 모듈 수준 상수 (같은 값이면 다시 쓴다):", *hints]
+    helper_hints = [f"- {f}: {', '.join(sigs)}" for f, sigs in (helpers or {}).items() if sigs]
+    if helper_hints:
+        data += [
+            "",
+            "같은 폴더 모듈의 기존 공개 함수 (비슷한 계산은 중복 작성하지 않고 재사용한다):",
+            *helper_hints,
+        ]
     if feedback:
         data += ["", "이전 회차가 검증을 통과하지 못한 이유:"]
         data += [f"- {item}" for item in feedback[:MAX_FEEDBACK_ITEMS]]

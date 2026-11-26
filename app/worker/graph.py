@@ -23,7 +23,7 @@ from langgraph.types import Command
 
 from app.shared.job_pure import PRJob
 from app.worker import flow_nodes, records
-from app.worker.fix import proposal
+from app.worker.fix import fix_decision_pure, proposal
 from app.worker.flow_state import (
     _STATE_TYPES,
     AUTHOR_CHECKERS,
@@ -334,18 +334,28 @@ def _awaiting_skills(value: object) -> list[str]:
     return [value["skill"]] if "skill" in value else []  # 2단계 전 체크포인트 ({"skill": "lint"})
 
 
-def _rerun(values: Mapping[str, Any], bundle: str) -> bool:
-    """그 묶음에 `/fix`로 다시 돌릴 것이 있는지: 수정안을 내지 못하고 끝났다(검증 실패, 호출 상한
-    등). 모델 묶음은 호출 상한에 걸려 정하지 못한 수정 판단도 다시 돌린다 (4.9 명령)."""
+def _rerun(values: Mapping[str, Any], bundle: str, *, blocked: str = "") -> bool:
+    """그 묶음에 `/fix`로 다시 돌릴 것이 있는지.
+
+    기계적 수정은 수정안을 내지 못하고 끝난 경우에만 다시 돌린다. 모델 묶음은 머지된 수정안 커밋이
+    아니면, 실패·호출 상한뿐 아니라 지난 판단이 `skip`했거나 이미 수정안 PR이 열려 있는 커밋도
+    사람이 `/fix`로 다시 시도·갱신할 수 있다 (pr-proof#149).
+    """
     fix = values.get(STATE_KEYS[bundle][0])
     failed = fix is not None and not fix.ready
     if bundle != MODEL:
         return failed
+    if blocked == "merged":
+        return False
     decided = values.get("fix_decisions")
-    capped = decided is not None and any(d.reason == "call_limit" for d in decided.decisions)
+    has_model_candidates = decided is not None and any(
+        d.method != MECHANICAL
+        and not (d.action == "skip" and d.reason in fix_decision_pure.TABLE_SKIPS)
+        for d in decided.decisions
+    )
     return (
-        capped
-        or failed
+        failed
+        or has_model_candidates
         or doc_rules.judge_left(values.get("doc_rules"))
         or pr_check_pure.judge_left(values.get("pr_checks"))
     )
@@ -355,16 +365,19 @@ def pending_fix(job: PRJob, ctx: FlowContext, saver: SqliteSaver, bundle: str) -
     """이 커밋에 그 묶음의 재개할 수정이 있는지. 승인 대기 중이거나, 수정·전달 도중 실패해 다시
     시도할 수 있거나, 수정안을 내지 못하고 끝나 다시 돌릴 수 있다."""
     snapshot = build_graph(ctx, saver).get_state(thread_config(job))
+    blocked = proposal.blocked_by_history(ctx.store, job.repo, job.pr_number, bundle, job.head_sha)[
+        0
+    ]
     if AWAIT_FIX in snapshot.next and snapshot.interrupts:
         if bundle in _awaiting_skills(snapshot.interrupts[0].value):
             return "awaiting"
         # 다른 묶음이 승인을 기다려도 이 묶음은 다시 돌릴 수 있다. 끝나면 다시 그 승인을 기다린다
-        return "rerun" if _rerun(snapshot.values, bundle) else None
+        return "rerun" if _rerun(snapshot.values, bundle, blocked=blocked) else None
     if FIX_NODES[bundle] in snapshot.next or DELIVER_NODES[bundle] in snapshot.next:
         return "interrupted_fix"
     if snapshot.next:
         return None
-    return "rerun" if _rerun(snapshot.values, bundle) else None
+    return "rerun" if _rerun(snapshot.values, bundle, blocked=blocked) else None
 
 
 def pending_kind(job: PRJob, ctx: FlowContext, bundle: str) -> PendingFix | None:

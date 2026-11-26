@@ -183,7 +183,28 @@ RECORDS_HEAD: Final = (
 )
 
 
-def render_records(chosen: Sequence[Chosen]) -> str:
+# 수정 방법 자체가 아니라 재검사·판단 문제일 수 있는 실패 표식. 같은 PR의 이런 실패는 수정 판단에서
+# "고치지 않음"의 근거로 쓰지 않는다 (pr-proof#149)
+_NON_METHOD_FAILURE_MARKERS: Final = ("남은 위반", "[재검사 실패]", "규칙 재검사를 하지 못함")
+
+
+def filter_decide_records(selection: Selection, *, current_pr: int | None) -> Selection:
+    """수정 판단에 넘길 기록에서 같은 PR의 비-수정방법 실패(남은 위반, 재검사 실패)를 뺀다."""
+    if current_pr is None or not selection.chosen:
+        return selection
+    kept = tuple(
+        c
+        for c in selection.chosen
+        if not (
+            c.record.kind == "failed"
+            and c.record.pr_number == current_pr
+            and any(m in (c.record.detail or "") for m in _NON_METHOD_FAILURE_MARKERS)
+        )
+    )
+    return Selection(kept, selection.below_ids)
+
+
+def render_records(chosen: Sequence[Chosen], *, current_pr: int | None = None) -> str:
     """참고 자료 블록 (6.6의 7번). 건마다 기록 번호, 종류, 규칙 원문 한 줄, diff 40줄까지. 고른 것이
     없으면 "" (프롬프트에 아무것도 넣지 않는다)."""
     if not chosen:
@@ -194,7 +215,10 @@ def render_records(chosen: Sequence[Chosen]) -> str:
         rule = " ".join(r.rule_text.split())[:MAX_RULE_CHARS]
         body = _clip_lines(r.diff, MAX_DIFF_LINES) or "(diff 없음)"
         fence = _fence(body)
-        out += ["", f"기록 {r.id} · {KIND_LABEL.get(r.kind, r.kind)} · 규칙 {r.rule_id}"]
+        pr_tag = ""
+        if current_pr is not None and r.pr_number is not None:
+            pr_tag = f" · {'같은 PR' if r.pr_number == current_pr else '다른 PR'} #{r.pr_number}"
+        out += ["", f"기록 {r.id} · {KIND_LABEL.get(r.kind, r.kind)}{pr_tag} · 규칙 {r.rule_id}"]
         out.append(f"규칙: {rule}")
         if r.file:
             out.append(f"파일: {r.file}")

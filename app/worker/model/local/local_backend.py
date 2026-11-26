@@ -43,7 +43,12 @@ from app.worker.model.model_backend import (
 
 NAME: Final = LOCAL_OPENAI_BACKEND
 CAPABILITIES: Final = Capabilities(
-    reads_code=True, reports_reads=True, edits=True, pipeline_tools=True
+    reads_code=True,
+    reports_reads=True,
+    edits=True,
+    pipeline_tools=True,
+    max_diff_chars=60_000,
+    max_checker_attempts=1,
 )
 SERVER_CHECK: Final = "로컬 모델 서버"
 MAX_TIMEOUT_S: Final = 1200.0  # 호출 시간 상한 20분

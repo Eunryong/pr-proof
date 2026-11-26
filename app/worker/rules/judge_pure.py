@@ -151,7 +151,7 @@ ANSWER_SCHEMA: Final[Mapping[str, object]] = {
                     "file": {"type": "string"},
                     "line": {"type": "integer"},
                     "quote": {"type": "string"},
-                    "why": {"type": "string"},
+                    "why": {"type": "string", "minLength": 1},
                 },
             },
         },
@@ -445,7 +445,9 @@ def verify_answer(asked: Sequence[Asked], answer: Answer) -> Verified:
         if (item.rule_id, item.line) in seen:
             continue
         seen.add((item.rule_id, item.line))
-        why = _one_line(item.why, MAX_WHY_CHARS)
+        why = _one_line(item.why, MAX_WHY_CHARS) or _one_line(
+            basis.get((at, item.rule_id), ""), MAX_WHY_CHARS
+        )
         kept[(at, item.rule_id)].append(Flag(item.rule_id, item.line, text.strip(), why))
     undecided: dict[Pair, str] = {}
     for pair in keep:

@@ -66,7 +66,8 @@ def test_missing_prompt_shows_the_digests_instead_of_the_diff() -> None:
         TEXT, PARTS, [("a.py: x를 바꿈",), None], earlier_missing(EARLIER)
     )
     assert "<<<DIFF" not in prompt and "<<<PR_BODY" in prompt
-    assert "묶음 1 (파일: a.py, big.py)\n- a.py: x를 바꿈\n<<<END CHANGES" in prompt
+    assert "묶음 1 (파일: a.py, big.py)\n- a.py: x를 바꿈\n" in prompt
+    assert "- big.py: 변경 포함 (요약에서 경로 생략됨)\n<<<END CHANGES" in prompt
     assert "\nx.lock\nbig.py\nc.py\n<<<END NOT_SEEN" in prompt
     assert "1. missing PR 글: 빈 줄을 건너뛴다. — 없음" in prompt
     assert "a를 바꿈" not in prompt and "c가 다름" not in prompt
