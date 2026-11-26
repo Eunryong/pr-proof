@@ -4,7 +4,7 @@
 
 ## 지켜야 할 원칙
 
-- 모델이 일을 쥐고, 프로그램(저장소의 도구, 검사기, 샌드박스 테스트)은 모델이 필요할 때 부르는 도구다. 프로그램이 모델 밖에서 하는 것은 올리기 직전의 출구 검사와 경계(샌드박스, 허용 범위, 비밀값, 호출·시간·크기 상한)다. 머지는 사람이 한다(DESIGN 2절, 2026-11-22). 결정은 네 종류다(DESIGN 2.1): 규칙 선택(모델), 위반 판단(도구가 있으면 도구, 없으면 모델), 수정 판단(모델), 수정 작성과 확인(모델이 도구로, 출구 검사는 프로그램). 출구 검사는 모델의 말을 믿지 않고 프로그램이 직접 돌린다.
+- 모델이 일을 쥐고, 프로그램(저장소의 도구, 검사기, 샌드박스 테스트)은 모델이 필요할 때 부르는 도구다. 프로그램이 모델 밖에서 하는 것은 올리기 직전의 출구 검사와 경계(샌드박스, 허용 범위, 비밀값, 호출·시간·크기 상한)다. 머지는 사람이 한다(DESIGN 2절). 결정은 네 종류다(DESIGN 2.1): 규칙 선택(모델), 위반 판단(도구가 있으면 도구, 없으면 모델), 수정 판단(모델), 수정 작성과 확인(모델이 도구로, 출구 검사는 프로그램). 출구 검사는 모델의 말을 믿지 않고 프로그램이 직접 돌린다.
 - 모델의 결과는 입력 해시별로 저장하고 다시 쓴다. 재현성은 모델을 금지해서가 아니라 저장해서 보장한다.
 - 규칙은 대상 리포의 문서와 도구 설정에서만 나온다. 파이프라인은 내장 규칙도 내장 검사기도 갖지 않는다. 특정 구조(MVC 등)를 강제하지 않는다.
 - 도구는 미리 깔지 않고 규칙 계획에 필요할 때만 받아 캐시한다(DESIGN 2.3).
@@ -57,15 +57,15 @@ BACKLOG.md 형식:
 
 ## 지금의 방향과 상태
 
-- 원칙(2026-11-22, DESIGN 2절): 모델이 일을 쥐고, 프로그램(저장소의 도구, 검사기, 샌드박스 테스트)은 모델이 필요할 때 부르는 도구다. 프로그램이 모델 밖에서 하는 것은 올리기 직전의 출구 검사와 경계(샌드박스, 허용 범위, 비밀값, 호출·시간·크기 상한)다. 머지는 사람이 한다.
+- 원칙(DESIGN 2절): 모델이 일을 쥐고, 프로그램(저장소의 도구, 검사기, 샌드박스 테스트)은 모델이 필요할 때 부르는 도구다. 프로그램이 모델 밖에서 하는 것은 올리기 직전의 출구 검사와 경계(샌드박스, 허용 범위, 비밀값, 호출·시간·크기 상한)다. 머지는 사람이 한다.
 - PR 하나의 순서: 작성자 확인(가드레일) → 규칙 읽기(모델, base의 문서와 도구 설정) → 규칙마다 확인 방법(저장소의 도구 / 모델이 쓴 검사기 / 모델 판단) → 위반 찾기 → 테스트 기준선 → 수정 판단(정해진 것은 프로그램, 나머지는 모델) → 수정 작성 → 출구 검사 → 수정안 PR과 결과 코멘트.
 - 수정 작성(DESIGN 4.7)은 모델이 한 호출 안에서 한다: 있던 테스트가 위반 줄을 실행하지 않으면 테스트(`tests/test_pipeline_<이름>.py`)를 먼저 쓰고, 도구 `run_tests`(샌드박스)와 `check_rules`(검사기)로 돌려 보며 고치고 다시 확인한다.
 - 출구 검사(DESIGN 4.8)는 프로그램이 같은 검사를 한 번 더 돌린다: 허용 범위, 비밀값, 설명 확인, 규칙 재검사, 만든 테스트의 조건(고치기 전 통과, 위반 줄 실행, 겹치지 않음, 고친 뒤 통과, 빈 테스트 아님), 테스트, 크기. 맞지 않는 만든 테스트는 그 파일만 뺀다.
-- 모델이 코드를 보는 방식은 단계마다 다르다(DESIGN 8.4). 수정 작성은 저장소를 읽고 쓰는 도구와 파이프라인 도구를 받는다. 위반 찾기의 모델 판단(DESIGN 4.5)과 PR 설명 확인(DESIGN 4.5 끝)은 읽기 도구(Read, Grep, Glob)로 PR의 코드에서 필요한 곳을 찾아 읽는다(2026-11-22). 규칙 읽기, 검사기 작성, 수정 판단, PR 단위 확인은 도구 없이 프로그램이 골라 준 자료만 받는다.
+- 모델이 코드를 보는 방식은 단계마다 다르다(DESIGN 8.4). 수정 작성은 저장소를 읽고 쓰는 도구와 파이프라인 도구를 받는다. 위반 찾기의 모델 판단(DESIGN 4.5)과 PR 설명 확인(DESIGN 4.5 끝)은 읽기 도구(Read, Grep, Glob)로 PR의 코드에서 필요한 곳을 찾아 읽는다. 규칙 읽기, 검사기 작성, 수정 판단, PR 단위 확인은 도구 없이 프로그램이 골라 준 자료만 받는다.
 - 모델이 끼는 흐름의 확인은 실제 모델로 한다(DESIGN 11.1). 모델 자리에 정해진 답을 내는 가짜 모델은 없고, 만들지 않는다. 모델 없이 볼 수 있는 부분은 그 부분만 떼어 입력 값으로 시험한다. 평가 케이스(`eval/`)에는 모델의 답을 적지 않고 기대를 결과로 적는다.
-- 대상 저장소: 예제 `Eunryong/eval`, 저장소 주인이 쓰는 `Eunryong/MathLLM`(둘 다 비공개). 이 리포(`pr-proof`)는 자기 PR을 검사하지 않는다. 실제 모델 확인은 `PR_PROOF_REAL_AI=1`(CLI)과 `PR_PROOF_REAL_MODEL=1`(평가 케이스)로 켠다.
+- 대상 저장소: 예제 `Eunryong/eval`(공개), 저장소 주인이 쓰는 `Eunryong/MathLLM`(비공개). 실제 모델 확인은 `PR_PROOF_REAL_AI=1`(CLI)과 `PR_PROOF_REAL_MODEL=1`(평가 케이스)로 켠다.
 - 열려 있는 완료 기준은 `docs/DESIGN.md` 13절, 문서와 코드가 다른 곳은 12.2, 주인에게 물은 것은 11.3에 있다. 코드 주석의 "DESIGN.md F7" 같은 번호는 v1의 절이고 12.3으로 읽는다.
-- 지나간 작업의 기록(지난 기록 `HISTORY.md`, 날짜별 문제 해결 일지 `JOURNAL.md`와 `journal/`)은 저장소에 두지 않는다(2026-11-23에 공개 저장소에서 뺐다). 저장소 주인의 작업 폴더 `.audit/records/`에 있고 git에 올리지 않는다. 설계 문서가 `docs/JOURNAL.md`나 `docs/HISTORY.md`를 가리키면 그곳의 파일이다. 지금의 지시가 아니다.
+- 지나간 작업의 기록(지난 기록 `HISTORY.md`, 날짜별 문제 해결 일지 `JOURNAL.md`와 `journal/`)은 저장소에 두지 않는다. 저장소 주인의 작업 폴더 `.audit/records/`에 있고 git에 올리지 않는다. 설계 문서가 `docs/JOURNAL.md`나 `docs/HISTORY.md`를 가리키면 그곳의 파일이다. 지금의 지시가 아니다.
 - 작업은 기능 단위 브랜치와 PR로 진행한다.
 - 이 절에 날짜가 붙은 작업 이력을 다시 쌓지 않는다. 이력은 저장소 밖의 작업 기록(`.audit/records/`), 결정은 DESIGN 11.1에 적고, 이 절은 지금의 방향이 바뀔 때만 고친다.
 
@@ -77,13 +77,13 @@ source .venv/bin/activate  # Procfile의 python·uvicorn은 venv에서 찾는다
 cp .env.example .env       # 처음 한 번. API_PORT 등 로컬 실행 설정 (비밀값은 넣지 않음)
 honcho start               # api(웹훅 + 동기화 루프), worker
 scripts/start.sh           # venv를 켜지 않은 셸이나 launchd에서. .venv/bin과 gh·claude·docker 경로를 정하고 honcho start
-scripts/install-launchd.sh # 사용자 LaunchAgent로 등록 (죽으면 다시 띄움). 상태·로그·제거는 README "launchd로 띄워 두기"
+scripts/install-launchd.sh # 사용자 LaunchAgent로 등록 (죽으면 다시 띄움). 상태·로그·제거는 docs/OPERATIONS.md "launchd로 띄워 두기 (macOS)"
 pytest                # 파이프라인 자체 테스트 (Docker 없이)
 pytest -m docker      # 실제 Docker·예제 리포가 필요한 통합 테스트 (이미지 빌드와 Python 런타임·ast-grep·ruff 받기에 네트워크가 필요하다)
 pip install -e '.[rag]'   # 과거 기록 검색을 쓸 때만(rag.enabled: on, 또는 auto가 켤 때). chromadb·onnxruntime·tokenizers·numpy
 python -m app.worker.cli reindex # 벡터 저장소(data_dir/chroma/)를 SQLite의 기록으로 다시 만든다
 python -m app.worker.cli eval --baseline --db <경로>  # 평가 세트 전부를 돌려 eval_runs에 기준선으로 남긴다. --baseline 없이 돌리면 기준선과 비교 (설정된 모델을 실제로 부른다. --out <폴더>는 junit·호출 기록을 남기고 그 폴더의 memo.jsonl을 다시 쓴다)
-PR_PROOF_REAL_EMBED=1 PR_PROOF_EMBED_DIR=<모델 폴더> pytest tests/worker/test_real_embed.py  # 실제 임베딩 모델의 recall@k
+PR_PROOF_REAL_EMBED=1 PR_PROOF_EMBED_DIR=<모델 폴더> pytest tests/worker/store/test_real_embed.py  # 실제 임베딩 모델의 recall@k
 ```
 
 워커 실행 전 `gh auth login`, `claude` 로그인, Docker 실행이 필요하다. preflight가 확인한다. 워커는 preflight 전에 DB 스키마(새 테이블, NULL 허용 열)를 맞추고, 맞추지 못하면 1로 끝난다.
@@ -106,7 +106,7 @@ app/
     config/     대상 저장소의 설정
     git/        체크아웃과 GitHub 쓰기
     store/      상태, 호출 상한, 기록, 검색
-    model/      모델 호출의 인터페이스와 구현(model/claude/)
+    model/      모델 호출의 인터페이스와 구현(model/claude/, model/local/)
     testing/    테스트 실행 결과와 커버리지
     sandbox/    언어와 무관한 docker 도구
     lang/       Python 언어 프로필
@@ -128,7 +128,7 @@ tests/          코드와 같은 이름의 폴더 (tests/api, tests/worker, test
 - `config/`: 대상 저장소의 설정. base 브랜치에서 읽기(`base_config.py`: `.pipeline.yaml`, ruff 설정과 버전), `.pipeline.yaml`의 스키마(`repo_config_pure.py`), 외부 작성자 설정(`access_pure.py`)
 - `git/`: 체크아웃(`repo.py`)과 GitHub 쓰기(`github.py`), 그 데이터(`git_pure.py`)
 - `store/`: 상태와 처리 기록 쓰기(`state.py`), 호출 상한(`budget.py`), 과거 기록 저장(`records.py`)과 무엇을 기록할지(`records_pure.py`), 검색(`memory.py`: 임베딩, Chroma 저장과 top-k, 밀린 기록 임베딩, reindex, 큰 규칙 문서의 조각 검색)
-- `model/`: 모델 호출의 인터페이스(`model_backend.py`)와 구현 고르기(`backends.py`), 공용 서브그래프 틀(`loop.py`), MCP 메시지와 도구 상한(`mcp_pure.py`). claude CLI 구현은 `model/claude/`: 호출(`claude_cli.py`, 모양 넷: 수정 작성의 `file_tools`·`fix_tools`, 읽기만 하는 `read_tools`, 도구 없는 `no_tools`), 모델 전용 폴더(`workdir.py`), 경로 감시 훅(`path_hook.py`), 수정 작성의 파이프라인 도구 서버(`tool_server.py`)와 CLI가 띄우는 중계(`mcp_relay.py`)
+- `model/`: 모델 호출의 인터페이스(`model_backend.py`)와 구현 고르기(`backends.py`), 사용량 한도에 닿으면 로컬 모델로 넘기기(`usage_limit_pure.py`, `usage_fallback.py`), 공용 서브그래프 틀(`loop.py`), MCP 메시지와 도구 상한(`mcp_pure.py`). claude CLI 구현은 `model/claude/`: 호출(`claude_cli.py`, 모양 넷: 수정 작성의 `file_tools`·`fix_tools`, 읽기만 하는 `read_tools`, 도구 없는 `no_tools`), 모델 전용 폴더(`workdir.py`), 경로 감시 훅(`path_hook.py`), 수정 작성의 파이프라인 도구 서버(`tool_server.py`)와 CLI가 띄우는 중계(`mcp_relay.py`). 로컬 OpenAI 호환 서버 구현은 `model/local/`: `ModelBackend`의 구현(`local_backend.py`), 요청과 응답(`openai_client.py`, `openai_pure.py`), 모델 전용 폴더 안의 읽기·쓰기 도구(`sandbox_tools.py`)
 - `testing/`: 테스트 실행 결과(`test_run_pure.py`), 커버리지(`coverage.py`, `coverage_pure.py`), 고친 위반의 테스트 표시(`test_lines.py`), 모델이 만든 테스트(`generated_tests_pure.py`)
 - `sandbox/`: `docker_cli`, `container`, `toolcache`, `checker_runner`, `safe_read`. 도구(ast-grep, ruff)와 Python 런타임은 `toolcache.py`가 고정한 버전과 SHA256으로 받아 캐시한다. 샌드박스 이미지에는 언어가 없다 (`debian:bookworm-slim`에 curl과 인증서)
 - `lang/python.py`: Python 언어 프로필 (런타임 준비, `.venv` 설치, pytest 실행과 결과 읽기, 위반 줄의 커버리지 읽기, ruff). 테스트 파일의 정의(`fix/scope_pure.py`), coverage.xml 파싱(`testing/coverage_pure.py`), ruff 설정 읽기와 도구 목록(`core/tools_pure.py`)은 순수 모듈에 있다. 두 번째 언어와 프로필 인터페이스는 만들지 않는다
@@ -138,7 +138,7 @@ tests/          코드와 같은 이름의 폴더 (tests/api, tests/worker, test
 
 **순수 모듈.** 이름이 `_pure.py`로 끝나는 모듈은 바깥에 손대지 않는다: 파일, 프로세스, 네트워크, Redis, DB 연결을 쓰지 않고 받은 값으로 계산만 한다(데이터 정의, 판정, 프롬프트 만들기, 답 읽기). 순수 모듈은 그것이 속한 단계 폴더나 공용 폴더에 두고(`app/worker/fix/fix_decision_pure.py`, `app/worker/git/git_pure.py`), 어느 한 폴더에 속하지 않으면서 여러 단계가 쓰는 데이터 정의와 도구만 `app/worker/core/`에 둔다(`app/worker/core/bundle_pure.py`). 웹과 워커가 같이 쓰면 `app/shared/`, 웹만 쓰면 `app/api/`. `app/worker/` 맨 위의 순수 모듈은 `command_pure.py` 하나다.
 
-같은 폴더에 같은 이름의 실행 코드 `x.py`가 있는 순수 모듈은 열세 개다: `command_pure`, `feedback/feedback_triage_pure`, `fix/model_fix_pure`, `fix/proposal_pure`, `fix/scope_pure`, `rules/doc_rules_pure`, `rules/judge_pure`, `rules/linked_issues_pure`, `rules/pr_check_pure`, `rules/pr_description_pure`, `rules/run_check_pure`, `store/records_pure`, `testing/coverage_pure`. 아래는 주로 부르는 실행 코드와 이름이 다른 것이다.
+같은 폴더에 같은 이름의 실행 코드 `x.py`가 있는 순수 모듈: `command_pure`, `feedback/feedback_triage_pure`, `fix/model_fix_pure`, `fix/proposal_pure`, `fix/scope_pure`, `rules/diff_batches_pure`, `rules/doc_rules_pure`, `rules/judge_pure`, `rules/linked_issues_pure`, `rules/pr_check_pure`, `rules/pr_description_pure`, `rules/run_check_pure`, `store/records_pure`, `testing/coverage_pure`. 아래는 주로 부르는 실행 코드와 이름이 다른 것이다.
 
 | 실행 코드 | 순수 모듈 |
 | --- | --- |
