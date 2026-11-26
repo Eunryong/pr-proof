@@ -150,8 +150,9 @@ class ModelSettings(BaseModel):
     checker: str = Field(default="sonnet", pattern=MODEL_NAME_PATTERN)
     decide: str = Field(default="sonnet", pattern=MODEL_NAME_PATTERN)  # 수정 판단 (4.6)
     judge: str = Field(default="sonnet", pattern=MODEL_NAME_PATTERN)  # 모델의 직접 판단 (4.5)
-    # 수정 경로의 모델: 가벼운 모델로 시작하고 실패가 이어지면 무거운 모델로 한 번 올린다
-    light: str = Field(default="haiku", pattern=MODEL_NAME_PATTERN)
+    # 수정 경로의 모델: 가벼운 모델로 시작하고 실패가 이어지면 무거운 모델로 한 번 올린다. 둘이
+    # 같으면 올리지 않는다
+    light: str = Field(default="sonnet", pattern=MODEL_NAME_PATTERN)
     heavy: str = Field(default="sonnet", pattern=MODEL_NAME_PATTERN)
     calls: CallSettings = CallSettings()
 

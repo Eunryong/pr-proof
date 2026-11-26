@@ -365,7 +365,7 @@ gh 로그인 대신 토큰을 쓸 수 있다. 토큰은 설정 폴더의 `github
 | --- | --- |
 | `pr-proof model` | 지금 설정과 단계별로 쓰일 모델을 보인다 |
 | `pr-proof model opus` | 모든 단계를 그 모델로 |
-| `pr-proof model default` | 지워서 기본값(판단 sonnet, 수정 haiku→sonnet)으로 되돌린다 |
+| `pr-proof model default` | 지워서 기본값(모든 단계 sonnet)으로 되돌린다 |
 
 - 값은 `config.yaml`의 `model.default`에 적는다. 다른 설정과 주석은 그대로 둔다. configure도 Claude 로그인 확인 다음에 한 번 묻는다(질문 없이 돌릴 때는 `--model <이름>`).
 - 대상 repo의 `.pipeline.yaml`에 단계별로 적은 모델(`model.rules` 등)이 이 값보다 앞선다.

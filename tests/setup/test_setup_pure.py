@@ -255,10 +255,9 @@ def test_bad_model_name_is_explained_with_examples(name: str) -> None:
 
 def test_model_view_without_a_pipeline_value_shows_the_code_defaults() -> None:
     text = pure.model_view(None, "pr-proof")
-    assert "파이프라인 쪽 모델: 정하지 않음 (단계별 기본값: 판단 sonnet, 수정 haiku→sonnet)" in text
-    assert [line.split()[-1] for line in text.splitlines()[3:9]] == [
-        "sonnet", "sonnet", "sonnet", "sonnet", "haiku", "sonnet",
-    ]  # fmt: skip
+    assert "파이프라인 쪽 모델: 정하지 않음 (단계별 기본값: 모든 단계 sonnet)" in text
+    assert [line.split()[-1] for line in text.splitlines()[3:8]] == ["sonnet"] * 5
+    assert "수정 작성 (올린 뒤)      sonnet (수정 작성과 같은 모델이라 올리지 않는다)" in text
     assert ".pipeline.yaml에 단계별로 적은 모델(model.rules 등)은 이 값보다 앞섭니다" in text
     assert "pr-proof model <이름>" in text and "pr-proof model default" in text
 
