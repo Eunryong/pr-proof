@@ -394,3 +394,14 @@ def test_unknown_rules_from_reads_only_that_value_as_default_with_a_note(value: 
     )  # fmt: skip
     (note,) = settings_notes(text)
     assert note == "`rules.from`은 pr, base 중 하나여야 합니다. 기본값 pr로 읽었습니다"
+
+
+def test_forced_model_overrides_even_the_stages_the_repo_wrote() -> None:
+    """사용량 한도로 로컬 모델에 넘긴 작업은 저장소가 적은 단계까지 그 모델로 돈다."""
+    from app.worker.config.repo_config_pure import ForcedModel
+
+    config, _ = parse_repo_config("model: {judge: opus, light: haiku}\n")
+    forced = with_default_model(config, ForcedModel("inkling-2-mini"))
+    assert set(_stage_models(forced).values()) == {"inkling-2-mini"}
+    assert with_default_model(forced, ForcedModel("inkling-2-mini")) is forced
+    assert with_default_model(config, "inkling-2-mini").model.judge == "opus"  # 보통 값은 그대로

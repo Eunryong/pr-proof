@@ -55,6 +55,28 @@ class CallMaxima(BaseModel):
     max_repo_daily: int = 2000
 
 
+def _loopback_url(value: str) -> str:
+    cleaned = value.rstrip("/")
+    if not is_local_openai_url(cleaned):
+        raise ValueError(
+            "로컬 모델 서버 주소는 http://127.0.0.1, http://localhost, "
+            f"http://[::1]만 허용: {value}"
+        )
+    return cleaned
+
+
+class LocalFallback(BaseModel):
+    """claude의 사용량 한도에 닿았을 때 이어서 쓸 로컬 모델 서버."""
+
+    base_url: str = DEFAULT_LOCAL_OPENAI_URL
+    model: str = Field(pattern=MODEL_NAME_PATTERN)  # 그 서버의 모델 이름
+
+    @field_validator("base_url")
+    @classmethod
+    def _local_base_url(cls, value: str) -> str:
+        return _loopback_url(value)
+
+
 class ModelConfig(BaseModel):
     # 모델 구현 이름 ("claude-cli" 또는 "local-openai"). 기본은 claude CLI
     backend: str = CLAUDE_CLI_BACKEND
@@ -63,6 +85,9 @@ class ModelConfig(BaseModel):
     # 이 컴퓨터가 처리하는 모든 저장소의 모든 단계에 쓸 모델 (DESIGN.md 10절 "파이프라인 쪽 설정").
     # 저장소의 `.pipeline.yaml`이 단계별로 적은 값이 앞서고, 없으면 코드의 단계별 기본값이다
     default: str | None = Field(default=None, pattern=MODEL_NAME_PATTERN)
+    # claude CLI가 계정의 사용량 한도에 닿으면 한도가 풀릴 때까지 이 로컬 서버로 돈다.
+    # 없으면 쓰지 않는다
+    fallback: LocalFallback | None = None
     calls: CallMaxima = CallMaxima()
 
     @field_validator("backend")
@@ -76,13 +101,7 @@ class ModelConfig(BaseModel):
     @field_validator("base_url")
     @classmethod
     def _local_base_url(cls, value: str) -> str:
-        cleaned = value.rstrip("/")
-        if not is_local_openai_url(cleaned):
-            raise ValueError(
-                "로컬 모델 서버 주소는 http://127.0.0.1, http://localhost, "
-                f"http://[::1]만 허용: {value}"
-            )
-        return cleaned
+        return _loopback_url(value)
 
 
 class RagConfig(BaseModel):

@@ -18,10 +18,11 @@ import subprocess
 import tempfile
 import threading
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Final, Literal
 
+from app.worker.model import usage_limit_pure
 from app.worker.model.mcp_pure import TOOL_NAMES
 
 # FIX_TOOLS_TIMEOUT_S, AIEnvironmentError는 이 모듈에서 import하던 이름이라 다시 내보낸다
@@ -370,13 +371,19 @@ def parse_output(
     """stream-json 출력을 읽는다. 실패해도 결과 줄에 있는 비용과 거부 목록은 남긴다."""
     init, data = _events(stdout)
     if data is None:
-        return _failure(AIErrorKind.BAD_JSON, _tail(stderr or stdout), returncode=returncode)
+        error, detail, resets_at = _usage_limit(
+            stdout, AIErrorKind.BAD_JSON, _tail(stderr or stdout)
+        )
+        failed = _failure(error or AIErrorKind.BAD_JSON, detail, returncode=returncode)
+        return replace(failed, limit_resets_at=resets_at)
     error, detail = _checked_status(init, shape, data, returncode)
+    error, detail, resets_at = _usage_limit(stdout, error, detail)
     text = data.get("result")
     input_tokens, output_tokens = _usage(data.get("usage"))
     return EditResult(
         ok=error is None,
         error=error,
+        limit_resets_at=resets_at,
         cost_usd=_cost(data),
         num_turns=_turns(data),
         permission_denials=_denials(data.get("permission_denials")),
@@ -402,9 +409,13 @@ def parse_structured_output(
     cwd가 있으면(읽기 도구를 준 호출) 모델이 읽은 경로를 cwd 기준으로 모은다."""
     init, data = _events(stdout)
     if data is None:
-        detail = f"종료 코드 {returncode}: {_tail(stderr or stdout)}"
-        return _structured_failure(AIErrorKind.BAD_JSON, detail)
+        error, detail, resets_at = _usage_limit(
+            stdout, AIErrorKind.BAD_JSON, f"종료 코드 {returncode}: {_tail(stderr or stdout)}"
+        )
+        failed = _structured_failure(error or AIErrorKind.BAD_JSON, detail)
+        return replace(failed, limit_resets_at=resets_at)
     error, detail = _checked_status(init, shape, data, returncode)
+    error, detail, resets_at = _usage_limit(stdout, error, detail)
     answer = None
     if error is None:
         answer = _answer(data)
@@ -425,7 +436,22 @@ def parse_structured_output(
         reads=() if cwd is None else read_paths(stdout, cwd),
         unexpected_tools=_unexpected_tools(stdout, shape),
         num_turns=_turns(data),
+        limit_resets_at=resets_at,
     )
+
+
+def _usage_limit(
+    stdout: str, error: AIErrorKind | None, detail: str
+) -> tuple[AIErrorKind | None, str, float | None]:
+    """claude가 오류로 끝났거나 답을 내지 못한 호출의 출력이 사용량 한도에 닿았다고 하면 오류를
+    USAGE_LIMIT로 바꾼다. 성공한 호출은 그대로 둔다(한도를 넘겨 쓰는 설정이면 한도에 닿았다는 줄이
+    있어도 답이 온다). 도구 목록이 어긋난 호출과 예산을 넘긴 호출도 그 오류 그대로 둔다."""
+    if error not in (AIErrorKind.EXIT, AIErrorKind.BAD_JSON):
+        return error, detail, None
+    limit = usage_limit_pure.limited(stdout)
+    if limit is None:
+        return error, detail, None
+    return AIErrorKind.USAGE_LIMIT, f"claude 사용량 한도에 닿음 ({detail})", limit.resets_at
 
 
 def _turns(data: dict) -> int:
