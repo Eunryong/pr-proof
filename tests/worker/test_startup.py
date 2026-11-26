@@ -45,7 +45,7 @@ def deploy(tmp_path: Path, monkeypatch):
     config_dir.mkdir()
     (config_dir / "config.yaml").write_text(f"repos: [o/r]\ndata_dir: {data_dir}\n")
     monkeypatch.setenv(config.CONFIG_DIR_ENV, str(config_dir))
-    monkeypatch.setattr(preflight, "run_checks", lambda redis: [])
+    monkeypatch.setattr(preflight, "run_checks", lambda redis, backend=None: [])
     waiting: list[Path] = []
 
     class Worker:

@@ -16,7 +16,7 @@ import re
 from collections.abc import Mapping
 from typing import Final, Literal
 
-Kind = Literal["gh_login", "gh_token", "claude_login", "docker", "redis"]
+Kind = Literal["gh_login", "gh_token", "claude_login", "local_model", "docker", "redis"]
 
 TEXT: Final[Mapping[Kind, str]] = {
     "gh_login": "pr-proof: GitHub 로그인 확인이 실패했습니다. "
@@ -25,6 +25,8 @@ TEXT: Final[Mapping[Kind, str]] = {
     "설정 폴더의 github_token 파일을 바꾸세요.",
     "claude_login": "pr-proof: Claude 로그인이 풀렸습니다. "
     "터미널에서 claude를 실행해 /login 하세요.",
+    "local_model": "pr-proof: 로컬 모델 서버에 연결하지 못했습니다. "
+    "Ollama 또는 llama-server가 실행 중인지 확인하세요.",
     "docker": "pr-proof: Docker가 꺼져 있습니다. Docker Desktop을 실행하세요.",
     "redis": "pr-proof: Redis에 연결하지 못했습니다. "
     "pr-proof 폴더에서 docker compose up -d를 실행하세요.",

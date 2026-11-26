@@ -8,9 +8,14 @@ from pathlib import Path
 
 import pytest
 
+from app.shared.model_names_pure import DEFAULT_LOCAL_OPENAI_URL, LOCAL_OPENAI_BACKEND
 from app.worker.evaluation.evaluation import MODEL_MEMO_ENV
+from app.worker.model import backends
 from app.worker.model.claude import claude_cli
 from app.worker.model.claude.claude_cli import AIErrorKind, ClaudeResult, StructuredResult
+from app.worker.model.local import openai_client
+from app.worker.model.local.local_backend import LocalOpenAIBackend
+from app.worker.model.local.openai_client import LocalApiError
 
 from .model_memo import Memo
 
@@ -30,15 +35,29 @@ def _no_real_fix(*args, **kwargs) -> ClaudeResult:
     )  # fmt: skip
 
 
+def _no_real_local(*args, **kwargs):
+    raise LocalApiError(AIErrorKind.LAUNCH, "E2E에서 실제 로컬 모델을 부르지 않음")
+
+
 def block_model(monkeypatch) -> None:
     monkeypatch.setattr(claude_cli, "run_structured", _no_real_model)
     monkeypatch.setattr(claude_cli, "run_claude", _no_real_fix)
+    monkeypatch.setattr(openai_client, "post_chat", _no_real_local)
 
 
 @pytest.fixture(autouse=True)
 def no_real_model(monkeypatch, request) -> None:
     if os.environ.get("PR_PROOF_REAL_MODEL") != "1":
         block_model(monkeypatch)
+        return
+    if os.environ.get("PR_PROOF_BACKEND") == LOCAL_OPENAI_BACKEND:
+        base_url = os.environ.get("PR_PROOF_LOCAL_BASE_URL", DEFAULT_LOCAL_OPENAI_URL)
+        model_override = os.environ.get("PR_PROOF_LOCAL_MODEL") or None
+        monkeypatch.setattr(
+            backends,
+            "default_backend",
+            lambda: LocalOpenAIBackend(base_url=base_url, model_override=model_override),
+        )
         return
     if memo_path := os.environ.get(MODEL_MEMO_ENV):
         memo = Memo(Path(memo_path))

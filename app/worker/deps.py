@@ -17,11 +17,16 @@ class Deps:
     github: GitHub
     settings: config.PipelineConfig
     # 모델 구현 (`app/worker/model/model_backend.py`). 호출하는 쪽은 이것만 안다
-    backend: ModelBackend = field(default_factory=backends.default_backend)
+    backend: ModelBackend = field(default_factory=lambda: backends.default_backend())
 
     @classmethod
     def from_config(cls) -> "Deps":
         settings = config.load_config()
         redis = Redis.from_url(settings.redis_url)
         github = GitHub(server=server.current(settings.data_dir))
-        return cls(Store(settings.db_path, redis), github, settings, backends.default_backend())
+        return cls(
+            Store(settings.db_path, redis),
+            github,
+            settings,
+            backends.from_config(settings.model),
+        )

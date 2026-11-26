@@ -257,7 +257,7 @@ def _checks(*failing: str):
     """시작 전 확인의 결과. failing에 든 종류만 실패한다."""
     names = {"gh_login": "GitHub 로그인", "claude_login": "Claude 로그인", "docker": "Docker"}
 
-    def run(redis) -> list[preflight.Check]:
+    def run(redis, **_: object) -> list[preflight.Check]:
         return [preflight.Check(n, k not in failing, "", k) for k, n in names.items()]
 
     return run
