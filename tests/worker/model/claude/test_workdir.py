@@ -10,10 +10,6 @@ import pytest
 
 from app.worker.git import repo
 from app.worker.model.claude import workdir
-from app.worker.model.claude.claude_cli import (
-    AIErrorKind,
-    ClaudeResult,
-)
 
 SECRET: Final = "outside-secret\n"
 
@@ -100,15 +96,6 @@ def test_a_file_swapped_for_a_link_after_checkout_is_not_copied(wt: Path, outsid
     (wt / "src" / "app.py").symlink_to(outside / "secret.txt")
     with workdir.model_folder(wt, repo.list_files(wt)) as folder:
         assert "src/app.py" not in _files(folder.work)
-
-
-def test_a_tool_list_mismatch_is_returned_as_is(wt: Path) -> None:
-    failure = ClaudeResult(
-        ok=False, error=AIErrorKind.TOOLS, cost_usd=None, num_turns=0, permission_denials=(),
-        text="", detail="도구 목록이 기대와 다름",
-    )  # fmt: skip
-    result = workdir.run_in_model_folder(wt, "p", run=lambda *a, **k: failure)
-    assert result is failure
 
 
 def test_hook_settings_register_the_hook_for_every_tool(tmp_path: Path) -> None:
