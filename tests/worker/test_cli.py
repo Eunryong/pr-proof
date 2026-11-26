@@ -10,7 +10,7 @@ def test_reindex_rebuilds_the_vector_store_from_records(monkeypatch, tmp_path, c
     from app.worker.store.records_pure import NewRecord
     from app.worker.store.state import Store
 
-    from .store.rag_helpers import FakeEncoder
+    from .store.rag_helpers import embed_encoder
 
     settings = cli.config.PipelineConfig(
         repos=["o/r"], data_dir=tmp_path, redis_url="redis://127.0.0.1:1/0"
@@ -19,7 +19,7 @@ def test_reindex_rebuilds_the_vector_store_from_records(monkeypatch, tmp_path, c
     db.add_record(NewRecord(repo="o/r", kind="adopted", origin="fix_pr", source_id="a",
                             rule_id="R", rule_text="규칙", file="a.py", line_text="x",
                             context="x", diff="+x"))  # fmt: skip
-    assert cli.reindex(settings, None, encoder=FakeEncoder()) == 0
+    assert cli.reindex(settings, None, encoder=embed_encoder()) == 0
     assert "o/r: 기록 1건" in capsys.readouterr().out
     assert (tmp_path / "chroma").is_dir()
     assert all(r.embedded_at is not None for r in db.records("o/r"))

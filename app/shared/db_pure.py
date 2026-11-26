@@ -156,7 +156,7 @@ class EvalRun(SQLModel, table=True):
     label: str = ""
     baseline: bool = Field(default=False, index=True)
     pipeline_commit: str = ""  # 평가한 파이프라인 코드의 커밋. 모르면 빈 문자열
-    real_model: bool  # False면 케이스의 가짜 모델이다(하네스와 결정적 도구만 확인한다)
+    real_model: bool = True  # False인 줄은 모델을 부르지 않은 옛 실행이라 기준선으로 쓰지 않는다
     passed: int
     failed: int
     skipped: int

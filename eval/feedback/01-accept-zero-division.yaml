@@ -5,7 +5,6 @@ description: >-
   작성의 모델이 고치고, 출구 검사를 통과해 수정안 PR(pipeline/pr-1-fix-feedback)이 열린다. 그 스레드에
   "반영했습니다. 수정안 #N" 답글이 달리고 기록은 accepted와 그 번호다. 실제 모델로만 돈다. 호출을
   줄이려고 규칙 문서를 없는 파일로 둔다(규칙 읽기를 부르지 않는다).
-real_only: true
 pipeline:
   rules: {docs: [NO_RULES.md]}
 pr:

@@ -81,21 +81,32 @@ class Memo:
         with self.path.open("a") as out:
             out.write(json.dumps({"kind": kind, **fields}, ensure_ascii=False) + "\n")
 
+    def hit(self, key: str, stage: str, model: str, test: str) -> StructuredResult | None:
+        """저장한 답이 있으면 다시 쓴 것을 기록하고 돌려준다."""
+        saved = self.answers.get(key)
+        if saved is not None:
+            self._write("hit", key=key, stage=stage, model=model, test=test)
+        return saved
+
+    def called(self, key: str, stage: str, model: str, test: str, seconds: float,
+               result: StructuredResult) -> None:  # fmt: skip
+        """모델을 부른 결과를 기록한다. 성공한 답은 다음에 다시 쓴다."""
+        self._write("call", key=key, stage=stage, model=model, test=test, seconds=seconds,
+                    result={**asdict(result), "error": result.error})  # fmt: skip
+        if result.ok:
+            self.answers[key] = result
+
     def structured(self, ask: Callable[..., StructuredResult], test: Callable[[], str]):
         def run(prompt: str, **kw) -> StructuredResult:
             schema, model = kw.get("schema"), kw.get("model", "")
             key = memo_key(prompt, kw.get("system_prompt", ""), schema, model)
             stage = stage_of(schema)
-            if key in self.answers:
-                self._write("hit", key=key, stage=stage, model=model, test=test())
-                return self.answers[key]
+            saved = self.hit(key, stage, model, test())
+            if saved is not None:
+                return saved
             started = time.monotonic()
             result = ask(prompt, **kw)
-            self._write("call", key=key, stage=stage, model=model, test=test(),
-                        seconds=round(time.monotonic() - started, 1),
-                        result={**asdict(result), "error": result.error})  # fmt: skip
-            if result.ok:
-                self.answers[key] = result
+            self.called(key, stage, model, test(), round(time.monotonic() - started, 1), result)
             return result
 
         return run

@@ -202,6 +202,11 @@ FINAL_ANSWER_PROMPT: Final = (
 )
 
 
+def final_answer_messages(messages: Sequence[Mapping[str, object]]) -> list[dict[str, object]]:
+    """읽기가 끝난 대화에 최종 답을 묻는 사용자 메시지를 더한 것."""
+    return [*(dict(m) for m in messages), {"role": "user", "content": FINAL_ANSWER_PROMPT}]
+
+
 def reading_system_prompt(system_prompt: str) -> str:
     """`reading` 호출에서 읽기 도구의 사용을 안내하는 시스템 프롬프트. 최종 답은 읽기가 끝난 뒤
     스키마를 강제한 턴에서 따로 받는다."""

@@ -9,7 +9,7 @@ GitHub만 가짜(FakeGh)이고 git·ruff(도구 캐시에 받음)·Docker는 진
 예제 리포에는 ruff 설정이 없다. v1은 그런 base에 ruff 기본 규칙을 썼지만 파이프라인이 정한 규칙은
 없앴다(3-3). 그래서 이 케이스의 base에는 빈 `ruff.toml`(ruff의 기본 설정)을 둔다. 케이스 파일은 v1
 그대로다. 바뀐 것은 수정안 브랜치의 이름(`fix-lint` → `fix-mechanical`)뿐이다.
-이 하네스는 문서 규칙을 보지 않으므로 실제 모델로 도는 평가에서도 모델을 막는다(`no_model`).
+이 하네스는 문서 규칙을 보지 않는다. 원격에서 규칙 문서(README.md)를 지워 모델을 부를 일이 없다.
 """
 
 import json
@@ -25,6 +25,7 @@ import yaml
 from app.shared import config, state_keys_pure
 from app.shared.job_pure import PRJob
 from app.worker import main
+from app.worker.config.repo_config_pure import DEFAULT_RULE_DOCS
 from app.worker.deps import Deps
 from app.worker.git import repo
 from app.worker.git.github import GitHub
@@ -72,6 +73,8 @@ def _remote(tmp_path: Path, eval_repo: Path, case: dict) -> dict:
     _git(path, "init", "-q", "-b", "main")
     _git(path, "config", "uploadpack.allowAnySHA1InWant", "true")
     _apply(path, case.get("base"))
+    for doc in DEFAULT_RULE_DOCS:
+        (path / doc).unlink(missing_ok=True)
     (path / RUFF_SETTINGS).write_text("")
     _git(path, "add", "-A")
     _git(path, "commit", "-q", "-m", "base")
@@ -113,7 +116,7 @@ def _finding_codes(body: str) -> list[str]:
 @pytest.mark.docker
 @pytest.mark.parametrize("case_path", CASES, ids=[p.stem for p in CASES])
 def test_lint_case(case_path: Path, eval_repo: Path, shared_venvs: Path, tmp_path: Path,
-                   monkeypatch, no_model) -> None:  # fmt: skip
+                   monkeypatch) -> None:  # fmt: skip
     case = yaml.safe_load(case_path.read_text())
     expect = case["expect"]
     remote = _remote(tmp_path, eval_repo, case)

@@ -25,7 +25,6 @@ from app.worker.model.model_backend import (
     Capabilities,
     EditResult,
     StartupCheck,
-    StructuredResult,
     fix_unavailable,
 )
 
@@ -129,45 +128,6 @@ def test_the_backend_calls_claude_exactly_like_the_direct_calls(wt: Path) -> Non
     assert after.calls[3]["env"]["MCP_TOOL_TIMEOUT"] == claude_cli.MCP_TOOL_TIMEOUT_MS
 
 
-def test_ask_passes_only_what_the_caller_gave() -> None:
-    """가짜 run_structured를 쓰는 테스트가 받던 인자 그대로다. 시간 상한은 준 때만 넘긴다."""
-    seen: list[tuple[str, dict]] = []
-
-    def run(prompt: str, **kwargs: object) -> StructuredResult:
-        seen.append((prompt, kwargs))
-        return StructuredResult(True, None, {}, "", None, None, None, 0)
-
-    backend = ClaudeCliBackend(run_structured=run)
-    backend.ask("p", **ASK)
-    backend.ask("p", **ASK, timeout=5.0)
-    assert seen == [("p", ASK), ("p", {**ASK, "timeout": 5.0})]
-
-
-def test_the_claude_call_is_looked_up_when_called(monkeypatch, wt: Path) -> None:
-    """구현을 만든 뒤에 `claude_cli.run_structured`·`run_claude`를 바꿔 끼워도 그것이 불린다."""
-    backend = ClaudeCliBackend()
-    asked: list[dict] = []
-    fixed: list[Path] = []
-
-    def ask(prompt: str, **kwargs: object) -> StructuredResult:
-        asked.append(kwargs)
-        return StructuredResult(True, None, {"ok": True}, "", None, None, None, 0)
-
-    def fix(work: Path, prompt: str, **kwargs: object) -> EditResult:
-        fixed.append(work)
-        return EditResult(True, None, None, 1, (), "")
-
-    monkeypatch.setattr(claude_cli, "run_structured", ask)
-    monkeypatch.setattr(claude_cli, "run_claude", fix)
-    assert backend.ask("p", **ASK).data == {"ok": True}
-    with backend.reading(wt) as read:
-        read("p", **READ)
-    assert backend.fix(wt, "p", system_prompt="s", model="m", max_budget_usd=1).ok
-    assert "read_in" not in asked[0]
-    assert isinstance(asked[1]["read_in"], claude_cli.ReadFolder)
-    assert fixed and fixed[0] != wt  # 모델 폴더에서 돈다
-
-
 @pytest.mark.parametrize(
     ("result", "environment"),
     [
@@ -179,12 +139,10 @@ def test_the_claude_call_is_looked_up_when_called(monkeypatch, wt: Path) -> None
         (EditResult(False, AIErrorKind.TIMEOUT, None, 0, (), ""), ""),
     ],
 )  # fmt: skip
-def test_fix_reports_an_unusable_environment(wt: Path, result: EditResult, environment) -> None:
-    """로그인 풀림 같은 환경 오류는 claude의 글자를 아는 구현이 결과의 environment로 알린다."""
-    backend = ClaudeCliBackend(run_claude=lambda work, prompt, **kw: result)
-    out = backend.fix(wt, "p", system_prompt="s", model="m", max_budget_usd=1)
-    assert out.environment == environment
-    assert (out.ok, out.error) == (result.ok, result.error)
+def test_an_unusable_environment_is_read_from_the_result(result: EditResult, environment) -> None:
+    """로그인 풀림 같은 환경 오류는 claude의 글자를 아는 구현이 결과에서 읽어 낸다. `fix`는 이 값을
+    결과의 environment에 적는다."""
+    assert (claude_cli.environment_problem(result) or "") == environment
 
 
 @pytest.mark.parametrize(

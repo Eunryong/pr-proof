@@ -5,8 +5,7 @@ description: >-
   모듈" 절. 검색을 켜면 제목 단위 조각이 저장소의 문서 컬렉션에 임베딩되고, PR이 바꾼 경로
   (orders/services/pricing.py)와 추가된 줄(print)로 찾은 "주문 모듈" 절이 읽혀 그 규칙이 PR의
   print를 잡는다. 검색은 `rag.top_k`(여기서 3)개 절만 꺼내므로 설명 절 대부분은 읽지 않는다. 코멘트에
-  "규칙 문서가 커서 관련 절 N개만 읽음"과 읽은 절의 목록이 나온다. 가짜 임베딩 모델과 실제 모델
-  (multilingual-e5-small, 주문 절이 1위) 모두에서 돈다.
+  "규칙 문서가 커서 관련 절 N개만 읽음"과 읽은 절의 목록이 나온다.
 pipeline:
   rag: {enabled: true, top_k: 3}
 base:
@@ -23,24 +22,6 @@ pr:
     find: "def discount(order: Order) -> int:\n"
     replace: "def discount(order: Order) -> int:\n    print(\"coupon\", order.coupon_percent)\n"
 records: []
-model:
-  rules:
-    - section: 주문 모듈
-      quote: "`orders/` 아래 모듈은 `print`를 쓰지 않는다."
-      scope: ["orders/**"]
-      checker:
-        body: |
-          id: no-print
-          language: python
-          severity: error
-          message: orders/ 아래 모듈은 print를 쓰지 않는다
-          rule:
-            pattern: print($$$ARGS)
-        examples:
-          - {code: "print(1)\n", violates: true, lines: [1]}
-          - {code: "def f(o):\n    print('o', o)\n", violates: true, lines: [2]}
-          - {code: "logger.info('x')\n", violates: false, lines: []}
-          - {code: "pprint_name = 1\n", violates: false, lines: []}
 expect:
   violations: ["orders/services/pricing.py:13"]
   contains:

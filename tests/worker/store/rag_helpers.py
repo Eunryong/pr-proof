@@ -1,32 +1,37 @@
-"""검색 테스트의 가짜 임베딩 모델. 실제 모델(470MB)을 받지 않고 결정적으로 벡터를 만든다.
+"""검색 테스트가 같이 쓰는 것: 기록 만들기, 수정 결과 넣기, 받아 둔 임베딩 모델 열기.
 
-글자 3-gram을 해시해 센 벡터라 같은 낱말이 많은 글일수록 가깝다. 정규화하지 않은 값을 돌려줘
-`memory.embed`가 정규화하는지도 본다. 받은 글(접두어 포함)을 `seen`에 남긴다.
+임베딩 모델(multilingual-e5-small, 470MB)을 쓰는 테스트는 `PR_PROOF_REAL_EMBED=1`과
+`PR_PROOF_EMBED_DIR`(`tokenizer.json`, `model.onnx`가 든 폴더)이 있을 때만 돈다.
 """
 
 import hashlib
-from collections.abc import Sequence
+import os
 from pathlib import Path
 from typing import Final
 
+import pytest
+
 from app.shared.db_pure import FixAttempt
-from app.shared.embed_models_pure import EmbedModel, ModelFile
-from app.worker.config.repo_config_pure import RagSettings
-from app.worker.store.memory import Retriever, VectorStore
+from app.shared.embed_models_pure import E5_SMALL, EMBED_MODELS, EmbedModel
+from app.worker.store.memory import OnnxEncoder
 from app.worker.store.records_pure import NewRecord
 from app.worker.store.state import Store
 
-FAKE_DIM: Final = 256
+REAL_EMBED_ENV: Final = "PR_PROOF_REAL_EMBED"
+EMBED_DIR_ENV: Final = "PR_PROOF_EMBED_DIR"
+SPEC: Final[EmbedModel] = EMBED_MODELS[E5_SMALL]
 PRINT_RULE: Final = "`orders/` 아래 모듈은 `print`를 쓰지 않는다."
-FAKE_SPEC: Final = EmbedModel(
-    name="test/fake-embed",
-    revision="0" * 40,
-    dim=FAKE_DIM,
-    query_prefix="query: ",
-    passage_prefix="passage: ",
-    tokenizer=ModelFile("tokenizer.json", "0" * 64, 1),
-    onnx=ModelFile("model.onnx", "0" * 64, 1),
-)
+
+
+def embed_encoder() -> OnnxEncoder:
+    """받아 둔 임베딩 모델. 없으면 테스트를 건너뛴다. 파일의 해시를 고정한 판과 맞춰 본다."""
+    folder = os.environ.get(EMBED_DIR_ENV)
+    if os.environ.get(REAL_EMBED_ENV) != "1" or not folder:
+        pytest.skip(f"임베딩 모델을 쓰는 테스트 ({REAL_EMBED_ENV}=1, {EMBED_DIR_ENV})")
+    for f in (SPEC.tokenizer, SPEC.onnx):
+        data = (Path(folder) / Path(f.path).name).read_bytes()
+        assert hashlib.sha256(data).hexdigest() == f.sha256, f.path
+    return OnnxEncoder(SPEC, Path(folder))
 
 
 def record(
@@ -66,34 +71,3 @@ def fix_outcomes(
         state = "merged" if i < adopted else "rejected"
         fix_outcome(store, start + i, state, references, repo=repo)
     return start + count
-
-
-def seeded(
-    store: Store, path: Path, records: Sequence[NewRecord], settings: RagSettings,
-    repo: str = "o/r",
-) -> Retriever:  # fmt: skip
-    """records를 저장한 Store와 그것을 찾는 진짜 Retriever(임시 Chroma, 가짜 모델)."""
-    for r in records:
-        store.add_record(r)
-    vectors = VectorStore(path / "chroma", FAKE_SPEC.name, FAKE_SPEC.dim)
-    return Retriever(store, repo, settings, vectors, FakeEncoder())
-
-
-class FakeEncoder:
-    def __init__(self, spec: EmbedModel = FAKE_SPEC) -> None:
-        self.spec = spec
-        self.seen: list[str] = []
-
-    def encode(self, texts: Sequence[str]) -> list[list[float]]:
-        self.seen += list(texts)
-        out = []
-        for text in texts:
-            body = text.split(": ", 1)[1] if ": " in text[:10] else text
-            vector = [0.0] * self.spec.dim
-            for i in range(max(1, len(body) - 2)):
-                gram = body[i : i + 3]
-                slot = int(hashlib.md5(gram.encode()).hexdigest(), 16) % self.spec.dim
-                vector[slot] += 1.0
-            vector[0] += 0.5  # 빈 글도 0 벡터가 되지 않게
-            out.append(vector)
-        return out

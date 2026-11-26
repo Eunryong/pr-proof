@@ -23,31 +23,6 @@ pr:
           return {"refund": pick("amount")}
   - file: orders/services/refund.py
     create: "def compute_refund(amount: int) -> int:\n    return amount\n"
-model:
-  rules:
-    - section: 코드 규칙 > API
-      quote: "`orders/api`의 모듈 수준 함수 이름은 `handle_`로 시작한다."
-      scope: ["orders/api/**"]
-      checker:
-        body: |
-          id: api-handler-prefix
-          language: python
-          severity: error
-          message: orders/api의 모듈 수준 함수 이름은 handle_로 시작한다
-          rule:
-            kind: function_definition
-            inside:
-              kind: module
-            has:
-              field: name
-              kind: identifier
-              not:
-                regex: "^handle_"
-        examples:
-          - {code: "def compute(p):\n    return p\n", violates: true, lines: [1]}
-          - {code: "def quote(p):\n    return 1\n", violates: true, lines: [1]}
-          - {code: "def handle_quote(p):\n    return 1\n", violates: false, lines: []}
-          - {code: "def handle_x(p):\n    def inner():\n        return 1\n    return inner()\n", violates: false, lines: []}
 expect:
   violations: ["orders/api/handlers.py:14"]
   not_flagged: ["orders/api/handlers.py:18", "orders/api/handlers.py:19", "orders/services/refund.py:1"]

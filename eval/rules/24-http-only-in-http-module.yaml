@@ -35,36 +35,6 @@ pr:
           import requests
 
           return requests
-model:
-  rules:
-    - section: 코드 규칙 > HTTP
-      quote: "HTTP 호출은 `orders/http.py`만 한다. 다른 모듈은 `requests`를 import하지 않는다."
-      scope: []
-      scope_exclude: ["orders/http.py"]
-      scope_reason: HTTP 호출을 하라고 정한 파일 자체다
-      checker:
-        body: |
-          id: no-requests-import
-          language: python
-          severity: error
-          message: requests는 orders/http.py에서만 import한다
-          rule:
-            any:
-              - kind: import_statement
-                has:
-                  kind: dotted_name
-                  regex: "^requests(\\.|$)"
-              - kind: import_from_statement
-                has:
-                  field: module_name
-                  regex: "^requests(\\.|$)"
-        examples:
-          - {code: "import requests\n", violates: true, lines: [1]}
-          - {code: "from requests import Session\n", violates: true, lines: [1]}
-          - {code: "import requests.adapters\n", violates: true, lines: [1]}
-          - {code: "import requests_cache_policy\n", violates: false, lines: []}
-          - {code: "from orders import requests_cache_policy\n", violates: false, lines: []}
-          - {code: "from orders.http import get\n", violates: false, lines: []}
 expect:
   violations: ["orders/api/handlers.py:15", "orders/services/pricing.py:31"]
   not_flagged: ["orders/api/handlers.py:16", "orders/http.py:6"]

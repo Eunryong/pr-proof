@@ -2,8 +2,8 @@
 
 `python -m app.worker.cli eval`이 부른다. `tests/e2e`의 docker 테스트 전부(케이스 파일 하네스,
 도구를 끈 평가, 비교 하네스)를 pytest 하위 프로세스로 돌리고, junit 결과와 도구를 끈 평가의 JSON을
-읽어 한 줄로 저장한다. 기본은 케이스의 가짜 모델이고, `real_model`이면 하네스가 로그인된 claude를
-부른다(비용이 든다). 하위 프로세스에는 docker·gh·claude가 쓰는 최소 환경만 넘긴다.
+읽어 한 줄로 저장한다. 하네스는 설정된 모델을 실제로 부른다(비용이 든다). 하위 프로세스에는
+docker·gh·claude가 쓰는 최소 환경만 넘긴다.
 """
 
 import json
@@ -30,8 +30,9 @@ PASSED_ENV: Final = (
     "DOCKER_HOST", "DOCKER_CONFIG", "DOCKER_CONTEXT", "GH_CONFIG_DIR",
 )  # fmt: skip
 TOOLS_OFF_OUT_ENV: Final = "PR_PROOF_TOOLS_EVAL_OUT"
+# 하네스가 모델을 부르도록 허락하는 값. 없으면 모델이 필요한 케이스를 건너뛴다
 REAL_MODEL_ENV: Final = "PR_PROOF_REAL_MODEL"
-# 실제 모델 평가의 호출 기록이자 같은 입력의 답을 다시 쓰는 파일(`tests/e2e/model_memo.py`).
+# 호출 기록이자 같은 입력의 답을 다시 쓰는 파일(`tests/e2e/model_memo.py`).
 # 주지 않으면 그 실행의 임시 폴더에 두어 실행 하나 안에서만 다시 쓴다
 MODEL_MEMO_ENV: Final = "PR_PROOF_MODEL_MEMO"
 SUITE: Final = "tests/e2e"
@@ -50,12 +51,11 @@ class Stored:
     baseline: EvalRun | None  # 비교한 기준선. 기준선으로 저장했거나 기준선이 없으면 None
 
 
-def suite_env(environ: Mapping[str, str], out_dir: Path, real_model: bool) -> dict[str, str]:
+def suite_env(environ: Mapping[str, str], out_dir: Path) -> dict[str, str]:
     env = {k: environ[k] for k in PASSED_ENV if k in environ}
     env[TOOLS_OFF_OUT_ENV] = str(out_dir)
-    if real_model:
-        env[REAL_MODEL_ENV] = "1"
-        env[MODEL_MEMO_ENV] = environ.get(MODEL_MEMO_ENV) or str(out_dir / "memo.jsonl")
+    env[REAL_MODEL_ENV] = "1"
+    env[MODEL_MEMO_ENV] = environ.get(MODEL_MEMO_ENV) or str(out_dir / "memo.jsonl")
     return env
 
 
@@ -63,14 +63,13 @@ def run_suite(
     repo_root: Path,
     out_dir: Path,
     *,
-    real_model: bool,
     environ: Mapping[str, str] | None = None,
     runner: Runner = subprocess.run,
 ) -> eval_run_pure.RunSummary:
     junit = out_dir / "junit.xml"
     command = [sys.executable, "-m", "pytest", "-m", "docker", SUITE, "-q",
                "-p", "no:cacheprovider", f"--junitxml={junit}"]  # fmt: skip
-    env = suite_env(os.environ if environ is None else environ, out_dir, real_model)
+    env = suite_env(os.environ if environ is None else environ, out_dir)
     runner(command, cwd=repo_root, env=env, check=False)
     if not junit.is_file():
         raise EvalError(f"pytest가 결과 파일을 남기지 않았다: {junit}")
@@ -93,13 +92,12 @@ def pipeline_commit(repo_root: Path, runner: Runner = subprocess.run) -> str:
 
 
 def to_row(summary: eval_run_pure.RunSummary, *, label: str, baseline: bool, commit: str,
-           real_model: bool, now: datetime | None = None) -> EvalRun:  # fmt: skip
+           now: datetime | None = None) -> EvalRun:  # fmt: skip
     return EvalRun(
         created_at=now or datetime.now(UTC),
         label=label,
         baseline=baseline,
         pipeline_commit=commit,
-        real_model=real_model,
         passed=summary.count("passed"),
         failed=summary.count("failed"),
         skipped=summary.count("skipped"),
@@ -134,7 +132,6 @@ def evaluate(
     repo_root: Path,
     *,
     baseline: bool,
-    real_model: bool,
     label: str = "",
     runner: Runner = subprocess.run,
     environ: Mapping[str, str] | None = None,
@@ -143,10 +140,9 @@ def evaluate(
     """평가 세트를 돌려 저장한다. 기준선으로 저장하지 않으면 가장 최근 기준선을 함께 돌려준다.
     out을 주면 junit·도구를 끈 평가의 JSON·호출 기록을 그 폴더에 남긴다(없으면 임시 폴더)."""
     with _out_dir(out) as folder:
-        summary = run_suite(repo_root, folder, real_model=real_model, environ=environ,
-                            runner=runner)  # fmt: skip
-    row = to_row(summary, label=label, baseline=baseline, real_model=real_model,
+        summary = run_suite(repo_root, folder, environ=environ, runner=runner)
+    row = to_row(summary, label=label, baseline=baseline,
                  commit=pipeline_commit(repo_root, runner))  # fmt: skip
     run_id = state.add_eval_run(engine, row)
-    base = None if baseline else state.latest_baseline(engine, real_model, before_id=run_id)
+    base = None if baseline else state.latest_baseline(engine, before_id=run_id)
     return Stored(run_id, summary, base)

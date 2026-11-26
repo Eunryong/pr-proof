@@ -1,8 +1,9 @@
 """검색의 임베딩과 벡터 저장소 (DESIGN.md 6.6의 2·3·5번, 6.7).
 
-Chroma는 진짜(임시 폴더의 `PersistentClient`)이고 임베딩 모델은 쓰지 않는다: 시드를 고정한 가짜
-벡터와 글자 3-gram 가짜 모델로 한다. chromadb가 없는 설치(선택 의존성 `[rag]`를 깔지 않음)에서는
-건너뛴다. 실제 모델은 `PR_PROOF_REAL_EMBED=1`의 느린 테스트(`test_real_embed.py`)가 본다.
+Chroma는 진짜다(임시 폴더의 `PersistentClient`). 벡터 저장소만 보는 테스트는 시드를 고정한 벡터를
+넣고, 글을 벡터로 바꾸는 데까지 보는 테스트는 받아 둔 임베딩 모델을 쓴다(`PR_PROOF_REAL_EMBED=1`,
+`PR_PROOF_EMBED_DIR`. 없으면 건너뛴다). chromadb가 없는 설치(선택 의존성 `[rag]`를 깔지 않음)에서는
+모두 건너뛴다. 검색 품질은 `test_real_embed.py`가 잰다.
 """
 
 import hashlib
@@ -22,7 +23,7 @@ from app.worker.store.records_pure import NewRecord
 from app.worker.store.state import Store
 
 from ...redis_stand_ins import MemoryKeys
-from .rag_helpers import FAKE_SPEC, FakeEncoder
+from .rag_helpers import SPEC, embed_encoder
 
 np = pytest.importorskip("numpy")
 pytest.importorskip("chromadb")
@@ -78,12 +79,11 @@ def test_nearest_item_is_found_among_many_near_duplicates(tmp_path: Path) -> Non
     texts.append(
         "## 주문 모듈\n\n- `orders/` 아래 모듈은 `print`를 쓰지 않는다. `orders/services/`도."
     )
-    encoder = FakeEncoder()
+    encoder = embed_encoder()
     matrix = memory.embed(encoder, texts, role="passage").vectors
     q = memory.embed(encoder, ["바뀐 파일: orders/services/pricing.py\nprint(x)"], role="query")
     q = q.vectors[0]
-    dim = FAKE_SPEC.dim
-    vs = memory.VectorStore(tmp_path / "chroma", "test/model", dim)
+    vs = memory.VectorStore(tmp_path / "chroma", "test/model", SPEC.dim)
     vs.store(REPO, [str(i) for i in range(len(matrix))], matrix,
              [{"repo": REPO, "kind": "adopted", "rule_id": "R"}] * len(matrix))  # fmt: skip
     got = [(h.record_id, h.similarity) for h in vs.search(REPO, q, 20)]
@@ -91,22 +91,11 @@ def test_nearest_item_is_found_among_many_near_duplicates(tmp_path: Path) -> Non
     assert got[0][0] == 800
 
 
-def test_embed_normalizes_and_adds_the_role_prefix() -> None:
-    encoder = FakeEncoder()
-    out = memory.embed(encoder, ["가나다라 마바사", "x"], role="passage")
-    assert out.vectors.shape == (2, FAKE_SPEC.dim)
-    assert np.allclose(np.linalg.norm(out.vectors, axis=1), 1.0)
-    assert encoder.seen == ["passage: 가나다라 마바사", "passage: x"]
-    memory.embed(encoder, ["q"], role="query")
-    assert encoder.seen[-1] == "query: q"
-    assert out.model == FAKE_SPEC.name and out.dim == FAKE_SPEC.dim
-
-
-def test_embed_without_role_is_an_error() -> None:
-    with pytest.raises(TypeError):
-        memory.embed(FakeEncoder(), ["a"])  # type: ignore[call-arg]
-    with pytest.raises(ValueError):
-        memory.embed(FakeEncoder(), ["a"], role="document")
+def test_embed_gives_normalized_vectors_of_the_models_size() -> None:
+    out = memory.embed(embed_encoder(), ["가나다라 마바사", "x"], role="passage")
+    assert out.vectors.shape == (2, SPEC.dim)
+    assert np.allclose(np.linalg.norm(out.vectors, axis=1), 1.0, atol=1e-5)
+    assert out.model == SPEC.name and out.dim == SPEC.dim
 
 
 def test_other_repos_collection_is_never_searched(tmp_path: Path) -> None:
@@ -140,31 +129,33 @@ def _add(db: Store, n: int, repo: str = REPO, kind: str = "adopted") -> None:
 def test_index_pending_fills_embedded_at_once(tmp_path: Path) -> None:
     db = _store(tmp_path)
     _add(db, 5)
-    vs = memory.VectorStore(tmp_path / "chroma", FAKE_SPEC.name, FAKE_SPEC.dim)
-    assert memory.index_pending(db, vs, FakeEncoder(), REPO) == 5
-    assert all(r.embedded_at is not None and r.embed_model == FAKE_SPEC.name
+    encoder = embed_encoder()
+    vs = memory.VectorStore(tmp_path / "chroma", SPEC.name, SPEC.dim)
+    assert memory.index_pending(db, vs, encoder, REPO) == 5
+    assert all(r.embedded_at is not None and r.embed_model == SPEC.name
                for r in db.records(REPO))  # fmt: skip
-    assert memory.index_pending(db, vs, FakeEncoder(), REPO) == 0
+    assert memory.index_pending(db, vs, encoder, REPO) == 0
     assert vs.collection(REPO).count() == 5
 
 
 def test_reindex_after_deleting_the_store_gives_the_same_results(tmp_path: Path) -> None:
+    encoder = embed_encoder()
     db = _store(tmp_path)
     _add(db, 12)
     _add(db, 3, repo="o/other")
     settings = RagSettings(enabled=True, min_similarity=0.0, max_records=3)
-    vs = memory.VectorStore(tmp_path / "chroma", FAKE_SPEC.name, FAKE_SPEC.dim)
+    vs = memory.VectorStore(tmp_path / "chroma", SPEC.name, SPEC.dim)
     query = [query_text("규칙 1: 비교에 숫자를 직접 쓰지 않는다", "def f4(x):\n    if x > 4:")]
-    before = memory.Retriever(db, REPO, settings, vs, FakeEncoder()).find("decide", query)
+    before = memory.Retriever(db, REPO, settings, vs, encoder).find("decide", query)
     assert before.chosen
 
     import shutil
 
     vs.close()
     shutil.rmtree(tmp_path / "chroma")
-    fresh = memory.VectorStore(tmp_path / "chroma", FAKE_SPEC.name, FAKE_SPEC.dim)
-    assert memory.reindex(db, fresh, FakeEncoder()) == {"o/other": 3, REPO: 12}
-    after = memory.Retriever(db, REPO, settings, fresh, FakeEncoder()).find("decide", query)
+    fresh = memory.VectorStore(tmp_path / "chroma", SPEC.name, SPEC.dim)
+    assert memory.reindex(db, fresh, encoder) == {"o/other": 3, REPO: 12}
+    after = memory.Retriever(db, REPO, settings, fresh, encoder).find("decide", query)
     assert after.ids == before.ids
     assert [round(c.similarity, 4) for c in after.chosen] == [
         round(c.similarity, 4) for c in before.chosen
@@ -172,14 +163,15 @@ def test_reindex_after_deleting_the_store_gives_the_same_results(tmp_path: Path)
 
 
 def test_retriever_uses_only_its_repo_and_requested_kinds(tmp_path: Path) -> None:
+    encoder = embed_encoder()
     db = _store(tmp_path)
     _add(db, 4, kind="rejected")
     _add(db, 4, repo="o/other", kind="rejected")
-    vs = memory.VectorStore(tmp_path / "chroma", FAKE_SPEC.name, FAKE_SPEC.dim)
+    vs = memory.VectorStore(tmp_path / "chroma", SPEC.name, SPEC.dim)
     for repo in ("o/other",):
-        memory.index_pending(db, vs, FakeEncoder(), repo)
+        memory.index_pending(db, vs, encoder, repo)
     settings = RagSettings(enabled=True, min_similarity=0.0, max_records=10)
-    retriever = memory.Retriever(db, REPO, settings, vs, FakeEncoder())
+    retriever = memory.Retriever(db, REPO, settings, vs, encoder)
     query = [query_text("규칙 0: 비교에 숫자를 직접 쓰지 않는다", "if x > 0:")]
     found = retriever.find("decide", query)
     assert {c.record.repo for c in found.chosen} == {REPO}
@@ -188,11 +180,12 @@ def test_retriever_uses_only_its_repo_and_requested_kinds(tmp_path: Path) -> Non
 
 
 def test_retriever_records_an_error_instead_of_raising(tmp_path: Path) -> None:
+    encoder = embed_encoder()
     db = _store(tmp_path)
     _add(db, 1)
-    memory.VectorStore(tmp_path / "chroma", "another-model", FAKE_SPEC.dim).collection(REPO)
-    vs = memory.VectorStore(tmp_path / "chroma", FAKE_SPEC.name, FAKE_SPEC.dim)
-    retriever = memory.Retriever(db, REPO, RagSettings(enabled=True), vs, FakeEncoder())
+    memory.VectorStore(tmp_path / "chroma", "another-model", SPEC.dim).collection(REPO)
+    vs = memory.VectorStore(tmp_path / "chroma", SPEC.name, SPEC.dim)
+    retriever = memory.Retriever(db, REPO, RagSettings(enabled=True), vs, encoder)
     assert retriever.find("decide", ["q"]).chosen == ()
     assert "ReindexNeeded" in retriever.error
 
@@ -203,7 +196,7 @@ def _spec_for(tokenizer: bytes, onnx: bytes):
 
     from dataclasses import replace
 
-    return replace(FAKE_SPEC, tokenizer=file("onnx/tokenizer.json", tokenizer),
+    return replace(SPEC, tokenizer=file("onnx/tokenizer.json", tokenizer),
                    onnx=file("onnx/model.onnx", onnx))  # fmt: skip
 
 
@@ -271,7 +264,7 @@ def test_open_retriever_without_the_model_keeps_checking_without_search(tmp_path
         raise memory.SearchUnavailable("네트워크 없음")
 
     db = _store(tmp_path)
-    retriever = memory.open_retriever(tmp_path, db, REPO, RagSettings(enabled=True), FAKE_SPEC,
+    retriever = memory.open_retriever(tmp_path, db, REPO, RagSettings(enabled=True), SPEC,
                                       download=fail)  # fmt: skip
     assert retriever.find("decide", ["q"]).chosen == ()
     assert "네트워크 없음" in retriever.error

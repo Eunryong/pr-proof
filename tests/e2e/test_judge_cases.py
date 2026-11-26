@@ -1,17 +1,13 @@
 """모델의 직접 판단 E2E (eval/judge/*.yaml, 13절 4단계의 4-1–4-7).
 
 문서 규칙 케이스와 같은 방식이다: 예제 리포의 로컬 git 원격, 실제 샌드박스 테스트, 실제
-ast-grep·ruff(도구 캐시에 받는다), GitHub만 가짜. 모델은 기본으로 케이스의 답을 돌려주는 가짜라
-`pytest -m docker`가 결정적이고 비용이 없다. 모델 판단의 답 확인, 검사기 예시 확인, 수정 검증은 모두
-진짜다. `PR_PROOF_REAL_MODEL=1`이면 로그인된 claude를 실제로 부르고, `PR_PROOF_RECORD_DIR`을 주면
-케이스마다 결과(코멘트의 규칙 절, 모델 호출 기록, 수정안 PR 본문)를 JSON으로 남긴다.
+ast-grep·ruff(도구 캐시에 받는다), GitHub만 가짜. 설정된 모델을 실제로 부르므로
+`PR_PROOF_REAL_MODEL=1`일 때만 돈다. `PR_PROOF_RECORD_DIR`을 주면 케이스마다 결과(코멘트의 규칙 절,
+모델 호출 기록, 수정안 PR 본문)를 JSON으로 남긴다.
 
 케이스 형식은 문서 규칙 케이스에 아래를 더한다.
 
-    model.rules[].judge: 모델 판단의 답 ({file, line, quote, why}). 그 파일을 물을 때만 낸다
-    record_only: 실제 모델로 돌 때 결과를 남기기만 하고 위반 목록은 확인하지 않는다 (4-5)
-    real_checker_scripted: 실제 모델로 돌 때도 검사기 작성만 케이스의 답(예시를 통과하지 못하는
-        검사기나 `coverage: none`)으로 둔다. 모델 판단부터의 경로를 실제 모델로 보려는 것이다
+    record_only: 결과를 남기기만 하고 위반 목록은 확인하지 않는다 (4-5)
     expect.judge_calls: 모델 판단의 실제 호출 수 (저장된 답을 쓴 것은 세지 않는다)
     expect.next_commit: {edits, contains} 같은 PR에 새 커밋을 올려 모델 판단의 호출이 늘지 않는다
     expect.then_fix: {command, result, judge_calls, violations, absent} 결과 코멘트 뒤의 명령
@@ -29,12 +25,10 @@ import yaml
 from app.shared.job_pure import PRJob
 from app.worker import main
 from app.worker.deps import Deps
-from app.worker.model.claude import claude_cli
-from app.worker.rules import checker_authoring_pure
 
+from .conftest import needs_model
 from .test_lint_cases import _bodies, _git, shared_venvs  # noqa: F401
 from .test_rules_cases import (
-    REAL_MODEL_ENV,
     _check,
     _check_fix,
     _push_commit,
@@ -42,8 +36,6 @@ from .test_rules_cases import (
     deps_for,  # noqa: F401
     doc_rules_section,
     flagged,
-    scripted_fixer,
-    scripted_model,
 )
 
 CASES_DIR: Final = Path(__file__).resolve().parents[2] / "eval" / "judge"
@@ -79,29 +71,17 @@ def _record(case_path: Path, deps: Deps, gh, sections: list[str]) -> None:
 
 @pytest.mark.docker
 @pytest.mark.parametrize("case_path", CASES, ids=[p.stem for p in CASES])
-def test_judge_case(case_path: Path, eval_repo: Path, deps_for, tmp_path: Path,  # noqa: F811
-                    monkeypatch) -> None:  # fmt: skip
+def test_judge_case(case_path: Path, eval_repo: Path, deps_for, tmp_path: Path) -> None:  # noqa: F811
+    needs_model()
     case = yaml.safe_load(case_path.read_text())
     expect = case["expect"]
-    real_model = os.environ.get(REAL_MODEL_ENV) == "1"
-    if real_model and case.get("scripted_only"):
-        pytest.skip("가짜 모델로만 확인하는 케이스")
-    fixer = scripted_fixer(case) if "fix" in case else None
-    if not real_model:
-        monkeypatch.setattr(claude_cli, "run_structured", scripted_model(case))
-        if fixer is not None:
-            monkeypatch.setattr(claude_cli, "run_claude", fixer)
-    elif case.get("real_checker_scripted"):
-        monkeypatch.setattr(
-            claude_cli, "run_structured", _scripted_checker(case, claude_cli.run_structured)
-        )
     remote = _remote(tmp_path, eval_repo, case)
     deps, gh, redis = deps_for(remote)
 
     section = doc_rules_section(_check(deps, gh, redis, remote, pr=1))
     sections = [section]
     try:
-        if real_model and case.get("record_only"):
+        if case.get("record_only"):
             return
         assert flagged(section) == sorted(expect["violations"]), section
         assert not set(flagged(section)) & set(expect.get("not_flagged", ())), section
@@ -110,7 +90,7 @@ def test_judge_case(case_path: Path, eval_repo: Path, deps_for, tmp_path: Path, 
         if "judge_calls" in expect:
             assert _judge_calls(deps) == expect["judge_calls"], section
         if "fix" in expect:
-            _check_fix(expect, section, gh, remote, fixer, real_model)
+            _check_fix(expect, section, gh, remote, deps)
         if "mechanical_branch" in expect:
             _check_mechanical(expect, section, gh, remote)
         if "next_commit" in expect:
@@ -118,23 +98,7 @@ def test_judge_case(case_path: Path, eval_repo: Path, deps_for, tmp_path: Path, 
         if "then_fix" in expect:
             sections.append(_check_then_fix(expect["then_fix"], deps, gh))
     finally:
-        if real_model:
-            _record(case_path, deps, gh, sections)
-
-
-def _scripted_checker(case: dict, real):
-    """검사기 작성의 호출만 케이스의 답으로 돌려주고, 나머지(규칙 읽기, 모델 판단, 수정 판단)는
-    실제 모델을 부른다."""
-    scripted = scripted_model(case)
-    schemas = (checker_authoring_pure.ANSWER_SCHEMA, checker_authoring_pure.AST_GREP_SCHEMA,
-               checker_authoring_pure.PYTHON_AST_SCHEMA)  # fmt: skip
-
-    def ask(prompt: str, *, schema, **kw):
-        if any(schema is s for s in schemas):
-            return scripted(prompt, schema=schema, **kw)
-        return real(prompt, schema=schema, **kw)
-
-    return ask
+        _record(case_path, deps, gh, sections)
 
 
 def _check_mechanical(expect: dict, section: str, gh, remote: dict) -> None:
@@ -175,8 +139,5 @@ def _check_then_fix(then: dict, deps: Deps, gh) -> str:
 def test_case_files_are_well_formed() -> None:
     for path in CASES:
         case = yaml.safe_load(path.read_text())
-        assert {"name", "description", "pr", "model", "expect"} <= case.keys(), path
-        judged = [r for r in case["model"]["rules"] if "judge" in r]
-        assert judged, path
-        for rule in judged:
-            assert all({"file", "line", "quote", "why"} <= a.keys() for a in rule["judge"]), path
+        assert {"name", "description", "pr", "expect"} <= case.keys(), path
+        assert not {"model", "fix"} & case.keys(), path  # 모델의 답을 케이스에 적지 않는다

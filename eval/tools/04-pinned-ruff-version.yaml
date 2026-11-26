@@ -12,8 +12,6 @@ pr:
   - file: orders/services/pricing.py
     find: "from orders.models.order import Order\n"
     replace: "import os\n\nfrom orders.models.order import Order\n"
-model:
-  rules: []
 expect:
   rule_line: "**규칙:** ⚠️ 위반 1건 (규칙 1개) · 수정안 #900"
   contains:
@@ -24,5 +22,4 @@ expect:
   not_fetched: [ruff/0.17.5]
   branch: pipeline/pr-1-fix-mechanical
   fix_file: orders/services/pricing.py
-  same_as_base: true
   second_run_fetches_nothing: true

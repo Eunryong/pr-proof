@@ -573,7 +573,7 @@ scripts/start.sh                 # api(웹훅 + 동기화)와 worker
 ```
 python -m app.api.cli sync                   # 동기화를 한 번 돌린다
 python -m app.worker.cli reindex             # 과거 기록 검색의 벡터 저장소를 다시 만든다 ([rag] 필요)
-python -m app.worker.cli eval --real-model   # 평가 케이스를 실제 모델로 돌린다 (비용이 든다)
+python -m app.worker.cli eval                # 평가 케이스를 돌린다 (모델을 실제로 부른다. 비용이 든다)
 ```
 
 ---
