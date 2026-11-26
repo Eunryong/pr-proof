@@ -51,6 +51,8 @@ class Checker:
     engine_version: str  # 검사 엔진 버전. 바뀌면 예시 확인을 다시 한다
     model: str = ""
     verified_at: datetime | None = None
+    # 도구·검사기 위반을 코멘트에 보일 때 원문 영어/약어 메시지 대신 쓸 한국어 이유 한 문장
+    reason_ko: str = ""
 
 
 def is_repo_path(path: str) -> bool:

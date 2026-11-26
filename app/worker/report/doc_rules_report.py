@@ -403,7 +403,7 @@ def _found(
     flagged = {v.rule_id for v in found.violations}
     by_id = {d.violation_id: d for d in decisions.decisions} if decisions else {}
     shown = [
-        _violations(found, by_id, fixed_in(fixes)),
+        _violations(found, by_id, fixed_in(fixes), checkers),
         _run_broken(answers),
         _decision_summary(decisions, found.violations),
         *(_fix_lines(view, bundle, _test_lines(found, view)) for bundle, view in fixes.items()),
@@ -809,13 +809,24 @@ def _left_note(d: FixDecision, v: Violation, *, mixed: bool) -> str:
     return f" · {short or model}" if short or model else ""
 
 
-def _problem(rule: Rule, violations: Sequence[Violation]) -> list[str]:
-    """규칙 블록의 "무엇이 문제인가" 한 줄. 그 규칙의 위반들이 같은 메시지(검사기·도구의
-    메시지, 모델 판단의 까닭)를 가지면 규칙 블록에 한 번 싣는다. 메시지가 위치마다 보이는
-    규칙(도구 설정의 규칙), 메시지가 없거나 서로 다른 것, 규칙 원문과 사실상 같은 말인 것은
-    싣지 않는다."""
+def _problem(
+    rule: Rule, violations: Sequence[Violation], checker: Checker | None = None
+) -> list[str]:
+    """규칙 블록의 "무엇이 문제인가" 한 줄.
+
+    검사기에 캐시된 한국어 이유(`checker.reason_ko`)가 있으면 도구·검사기 원문 대신 그것을
+    우선 쓴다. 아니면 그 규칙의 위반들이 같은 메시지를 가질 때 규칙 블록에 한 번 싣는다.
+    메시지가 위치마다 보이는 규칙(도구 설정의 규칙), 메시지가 없거나 서로 다른 것, 규칙 원문과
+    사실상 같은 말인 것은 싣지 않는다.
+    """
+    if any(v.rule_id == v.code for v in violations):
+        return []
+    if checker is not None and checker.reason_ko.strip():
+        reason = checker.reason_ko.strip()
+        if _plain(reason) != _plain(rule.text):
+            return [f"  {PROBLEM} {inline_code(reason, MAX_DETAIL_CHARS)}"]
     messages = {v.message.strip() for v in violations}
-    if len(messages) != 1 or any(v.rule_id == v.code for v in violations):
+    if len(messages) != 1:
         return []
     message = messages.pop()
     if not message or _plain(message) == _plain(rule.text):
@@ -856,7 +867,10 @@ class _Fold:
 
 
 def _violations(
-    found: Found, decisions: Mapping[str, FixDecision], fixed_in: Mapping[str, int]
+    found: Found,
+    decisions: Mapping[str, FixDecision],
+    fixed_in: Mapping[str, int],
+    checkers: Mapping[str, Checker] = {},
 ) -> list[str]:
     """규칙별 건수, 무엇이 문제인지, 고칠 대상의 위치, 직접 고쳐야 하는 위반과 수정안을 만들지
     않은 까닭 (4.9, 11.2 D6).
@@ -878,19 +892,26 @@ def _violations(
         lines[1:1] = ["", MANY_VIOLATIONS_NOTE]
     for rule_id, violations in grouped.items():
         outcome = by_rule[rule_id]
+        checker = checkers.get(outcome.checker.key) if isinstance(outcome, RuleChecked) else None
+        problem = _problem(outcome.rule, violations, checker)
+        # 공통 "무엇이 문제인가"가 없고 위반마다 메시지가 다르면 위치 옆에 보인다
+        per_item_msg = (
+            not problem and len({v.message.strip() for v in violations if v.message.strip()}) > 1
+        )
         lines += [
             f"- `{rule_id}` {_quote(outcome.rule)} · {len(violations)}건",
             f"  출처: {_source(outcome.rule)} · {_how_checked(outcome)}",
-            *_problem(outcome.rule, violations),
+            *problem,
         ]
         shown: list[str] = []
         left: list[tuple[Violation, FixDecision]] = []
         for v in violations:
             d = decisions.get(v.id)
+            where = _where(v, show_message=per_item_msg, rule_text=outcome.rule.text)
             if d is None:
-                shown.append(f"  - {_where(v)}")
+                shown.append(f"  - {where}")
             elif d.action == "fix":
-                shown.append(f"  - {_where(v)}{_fix_note(d, v, fixed_in.get(v.id))}")
+                shown.append(f"  - {where}{_fix_note(d, v, fixed_in.get(v.id))}")
             else:
                 left.append((v, d))
         lines += shown[:MAX_SHOWN_PER_RULE]
@@ -900,9 +921,14 @@ def _violations(
         if left:
             head, mixed = _left_lines(left)
             lines += head
-            lines += fold.lines(f"{LEFT} {len(left)}건의 위치",
-                                [f"  - {_where(v)}{_left_note(d, v, mixed=mixed)}"
-                                 for v, d in left])  # fmt: skip
+            lines += fold.lines(
+                f"{LEFT} {len(left)}건의 위치",
+                [
+                    f"  - {_where(v, show_message=per_item_msg, rule_text=outcome.rule.text)}"
+                    f"{_left_note(d, v, mixed=mixed)}"
+                    for v, d in left
+                ],
+            )
     return lines
 
 
@@ -920,12 +946,18 @@ def fixed_in(fixes: Mapping[str, FixView]) -> dict[str, int]:
     return out
 
 
-def _where(v: Violation) -> str:
+def _where(v: Violation, *, show_message: bool = False, rule_text: str = "") -> str:
     if v.unit == "file":
         return f"{inline_code(v.file, 200)} (파일 이름·경로)"
     where = inline_code(f"{v.file}:{v.line}", 200)
-    # 도구 설정 규칙은 원문이 "설정대로 통과한다" 하나라 위반마다 도구의 메시지를 보인다
-    return f"{where} {inline_code(v.message, MAX_DETAIL_CHARS)}" if v.rule_id == v.code else where
+    # 도구 설정 규칙은 원문이 "설정대로 통과한다" 하나라 위반마다 도구의 메시지를 보인다.
+    # 또한 규칙 블록에 공통 문제가 올라가지 못한 위반들도 각 줄의 이유를 함께 보인다.
+    if v.rule_id == v.code:
+        return f"{where} {inline_code(v.message, MAX_DETAIL_CHARS)}"
+    msg = v.message.strip()
+    if show_message and msg and (not rule_text or _plain(msg) != _plain(rule_text)):
+        return f"{where} {inline_code(msg, MAX_DETAIL_CHARS)}"
+    return where
 
 
 def _rule_lines(outcomes: Sequence[RuleUnchecked], *, detail: bool) -> list[str]:
