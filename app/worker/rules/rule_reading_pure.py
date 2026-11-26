@@ -8,6 +8,7 @@
 
 import json
 import re
+import unicodedata
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import PurePosixPath
@@ -32,7 +33,7 @@ from app.worker.core.rule_pure import (
 from app.worker.git.git_pure import REGULAR_FILE_MODES, TreeEntry
 
 # 문서 고르기와 원문 확인의 버전. 이 파일의 결정적 처리를 바꾸면 올린다 (캐시 키에 들어간다)
-READER_VERSION: Final = "3"
+READER_VERSION: Final = "4"
 # 한 번에 읽는 문서 합계의 상한 (약 10만 토큰). 넘는 문서는 읽지 않고 이유를 남긴다
 MAX_DOCS_BYTES: Final = 400_000
 # 정리한 뒤 이보다 짧은 인용은 어느 문서에나 있을 수 있어 근거가 되지 못한다
@@ -41,6 +42,9 @@ SECTION_SEPARATOR: Final = " > "
 
 _HEADING: Final = re.compile(r"^ {0,3}(#{1,6})(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*$")
 _FENCE: Final = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+_BULLET: Final = re.compile(r"^[ \t]*(?:[-*+]|\d+[.)])[ \t]+")
+_SENTENCE_END: Final = frozenset(".!?。")
+_WRAP_CHARS: Final = frozenset("`*_\"'()[]<>「」『』")
 _GLOB_BAD_CHARS: Final = frozenset("\\\0")
 
 
@@ -354,15 +358,172 @@ def _examples(raw: Iterable[AnswerExample], flat_doc: str) -> tuple[Example, ...
     return tuple(kept)
 
 
+def _normalized_with_map(raw: str) -> tuple[str, list[int]]:
+    """`normalize(raw)`와 같은 문자열과, 각 글자가 `raw`(NFC)에서 차지하는 원래 인덱스 목록."""
+    nfc = unicodedata.normalize("NFC", raw)
+    chars: list[str] = []
+    positions: list[int] = []
+    in_space = True  # 앞쪽 공백은 버린다 (strip)
+    for i, ch in enumerate(nfc):
+        if ch in ("`", "*"):
+            continue
+        if ch.isspace():
+            if not in_space:
+                chars.append(" ")
+                positions.append(i)
+                in_space = True
+            continue
+        chars.append(ch)
+        positions.append(i)
+        in_space = False
+    if chars and chars[-1] == " ":
+        chars.pop()
+        positions.pop()
+    return "".join(chars), positions
+
+
+def _paragraph_bounds(text: str, pos: int) -> tuple[int, int]:
+    """`text`의 `pos`가 속한 문단·불릿 항목의 `(start, end)` 오프셋.
+
+    빈 줄, 제목(`#`), 코드 울타리, 불릿 시작(`- `, `1. `)을 항목 경계로 본다.
+    """
+    lines = text.splitlines(keepends=True)
+    offsets: list[int] = []
+    cur = 0
+    for line in lines:
+        offsets.append(cur)
+        cur += len(line)
+    if not lines:
+        return 0, 0
+    idx = 0
+    for i, off in enumerate(offsets):
+        if off <= pos < off + len(lines[i]):
+            idx = i
+            break
+    else:
+        idx = len(lines) - 1
+
+    def _is_break(line: str) -> bool:
+        stripped = line.strip()
+        return not stripped or bool(_HEADING.match(line)) or bool(_FENCE.match(line))
+
+    start_i = idx
+    while start_i > 0:
+        if _BULLET.match(lines[start_i]):
+            break
+        if _is_break(lines[start_i - 1]):
+            break
+        start_i -= 1
+
+    end_i = idx
+    while end_i + 1 < len(lines):
+        nxt = lines[end_i + 1]
+        if _is_break(nxt) or _BULLET.match(nxt):
+            break
+        end_i += 1
+
+    start = offsets[start_i]
+    bullet = _BULLET.match(lines[start_i])
+    if bullet:
+        start += bullet.end()
+    end = offsets[end_i] + len(lines[end_i].rstrip("\r\n"))
+    return start, end
+
+
+def _sentence_breaks(segment: str) -> list[int]:
+    """문단 `segment` 안의 문장 경계 오프셋 목록 (0과 len 포함).
+
+    백틱 코드 스팬 안의 마침표나 파일명·숫자(`3.11`, `orders.py`)처럼 뒤에 공백이 없는 마침표는
+    문장 끝으로 보지 않는다.
+    """
+    breaks = [0]
+    in_code = False
+    n = len(segment)
+    i = 0
+    while i < n:
+        ch = segment[i]
+        if ch == "`":
+            in_code = not in_code
+            i += 1
+            continue
+        if not in_code and ch in _SENTENCE_END:
+            j = i + 1
+            while j < n and segment[j] in _WRAP_CHARS:
+                j += 1
+            if j == n or segment[j].isspace():
+                breaks.append(j)
+                i = j
+                continue
+        i += 1
+    if breaks[-1] != n:
+        breaks.append(n)
+    return breaks
+
+
+def _snap_quote(doc: _IndexedDocument, section: Section, quote: str) -> tuple[str, tuple[int, int]]:
+    """절 안의 `quote`가 문장 중간에서 잘렸으면 그 문장의 경계까지 확장하고, 문서 기준 span을 준다.
+
+    이미 문장 경계에 맞으면 `quote.strip()`을 그대로 남긴다.
+    """
+    doc_lines = doc.document.text.splitlines(keepends=True)
+    sec_offset = sum(len(line) for line in doc_lines[: section.start])
+    sec_raw = unicodedata.normalize("NFC", "".join(doc_lines[section.start : section.end]))
+    norm_sec, pos_map = _normalized_with_map(sec_raw)
+    wanted = normalize(quote)
+    found_at = norm_sec.find(wanted)
+    if found_at < 0 or not pos_map:
+        return quote.strip(), (sec_offset, sec_offset)
+    raw_start = pos_map[found_at]
+    raw_end = pos_map[found_at + len(wanted) - 1] + 1
+    # 인용 앞뒤의 강조 기호(`, *)가 raw에 붙어 있으면 포함해 경계 비교에 잡음이 없게 한다
+    while raw_start > 0 and sec_raw[raw_start - 1] in ("`", "*"):
+        raw_start -= 1
+    while raw_end < len(sec_raw) and sec_raw[raw_end] in ("`", "*"):
+        raw_end += 1
+
+    para_start, para_end = _paragraph_bounds(sec_raw, raw_start)
+    # 문단을 넘어 여러 항목을 인용했으면 그대로 둔다
+    if raw_end > para_end:
+        return quote.strip(), (sec_offset + raw_start, sec_offset + raw_end)
+
+    segment = sec_raw[para_start:para_end]
+    rel_start = max(0, raw_start - para_start)
+    rel_end = min(len(segment), raw_end - para_start)
+    breaks = _sentence_breaks(segment)
+
+    snap_start = max((b for b in breaks if b <= rel_start), default=0)
+    while snap_start < rel_start and segment[snap_start].isspace():
+        snap_start += 1
+    snap_end = min((b for b in breaks if b >= rel_end), default=len(segment))
+    while snap_end > rel_end and segment[snap_end - 1].isspace():
+        snap_end -= 1
+
+    left_trimmed = segment[snap_start:rel_start].strip(" \t\r\n`*")
+    right_trimmed = segment[rel_end:snap_end].strip(" \t\r\n`*")
+    abs_start = sec_offset + para_start + snap_start
+    abs_end = sec_offset + para_start + snap_end
+    if not left_trimmed and not right_trimmed:
+        return quote.strip(), (abs_start, abs_end)
+    snapped = segment[snap_start:snap_end].strip()
+    return (snapped or quote.strip()), (abs_start, abs_end)
+
+
+def _spans_overlap(a: tuple[int, int], b: tuple[int, int]) -> bool:
+    """두 원문 span이 겹치는지(끝점만 닿는 것은 겹침이 아니다)."""
+    return a[0] < b[1] and b[0] < a[1]
+
+
 def verify_rules(
     answer: Answer, documents: Sequence[Document]
 ) -> tuple[tuple[Rule, ...], tuple[DroppedRule, ...]]:
     """모델이 답한 규칙 중 원문이 그 문서의 그 절에 있는 것만 규칙으로 만든다.
 
-    같은 문서의 같은 원문은 한 규칙이다 (규칙 id가 같다).
+    문장 중간에서 잘린 인용은 그 문장 경계까지 확장해 조건절이 떨어져 나가지 않게 한다.
+    같은 문서의 같은 원문이거나 원문 span이 겹치는 규칙은 한 규칙으로 합친다.
     """
     by_path = {d.path: _index(d) for d in documents}
     rules: dict[str, Rule] = {}
+    spans: dict[str, tuple[str, int, int]] = {}  # rule_id -> (doc_path, start, end)
     dropped: list[DroppedRule] = []
     for raw in answer.rules:
 
@@ -381,13 +542,34 @@ def verify_rules(
             drop("원문이 그 절에 없음")
             continue
         document = indexed.document
+        snapped_quote, span = _snap_quote(indexed, found, raw.quote)
         source = RuleSource(document.path, SECTION_SEPARATOR.join(found.path), document.blob_sha)
-        rule = _rule(raw, rule_id(document.path, raw.quote), source, indexed.flat)
-        rules.setdefault(rule.id, rule)
+        rule = _rule(
+            raw, rule_id(document.path, snapped_quote), source, indexed.flat, snapped_quote
+        )
+        if rule.id in rules:
+            continue
+        # 같은 문서에서 원문 span이 겹치는 규칙(전체 문장과 그 일부 등)은 더 넓은 쪽을 남긴다
+        overlapping = [
+            rid for rid, (p, s, e) in spans.items()
+            if p == document.path and _spans_overlap((s, e), span)
+        ]  # fmt: skip
+        if overlapping:
+            existing_id = overlapping[0]
+            _, ex_s, ex_e = spans[existing_id]
+            if (span[1] - span[0]) > (ex_e - ex_s):
+                del rules[existing_id]
+                del spans[existing_id]
+            else:
+                continue
+        rules[rule.id] = rule
+        spans[rule.id] = (document.path, span[0], span[1])
     return tuple(rules.values()), tuple(dropped)
 
 
-def _rule(raw: AnswerRule, id_: str, source: RuleSource, flat_doc: str) -> Rule:
+def _rule(
+    raw: AnswerRule, id_: str, source: RuleSource, flat_doc: str, text: str | None = None
+) -> Rule:
     """원문 확인을 통과한 답 하나를 규칙으로. 코드 규칙이 아니면 범위, 예시, 확인 방법은 버린다.
 
     확인 대상이 pr·run인 규칙은 범위와 확인 방법 힌트를 받지 않는다. 모델이 같이 적은 값이
@@ -395,7 +577,7 @@ def _rule(raw: AnswerRule, id_: str, source: RuleSource, flat_doc: str) -> Rule:
     먼저 쓴다 (4.5 끝). 코드 규칙인데 check가 "none"이면 답이 어긋난 것이고, 검사기부터 시도한다.
     run 규칙인데 runs가 비면 답이 어긋난 것이고, 테스트 결과로 답한다.
     """
-    text = raw.quote.strip()
+    text = (text if text is not None else raw.quote).strip()
     if raw.target != "code":
         check = CheckMethod("none", reason=raw.reason.strip())
         examples = _examples(raw.examples, flat_doc) if raw.target == "pr" else ()

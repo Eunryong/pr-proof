@@ -445,3 +445,67 @@ def test_path_rule_keeps_the_hint_and_no_code_examples() -> None:
     assert not dropped
     assert rules[0].check.kind == "path"
     assert rules[0].examples == ()
+
+
+# --- 문장 경계 스냅과 span 중복 병합 ---
+
+MONEY_DOC: Final = Document(
+    "CONTRIBUTING.md",
+    "e" * 40,
+    "# 규칙\n\n## 금액\n\n"
+    "- 금액은 원 단위 정수로 다루며, 나눗셈은 `/` 대신 `//`를 쓴다.\n"
+    "- 세율은 소수로 계산한다. 반올림은 마지막에 한 번만 한다.\n",
+)
+
+
+def test_mid_sentence_fragment_snaps_to_full_sentence_preserving_condition() -> None:
+    # 모델이 한 문장의 뒷부분만 잘라 "금액은" 조건이 빠져도 문장 전체로 스냅된다
+    rules, dropped = _verify(
+        {"file": "CONTRIBUTING.md", "section": "금액", "quote": "나눗셈은 `/` 대신 `//`를 쓴다."},
+        docs=(MONEY_DOC,),
+    )
+    assert dropped == ()
+    assert len(rules) == 1
+    assert rules[0].text == "금액은 원 단위 정수로 다루며, 나눗셈은 `/` 대신 `//`를 쓴다."
+
+
+def test_sentence_split_into_two_fragments_merges_into_one_rule() -> None:
+    # 모델이 한 문장을 둘로 쪼개 답해도 같은 문장으로 스냅돼 1건으로 합쳐진다
+    rules, dropped = _verify(
+        {"file": "CONTRIBUTING.md", "section": "금액", "quote": "금액은 원 단위 정수로 다루며"},
+        {"file": "CONTRIBUTING.md", "section": "금액", "quote": "나눗셈은 `/` 대신 `//`를 쓴다."},
+        docs=(MONEY_DOC,),
+    )
+    assert dropped == ()
+    assert len(rules) == 1
+    assert rules[0].text == "금액은 원 단위 정수로 다루며, 나눗셈은 `/` 대신 `//`를 쓴다."
+
+
+def test_distinct_sentences_in_same_bullet_stay_separate() -> None:
+    # 한 불릿에 마침표로 나뉜 두 문장을 따로 뽑으면 겹치지 않으므로 둘 다 남는다
+    rules, dropped = _verify(
+        {"file": "CONTRIBUTING.md", "section": "금액", "quote": "세율은 소수로 계산한다."},
+        {"file": "CONTRIBUTING.md", "section": "금액", "quote": "반올림은 마지막에 한 번만 한다."},
+        docs=(MONEY_DOC,),
+    )
+    assert dropped == ()
+    assert [r.text for r in rules] == [
+        "세율은 소수로 계산한다.",
+        "반올림은 마지막에 한 번만 한다.",
+    ]
+
+
+def test_overlapping_whole_and_part_sentences_keep_wider_rule() -> None:
+    # 전체 문장과 그 안의 한 문장을 함께 뽑으면 더 넓은 쪽 하나만 남는다
+    rules, dropped = _verify(
+        {"file": "CONTRIBUTING.md", "section": "금액", "quote": "세율은 소수로 계산한다."},
+        {
+            "file": "CONTRIBUTING.md",
+            "section": "금액",
+            "quote": "세율은 소수로 계산한다. 반올림은 마지막에 한 번만 한다.",
+        },
+        docs=(MONEY_DOC,),
+    )
+    assert dropped == ()
+    assert len(rules) == 1
+    assert rules[0].text == "세율은 소수로 계산한다. 반올림은 마지막에 한 번만 한다."
