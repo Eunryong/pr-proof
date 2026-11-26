@@ -282,8 +282,12 @@ _FRAME: Final = Target(
 )  # fmt: skip
 # 캐시 키에 들어간다. 프롬프트를 한 글자라도 바꾸면 달라져 다시 묻는다
 PROMPT_VERSION: Final = prompt_version(
-    SYSTEM_PROMPT, {}, build_prompt([_FRAME], constants={"f.py": ["A"]}, feedback=["x"],
-                                    current_diff="d")
+    SYSTEM_PROMPT,
+    {},
+    build_prompt(
+        [_FRAME], constants={"f.py": ["A"]}, helpers={"g.py": ["f(x)"]}, feedback=["x"],
+        current_diff="d",
+    ),
 )  # fmt: skip
 
 
