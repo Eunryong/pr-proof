@@ -1,4 +1,4 @@
-"""워커 작업이 쓰는 의존 객체. 테스트에서는 가짜를 넣는다."""
+"""워커 작업이 쓰는 의존 객체."""
 
 from dataclasses import dataclass, field
 

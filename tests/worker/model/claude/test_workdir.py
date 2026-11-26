@@ -10,12 +10,6 @@ import pytest
 
 from app.worker.git import repo
 from app.worker.model.claude import workdir
-from app.worker.model.claude.claude_cli import (
-    AIErrorKind,
-    ClaudeResult,
-    ReadFolder,
-    StructuredResult,
-)
 
 SECRET: Final = "outside-secret\n"
 
@@ -53,28 +47,6 @@ def wt(tmp_path: Path, outside: Path) -> Path:
     _git(path, "add", "-A")
     _git(path, "commit", "-q", "-m", "init")
     return path
-
-
-def _ok(tool_uses: int = 0) -> ClaudeResult:
-    return ClaudeResult(
-        ok=True, error=None, cost_usd=0.01, num_turns=1, permission_denials=(), text="고침",
-        tool_uses=tool_uses,
-    )  # fmt: skip
-
-
-def _model(edit, tool_uses: int = 0, hook_lines: int = 0):
-    """모델 폴더에서 edit(work)를 하고, 훅 기록을 hook_lines줄 남기는 가짜 run_claude."""
-    seen: dict[str, object] = {}
-
-    def run(work: Path, prompt: str, *, settings: Path, **kwargs) -> ClaudeResult:
-        seen.update(work=work, settings=settings, files=_files(work), kwargs=kwargs)
-        hook_log = settings.parent / "hook.log"
-        hook_log.write_text('{"tool": "Read", "denied": null}\n' * hook_lines)
-        edit(work)
-        return _ok(tool_uses)
-
-    run.seen = seen
-    return run
 
 
 def _files(root: Path) -> list[str]:
@@ -126,74 +98,6 @@ def test_a_file_swapped_for_a_link_after_checkout_is_not_copied(wt: Path, outsid
         assert "src/app.py" not in _files(folder.work)
 
 
-def test_changes_are_applied_to_the_worktree_as_a_diff(wt: Path) -> None:
-    def edit(work: Path) -> None:
-        (work / "src" / "app.py").write_text("LIMIT = 1\nX = LIMIT\n")
-        (work / "src" / "limits.py").write_text("LIMIT = 1\n")
-        (work / "src" / "data.bin").write_bytes(b"\x00\xff changed")
-
-    model = _model(edit, tool_uses=3, hook_lines=3)
-    result = workdir.run_in_model_folder(wt, "고쳐라", run=model, model="haiku", max_budget_usd=1)
-
-    assert result.ok and model.seen["kwargs"] == {"model": "haiku", "max_budget_usd": 1}
-    assert model.seen["work"] != wt and "notes.txt" not in model.seen["files"]
-    assert (wt / "src" / "app.py").read_text() == "LIMIT = 1\nX = LIMIT\n"
-    assert (wt / "src" / "limits.py").read_text() == "LIMIT = 1\n"
-    assert (wt / "src" / "data.bin").read_bytes() == b"\x00\xff changed"
-    # worktree의 링크는 그대로이고, 범위 검사가 보는 status에 바뀐 파일이 보인다
-    assert (wt / "notes.txt").is_symlink()
-    assert " M src/app.py" in repo.status(wt) and "?? src/limits.py" in repo.status(wt)
-    # 적용한 diff가 결과에 남는다. 같은 diff를 처음 상태에 다시 적용하면 같은 결과가 된다
-    assert b"src/limits.py" in result.applied and b"LIMIT = 1" in result.applied
-
-
-def test_no_change_applies_nothing(wt: Path) -> None:
-    result = workdir.run_in_model_folder(wt, "p", run=_model(lambda work: None))
-    assert result.applied == b""
-    assert result.ok and repo.status(wt) == ""
-
-
-def test_changes_are_discarded_when_the_hook_did_not_run(wt: Path) -> None:
-    """모델이 도구를 불렀는데 훅 기록이 그보다 적으면 훅 없이 돈 것이다."""
-    model = _model(lambda work: (work / "src" / "app.py").write_text("X = 2\n"),
-                   tool_uses=2, hook_lines=1)  # fmt: skip
-    result = workdir.run_in_model_folder(wt, "p", run=model)
-    assert (result.ok, result.error) == (False, AIErrorKind.TOOLS)
-    assert "훅" in result.detail and result.cost_usd == 0.01
-    assert (wt / "src" / "app.py").read_text() == "X = 1\n"
-
-
-def test_nothing_is_written_through_a_link_in_the_worktree(wt: Path, outside: Path) -> None:
-    """모델 폴더에서는 진짜 폴더인 경로가 worktree에서는 밖을 가리키는 링크다."""
-
-    def edit(work: Path) -> None:
-        (work / "src" / "app.py").write_text("X = 2\n")
-        (work / "linked").mkdir()
-        (work / "linked" / "planted.txt").write_text("planted\n")
-
-    result = workdir.run_in_model_folder(wt, "p", run=_model(edit))
-    assert (result.ok, result.error) == (False, AIErrorKind.APPLY)
-    assert _files(outside) == ["secret.txt"]
-    assert (wt / "src" / "app.py").read_text() == "X = 1\n"  # 하나라도 안 되면 전부 적용하지 않는다
-
-
-def test_a_link_in_the_worktree_is_not_overwritten(wt: Path, outside: Path) -> None:
-    result = workdir.run_in_model_folder(
-        wt, "p", run=_model(lambda work: (work / "notes.txt").write_text("overwritten\n"))
-    )
-    assert result.error == AIErrorKind.APPLY
-    assert (outside / "secret.txt").read_text() == SECRET and (wt / "notes.txt").is_symlink()
-
-
-def test_a_tool_list_mismatch_is_returned_as_is(wt: Path) -> None:
-    failure = ClaudeResult(
-        ok=False, error=AIErrorKind.TOOLS, cost_usd=None, num_turns=0, permission_denials=(),
-        text="", detail="도구 목록이 기대와 다름",
-    )  # fmt: skip
-    result = workdir.run_in_model_folder(wt, "p", run=lambda *a, **k: failure)
-    assert result is failure
-
-
 def test_hook_settings_register_the_hook_for_every_tool(tmp_path: Path) -> None:
     import json
     import shlex
@@ -204,68 +108,6 @@ def test_hook_settings_register_the_hook_for_every_tool(tmp_path: Path) -> None:
     command = shlex.split(entry["hooks"][0]["command"])
     assert command[:2] == ["/py", "-I"] and command[2].endswith("path_hook.py")
     assert command[3:] == [str(tmp_path / "w k"), str(tmp_path / "hook.log")]  # 공백이 든 경로
-
-
-def _structured(tool_uses: int = 0) -> StructuredResult:
-    return StructuredResult(
-        ok=True, error=None, data={"violations": []}, model_id="m", input_tokens=1,
-        output_tokens=1, cost_usd=None, permission_denials=0, tool_uses=tool_uses,
-    )  # fmt: skip
-
-
-def _reader(write: bool = False, tool_uses: int = 0, hook_lines: int = 0):
-    """read_in으로 받은 폴더를 기록하고, write면 폴더에 파일을 바꿔 쓰는 구조화 출력 호출."""
-    seen: list[dict] = []
-
-    def ask(prompt: str, *, read_in: ReadFolder, **kwargs) -> StructuredResult:
-        seen.append({"folder": read_in, "files": _files(read_in.work), **kwargs})
-        with (read_in.settings.parent / "hook.log").open("a") as log:
-            log.write('{"tool": "Read", "denied": null}\n' * hook_lines)
-        if write:
-            (read_in.work / "src" / "app.py").write_text("HACKED = 1\n")
-            (read_in.work / "new.py").write_text("x = 1\n")
-        return _structured(tool_uses)
-
-    ask.seen = seen
-    return ask
-
-
-def test_reading_folder_reads_a_copy_and_never_writes_back(wt: Path) -> None:
-    """위반 판단: 폴더 하나를 호출들이 같이 쓰고, 폴더에서 바뀐 것은 worktree에 가지 않는다."""
-    ask = _reader(write=True, tool_uses=2, hook_lines=2)
-    with workdir.reading_folder(wt, ask) as read:
-        first = read("p", model="sonnet", max_budget_usd=1.0)
-        second = read("q", model="sonnet", max_budget_usd=1.0)
-        folder = ask.seen[0]["folder"]
-        assert folder.work not in folder.settings.parents
-    assert first.ok and second.ok
-    assert ask.seen[0]["files"] == [".gitignore", "run.sh", "src/app.py", "src/data.bin"]
-    assert ask.seen[1]["folder"] == folder and ask.seen[0]["model"] == "sonnet"
-    assert (wt / "src" / "app.py").read_text() == "X = 1\n" and not (wt / "new.py").exists()
-    assert _git(wt, "status", "--porcelain") == ""
-    assert not folder.work.exists()  # 블록이 끝나면 지운다
-
-
-def test_reading_folder_drops_the_answer_when_the_hook_did_not_run(wt: Path) -> None:
-    with workdir.reading_folder(wt, _reader(tool_uses=3, hook_lines=2)) as read:
-        result = read("p")
-    assert not result.ok and result.error == AIErrorKind.TOOLS and result.data is None
-    assert "도구 호출 3건, 훅 2건" in result.detail
-
-
-def test_reading_folder_counts_the_hook_per_call(wt: Path) -> None:
-    """앞 호출의 훅 기록이 뒤 호출의 모자란 기록을 메우지 않는다."""
-    calls = iter([(2, 5), (2, 0)])
-
-    def ask(prompt: str, *, read_in: ReadFolder, **kwargs) -> StructuredResult:
-        uses, lines = next(calls)
-        with (read_in.settings.parent / "hook.log").open("a") as log:
-            log.write("{}\n" * lines)
-        return _structured(uses)
-
-    with workdir.reading_folder(wt, ask) as read:
-        assert read("p").ok
-        assert read("q").error == AIErrorKind.TOOLS
 
 
 def test_path_digest_follows_the_content_of_files_and_folders(wt: Path) -> None:

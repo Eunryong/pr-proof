@@ -21,35 +21,6 @@ pr:
 
       def reject() -> None:
           raise CouponRejected("coupon")
-model:
-  rules:
-    - section: 코드 규칙 > 예외
-      quote: "예외 클래스 이름은 `Error`로 끝난다."
-      scope: []
-      checker:
-        body: |
-          id: exception-name-error
-          language: python
-          severity: error
-          message: 예외 클래스 이름은 Error로 끝난다
-          rule:
-            kind: class_definition
-            all:
-              - has:
-                  field: superclasses
-                  has:
-                    regex: "(Error|Exception)$"
-              - has:
-                  field: name
-                  kind: identifier
-                  not:
-                    regex: "Error$"
-        examples:
-          - {code: "class Bad(ValueError):\n    pass\n", violates: true, lines: [1]}
-          - {code: "class Oops(Exception):\n    pass\n", violates: true, lines: [1]}
-          - {code: "class OutOfStockError(Exception):\n    pass\n", violates: false, lines: []}
-          - {code: "class Cart:\n    pass\n", violates: false, lines: []}
-          - {code: "raise Bad('x')\n", violates: false, lines: []}
 expect:
   violations: ["orders/services/pricing.py:30"]
   not_flagged: ["orders/services/pricing.py:34", "orders/services/pricing.py:39"]

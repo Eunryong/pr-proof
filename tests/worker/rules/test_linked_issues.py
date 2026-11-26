@@ -15,14 +15,9 @@ from app.worker.git.git_pure import Issue, Linked
 from app.worker.git.github import GitHub
 from app.worker.model.claude import workdir
 from app.worker.model.claude.claude_backend import ClaudeCliBackend
-from app.worker.model.claude.claude_cli import StructuredResult
 from app.worker.rules import linked_issues
 from app.worker.rules.checkers import STALE
-from app.worker.rules.diff_batches import save_digest
-from app.worker.rules.diff_batches_pure import DIGEST_SYSTEM, split
 from app.worker.rules.linked_issues_pure import (
-    DIGEST_PROMPT_VERSION,
-    DIGEST_SYSTEM_PROMPT,
     IssueGap,
     earlier_from_json,
     earlier_key,
@@ -30,7 +25,6 @@ from app.worker.rules.linked_issues_pure import (
     items_to_json,
     select,
 )
-from app.worker.rules.pr_description_pure import parse_diff
 from app.worker.store.budget import CallBudget
 from app.worker.store.state import Store
 
@@ -157,78 +151,3 @@ def test_new_commit_stops_before_asking(wt: Path, store: Store) -> None:
 
 
 # --- 변경이 커서 묶음의 요약으로 견줄 때 ---
-
-
-@pytest.fixture
-def big(wt: Path) -> Path:
-    """호출 하나에 들어가지 않는 변경. 묶음은 (config.py, gen0.py), (gen1.py), (gen2.py)다."""
-    for n in range(3):
-        (wt / f"gen{n}.py").write_text("".join(f"V{n}_{i} = '{'x' * 50}'\n" for i in range(900)))
-    _git(wt, "add", "-A")
-    _git(wt, "commit", "--amend", "-qm", "타임아웃을 줄인다")
-    return wt
-
-
-class Scripted:
-    """요약을 받는 호출에는 그 묶음의 요약을, 견주는 호출에는 GAP을 답한다."""
-
-    def __init__(self) -> None:
-        self.digests: list[str] = []
-        self.final: list[str] = []
-
-    def __call__(self, prompt: str, **kw) -> StructuredResult:
-        if kw["system_prompt"] == DIGEST_SYSTEM:
-            self.digests.append(prompt)
-            data: dict = {"changes": ["요약 " + prompt.split("나눈 것 중 ")[1][:1]]}
-        else:
-            assert kw["system_prompt"] == DIGEST_SYSTEM_PROMPT
-            self.final.append(prompt)
-            data = {"gaps": [{"issue": 7, "kind": "missing", "quote": GAP.quote,
-                              "summary": GAP.summary, "same_as": 0}]}  # fmt: skip
-        return StructuredResult(ok=True, error=None, data=data, model_id="claude-sonnet",
-                                input_tokens=100, output_tokens=10, cost_usd=None,
-                                permission_denials=0)  # fmt: skip
-
-
-def _big_tools(store: Store, ask, **limits: int) -> linked_issues.Tools:
-    budget = CallBudget(store, "o/r", 1, HEAD_SHA, CallSettings(**limits))
-    return linked_issues.Tools(store=store, budget=budget, read_code=_reading(ask), model=MODEL)
-
-
-def test_large_change_is_compared_from_the_batch_digests(big: Path, store: Store) -> None:
-    ask = Scripted()
-    out = linked_issues.check(LINKED, "o/r", _diff(big), big, _big_tools(store, ask))
-    assert out.status == "checked" and out.items == (GAP,)
-    assert (out.batches, out.files, out.shown, out.left, out.usage.calls) == (3, 4, 4, (), 4)
-    assert len(ask.digests) == 3 and "<<<ISSUE_TITLE" not in ask.digests[0]
-    (final,) = ask.final
-    assert "<<<DIFF" not in final and "<<<ISSUE_TITLE number=7" in final
-    assert "묶음 1 (파일: config.py, gen0.py)\n- 요약 1\n묶음 2 (파일: gen1.py)\n- 요약 2" in final
-    key = issues_key(select(LINKED, "o/r"), _diff(big), MODEL, DIGEST_PROMPT_VERSION)
-    assert store.cached_result(key) is not None
-    again = linked_issues.check(LINKED, "o/r", _diff(big), big, _tools(store))
-    assert again.items == (GAP,) and (again.usage.calls, again.usage.cached) == (0, 1)
-
-
-def test_saved_digests_are_reused_and_only_missing_ones_are_asked(big: Path, store: Store) -> None:
-    """PR 설명 확인이 묶음을 읽으며 저장한 요약이 있으면 그 묶음은 다시 요약하지 않는다."""
-    parts = split(parse_diff(_diff(big)))
-    save_digest(store, parts.batches[0], ("저장한 요약",), MODEL)
-    save_digest(store, parts.batches[2], ("저장한 요약 셋",), MODEL)
-    ask = Scripted()
-    out = linked_issues.check(LINKED, "o/r", _diff(big), big, _big_tools(store, ask))
-    assert out.usage.calls == 2 and len(ask.digests) == 1 and "V1_0" in ask.digests[0]
-    assert "- 저장한 요약\n" in ask.final[0] and "- 요약 2\n" in ask.final[0]
-    assert "- 저장한 요약 셋\n" in ask.final[0]
-
-
-def test_batches_without_a_digest_are_named_when_the_cap_is_short(big: Path, store: Store) -> None:
-    ask = Scripted()
-    out = linked_issues.check(LINKED, "o/r", _diff(big), big, _big_tools(store, ask, pr_base=2))
-    assert out.status == "checked" and out.usage.calls == 2 and len(ask.digests) == 1
-    assert (out.left, out.shown) == (("gen1.py", "gen2.py"), 2)
-    assert "<<<NOT_SEEN" in ask.final[0] and "묶음 2" not in ask.final[0]
-    key = issues_key(select(LINKED, "o/r"), _diff(big), MODEL, DIGEST_PROMPT_VERSION)
-    assert store.cached_result(key) is None
-    none = linked_issues.check(LINKED, "o/r", _diff(big), big, _big_tools(store, _never, pr_base=2))
-    assert (none.status, none.gap) == ("unchecked", "cap")

@@ -139,7 +139,7 @@ class LocalOpenAIBackend:
         deadline: float,
     ) -> StructuredResult:
         """읽기가 끝난 대화에 최종 답을 묻는 턴을 더해, 도구 없이 스키마를 강제해 받는다."""
-        asked = [*messages, {"role": "user", "content": openai_pure.FINAL_ANSWER_PROMPT}]
+        asked = openai_pure.final_answer_messages(messages)
         return self._ask_messages(asked, schema, model, _remaining(deadline))
 
     def _ask_messages(

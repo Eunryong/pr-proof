@@ -129,7 +129,7 @@ def module_constants(worktree: Path, files: Sequence[str]) -> dict[str, list[str
 
 @dataclass
 class FixTools:
-    """수정 루프가 쓰는 외부 동작. 테스트에서는 가짜로 바꾼다."""
+    """수정 루프가 쓰는 외부 동작."""
 
     # (worktree, 사용자 메시지, *, system_prompt, model, max_budget_usd, tools, timeout) → 결과.
     # 그래프는 모델 구현의 fix(`ModelBackend.fix`)를 넘긴다

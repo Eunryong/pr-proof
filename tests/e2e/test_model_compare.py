@@ -10,17 +10,16 @@
 가벼운 모델이 두 번 연이어 실패하면 무거운 모델로 올라가는지 보는 표본이다.
 `PR_PROOF_MODEL_COMPARE_CASES`(쉼표)로 고를 수 있다.
 
-규칙 읽기·검사기 작성·수정 판단은 케이스의 답(가짜)이고 수정 작성만 실제 모델이다. 그래서 세 구성의
-차이는 수정 작성의 모델 하나다. 매번 빈 데이터 폴더다(저장된 답이 구성 사이에 섞이지 않게).
+모든 단계가 설정된 모델을 실제로 부른다(`PR_PROOF_REAL_MODEL=1`). 세 구성이 다른 곳은 수정 작성의
+모델이다. 매번 빈 데이터 폴더다(저장된 답이 구성 사이에 섞이지 않게).
 
 - 해소율: 수정안이 검증(4.8: 규칙 재검사, 테스트, 허용 범위)을 통과해 수정안 PR까지 간 비율.
 - 채택률: 수정안이 케이스가 정한 팀의 방식(`ADOPTED`)과 맞는 비율 (6.7의 평가 세트 정의).
 - 호출 수: 수정 작성의 실제 모델 호출 수(`ai_calls`의 줄), 상한에서 센 값(회차의 단계가 heavy면 3),
   모델로 다시 센 값(sonnet 3, haiku 1. 9.2의 "무거운 모델 호출은 3").
 
-기본은 가짜 수정 모델로 구성마다 한 번 돌아 하네스만 본다. `PR_PROOF_REAL_MODEL=1`이면 수정 작성만
-로그인된 claude를 부르고 `PR_PROOF_MODEL_COMPARE_RUNS`(기본 1)번씩 돈다.
-`PR_PROOF_MODEL_COMPARE_OUT`이 있으면 결과 JSON을 쓴다. 없으면 평가 명령의 출력 폴더
+구성마다 `PR_PROOF_MODEL_COMPARE_RUNS`(기본 1)번씩 돈다. 결과는 재는 값이라 통과·실패로 가르지
+않는다. `PR_PROOF_MODEL_COMPARE_OUT`이 있으면 결과 JSON을 쓴다. 없으면 평가 명령의 출력 폴더
 (`PR_PROOF_TOOLS_EVAL_OUT`)에 쓴다.
 """
 
@@ -42,21 +41,18 @@ from app.worker.deps import Deps
 from app.worker.evaluation.evaluation import TOOLS_OFF_OUT_ENV
 from app.worker.git import repo
 from app.worker.git.github import GitHub
-from app.worker.model.claude import claude_cli
 from app.worker.store.state import Store
 from tests.sandbox_names import TEST_NAMES
 
 from ..redis_stand_ins import MemoryKeys
 from ..worker.git.test_github import FakeGh
+from .conftest import needs_model
 from .test_lint_cases import _git, shared_venvs  # noqa: F401
 from .test_rules_cases import (
     BRANCH,
     CASES_DIR,
-    REAL_MODEL_ENV,
     _check,
     _remote,
-    scripted_fixer,
-    scripted_model,
 )
 
 RUNS_ENV: Final = "PR_PROOF_MODEL_COMPARE_RUNS"
@@ -90,7 +86,7 @@ def _integer_only(source: str) -> bool:
 
 # 케이스마다 팀의 방식. 검증을 통과한 수정안의 고친 파일을 받는다
 ADOPTED: Final[Mapping[str, Callable[[str], bool]]] = {
-    # 두 줄 모두 원래 있던 상수를 다시 쓴다 (가장 작은 변경, 2026-11-21)
+    # 두 줄 모두 원래 있던 상수를 다시 쓴다 (가장 작은 변경)
     "09-old-static-01-magic-value-fix": lambda text: (
         "order.coupon_percent > MAX_COUPON_PERCENT" in text
         and "discount(order) >= FREE_SHIPPING_MIN" in text
@@ -102,10 +98,6 @@ ADOPTED: Final[Mapping[str, Callable[[str], bool]]] = {
     "30-money-half-even-fix": lambda text: _integer_only(_discount_body(text)),
     "31-money-signed-half-even-fix": lambda text: _integer_only(_discount_body(text, "adjustment")),
 }
-
-
-def _real() -> bool:
-    return os.environ.get(REAL_MODEL_ENV) == "1"
 
 
 def _case(name: str, arm: str) -> dict:
@@ -132,9 +124,6 @@ def _deps(remote: dict, data: Path, shared_venvs: Path, tool_cache: Path, monkey
 def run_once(name: str, arm: str, n: int, tmp: Path, eval_repo: Path, shared_venvs,  # noqa: F811
              tool_cache: Path, monkeypatch) -> dict:  # fmt: skip
     case = _case(name, arm)
-    monkeypatch.setattr(claude_cli, "run_structured", scripted_model(case))
-    if not _real():
-        monkeypatch.setattr(claude_cli, "run_claude", scripted_fixer(case))
     folder = tmp / f"{name}-{arm}-{n}"
     folder.mkdir()
     remote = _remote(folder, eval_repo, case)
@@ -228,10 +217,10 @@ def test_adopted_reads_the_teams_way() -> None:
 @pytest.mark.docker
 def test_model_arms(eval_repo: Path, shared_venvs, tool_cache: Path, tmp_path: Path,  # noqa: F811
                     monkeypatch) -> None:  # fmt: skip
-    runs_n = int(os.environ.get(RUNS_ENV, "1")) if _real() else 1
+    needs_model()
     runs = [
         run_once(name, arm, n, tmp_path, eval_repo, shared_venvs, tool_cache, monkeypatch)
-        for n in range(runs_n) for name in _chosen() for arm in ARMS
+        for n in range(int(os.environ.get(RUNS_ENV, "1"))) for name in _chosen() for arm in ARMS
     ]  # fmt: skip
     table = summarize(runs)
     if folder := os.environ.get(OUT_ENV) or os.environ.get(TOOLS_OFF_OUT_ENV):
@@ -242,23 +231,3 @@ def test_model_arms(eval_repo: Path, shared_venvs, tool_cache: Path, tmp_path: P
         )
     for row in table:
         print(row)
-    if _real():
-        return
-    # 가짜 수정 모델은 구성과 관계없이 같은 편집을 하므로 세 구성의 결과가 같고, 반올림 케이스는
-    # 1회차에 테스트가 깨져 2회차에 통과한다
-    for row in table:
-        assert row["resolved"] == row["adopted"] == "5/5", row
-    rounding = [r for r in runs if r["case"] == "26-money-rounding-fix"]
-    assert all(r["fix_calls"] == 2 and r["attempts"] == [2] for r in rounding), rounding
-    # 짝수 쪽 반올림 케이스는 두 번 실패한 뒤 3회차에 통과한다. 3회차는 무거운 단계다
-    for name in ("30-money-half-even-fix", "31-money-signed-half-even-fix"):
-        half_even = {r["arm"]: r for r in runs if r["case"] == name}
-        assert all(r["attempts"] == [3] and r["tiers"] == ["light", "light", "heavy"]
-                   for r in half_even.values()), half_even  # fmt: skip
-        assert half_even["light_then_heavy"]["models"] == ["haiku", "haiku", "sonnet"]
-        assert half_even["light_only"]["models"] == ["haiku"] * 3
-    by_arm = {r["arm"]: r for r in rounding}
-    # 상한은 회차의 단계(light·heavy)로 센다. 무거운 모델만 구성의 sonnet도 1회차·2회차는 가벼운
-    # 단계라 1로 센다. 9.2의 "무거운 모델 3"으로 다시 센 값이 fix_units다
-    assert by_arm["heavy_only"]["fix_counted"] == by_arm["light_only"]["fix_counted"] == 2
-    assert by_arm["heavy_only"]["fix_units"] == 6 and by_arm["light_only"]["fix_units"] == 2

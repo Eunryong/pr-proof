@@ -12,19 +12,6 @@ pr:
   - file: orders/services/pricing.py
     find: "from orders.models.order import Order\n"
     replace: "import os\n\nfrom orders.models.order import Order\n"
-model:
-  rules:
-    - section: 코드 규칙 > import
-      quote: "안 쓰는 import를 남기지 않는다."
-      tool:
-        tool: ruff
-        codes: [F401]
-        reason: F401이 쓰지 않는 import를 잡는다
-        examples:
-          - {code: "import os\n", violates: true, lines: [1]}
-          - {code: "import json\nx = 1\n", violates: true, lines: [1]}
-          - {code: "import os\nprint(os.sep)\n", violates: false, lines: []}
-          - {code: "x = 1\n", violates: false, lines: []}
 expect:
   rule_line: "**규칙:** ⚠️ 위반 1건 (규칙 1개) · 수정안 #900"
   contains:
@@ -34,4 +21,3 @@ expect:
   fetched: [ruff/0.17.5]
   branch: pipeline/pr-1-fix-mechanical
   fix_file: orders/services/pricing.py
-  same_as_base: true

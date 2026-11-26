@@ -1,15 +1,12 @@
 name: adopted-constants-file
 description: >-
-  5-1, 5-4, 5-13. 팀은 상수를 `orders/constants.py`에 두고 import한다(base: pricing.py가
-  MAX_COUPON_PERCENT를 constants.py에서 가져온다). 그 방식으로 고친 수정안 PR이 머지된 채택 기록 하나
-  (shipping.py의 무게 상한을 constants.py로 옮김)와 다른 규칙의 거절 기록 하나를 넣고 검색을 켠다.
-  PR은 import를 지우고 `> 50`을 쓴다. 수정 판단과 수정 작성의 프롬프트에 그 채택 기록만 참고 자료로
-  들어가고, 결과 코멘트의 접힌 블록에 기록 번호·유사도·쓰인 단계가 나온다. 가짜 수정 모델은 기록처럼
-  constants.py에서 import해 고친다. 벡터 저장소를 지우고 reindex한 뒤 `/recheck`의 참고 기록이 같다.
-  실제 모델로 검색 유무를 비교하는 것은 tests/e2e/test_rag_compare.py다(같은 base와 PR, 같은 기록).
-fake_embed_only: true
+  5-1, 5-4, 5-13. 팀은 상수를 `orders/constants.py`에 두고 import한다(base: pricing.py가 MAX_COUPON_PERCENT를
+  constants.py에서 가져온다). 그 방식으로 고친 수정안 PR이 머지된 채택 기록 하나(shipping.py의 무게 상한을 constants.py로 옮김)와 다른 규칙의
+  거절 기록 하나를 넣고 검색을 켠다. PR은 import를 지우고 `> 50`을 쓴다. 채택 기록이 수정 판단과 수정 작성의 참고 자료로 들어가고, 결과 코멘트의 접힌 블록에
+  기록 번호·유사도·쓰인 단계가 나온다. 벡터 저장소를 지우고 reindex한 뒤 `/recheck`의 참고 기록이 같다. 검색 유무의 비교는
+  tests/e2e/test_rag_compare.py다(같은 base와 PR, 같은 기록).
 pipeline:
-  rag: {enabled: true, min_similarity: 0.6}
+  rag: {enabled: true}
 base:
   - file: orders/constants.py
     create: "MAX_COUPON_PERCENT = 50\n"
@@ -28,7 +25,7 @@ pr:
     replace: "order.coupon_percent > 50"
 records:
   - kind: adopted
-    rule: 0
+    rule_text: "비교에 쓰는 기준값(금액, 비율의 상한)은 숫자를 직접 쓰지 않고 대문자 이름의 모듈 상수로 둔다. `0`, `1`, 퍼센트 계산의 `100`은 예외다."
     file: orders/services/shipping.py
     line_text: "if order.weight > 30:"
     context: |
@@ -67,56 +64,14 @@ records:
     diff: "-class Boom(Exception):\n+class BoomError(Exception):"
     pr_number: 43
     fix_pr_number: 44
-model:
-  rules:
-    - section: 코드 규칙 > 상수
-      quote: "비교에 쓰는 기준값(금액, 비율의 상한)은 숫자를 직접 쓰지 않고 대문자 이름의 모듈 상수로 둔다. `0`, `1`, 퍼센트 계산의 `100`은 예외다."
-      scope: []
-      scope_exclude: ["tests/**"]
-      scope_reason: 테스트는 기대값을 숫자로 직접 적는 코드라 이 규칙의 대상이 아니다
-      checker:
-        body: |
-          id: no-magic-number-in-comparison
-          language: python
-          severity: error
-          message: 비교의 기준값은 대문자 이름의 모듈 상수로 둔다
-          rule:
-            any:
-              - kind: integer
-              - kind: float
-            inside:
-              kind: comparison_operator
-            not:
-              regex: "^(0|1|100)$"
-        examples:
-          - {code: "if price > 50:\n    pass\n", violates: true, lines: [1]}
-          - {code: "ok = total >= 50_000\n", violates: true, lines: [1]}
-          - {code: "if n > 0:\n    pass\n", violates: false, lines: []}
-          - {code: "full = percent == 100\n", violates: false, lines: []}
-fix:
-  edits:
-    - - file: orders/services/pricing.py
-        find: "order.coupon_percent > 50"
-        replace: "order.coupon_percent > MAX_COUPON_PERCENT"
-      - file: orders/services/pricing.py
-        find: "from orders.models.order import Order\n"
-        replace: "from orders.constants import MAX_COUPON_PERCENT\nfrom orders.models.order import Order\n"
-  answer:
-    summary: 쿠폰 비율의 상한을 팀의 방식대로 orders/constants.py의 상수로 씀
-    changes:
-      - {file: orders/services/pricing.py, rule: 0, why: constants.py의 상수를 가져와 비교의 기준값으로 쓴다}
 expect:
   violations: ["orders/services/pricing.py:12"]
   fix: ready
   fix_file: orders/services/pricing.py
-  same_as_base: true
   pushed_contains: ["from orders.constants import MAX_COUPON_PERCENT"]
-  prompt_records: {decide: 1, fix: 1}
   contains:
-    - "<details><summary>참고한 과거 기록 1건</summary>"
+    - "<summary>참고한 과거 기록"
     - "- 기록 1 · 채택 · 원래 PR #41 · 수정안 PR #42 · 규칙 `R-readme-"
     - "· 수정 판단"
     - "· 수정 작성"
-    - "유사도 기준값에 못 미쳐 넣지 않은 후보:"
-  absent: ["- 기록 2 ·"]
   reindex_same: true

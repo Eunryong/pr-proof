@@ -2,7 +2,6 @@ name: generated-sample-with-validation
 description: >-
   `33`의 짝. 같은 규칙에서 PR이 더한 생성 함수가 `validate_example`을 부르고 `"verified": True`를 넣으면
   위반이 없다. 실제 모델로만 돈다. 결론 줄은 "위반 없음"이고 그 규칙은 확인한 규칙으로 센다.
-real_only: true
 pipeline:
   rules: {docs: [GENERATION.md]}
   fix: {require_approval: true}

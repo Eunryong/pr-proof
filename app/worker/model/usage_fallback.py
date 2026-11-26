@@ -73,6 +73,17 @@ def active(model: ModelConfig, data_dir: Path, primary: ModelBackend) -> tuple[M
     return LimitWatch(primary, data_dir), False
 
 
+def check(result: _R, data_dir: Path, now: float) -> _R:
+    """호출의 결과가 사용량 한도라면 로컬 모델로 도는 끝 시각을 적고 환경 오류로 올린다. 아니면
+    결과를 그대로 돌려준다."""
+    if result.error != AIErrorKind.USAGE_LIMIT:
+        return result
+    until = usage_limit_pure.until(Limited(result.limit_resets_at), now)
+    mark_limited(data_dir, until)
+    log.warning("claude 사용량 한도에 닿음. %s까지 로컬 모델로 돈다", time.ctime(until))
+    raise UsageLimitReached(f"claude 사용량 한도에 닿음: {result.detail}")
+
+
 class LimitWatch:
     """모델 구현을 감싸, 호출이 사용량 한도로 실패하면 풀리는 시각을 적고 환경 오류로 올린다."""
 
@@ -106,9 +117,4 @@ class LimitWatch:
         return self._checked(self._inner.fix(worktree, prompt, **kwargs))
 
     def _checked(self, result: _R) -> _R:
-        if result.error != AIErrorKind.USAGE_LIMIT:
-            return result
-        until = usage_limit_pure.until(Limited(result.limit_resets_at), time.time())
-        mark_limited(self._data_dir, until)
-        log.warning("claude 사용량 한도에 닿음. %s까지 로컬 모델로 돈다", time.ctime(until))
-        raise UsageLimitReached(f"claude 사용량 한도에 닿음: {result.detail}")
+        return check(result, self._data_dir, time.time())

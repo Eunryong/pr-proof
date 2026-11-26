@@ -3,12 +3,11 @@
 - `python -m app.worker.cli reindex [--repo owner/name]`: SQLite의 기록(`records`)으로 벡터 저장소
   (`data_dir/chroma/`)를 다시 만든다 (DESIGN.md 6.5). 벡터 저장소가 지워졌거나 임베딩 모델을 바꿨을
   때 쓴다. 선택 의존성 `[rag]`가 필요하고, 처음이면 임베딩 모델을 받는다.
-- `python -m app.worker.cli eval [--baseline] [--real-model] [--label 이름] [--db 경로]
-  [--out 폴더]`: 평가 세트 전부(`tests/e2e`의 docker 테스트, 도구를 끈 평가 포함)를 돌려
-  `eval_runs`에 남긴다 (DESIGN.md 13절 6단계). `--baseline`이면 기준선으로 남기고, 아니면 같은
-  종류(가짜 모델 / 실제 모델)의 가장 최근 기준선과 비교해 보인다. 프롬프트나 모델을 바꾼 뒤 이 명령
-  하나로 비교한다.
-  `--real-model`은 claude를 부른다. `--out`을 주면 그 폴더에 junit, 도구를 끈 평가의 JSON, 실제
+- `python -m app.worker.cli eval [--baseline] [--label 이름] [--db 경로] [--out 폴더]`: 평가 세트
+  전부(`tests/e2e`의 docker 테스트, 도구를 끈 평가 포함)를 돌려 `eval_runs`에 남긴다 (DESIGN.md
+  13절 6단계). 설정된 모델을 실제로 부른다. `--baseline`이면 기준선으로 남기고, 아니면 가장 최근
+  기준선과 비교해 보인다. 프롬프트나 모델을 바꾼 뒤 이 명령 하나로 비교한다.
+  `--out`을 주면 그 폴더에 junit, 도구를 끈 평가의 JSON,
   모델의 호출 기록(`memo.jsonl`)을 남긴다. 그 폴더에 이미 `memo.jsonl`이 있으면 그 답을 다시 쓴다.
 """
 
@@ -30,19 +29,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("command", choices=["reindex", "eval"])
     parser.add_argument("--repo", action="append", help="reindex할 저장소 (여러 번 줄 수 있음)")
     parser.add_argument("--baseline", action="store_true", help="eval: 기준선으로 남긴다")
-    parser.add_argument("--real-model", action="store_true", help="eval: 실제 claude를 부른다")
     parser.add_argument("--label", default="", help="eval: 이 실행의 이름")
     parser.add_argument("--db", type=Path, help="eval: 저장할 SQLite (기본은 설정의 data_dir)")
     parser.add_argument("--out", type=Path, help="eval: junit·도구를 끈 평가·호출 기록을 남길 폴더")
     args = parser.parse_args(argv)
     if args.command == "eval":
         db = args.db or config.load_config().db_path
-        return evaluate(db, baseline=args.baseline, real_model=args.real_model, label=args.label,
-                        out=args.out)  # fmt: skip
+        return evaluate(db, baseline=args.baseline, label=args.label, out=args.out)
     return reindex(config.load_config(), args.repo)
 
 
-def evaluate(db: Path, *, baseline: bool, real_model: bool, label: str, out: Path | None = None,
+def evaluate(db: Path, *, baseline: bool, label: str, out: Path | None = None,
              runner=subprocess.run) -> int:  # noqa: ANN001  # fmt: skip
     """runner(`subprocess.run`과 같은 꼴)는 테스트가 바꾼다."""
     from app.worker.evaluation import eval_run_pure, evaluation
@@ -50,13 +47,13 @@ def evaluate(db: Path, *, baseline: bool, real_model: bool, label: str, out: Pat
 
     engine = state.open_engine(db)
     try:
-        stored = evaluation.evaluate(engine, REPO_ROOT, baseline=baseline, real_model=real_model,
-                                     label=label, runner=runner, out=out)  # fmt: skip
+        stored = evaluation.evaluate(engine, REPO_ROOT, baseline=baseline, label=label,
+                                     runner=runner, out=out)  # fmt: skip
     except evaluation.EvalError as e:
         print(f"평가를 남기지 못함: {e}", file=sys.stderr)
         return 1
     kind = "기준선" if baseline else "실행"
-    print(f"eval_runs #{stored.run_id} ({kind}, {'실제 모델' if real_model else '가짜 모델'})")
+    print(f"eval_runs #{stored.run_id} ({kind})")
     print(eval_run_pure.render_summary(stored.summary))
     if not baseline:
         if stored.baseline is None:
@@ -68,8 +65,7 @@ def evaluate(db: Path, *, baseline: bool, real_model: bool, label: str, out: Pat
 
 
 def reindex(settings: config.PipelineConfig, repos: list[str] | None, encoder=None) -> int:  # noqa: ANN001
-    """encoder(`memory.Encoder`)를 주지 않으면 설정의 임베딩 모델을 받아 쓴다. 테스트는 가짜를
-    넘긴다."""
+    """encoder(`memory.Encoder`)를 주지 않으면 설정의 임베딩 모델을 받아 쓴다."""
     from app.shared.embed_models_pure import EMBED_MODELS
     from app.worker.store import memory
     from app.worker.store.state import Store
