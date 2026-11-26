@@ -115,6 +115,30 @@ def fix_pr_records(
     ]
 
 
+_FAILURE_LABELS: Final[Mapping[str, str]] = {
+    "failed": "검증 실패",
+    "dropped": "수정안 버림",
+    "new_violations": "새 위반 발생",
+    "out_of_scope": "범위 밖 변경",
+    "secret": "비밀값 감지",
+    "tests_changed": "테스트 실패",
+    "unchecked": "재검사 실패",
+    "too_big": "크기 상한 초과",
+}
+
+
+def format_failure_detail(detail: str, status: str = "") -> str:
+    """실패 기록의 detail 앞에 실패 종류 표식을 붙여 수정 방법 외의 실패와 구별한다."""
+    text = detail.strip()
+    if status == "failed" and "남은 위반" in text:
+        label = "남은 위반"
+    else:
+        label = _FAILURE_LABELS.get(status, "")
+    if label and not text.startswith(f"[{label}]"):
+        text = f"[{label}] {text}" if text else f"[{label}]"
+    return text[:MAX_DETAIL_CHARS]
+
+
 def failure_records(
     *,
     repo: str,
@@ -124,8 +148,10 @@ def failure_records(
     targets: Sequence[Target],
     patch: str,
     detail: str,
+    status: str = "",
 ) -> list[NewRecord]:
     """수정이 검증에 실패했을 때 대상 위반마다 하나. patch는 마지막 회차가 남긴 diff다."""
+    formatted = format_failure_detail(detail, status)
     return [
         _from_target(
             t,
@@ -136,7 +162,7 @@ def failure_records(
             repo=repo,
             pr_number=pr_number,
             commit_sha=head_sha,
-            detail=detail[:MAX_DETAIL_CHARS],
+            detail=formatted,
         )  # fmt: skip
         for t in targets
     ]

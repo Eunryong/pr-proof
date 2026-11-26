@@ -45,6 +45,7 @@ from app.worker.store.rag_pure import (
     EMPTY,
     Retrieval,
     Selection,
+    filter_decide_records,
     merge_retrievals,
     query_text,
     render_records,
@@ -69,8 +70,13 @@ def decide(
     per_call: int = MAX_PER_CALL,
     retriever: FindsRecords | None = None,
     context_of: Callable[[Violation], str] = lambda v: "",
+    manual: bool = False,
+    current_pr: int | None = None,
 ) -> Decided:
     """found의 위반마다 수정 판단 하나. model은 `model.decide`다. per_call개씩 묶어 묻는다.
+
+    manual이 True(`/fix`로 사람이 직접 요청)이면 파이프라인 표를 통과한 위반은 지난 실패 기록이나
+    모델의 "고치지 않음" 판단에 막히지 않고 바로 모델 수정 대상으로 넘긴다 (pr-proof#149).
 
     retriever가 있으면(검색을 켬) 모델에 넘기는 위반마다 같은 저장소의 채택·거절·실패 기록을 찾아
     프롬프트에 참고 자료로 넣는다 (6.2). 한 호출의 기록은 `rag.max_records`건까지이므로, 고른 기록이
@@ -79,13 +85,24 @@ def decide(
     rules = {rule_id: o.rule for rule_id, o in outcomes_by_rule(found).items()}
     planned = plan(found.violations, {rid: r.fix for rid, r in rules.items()}, tests)
     decided = {d.violation_id: d for d in planned.decided}
+    if manual:
+        for v in planned.for_model:
+            decided[v.id] = FixDecision(
+                v.id, "fix", "pipeline", method="model", why="사람이 /fix로 다시 시도함"
+            )
+        return Decided(tuple(decided[v.id] for v in found.violations))
     budget = budget.with_targets(open_targets(planned.decided) + len(planned.for_model))
     diff = changes_diff.decode("utf-8", errors="replace")
     questions = [
         Question(v, rules[v.rule_id], hunk_around(diff, v.file, v.line, HUNK_RADIUS))
         for v in planned.for_model
     ]
-    chosen = {q.violation.id: _records_for(q, retriever, context_of) for q in questions}
+    chosen = {
+        q.violation.id: filter_decide_records(
+            _records_for(q, retriever, context_of), current_pr=current_pr
+        )
+        for q in questions
+    }
     keys = {q.violation.id: decision_key(q, model, chosen[q.violation.id].ids) for q in questions}
     to_ask: list[Question] = []
     for q in questions:
@@ -102,7 +119,7 @@ def decide(
     for q in to_ask:  # 같은 기록을 넣는 위반끼리 (기록이 없는 위반은 한 묶음)
         groups.setdefault(chosen[q.violation.id].ids, []).append(q)
     for group in groups.values():
-        records = render_records(chosen[group[0].violation.id].chosen)
+        records = render_records(chosen[group[0].violation.id].chosen, current_pr=current_pr)
         for start in range(0, len(group), per_call):
             chunk = group[start : start + per_call]
             asked = _ask(chunk, keys, store=store, budget=budget, model=model, ask=ask,
