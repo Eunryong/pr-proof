@@ -3,7 +3,7 @@
 예제 리포(`Eunryong/eval`)에 위반을 일부러 넣은 PR을 만들고, 파이프라인이 무엇을 찾고 어떻게 고쳐야 하는지를 정답으로 적은 것이다 (docs/DESIGN.md "회귀 테스트").
 
 - 모델이 끼는 케이스는 설정된 모델을 실제로 부른다. 모델의 답을 케이스에 적지 않는다. 기대는 글이 아니라 결과(위반 위치, 수정안이 올라갔는가, 바뀐 파일, 만든 테스트가 올라갔는가)로 적는다. `PR_PROOF_REAL_MODEL=1`이 없으면 이 케이스들은 건너뛴다.
-- `lint/*.yaml`: 도구 설정의 규칙 묶음과 기계적 수정 묶음(완료 기준 3-1). `tests/e2e/test_lint_cases.py`가 읽어, 로컬 git 원격 + 실제 ruff(도구 캐시에 받음) + 실제 샌드박스 테스트로 처음부터 끝까지 돌린다. GitHub만 가짜로 바꾼다. 하네스가 base에 빈 `ruff.toml`을 두고 규칙 문서(README.md)를 지워, 모델을 부르지 않는다.
+- `lint/*.yaml`: 도구 설정의 규칙 묶음과 기계적 수정 묶음(완료 기준 3-1). `tests/e2e/test_lint_cases.py`가 읽어, 로컬 git 원격 + 실제 ruff(도구 캐시에 받음) + 실제 샌드박스 테스트로 처음부터 끝까지 돌린다. GitHub만 가짜로 바꾼다. 하네스가 base에 빈 `ruff.toml`을 두고 규칙 문서(README.md)를 지워 문서 규칙은 보지 않는다. PR 설명 확인이 케이스마다 모델을 한 번 부른다.
 - `rules/*.yaml`: 문서 규칙 케이스. 예제 리포 README의 "코드 규칙" 절의 규칙을 읽어 PR이 바꾼 줄의 위반을 찾고 고치는지 본다. `tests/e2e/test_rules_cases.py`가 돌린다. `17`–`30`은 팀 고유 규칙이고 `26`, `30`, `31-money-signed`는 모델 비교의 표본이다.
 - `judge/*.yaml`: 검사기로 가릴 수 없는 규칙의 모델 판단 케이스(4-1, 4-2, 4-5). `tests/e2e/test_judge_cases.py`가 돌리고, 더한 키(`record_only`, `expect.judge_calls`·`next_commit`·`then_fix`·`mechanical_branch`)는 그 파일의 독스트링에 있다.
 - `pr/*.yaml`: PR 단위 확인 케이스(커밋 형식, PR 본문). `tests/e2e/test_pr_cases.py`.
