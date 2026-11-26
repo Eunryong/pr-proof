@@ -64,7 +64,7 @@ def test_prompt_puts_rule_and_violations_inside_the_data_block_only() -> None:
     assert f"<<<END DATA tag={tag}>>>" not in body  # 자료가 경계를 흉내 내도 같은 tag가 아니다
     for text in (RULE.text, "README.md > 코드 규칙 > 상수", "a.py:2", "LIMIT", "고친 뒤 줄 9"):
         assert text in body
-    assert "바꿀 수 있는 파일: a.py" in body
+    assert "위반이 있는 파일: a.py" in body
     assert "테스트" not in head  # 지시는 시스템 프롬프트에만 있다
     assert (
         "테스트 파일" in model_fix_pure.SYSTEM_PROMPT

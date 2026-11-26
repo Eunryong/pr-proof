@@ -211,7 +211,7 @@ def build_prompt(
     test_dir은 새 테스트 파일을 둘 폴더다."""
     files = sorted({t.violation.file for t in targets})
     data = [
-        f"바꿀 수 있는 파일: {', '.join(files)}",
+        f"위반이 있는 파일: {', '.join(files)}",
         f"새 테스트 파일: {test_dir}/{GENERATED_TEST_PREFIX}<이름>.py (이름은 영문 소문자·숫자·"
         "밑줄 40자까지, 새 파일만)",
     ]

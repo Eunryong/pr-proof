@@ -80,7 +80,10 @@ def _reasons(entries, allowed=("a.py",), policy=AI_POLICY, **kw) -> list[tuple[s
         (StatusEntry("A ", "a.py"), []),
         (StatusEntry("??", "a.py"), []),
         (StatusEntry(" D", "a.py"), []),
-        (StatusEntry(" M", "b.py"), [("M", "b.py", "허용 목록 밖")]),
+        (StatusEntry(" M", "b.py"), []),  # 위반을 고치며 같이 바꾼 다른 코드 파일
+        (StatusEntry(" M", "b.toml"), [("M", "b.toml", "허용 목록 밖")]),
+        (StatusEntry(" D", "b.py"), [("D", "b.py", "허용 목록 밖")]),
+        (StatusEntry("??", "b.py"), [("??", "b.py", "허용 목록 밖")]),
         (StatusEntry("UU", "a.py"), [("UU", "a.py", "병합 충돌 상태")]),
         (StatusEntry(" T", "a.py"), [("T", "a.py", "파일 종류 변경")]),
         (StatusEntry("R ", "a.py", "old.py"), [("R", "old.py", "허용 목록 밖")]),
@@ -128,10 +131,10 @@ def test_symlink_and_new_ignored() -> None:
 
 
 def test_every_violation_is_listed_and_detail_has_reasons() -> None:
-    entries = [StatusEntry(" M", "b.py"), StatusEntry(" M", ".github/ci.yml")]
+    entries = [StatusEntry(" M", "b.cfg"), StatusEntry(" M", ".github/ci.yml")]
     result = judge_scope(entries, ["a.py"], AI_POLICY)
     assert not result.ok
-    assert result.detail == "M b.py (허용 목록 밖), M .github/ci.yml (`.github/` 변경)"
+    assert result.detail == "M b.cfg (허용 목록 밖), M .github/ci.yml (`.github/` 변경)"
     assert judge_scope([], ["a.py"], AI_POLICY).ok
 
 
@@ -208,3 +211,23 @@ def test_generated_test_name_rule() -> None:
     assert not is_generated_test("tests/test_pipeline_" + "a" * 41 + ".py", "tests")
     assert not is_generated_test("tests/test_pipeline_a.pyc", "tests")
     assert not is_generated_test("tests/../test_pipeline_a.py", "tests")
+
+
+def test_other_code_files_are_accepted_only_as_edits_of_the_same_kind() -> None:
+    """모델 수정은 위반을 고치며 같이 바꾼 다른 코드 파일의 수정을 받는다. 테스트 파일, 설정 파일,
+    목록 밖의 새 파일·이름 변경은 여전히 밖이다."""
+    allowed = ["orders/models/cart.py"]
+    assert judge_scope([StatusEntry(" M", "orders/api/cart_handlers.py")], allowed, AI_POLICY).ok
+    outside = [
+        StatusEntry(" M", "tests/test_cart_handlers.py"),
+        StatusEntry(" M", "pyproject.toml"),
+        StatusEntry(" M", "Makefile"),
+        StatusEntry("??", "orders/api/new_handlers.py"),
+        StatusEntry("R ", "orders/api/moved.py", "orders/api/cart_handlers.py"),
+    ]
+    for entry in outside:
+        assert not judge_scope([entry], allowed, AI_POLICY).ok, entry
+    # 기계적 수정은 위반이 있는 파일만이다
+    assert not judge_scope(
+        [StatusEntry(" M", "orders/api/cart_handlers.py")], allowed, MECHANICAL_POLICY
+    ).ok

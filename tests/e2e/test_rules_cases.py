@@ -417,11 +417,13 @@ def _check_fix(expect: dict, section: str, gh: FakeGh, remote: dict, fixer, real
     pushed = _git(remote["path"], "rev-parse", BRANCH)
     assert _git(remote["path"], "rev-parse", f"{pushed}^") == remote["head"]
     changed = _git(remote["path"], "diff", "--name-only", remote["head"], pushed).split()
+    # fix_also: 위반을 고치며 같이 바꾼, 위반이 없는 파일
+    code = sorted([expect["fix_file"], *expect.get("fix_also", ())])
     if expect.get("generated_tests"):
         tests = [f for f in changed if re.fullmatch(r"tests/test_pipeline_[a-z0-9_]+\.py", f)]
-        assert tests and sorted(changed) == sorted([expect["fix_file"], *tests]), changed
+        assert tests and sorted(changed) == sorted([*code, *tests]), changed
     else:
-        assert changed == [expect["fix_file"]]
+        assert sorted(changed) == code, changed
     text = _git(remote["path"], "show", f"{pushed}:{expect['fix_file']}")
     if expect.get("same_as_base") and not real_model:
         assert text == _git(remote["path"], "show", f"{remote['base']}:{expect['fix_file']}")
