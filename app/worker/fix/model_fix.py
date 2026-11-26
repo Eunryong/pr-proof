@@ -127,6 +127,60 @@ def module_constants(worktree: Path, files: Sequence[str]) -> dict[str, list[str
     return result
 
 
+MAX_SIBLING_FILES: Final = 10
+MAX_SIBLING_FUNCS: Final = 12
+
+
+def sibling_helpers(worktree: Path, files: Sequence[str]) -> dict[str, list[str]]:
+    """대상 파일과 같은 폴더의 다른 `.py` 모듈에 있는 공개 함수 시그니처.
+
+    호스트에서 파싱만 하고 실행하지 않는다. 모델이 인접 모듈(`pricing.py` 등)의 기존 계산
+    함수를 중복 구현하지 않고 재사용하도록 참고 자료로 넘긴다.
+    """
+    target_set = set(files)
+    sibling_paths: list[str] = []
+    seen_dirs: set[Path] = set()
+    for rel in files:
+        parent = (worktree / rel).parent
+        if parent in seen_dirs or not parent.is_dir():
+            continue
+        seen_dirs.add(parent)
+        try:
+            entries = sorted(parent.glob("*.py"))
+        except OSError:
+            continue
+        for p in entries:
+            try:
+                rel_p = p.relative_to(worktree).as_posix()
+            except ValueError:
+                continue
+            name = p.name
+            if rel_p in target_set or name.startswith(("test_", "_")):
+                continue
+            sibling_paths.append(rel_p)
+            if len(sibling_paths) >= MAX_SIBLING_FILES:
+                break
+        if len(sibling_paths) >= MAX_SIBLING_FILES:
+            break
+    result: dict[str, list[str]] = {}
+    for rel_p, source in read_sources(worktree, sibling_paths).items():
+        try:
+            tree = ast.parse(source)
+        except (SyntaxError, ValueError, RecursionError, MemoryError):
+            continue
+        sigs: list[str] = []
+        for node in tree.body:
+            is_fn = isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            if is_fn and not node.name.startswith("_"):
+                args = [a.arg for a in node.args.args]
+                sigs.append(f"{node.name}({', '.join(args)})")
+                if len(sigs) >= MAX_SIBLING_FUNCS:
+                    break
+        if sigs:
+            result[rel_p] = sigs
+    return result
+
+
 @dataclass
 class FixTools:
     """수정 루프가 쓰는 외부 동작."""
@@ -344,6 +398,7 @@ def fix_violations(
     test_dir = generated_test_dir(_top_dirs(worktree))
     policy = replace(AI_POLICY, generated_test_dir=test_dir)
     constants = module_constants(worktree, allowed)
+    helpers = sibling_helpers(worktree, allowed)
     start = file_hashes(worktree, allowed)
     sources_before = read_sources(worktree, allowed)  # 만든 테스트를 고치기 전 코드로 판정한다
     # 모델이 찾은 위반은 도구로 다시 확인하지 못해 그 줄이 바뀌었는지만 본다 (4.8의 5번).
@@ -423,7 +478,7 @@ def fix_violations(
         if isinstance(call, Denied):
             raise _CapHit(call.reason)
         prompt = model_fix_pure.build_prompt(
-            asked, constants=constants, feedback=feedback,
+            asked, constants=constants, helpers=helpers, feedback=feedback,
             current_diff=repo.head_diff(worktree) if attempt > 1 else "", records=records,
             test_dir=test_dir,
         )  # fmt: skip

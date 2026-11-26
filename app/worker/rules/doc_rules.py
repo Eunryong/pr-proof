@@ -251,7 +251,7 @@ def author(
             read.rules, ruleset_key=read.key, store=rt.store, budget=rt.budget,
             models=rt.models, ask=rt.backend.ask, sandbox=rt.sandbox, ruff=rt.ruff,
             is_stale=is_stale, retriever=rt.retriever, on_retrieval=on_retrieval,
-            secrets=rt.secrets,
+            secrets=rt.secrets, max_attempts=rt.backend.capabilities.max_checker_attempts,
         )  # fmt: skip
     except SandboxError as e:
         log.warning("검사기 확인 샌드박스 실패: %s", e)

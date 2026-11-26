@@ -249,6 +249,7 @@ def plan_and_author(
     retriever: FindsRecords | None = None,
     on_retrieval: Callable[[Retrieval], None] = lambda r: None,
     secrets: Sequence[str] = (),
+    max_attempts: int = MAX_ATTEMPTS,
 ) -> tuple[RuleCheck, ...]:
     """규칙마다 검사 방법을 정하고, 도구나 검사기가 필요한 규칙은 예시로 확인한다.
 
@@ -264,7 +265,7 @@ def plan_and_author(
     scope = RulesetScope(ruleset_key, len(rules))
     author = _Author(store=store, budget=budget, scope=scope, models=models, ask=ask,
                      sandbox=sandbox, ruff=ruff, retriever=retriever, on_retrieval=on_retrieval,
-                     secrets=secrets)  # fmt: skip
+                     secrets=secrets, max_attempts=max_attempts)  # fmt: skip
     out: list[RuleCheck] = []
     for rule in rules:
         if is_stale():
@@ -302,11 +303,13 @@ class _Author:
         retriever: FindsRecords | None = None,
         on_retrieval: Callable[[Retrieval], None] = lambda r: None,
         secrets: Sequence[str] = (),
+        max_attempts: int = MAX_ATTEMPTS,
     ) -> None:
         self.store, self.budget, self.scope = store, budget, scope
         self.models, self.ask, self.sandbox = models, ask, sandbox
         self.ruff = ruff
         self.retriever, self.on_retrieval, self.secrets = retriever, on_retrieval, secrets
+        self.max_attempts = max(1, max_attempts)
 
     def _records(self, rule: Rule) -> Selection:
         """비슷한 규칙의 검사기 기록 (6.2). 검색을 켜지 않았으면 빈 선택."""
@@ -379,10 +382,10 @@ class _Author:
             detail = final.get("detail", "")
         elif looks_at_paths(rule):
             route = None
-            detail = f"{MAX_ATTEMPTS}회 안에 예시를 통과하지 못함: {final.get('detail', '')}"
+            detail = f"{self.max_attempts}회 안에 예시를 통과하지 못함: {final.get('detail', '')}"
         else:
             route = "attempts"
-            detail = f"{MAX_ATTEMPTS}회 안에 예시를 통과하지 못함: {final.get('detail', '')}"
+            detail = f"{self.max_attempts}회 안에 예시를 통과하지 못함: {final.get('detail', '')}"
         log.info("검사기를 채택하지 않음 (%s, %s): %s", rule.id, route or "경로 규칙", detail)
         self.store.save_checker(key, rule_id=rule.id, accepted=False, checker_json=None,
                                 detail=detail, attempts_json=attempts,
@@ -620,6 +623,9 @@ class _Author:
                 return Verdict("pass")
             return failed(state, f"예시 {len(problems)}개를 틀리게 가림", (*problems, previous))
 
-        policy = LoopPolicy(max_attempts=MAX_ATTEMPTS, may_call=self.budget.may_call(self.scope),
-                            heavy_after=None)  # fmt: skip
+        policy = LoopPolicy(
+            max_attempts=self.max_attempts,
+            may_call=self.budget.may_call(self.scope),
+            heavy_after=None,
+        )
         return build_loop(f"author_checker[{rule.id}]", write, verify, policy)
