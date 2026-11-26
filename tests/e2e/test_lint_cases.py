@@ -9,7 +9,8 @@ GitHub만 가짜(FakeGh)이고 git·ruff(도구 캐시에 받음)·Docker는 진
 예제 리포에는 ruff 설정이 없다. v1은 그런 base에 ruff 기본 규칙을 썼지만 파이프라인이 정한 규칙은
 없앴다(3-3). 그래서 이 케이스의 base에는 빈 `ruff.toml`(ruff의 기본 설정)을 둔다. 케이스 파일은 v1
 그대로다. 바뀐 것은 수정안 브랜치의 이름(`fix-lint` → `fix-mechanical`)뿐이다.
-이 하네스는 문서 규칙을 보지 않는다. 원격에서 규칙 문서(README.md)를 지워 모델을 부를 일이 없다.
+이 하네스는 문서 규칙을 보지 않는다(원격에서 규칙 문서 README.md를 지운다). 모델은 PR 설명 확인이
+케이스마다 한 번 부르므로 `PR_PROOF_REAL_MODEL=1`일 때만 돈다.
 """
 
 import json
@@ -34,6 +35,7 @@ from tests.sandbox_names import TEST_NAMES
 
 from ..redis_stand_ins import MemoryKeys
 from ..worker.git.test_github import FakeGh
+from .conftest import needs_model
 
 CASES_DIR: Final = Path(__file__).resolve().parents[2] / "eval" / "lint"
 CASES: Final = sorted(CASES_DIR.glob("*.yaml"))
@@ -117,6 +119,7 @@ def _finding_codes(body: str) -> list[str]:
 @pytest.mark.parametrize("case_path", CASES, ids=[p.stem for p in CASES])
 def test_lint_case(case_path: Path, eval_repo: Path, shared_venvs: Path, tmp_path: Path,
                    monkeypatch) -> None:  # fmt: skip
+    needs_model()
     case = yaml.safe_load(case_path.read_text())
     expect = case["expect"]
     remote = _remote(tmp_path, eval_repo, case)
@@ -157,7 +160,8 @@ def test_lint_case(case_path: Path, eval_repo: Path, shared_venvs: Path, tmp_pat
             assert "자동 수정" not in rules
         case "tests":
             assert status == "failed" and "자동 수정" not in rules
-            assert "직접 고쳐야 함 1건 (테스트가 실패함 1건)" in body
+            assert ("직접 고쳐야 함 1건 · 테스트가 실패해 고친 것을 확인할 수 없으므로 "
+                    "수정안을 만들지 않았습니다.") in body  # fmt: skip
             assert "**기계적 수정안:**" not in body
     if expect["proposal"] != "auto":
         assert _git(remote["path"], "branch", "--list", BRANCH) == ""
