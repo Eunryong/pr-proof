@@ -14,7 +14,13 @@ import yaml
 from pydantic import BaseModel, Field, field_validator
 
 from app.shared.embed_models_pure import E5_SMALL, EMBED_MODELS
-from app.shared.model_names_pure import MODEL_NAME_PATTERN
+from app.shared.model_names_pure import (
+    CLAUDE_CLI_BACKEND,
+    DEFAULT_LOCAL_OPENAI_URL,
+    KNOWN_BACKENDS,
+    MODEL_NAME_PATTERN,
+    is_local_openai_url,
+)
 
 DEFAULT_CONFIG_DIR: Final = Path.home() / ".config" / "pipeline"
 CONFIG_DIR_ENV: Final = "PIPELINE_CONFIG_DIR"
@@ -50,10 +56,33 @@ class CallMaxima(BaseModel):
 
 
 class ModelConfig(BaseModel):
+    # 모델 구현 이름 ("claude-cli" 또는 "local-openai"). 기본은 claude CLI
+    backend: str = CLAUDE_CLI_BACKEND
+    # local-openai 구현이 붙는 로컬 서버 주소 (localhost / 127.0.0.1 / [::1]만 허용)
+    base_url: str = DEFAULT_LOCAL_OPENAI_URL
     # 이 컴퓨터가 처리하는 모든 저장소의 모든 단계에 쓸 모델 (DESIGN.md 10절 "파이프라인 쪽 설정").
     # 저장소의 `.pipeline.yaml`이 단계별로 적은 값이 앞서고, 없으면 코드의 단계별 기본값이다
     default: str | None = Field(default=None, pattern=MODEL_NAME_PATTERN)
     calls: CallMaxima = CallMaxima()
+
+    @field_validator("backend")
+    @classmethod
+    def _known_backend(cls, value: str) -> str:
+        if value not in KNOWN_BACKENDS:
+            known = ", ".join(KNOWN_BACKENDS)
+            raise ValueError(f"받을 수 있는 모델 구현이 아님: {value} (가능: {known})")
+        return value
+
+    @field_validator("base_url")
+    @classmethod
+    def _local_base_url(cls, value: str) -> str:
+        cleaned = value.rstrip("/")
+        if not is_local_openai_url(cleaned):
+            raise ValueError(
+                "로컬 모델 서버 주소는 http://127.0.0.1, http://localhost, "
+                f"http://[::1]만 허용: {value}"
+            )
+        return cleaned
 
 
 class RagConfig(BaseModel):

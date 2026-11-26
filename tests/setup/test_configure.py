@@ -825,7 +825,7 @@ def test_model_shows_sets_and_resets_keeping_other_settings(env) -> None:
     assert code == 0 and "이미 기본값" in out
 
 
-@pytest.mark.parametrize("name", ["-x", "opus 4", "a/b"])
+@pytest.mark.parametrize("name", ["-x", "opus 4", "a;b"])
 def test_model_refuses_a_bad_name_with_examples(env, name: str) -> None:
     env["dir"].mkdir()
     (env["dir"] / "config.yaml").write_text("repos: []\n")

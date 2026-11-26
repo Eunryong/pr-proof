@@ -85,8 +85,20 @@ def test_default_model_is_optional_and_checked(tmp_path: Path) -> None:
     assert config.load_config(tmp_path).model.default is None
     (tmp_path / "config.yaml").write_text("repos: [o/r]\nmodel:\n  default: opus\n")
     assert config.load_config(tmp_path).model.default == "opus"
+    (tmp_path / "config.yaml").write_text(
+        "repos: [o/r]\nmodel:\n  backend: local-openai\n  base_url: http://127.0.0.1:11434/v1/\n"
+        "  default: hf.co/unsloth/Inkling-2-Mini-GGUF:Q4_K_M\n"
+    )
+    loaded = config.load_config(tmp_path)
+    assert loaded.model.backend == "local-openai"
+    assert loaded.model.base_url == "http://127.0.0.1:11434/v1"
+    assert loaded.model.default == "hf.co/unsloth/Inkling-2-Mini-GGUF:Q4_K_M"
     with pytest.raises(ValueError):
         config.PipelineConfig(repos=[], model={"default": "-x"})
+    with pytest.raises(ValueError):
+        config.PipelineConfig(repos=[], model={"backend": "unknown"})
+    with pytest.raises(ValueError):
+        config.PipelineConfig(repos=[], model={"base_url": "https://api.openai.com/v1"})
 
 
 def test_rag_embed_model_must_be_a_pinned_model() -> None:

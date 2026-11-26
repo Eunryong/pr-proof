@@ -232,12 +232,22 @@ def test_rag_size_says_both_the_packages_and_the_model() -> None:
     assert "패키지 수백 MB" in text and "약 487MB" in text
 
 
-@pytest.mark.parametrize("name", ["sonnet", "opus", "claude-sonnet-4-5", "sonnet[1m]"])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "sonnet",
+        "opus",
+        "claude-sonnet-4-5",
+        "sonnet[1m]",
+        "inkling-2-mini",
+        "hf.co/unsloth/Inkling-2-Mini-GGUF:Q4_K_M",
+    ],
+)
 def test_model_names_of_the_right_shape(name: str) -> None:
     assert pure.model_name_problem(name) is None
 
 
-@pytest.mark.parametrize("name", ["-x", "", "opus 4", "a/b", "--model"])
+@pytest.mark.parametrize("name", ["-x", "", "opus 4", "a;b", "--model"])
 def test_bad_model_name_is_explained_with_examples(name: str) -> None:
     problem = pure.model_name_problem(name)
     assert problem is not None and pure.MODEL_EXAMPLES in problem

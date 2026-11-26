@@ -18,6 +18,7 @@ from app.shared import config, state_keys_pure
 from app.shared.job_pure import PRJob
 from app.worker import command, feedback_job, preflight, retry, update
 from app.worker.deps import Deps
+from app.worker.model import backends
 from app.worker.store.state import open_engine
 
 log = logging.getLogger(__name__)
@@ -62,7 +63,7 @@ def main() -> int:
         log.exception("DB 스키마를 맞추지 못해 워커를 시작하지 않는다: %s", settings.db_path)
         return 1
     redis = Redis.from_url(settings.redis_url)
-    checks = preflight.run_checks(redis)
+    checks = preflight.run_checks(redis, backend=backends.from_config(settings.model))
     problems = preflight.failures(checks)
     if problems:
         for problem in problems:

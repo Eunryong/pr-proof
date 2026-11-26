@@ -238,4 +238,6 @@ def test_backends_are_chosen_by_name() -> None:
 def test_an_unknown_backend_fails_with_the_known_names(name: str) -> None:
     with pytest.raises(backends.UnknownBackend) as caught:
         backends.make_backend(name)
-    assert str(caught.value) == f"모르는 모델 구현 {name!r}: 쓸 수 있는 것은 claude-cli"
+    assert (
+        str(caught.value) == f"모르는 모델 구현 {name!r}: 쓸 수 있는 것은 claude-cli, local-openai"
+    )
