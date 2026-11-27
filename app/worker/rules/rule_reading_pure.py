@@ -45,6 +45,7 @@ _FENCE: Final = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 _BULLET: Final = re.compile(r"^[ \t]*(?:[-*+]|\d+[.)])[ \t]+")
 _SENTENCE_END: Final = frozenset(".!?。")
 _WRAP_CHARS: Final = frozenset("`*_\"'()[]<>「」『』")
+_KO_TOPIC_WORD: Final = re.compile(r"[가-힣]+[은는이가]\b")
 _GLOB_BAD_CHARS: Final = frozenset("\\\0")
 
 
@@ -460,6 +461,19 @@ def _sentence_breaks(segment: str) -> list[int]:
     return breaks
 
 
+def _omits_korean_subject(sentence: str) -> bool:
+    """문장이 한국어를 포함하면서 앞부분(첫 3어절)에 주격·보조사(`은/는/이/가`)가 없는지.
+
+    "금액은 원 단위 정수로 다룬다. `float`로 바꾸거나 `/`로 나누지 않고 `//`를 쓴다."처럼
+    주어를 앞 문장에 두고 이어지는 후속 문장이 혼자 떨어져 나가지 않게 판별한다.
+    """
+    plain = normalize(sentence)
+    if not any("가" <= ch <= "힣" for ch in plain):
+        return False
+    head = " ".join(plain.split()[:3])
+    return _KO_TOPIC_WORD.search(head) is None
+
+
 def _snap_quote(doc: _IndexedDocument, section: Section, quote: str) -> tuple[str, tuple[int, int]]:
     """절 안의 `quote`가 문장 중간에서 잘렸으면 그 문장의 경계까지 확장하고, 문서 기준 span을 준다.
 
@@ -491,12 +505,21 @@ def _snap_quote(doc: _IndexedDocument, section: Section, quote: str) -> tuple[st
     rel_end = min(len(segment), raw_end - para_start)
     breaks = _sentence_breaks(segment)
 
-    snap_start = max((b for b in breaks if b <= rel_start), default=0)
+    orig_snap_start = max((b for b in breaks if b <= rel_start), default=0)
+    snap_start = orig_snap_start
     while snap_start < rel_start and segment[snap_start].isspace():
         snap_start += 1
     snap_end = min((b for b in breaks if b >= rel_end), default=len(segment))
     while snap_end > rel_end and segment[snap_end - 1].isspace():
         snap_end -= 1
+
+    # 같은 문단의 2번째 이후 문장이 주어를 생략해 앞 문장 대상에 의존하면 앞 문장까지 묶는다
+    if orig_snap_start > 0 and _omits_korean_subject(segment[snap_start:snap_end]):
+        prev_breaks = [b for b in breaks if b < orig_snap_start]
+        if prev_breaks:
+            snap_start = prev_breaks[-1]
+            while snap_start < rel_start and segment[snap_start].isspace():
+                snap_start += 1
 
     left_trimmed = segment[snap_start:rel_start].strip(" \t\r\n`*")
     right_trimmed = segment[rel_end:snap_end].strip(" \t\r\n`*")

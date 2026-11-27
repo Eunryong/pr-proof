@@ -454,8 +454,27 @@ MONEY_DOC: Final = Document(
     "e" * 40,
     "# 규칙\n\n## 금액\n\n"
     "- 금액은 원 단위 정수로 다루며, 나눗셈은 `/` 대신 `//`를 쓴다.\n"
+    "- 금액은 원 단위 정수(`int`)로 다룬다. `float`로 바꾸거나 `/`로 나누지 않고 `//`를 쓴다.\n"
     "- 세율은 소수로 계산한다. 반올림은 마지막에 한 번만 한다.\n",
 )
+
+
+def test_pro_drop_followup_sentence_in_bullet_snaps_to_preceding_subject() -> None:
+    # 두 번째 문장이 주어("금액은")를 생략하고 이어지면 앞 문장까지 하나의 규칙으로 스냅된다
+    rules, dropped = _verify(
+        {
+            "file": "CONTRIBUTING.md",
+            "section": "금액",
+            "quote": "`float`로 바꾸거나 `/`로 나누지 않고 `//`를 쓴다.",
+        },
+        docs=(MONEY_DOC,),
+    )
+    assert dropped == ()
+    assert len(rules) == 1
+    assert (
+        rules[0].text
+        == "금액은 원 단위 정수(`int`)로 다룬다. `float`로 바꾸거나 `/`로 나누지 않고 `//`를 쓴다."
+    )
 
 
 def test_mid_sentence_fragment_snaps_to_full_sentence_preserving_condition() -> None:
