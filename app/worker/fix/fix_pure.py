@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Final, Literal
 
 from app.worker.fix.scope_pure import MECHANICAL_POLICY, StatusEntry, judge_scope
-from app.worker.testing.test_run_pure import PytestRun
+from app.worker.testing.test_run_pure import TestRun
 
 MechanicalStatus = Literal[
     "ready",  # 검증 통과. 수정안 PR로 올린다
@@ -51,18 +51,18 @@ def out_of_scope(entries: Iterable[StatusEntry], allowed: Iterable[str]) -> list
     return [v.label for v in judge_scope(entries, allowed, MECHANICAL_POLICY).violations]
 
 
-def same_test_result(before: PytestRun, after: PytestRun) -> bool:
+def same_test_result(before: TestRun, after: TestRun) -> bool:
     """고친 뒤 테스트가 고치기 전과 같은 상태(통과 또는 테스트 없음)인지. 개수도 같아야 한다."""
     if before.status != after.status or not after.allows_mechanical_fix:
         return False
-    if before.summary is None or after.summary is None:
-        return before.summary is after.summary or after.status == "no_tests"
+    if before.report is None or after.report is None:
+        return before.report is after.report or after.status == "no_tests"
     # 불안정한 테스트는 재실행에서 통과한 수까지 센다
-    return (before.passed_count, before.summary.total) == (after.passed_count, after.summary.total)
+    return (before.passed_count, before.report.total) == (after.passed_count, after.report.total)
 
 
-def code_fix_tests_ok(before: PytestRun, after: PytestRun) -> bool:
+def code_fix_tests_ok(before: TestRun, after: TestRun) -> bool:
     """모델 수정 뒤 테스트: 모두 통과하고(불안정한 테스트 없이) 수정 전과 같은 수가 돌았다."""
-    if not after.allows_code_fix or before.summary is None or after.summary is None:
+    if not after.allows_code_fix or before.report is None or after.report is None:
         return False
-    return (after.passed_count, after.summary.total) == (before.passed_count, before.summary.total)
+    return (after.passed_count, after.report.total) == (before.passed_count, before.report.total)

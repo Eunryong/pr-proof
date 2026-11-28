@@ -18,7 +18,7 @@ from app.worker.core.prompt_text_pure import load
 from app.worker.core.rule_pure import CheckMethod, Rule, RuleSource
 from app.worker.core.violation_pure import Violation
 from app.worker.store.rag_pure import Retrieval, cited
-from app.worker.testing.test_run_pure import NO_PROFILE_WHY, RunStatus
+from app.worker.testing.test_run_pure import RunStatus, TestRun
 
 # changes_behavior·not_a_violation은 모델이 고르는 skip 이유다. risky는 모델이 이유를 고르지 않은
 # skip이다. needs_other_file은 저장된 옛 판단에만 있다
@@ -35,8 +35,10 @@ _TESTS_BROKEN: Final[Mapping[str, str]] = {
     "timeout": "테스트가 시간 안에 끝나지 않음",
     "unrunnable": "테스트를 돌리지 못함",
     "cancelled": "테스트가 중단됨",
+    "build_failed": "빌드가 실패함",
 }
-NO_PROFILE_GAP: Final = f"테스트로 확인할 수 없음 ({NO_PROFILE_WHY})"
+NO_TESTS_GAP: Final = "테스트로 확인할 수 없음 (테스트가 없음)"
+FLAKY_GAP: Final = "테스트로 확인할 수 없음 (불안정한 테스트가 있음)"
 
 
 @dataclass(frozen=True)
@@ -56,6 +58,11 @@ class SafetyNet:
 
     status: RunStatus
     flaky: bool = False  # 불안정한 테스트가 있다. 모델 수정을 확인하는 데 쓰지 않는다
+    unplanned: str = ""  # status가 no_env일 때 돌리지 않은 까닭
+
+    @classmethod
+    def of(cls, run: TestRun) -> "SafetyNet":
+        return cls(run.status, flaky=bool(run.flaky), unplanned=run.unplanned)
 
 
 def _skip(v: Violation, reason: SkipReason, why: str) -> FixDecision:
@@ -81,14 +88,17 @@ def decide_by_table(
         return _skip(v, "notify_only", "도구의 자동 수정이 없음")
     if tests.status in _TESTS_BROKEN:
         return _skip(v, "tests_failed", _TESTS_BROKEN[tests.status])
-    if tests.status == "no_profile":
-        return _skip(v, "no_safety_net", NO_PROFILE_GAP)
+    if tests.status == "no_env":
+        return _skip(v, "no_safety_net", _untestable(tests.unplanned))
     if v.mechanical_fix:  # 테스트 상태는 passed 또는 no_tests다
         return FixDecision(v.id, "fix", "pipeline", method="mechanical")
     if tests.status == "no_tests" or tests.flaky:
-        why = "테스트가 없음" if tests.status == "no_tests" else "불안정한 테스트가 있음"
-        return _skip(v, "no_safety_net", f"테스트로 확인할 수 없음 ({why})")
+        return _skip(v, "no_safety_net", NO_TESTS_GAP if tests.status == "no_tests" else FLAKY_GAP)
     return None
+
+
+def _untestable(why: str) -> str:
+    return f"테스트로 확인할 수 없음 ({why})"
 
 
 def safety_gap(tests: SafetyNet) -> str | None:
@@ -96,11 +106,10 @@ def safety_gap(tests: SafetyNet) -> str | None:
     확인할 수 있으면 None. 코멘트 수정(4.11)이 고치기 전에 본다."""
     if tests.status in _TESTS_BROKEN:
         return _TESTS_BROKEN[tests.status]
-    if tests.status == "no_profile":
-        return NO_PROFILE_GAP
+    if tests.status == "no_env":
+        return _untestable(tests.unplanned)
     if tests.status == "no_tests" or tests.flaky:
-        why = "테스트가 없음" if tests.status == "no_tests" else "불안정한 테스트가 있음"
-        return f"테스트로 확인할 수 없음 ({why})"
+        return NO_TESTS_GAP if tests.status == "no_tests" else FLAKY_GAP
     return None
 
 

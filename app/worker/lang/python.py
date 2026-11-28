@@ -36,7 +36,7 @@ import subprocess
 import tempfile
 import tomllib
 import uuid
-from collections.abc import Callable, Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -77,9 +77,10 @@ from app.worker.testing.coverage_pure import (
 from app.worker.testing.generated_tests_pure import Suite, parse_contexts, parse_report
 from app.worker.testing.test_run_pure import (
     KILLED_EXIT,
-    PYTEST_TESTS_FAILED,
-    PytestRun,
-    ReportSummary,
+    StepRun,
+    TestReport,
+    TestRun,
+    TestVerdict,
 )
 
 # ---- 런타임 ----
@@ -393,6 +394,16 @@ MAX_COVERAGE_JSON_BYTES: Final = 50 * 1024 * 1024
 # coverage.xml 경로를 리포 기준 상대 경로로 남기는 파이프라인 쪽 설정 (docker/sandbox/coveragerc)
 COVERAGERC: Final = f"{PIPELINE_DIR}/coveragerc"
 MAX_OUTPUT_CHARS: Final = 4000
+PYTEST_STEP: Final = "pytest"
+# pytest 종료 코드: 0 통과, 1 실패, 2 중단(수집 오류 포함), 3 내부 오류, 4 사용법 오류, 5 없음
+PYTEST_FAILED: Final = (1, 2)
+PYTEST_TESTS_FAILED: Final = 1  # 테스트가 실패했다 (수집 오류·중단은 2)
+PYTEST_NO_TESTS: Final = 5
+_PYTEST_UNRUNNABLE_WHY: Final[Mapping[int, str]] = {
+    3: "pytest 내부 오류",
+    4: "pytest 설정·인자 오류",
+}
+NO_REPORT_WHY: Final = "결과 파일 없음 (conftest 등 수집 전 오류)"
 
 
 def pythonpath_for(worktree: Path) -> str:
@@ -438,13 +449,47 @@ def passed_ids(report: Path) -> set[str]:
         return set()
 
 
-def read_summary(report: Path) -> ReportSummary | None:
+def report_of(data: dict) -> TestReport:
+    """pytest-json-report의 내용을 요약한다."""
+    summary = data.get("summary", {})
+    failed_ids = [
+        t["nodeid"] for t in data.get("tests", []) if t.get("outcome") in ("failed", "error")
+    ]
+    # 수집 단계 오류(import 실패 등)는 tests가 아니라 collectors에 남는다
+    collect_errors = [
+        c["nodeid"] for c in data.get("collectors", []) if c.get("outcome") == "failed"
+    ]
+    return TestReport(
+        passed=summary.get("passed", 0),
+        failed=summary.get("failed", 0),
+        errors=summary.get("error", 0) + len(collect_errors),
+        skipped=summary.get("skipped", 0),
+        total=summary.get("total", 0),
+        failed_tests=tuple(failed_ids + collect_errors),
+    )
+
+
+def read_report(report: Path) -> TestReport | None:
     """report.json을 읽는다. 없거나(링크·FIFO 포함) 깨졌으면 None."""
     try:
         data = _read_json(report)
-        return None if data is None else ReportSummary.from_report(data)
+        return None if data is None else report_of(data)
     except (ValueError, KeyError, TypeError, AttributeError):
         return None
+
+
+def _pytest_verdict(exit_code: int | None, report: TestReport | None) -> tuple[TestVerdict, str]:
+    if exit_code == PYTEST_NO_TESTS:
+        return "no_tests", ""
+    if report is not None and exit_code == 0:
+        return "passed", ""
+    if report is not None and exit_code in PYTEST_FAILED:
+        return "failed", ""
+    if exit_code in _PYTEST_UNRUNNABLE_WHY:
+        return "unrunnable", _PYTEST_UNRUNNABLE_WHY[exit_code]
+    if report is None:
+        return "unrunnable", NO_REPORT_WHY
+    return "unrunnable", f"pytest 종료 코드 {exit_code}"
 
 
 def run_tests(
@@ -455,8 +500,8 @@ def run_tests(
     is_stale: Callable[[], bool] | None = None,
     poll_seconds: float = POLL_SECONDS,
     contexts: bool = False,
-) -> PytestRun:
-    """컨테이너 안에서 pytest를 실행하고 결과를 PytestRun으로 돌려준다."""
+) -> TestRun:
+    """컨테이너 안에서 pytest를 실행하고 결과를 TestRun으로 돌려준다."""
     report = worktree / REPORT_FILE
     coverage_xml = worktree / COVERAGE_XML
     for leftover in (report, coverage_xml, worktree / COVERAGE_JSON,
@@ -471,19 +516,44 @@ def run_tests(
         is_stale=is_stale,
         poll_seconds=poll_seconds,
     )
-    summary = read_summary(report)
+    summary = read_report(report)
     oom_killed = _check_environment(container, result, has_report=summary is not None)
     flaky = _rerun_failed(container, worktree, result, summary, timeout, is_stale, poll_seconds)
-    return PytestRun(
-        flaky=flaky,
-        exit_code=result.returncode,
-        summary=summary,
-        report_path=report if summary is not None else None,
-        coverage_xml=coverage_xml if coverage_xml.is_file() else None,
+    step = StepRun(
+        PYTEST_STEP,
+        result.returncode,
         timed_out=result.timed_out,
         cancelled=result.cancelled,
         oom_killed=oom_killed,
         output=(result.stdout + result.stderr)[-MAX_OUTPUT_CHARS:],
+    )
+    return pytest_result(
+        step,
+        summary,
+        flaky=flaky,
+        report_path=report if summary is not None else None,
+        coverage_xml=coverage_xml if coverage_xml.is_file() else None,
+    )
+
+
+def pytest_result(
+    step: StepRun,
+    report: TestReport | None,
+    *,
+    flaky: tuple[str, ...] = (),
+    report_path: Path | None = None,
+    coverage_xml: Path | None = None,
+) -> TestRun:
+    """pytest 단계 하나의 결과. 종료 코드와 결과 파일로 테스트 단계의 판정과 까닭을 정한다."""
+    verdict, why = _pytest_verdict(step.exit_code, report)
+    return TestRun(
+        test=step,
+        verdict=verdict,
+        unrunnable_why=why,
+        report=report,
+        report_path=report_path,
+        coverage_xml=coverage_xml,
+        flaky=flaky,
     )
 
 
@@ -491,7 +561,7 @@ def _rerun_failed(
     container: str,
     worktree: Path,
     result: ExecResult,
-    summary: ReportSummary | None,
+    summary: TestReport | None,
     timeout: int,
     is_stale: Callable[[], bool] | None,
     poll_seconds: float,
@@ -590,7 +660,7 @@ def read_sources(
     return sources
 
 
-def read_suite(run: PytestRun, worktree: Path, files: Iterable[str]) -> Suite:
+def read_suite(run: TestRun, worktree: Path, files: Iterable[str]) -> Suite:
     """테스트 한 번의 결과에서 판단에 쓰는 것: 테스트 파일마다 결과와 수, files의 줄마다 실행한
     테스트 파일 (`generated_tests_pure.Suite`). 결과 파일은 PR 코드가 바꿀 수 있어 일반 파일만
     읽고, 없거나 깨졌으면 빈 값이다."""
@@ -607,7 +677,7 @@ def read_suite(run: PytestRun, worktree: Path, files: Iterable[str]) -> Suite:
 def annotate_coverage(
     findings: Iterable[Violation], coverage_xml: Path | None, worktree: Path
 ) -> tuple[Violation, ...]:
-    """위반에 covered를 채운다. coverage.xml은 `PytestRun.coverage_xml`(수정 전 실행)이다."""
+    """위반에 covered를 채운다. coverage.xml은 `TestRun.coverage_xml`(수정 전 실행)이다."""
     findings = tuple(findings)
     coverage = read_coverage(coverage_xml)
     if coverage is None:

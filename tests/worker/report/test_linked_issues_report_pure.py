@@ -7,7 +7,9 @@ from app.worker.report import report
 from app.worker.report.linked_issues_report_pure import NONE, RECHECK_HINT, expanded, folded, title
 from app.worker.rules.linked_issues_pure import IssueGap, LinkedIssues
 from app.worker.rules.pr_description_pure import DescriptionUsage, PrDescription
-from app.worker.testing.test_run_pure import PytestRun, ReportSummary
+from app.worker.testing.test_run_pure import TestReport
+
+from ..helpers import pytest_run
 
 MISSING: Final = IssueGap(
     73, "missing",
@@ -100,7 +102,7 @@ def test_usage_goes_to_the_folded_block() -> None:
 
 
 def test_issue_line_sits_under_the_pr_description_line() -> None:
-    run = PytestRun(exit_code=0, summary=ReportSummary(passed=1, total=1))
+    run = pytest_run(0, TestReport(passed=1, total=1))
     body = report.render_result(
         run, "a" * 40, 1.0, description=PrDescription("checked", files=1, shown=1),
         issues=LinkedIssues("checked", issues=(73,), items=(MISSING,), files=1, shown=1,

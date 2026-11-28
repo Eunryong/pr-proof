@@ -1,34 +1,55 @@
-"""테스트 실행 결과와 판정에 쓰는 상태."""
+"""테스트 실행 결과와 판정에 쓰는 상태.
+
+결과를 읽는 쪽(지금은 Python 프로필)이 테스트 단계의 결과를 `TestVerdict`로 정해 넘긴다. 도구마다
+다른 종료 코드의 뜻은 여기에 두지 않는다.
+"""
 
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final, Literal
 
-# pytest 종료 코드: 0 통과, 1 실패, 2 중단(수집 오류 포함), 3 내부 오류, 4 사용법 오류, 5 없음
-PYTEST_FAILED: Final = (1, 2)
-PYTEST_INTERNAL_ERROR: Final = 3
-PYTEST_USAGE_ERROR: Final = 4
-PYTEST_NO_TESTS: Final = 5
-PYTEST_TESTS_FAILED: Final = 1  # 테스트가 실패했다 (수집 오류·중단은 2)
 KILLED_EXIT: Final = 137  # SIGKILL. 컨테이너 메모리 한도를 넘어 OOM으로 종료됨
 
 # 환경 오류(Docker·설치·컨테이너 문제)는 상태가 아니라 SandboxError로 올라간다.
-# unrunnable은 컨테이너 안에서 pytest가 돌았지만 PR 코드 때문에 결과를 못 낸 경우다.
-# no_profile은 저장소에 언어 프로필이 돌릴 것이 없어 테스트를 돌리지 않은 경우다 (7.7).
+# unrunnable은 컨테이너 안에서 테스트가 돌았지만 PR 코드 때문에 결과를 못 낸 경우다.
+# no_env는 저장소에 돌릴 환경이 없어 아무것도 돌리지 않은 경우다 (7.7). 까닭은 TestRun.unplanned다.
 RunStatus = Literal[
-    "passed", "failed", "no_tests", "timeout", "cancelled", "unrunnable", "no_profile"
+    "passed", "failed", "build_failed", "no_tests", "timeout", "cancelled", "unrunnable", "no_env"
 ]  # fmt: skip
+TestVerdict = Literal["passed", "failed", "no_tests", "unrunnable"]
 
-# 프로필이 없어 돌리지 못한 것의 까닭. 결과 코멘트의 여러 줄이 같은 글을 쓴다
+# Python 프로필이 돌릴 것이 없을 때의 까닭 (graph.run_pr_tests)
 NO_PROFILE_WHY: Final = (
     "이 저장소에는 Python 파일이 없고, pr-proof가 빌드·테스트·정적 검사를 돌릴 수 있는 언어는 "
     "지금 Python뿐임"
 )
 
 
+# 체크포인트에서 되살릴 수 있게 graph.py가 등록하는 타입
+STATE_TYPES: Final = (
+    ("app.worker.testing.test_run_pure", "StepRun"),
+    ("app.worker.testing.test_run_pure", "TestReport"),
+    ("app.worker.testing.test_run_pure", "TestRun"),
+)
+
+
 @dataclass(frozen=True)
-class ReportSummary:
-    """pytest-json-report 결과 요약."""
+class StepRun:
+    """샌드박스에서 돌린 명령 하나. output은 출력의 끝 부분이다."""
+
+    name: str
+    exit_code: int | None
+    timed_out: bool = False
+    cancelled: bool = False
+    oom_killed: bool = False  # 컨테이너가 메모리 한도로 죽음 (docker inspect OOMKilled)
+    output: str = field(default="", repr=False)
+
+
+@dataclass(frozen=True)
+class TestReport:
+    """테스트 결과 파일의 요약. failed_tests는 실패와 오류의 이름이다."""
+
+    __test__ = False  # 이름이 Test로 시작해도 pytest가 테스트 클래스로 모으지 않게
 
     passed: int = 0
     failed: int = 0
@@ -37,56 +58,61 @@ class ReportSummary:
     total: int = 0
     failed_tests: tuple[str, ...] = ()
 
-    @classmethod
-    def from_report(cls, data: dict) -> "ReportSummary":
-        summary = data.get("summary", {})
-        failed_ids = [
-            t["nodeid"] for t in data.get("tests", []) if t.get("outcome") in ("failed", "error")
-        ]
-        # 수집 단계 오류(import 실패 등)는 tests가 아니라 collectors에 남는다
-        collect_errors = [
-            c["nodeid"] for c in data.get("collectors", []) if c.get("outcome") == "failed"
-        ]
-        return cls(
-            passed=summary.get("passed", 0),
-            failed=summary.get("failed", 0),
-            errors=summary.get("error", 0) + len(collect_errors),
-            skipped=summary.get("skipped", 0),
-            total=summary.get("total", 0),
-            failed_tests=tuple(failed_ids + collect_errors),
-        )
-
 
 @dataclass(frozen=True)
-class PytestRun:
-    """샌드박스에서 pytest를 한 번 실행한 결과. 산출물 경로는 worktree의 .pipeline-out/ 아래다."""
+class TestRun:
+    """빌드 단계들과 테스트 단계를 한 번 돌린 결과. 산출물 경로는 worktree의 .pipeline-out/ 아래다.
 
-    exit_code: int | None
-    summary: ReportSummary | None  # report.json이 없거나 깨졌으면 None
+    verdict와 unrunnable_why는 테스트 단계의 결과를 읽은 쪽이 정한다. unplanned가 있으면 돌릴
+    환경이 없어 아무것도 돌리지 않은 것이고, 나머지 값은 비어 있다.
+    """
+
+    __test__ = False
+
+    build: tuple[StepRun, ...] = ()
+    test: StepRun | None = None
+    verdict: TestVerdict | None = None
+    unrunnable_why: str = ""
+    report: TestReport | None = None  # 결과 파일이 없거나 깨졌으면 None
     report_path: Path | None = None
     coverage_xml: Path | None = None
-    timed_out: bool = False
-    cancelled: bool = False
-    oom_killed: bool = False  # 컨테이너가 메모리 한도로 죽음 (docker inspect OOMKilled)
-    output: str = field(default="", repr=False)
     # 처음 실행에서 실패했다가 한 번 더 돌려 통과한 테스트 (DESIGN.md F8 flaky)
     flaky: tuple[str, ...] = ()
-    no_profile: bool = False  # 언어 프로필이 돌릴 것이 없어 돌리지 않음. 나머지 값은 비어 있다
+    unplanned: str = ""
+
+    @property
+    def _steps(self) -> tuple[StepRun, ...]:
+        # 체크포인트에서 되살리면 튜플이 리스트로 돌아온다
+        return (*self.build, *((self.test,) if self.test is not None else ()))
+
+    @property
+    def _failed_build(self) -> StepRun | None:
+        return next((s for s in self.build if s.exit_code != 0), None)
+
+    @property
+    def cancelled(self) -> bool:
+        return any(s.cancelled for s in self._steps)
+
+    @property
+    def output(self) -> str:
+        """상태를 설명하는 출력: 빌드가 실패했으면 그 단계의 것, 아니면 테스트 단계의 것."""
+        step = self._failed_build or self.test
+        return step.output if step is not None else ""
 
     @property
     def passed_on_rerun(self) -> bool:
         """실패한 테스트가 모두 재실행에서 통과했다. 수집 오류·테스트 오류가 있으면 아니다."""
-        s = self.summary
-        if s is None or not self.flaky or s.errors:
+        r = self.report
+        if r is None or not self.flaky or r.errors:
             return False
-        return set(s.failed_tests) <= set(self.flaky)
+        return set(r.failed_tests) <= set(self.flaky)
 
     @property
     def passed_count(self) -> int:
         """재실행에서 통과한 테스트까지 센 통과 수."""
-        if self.summary is None:
+        if self.report is None:
             return 0
-        return self.summary.passed + (len(self.flaky) if self.passed_on_rerun else 0)
+        return self.report.passed + (len(self.flaky) if self.passed_on_rerun else 0)
 
     @property
     def ok(self) -> bool:
@@ -97,19 +123,15 @@ class PytestRun:
         # 취소·시간 초과를 먼저 본다. 이때 파이프라인이 컨테이너를 지워 137이 나올 수 있다
         if self.cancelled:
             return "cancelled"
-        if self.no_profile:
-            return "no_profile"
-        if self.timed_out:
+        if self.unplanned:
+            return "no_env"
+        if any(s.timed_out for s in self._steps):
             return "timeout"
-        if self.exit_code == 0 and self.summary is not None:
-            return "passed"
-        if self.exit_code == PYTEST_TESTS_FAILED and self.passed_on_rerun:
+        if self._failed_build is not None:
+            return "build_failed"
+        if self.verdict == "failed" and self.passed_on_rerun:
             return "passed"  # 불안정한 테스트가 있다 (flaky). 코드 수정을 확인하는 데는 쓰지 않는다
-        if self.exit_code in PYTEST_FAILED and self.summary is not None:
-            return "failed"
-        if self.exit_code == PYTEST_NO_TESTS:
-            return "no_tests"
-        return "unrunnable"
+        return self.verdict or "unrunnable"
 
     @property
     def unrunnable_reason(self) -> str | None:
@@ -118,18 +140,17 @@ class PytestRun:
             return None
         if self.memory_exceeded:
             return "메모리 한도를 넘어 종료됨"
-        if self.exit_code == PYTEST_INTERNAL_ERROR:
-            return "pytest 내부 오류"
-        if self.exit_code == PYTEST_USAGE_ERROR:
-            return "pytest 설정·인자 오류"
-        if self.summary is None:
-            return "결과 파일 없음 (conftest 등 수집 전 오류)"
-        return f"pytest 종료 코드 {self.exit_code}"
+        return self.unrunnable_why or "테스트 결과를 읽지 못함"
 
     @property
     def memory_exceeded(self) -> bool:
         """메모리 한도 초과로 종료됨. 취소·시간 초과가 아닐 때만 137을 메모리 초과로 본다."""
-        return self.status == "unrunnable" and (self.oom_killed or self.exit_code == KILLED_EXIT)
+        t = self.test
+        return (
+            self.status == "unrunnable"
+            and t is not None
+            and (t.oom_killed or t.exit_code == KILLED_EXIT)
+        )
 
     @property
     def allows_mechanical_fix(self) -> bool:

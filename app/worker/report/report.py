@@ -32,7 +32,7 @@ from app.worker.sandbox.docker_cli import MEMORY_LIMIT_GB
 from app.worker.store.rag_switch_pure import RagSwitch
 from app.worker.testing.coverage import DiffCoverage
 from app.worker.testing.test_lines import _gb, format_test_line
-from app.worker.testing.test_run_pure import PytestRun
+from app.worker.testing.test_run_pure import TestRun
 
 MAX_LISTED_FAILURES: Final = 10
 MAX_OUTPUT_CHARS: Final = 1500
@@ -66,7 +66,8 @@ _UNTESTED_NOTE: Final[Mapping[str, str]] = {
         "테스트가 시간 안에 끝나지 않아 고친 것을 확인할 수 없으므로 수정안을 만들지 않습니다."
     ),
     "unrunnable": "테스트 결과를 얻지 못해 고친 것을 확인할 수 없으므로 수정안을 만들지 않습니다.",
-    "no_profile": "테스트를 돌릴 수 없어 고친 것을 확인할 수 없으므로 수정안을 만들지 않습니다.",
+    "build_failed": "빌드가 실패해 고친 것을 확인할 수 없으므로 수정안을 만들지 않습니다.",
+    "no_env": "테스트를 돌릴 수 없어 고친 것을 확인할 수 없으므로 수정안을 만들지 않습니다.",
 }
 # 의존성 설치가 실패하면 테스트도 수정 판단도 하지 않고 끝난다 (update.py)
 INSTALL_FAILED_NOTE: Final = (
@@ -75,28 +76,28 @@ INSTALL_FAILED_NOTE: Final = (
 )
 
 
-def untested_note(run: PytestRun, violations: bool) -> list[str]:
+def untested_note(run: TestRun, violations: bool) -> list[str]:
     """테스트가 돌지 않아 수정안을 만들지 않는다는 한두 문장. 위반이 없으면 할 일이 없어 붙이지
     않는다. 테스트가 돌았으면(통과·실패) 없다. 새 커밋으로 멈춘 것도 없다(그 커밋이 다시 쓴다)."""
     note = _UNTESTED_NOTE.get(run.status) if violations else None
     return ["", note] if note else []
 
 
-def format_test_counts(run: PytestRun) -> list[str]:
+def format_test_counts(run: TestRun) -> list[str]:
     """테스트 수의 상세 (접는 블록 안). 통과·실패는 '테스트:' 줄에 이미 보인다."""
-    s = run.summary
+    s = run.report
     if s is None or not s.total:
         return []
     return ["", f"테스트: 전체 {s.total} · 통과 {s.passed} · 실패 {s.failed} · 오류 {s.errors} · "
             f"건너뜀 {s.skipped}"]  # fmt: skip
 
 
-def format_test_details(run: PytestRun, memory_gb: float, max_memory_gb: float) -> list[str]:
+def format_test_details(run: TestRun, memory_gb: float, max_memory_gb: float) -> list[str]:
     """'테스트:' 줄 아래에 펼쳐 두는 상세 줄들: 할 일이 있는 것만. 비어 있을 수 있다."""
     lines: list[str] = []
     if run.memory_exceeded:
         lines += ["", memory_hint(memory_gb, max_memory_gb)]
-    s = run.summary
+    s = run.report
     if run.flaky:
         lines += ["", "불안정한 테스트 (처음엔 실패, 다시 돌려 통과):"]
         lines += [f"- {inline_code(t, 300)}" for t in run.flaky[:MAX_LISTED_FAILURES]]
@@ -107,7 +108,7 @@ def format_test_details(run: PytestRun, memory_gb: float, max_memory_gb: float) 
         hidden = len(still_failed) - MAX_LISTED_FAILURES
         if hidden > 0:
             lines.append(f"- 외 {hidden}개")
-    if run.status == "unrunnable" and run.output:
+    if run.status in ("unrunnable", "build_failed") and run.output:
         lines += _details("출력", run.output[-MAX_OUTPUT_CHARS:])
     return lines
 
@@ -229,7 +230,7 @@ def carried_lines(carried: CarriedFrom | None) -> list[str]:
 
 
 def render_result(
-    run: PytestRun,
+    run: TestRun,
     head_sha: str,
     seconds: float,
     *,

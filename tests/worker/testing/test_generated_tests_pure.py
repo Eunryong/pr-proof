@@ -28,7 +28,9 @@ from app.worker.testing.generated_tests_pure import (
     render_before,
     render_check,
 )
-from app.worker.testing.test_run_pure import PytestRun, ReportSummary
+from app.worker.testing.test_run_pure import TestReport
+
+from ..helpers import pytest_run
 
 SRC: Final = "pkg/m.py"
 SOURCE: Final = (
@@ -41,7 +43,7 @@ SOURCE: Final = (
     "    return x * 2\n"
 )
 OK_TEST: Final = "from pkg.m import f\n\ndef test_f():\n    assert f(11) == 1\n"
-PASSED: Final = PytestRun(exit_code=0, summary=ReportSummary(passed=2, total=2))
+PASSED: Final = pytest_run(0, TestReport(passed=2, total=2))
 EXISTING: Final = "tests/test_a.py"
 NEW: Final = "tests/test_pipeline_f.py"
 
@@ -166,7 +168,7 @@ def test_has_checks_accepts_raises_and_unittest_asserts() -> None:
 
 def test_after_check_keeps_accepted_tests_that_still_pass() -> None:
     (t,) = judge([Candidate(NEW, OK_TEST)])
-    before = PytestRun(exit_code=0, summary=ReportSummary(passed=1, total=1))
+    before = pytest_run(0, TestReport(passed=1, total=1))
     after = suite({}, run=PASSED)
     check = after_check([t], before, after)
     assert check.ok and check.tests[0].after == "passed"
@@ -176,24 +178,24 @@ def test_a_generated_test_that_breaks_after_the_fix_sends_the_fix_back() -> None
     """고치기 전에 통과한 테스트가 고친 뒤 실패하면 수정이 동작을 바꾼 것이다. 테스트를 빼지
     않는다."""
     (t,) = judge([Candidate(NEW, OK_TEST)])
-    before = PytestRun(exit_code=0, summary=ReportSummary(passed=1, total=1))
-    failed = PytestRun(
-        exit_code=1,
-        summary=ReportSummary(passed=1, failed=1, total=2, failed_tests=(f"{NEW}::test_f",)),
+    before = pytest_run(0, TestReport(passed=1, total=1))
+    failed = pytest_run(
+        1,
+        TestReport(passed=1, failed=1, total=2, failed_tests=(f"{NEW}::test_f",)),
     )
     check = after_check([t], before, suite({}, outcomes={NEW: "failed"}, run=failed))
     assert not check.ok and check.broken == (NEW,) and check.tests[0].accepted
 
 
 def test_after_check_needs_the_same_existing_tests() -> None:
-    before = PytestRun(exit_code=0, summary=ReportSummary(passed=3, total=3))
+    before = pytest_run(0, TestReport(passed=3, total=3))
     check = after_check([], before, suite({}, run=PASSED))
     assert not check.existing_ok and not check.ok
 
 
 def test_rejected_tests_are_not_run_after() -> None:
     rejected = GeneratedTest(NEW, 3, "failed", rejected="fails_before")
-    before = PytestRun(exit_code=0, summary=ReportSummary(passed=2, total=2))
+    before = pytest_run(0, TestReport(passed=2, total=2))
     check = after_check([rejected], before, suite({}, run=PASSED))
     assert check.ok and check.tests == (rejected,)
 

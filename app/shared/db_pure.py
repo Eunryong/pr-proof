@@ -110,7 +110,7 @@ class Run(SQLModel, table=True):
     kind: str
     source: str
     state: str  # RunState
-    test_status: str | None = None  # PytestRun.status
+    test_status: str | None = None  # TestRun.status
     comment_id: int | None = None
     started_at: datetime
     heartbeat_at: datetime

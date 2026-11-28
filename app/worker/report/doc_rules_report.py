@@ -16,7 +16,13 @@ from app.worker.core.checker_pure import TOOL_KINDS, Checker
 from app.worker.core.markdown_pure import code_fence, inline_code
 from app.worker.core.rule_pure import Rule
 from app.worker.core.violation_pure import Violation
-from app.worker.fix.fix_decision_pure import NO_PROFILE_GAP, Decided, FixDecision, SkipReason
+from app.worker.fix.fix_decision_pure import (
+    FLAKY_GAP,
+    NO_TESTS_GAP,
+    Decided,
+    FixDecision,
+    SkipReason,
+)
 from app.worker.fix.fix_pure import MechanicalFix
 from app.worker.fix.model_fix_pure import ModelFix
 from app.worker.fix.proposal_pure import ProposalResult
@@ -139,7 +145,7 @@ _LEFT_REASON: Final[Mapping[str, tuple[str, str]]] = {
         "테스트로 확인할 수 없음",
         "불안정한 테스트가 있어 고친 것을 확인할 수 없으므로 수정안을 만들지 않았습니다.",
     ),
-    "no_profile": (
+    "no_env": (
         "테스트로 확인할 수 없음",
         "이 저장소의 테스트를 돌릴 수 없어 고친 것을 확인할 수 없으므로 수정안을 만들지 "
         "않았습니다.",
@@ -190,6 +196,7 @@ _TESTS_BROKEN_HEAD: Final[Mapping[str, str]] = {
     "테스트가 시간 안에 끝나지 않음": "테스트가 시간 안에 끝나지 않아",
     "테스트를 돌리지 못함": "테스트를 돌리지 못해",
     "테스트가 중단됨": "테스트가 중단돼",
+    "빌드가 실패함": "빌드가 실패해",
 }
 _SKIP_REASONS: Final = frozenset(get_args(SkipReason))
 LEFT: Final = "직접 고쳐야 함"
@@ -788,9 +795,8 @@ def _left_reason(d: FixDecision, v: Violation | None) -> tuple[str, str]:
             return _LEFT_REASON["notify_file"]
         return _LEFT_REASON["notify_tool" if d.why == NO_AUTOFIX_WHY else "notify_rule"]
     if reason == "no_safety_net":
-        if d.why == NO_PROFILE_GAP:
-            return _LEFT_REASON["no_profile"]
-        return _LEFT_REASON["flaky" if "불안정한 테스트" in d.why else "no_tests"]
+        gap = {NO_TESTS_GAP: "no_tests", FLAKY_GAP: "flaky"}.get(d.why, "no_env")
+        return _LEFT_REASON[gap]
     if reason == "undecided" and d.why in _UNDECIDED:
         return _UNDECIDED[d.why]
     if reason == "tests_failed":

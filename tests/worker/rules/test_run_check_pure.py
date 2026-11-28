@@ -25,9 +25,11 @@ from app.worker.rules.run_check_pure import (
     run_key,
     run_rules,
     summarize_tests,
-    without_profile,
+    without_env,
 )
-from app.worker.testing.test_run_pure import NO_PROFILE_WHY, PytestRun, ReportSummary
+from app.worker.testing.test_run_pure import NO_PROFILE_WHY, StepRun, TestReport, TestRun
+
+from ..helpers import pytest_run
 
 RULE: Final = Rule(
     id="R-readme-run", text="문법/정적 검사 및 데이터 생성기 테스트 통과",
@@ -58,13 +60,14 @@ def test_the_model_is_not_shown_how_much_of_the_change_the_tests_ran() -> None:
 @pytest.mark.parametrize(
     ("run", "text"),
     [
-        (PytestRun(exit_code=0, summary=ReportSummary(passed=6, total=6)), "통과 (6개)"),
-        (PytestRun(exit_code=1, summary=ReportSummary(passed=4, failed=2, total=6)),
+        (pytest_run(0, TestReport(passed=6, total=6)), "통과 (6개)"),
+        (pytest_run(1, TestReport(passed=4, failed=2, total=6)),
          "실패 (6개 중 2개)"),
-        (PytestRun(exit_code=5, summary=ReportSummary()), "실행된 테스트 없음"),
+        (pytest_run(5, TestReport()), "실행된 테스트 없음"),
+        (TestRun(build=(StepRun("cmake", 1),)), "빌드 실패"),
     ],
 )  # fmt: skip
-def test_tests_text_names_the_result(run: PytestRun, text: str) -> None:
+def test_tests_text_names_the_result(run: TestRun, text: str) -> None:
     assert summarize_tests(run) == text
 
 
@@ -123,9 +126,7 @@ def test_without_a_profile_every_run_rule_is_left_with_the_programs_reason() -> 
     found = Found(
         (RuleUnchecked(RULE, "run", ""), RuleUnchecked(other, "no_checker", "")), (), 0, USAGE
     )
-    no_profile = PytestRun(exit_code=None, summary=None, no_profile=True)
-    assert without_profile(found, no_profile) == (
-        RunJudged("R-readme-run", "left", NO_PROFILE_WHY, ""),
-    )
-    assert without_profile(found, PytestRun(exit_code=5, summary=ReportSummary())) is None
-    assert summarize_tests(no_profile) == "돌리지 않음"
+    unplanned = TestRun(unplanned=NO_PROFILE_WHY)
+    assert without_env(found, unplanned) == (RunJudged("R-readme-run", "left", NO_PROFILE_WHY, ""),)
+    assert without_env(found, pytest_run(5, TestReport())) is None
+    assert summarize_tests(unplanned) == "돌리지 않음"

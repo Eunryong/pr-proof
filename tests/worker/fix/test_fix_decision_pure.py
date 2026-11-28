@@ -8,7 +8,6 @@ import pytest
 from app.worker.core.rule_pure import CheckMethod, Rule, RuleSource
 from app.worker.core.violation_pure import Violation
 from app.worker.fix.fix_decision_pure import (
-    NO_PROFILE_GAP,
     SYSTEM_PROMPT,
     FixDecision,
     Question,
@@ -23,12 +22,14 @@ from app.worker.fix.fix_decision_pure import (
     reconcile,
     safety_gap,
 )
+from app.worker.testing.test_run_pure import StepRun, TestRun
 
 V: Final = Violation(
     id="v1", rule_id="R-1", file="orders/a.py", line=3, message="m", found_by="checker",
     line_text="print(x)", covered=True,
 )  # fmt: skip
 PASSED: Final = SafetyNet("passed")
+NO_ENV: Final = SafetyNet("no_env", unplanned="C++ 환경이 없음")
 
 
 def test_covered_violation_with_passing_tests_goes_to_the_model() -> None:
@@ -48,9 +49,10 @@ def test_covered_violation_with_passing_tests_goes_to_the_model() -> None:
          "테스트로 확인할 수 없음 (테스트가 없음)"),
         (V, "model", SafetyNet("passed", flaky=True), "no_safety_net",
          "테스트로 확인할 수 없음 (불안정한 테스트가 있음)"),
-        (V, "model", SafetyNet("no_profile"), "no_safety_net", NO_PROFILE_GAP),
-        (replace(V, mechanical_fix=True), "mechanical", SafetyNet("no_profile"), "no_safety_net",
-         NO_PROFILE_GAP),
+        (V, "model", SafetyNet("build_failed"), "tests_failed", "빌드가 실패함"),
+        (V, "model", NO_ENV, "no_safety_net", "테스트로 확인할 수 없음 (C++ 환경이 없음)"),
+        (replace(V, mechanical_fix=True), "mechanical", NO_ENV, "no_safety_net",
+         "테스트로 확인할 수 없음 (C++ 환경이 없음)"),
     ],
 )  # fmt: skip
 def test_table_skips_with_the_reason(violation, rule_fix, tests, reason, why) -> None:
@@ -231,6 +233,11 @@ def test_tool_settings_violation_without_a_tool_fix_is_notify_only() -> None:
     assert decide_by_table(fixable, "mechanical", SafetyNet("no_tests")).method == "mechanical"
 
 
-def test_safety_gap_names_the_missing_profile() -> None:
-    assert safety_gap(SafetyNet("no_profile")) == NO_PROFILE_GAP
-    assert "Python뿐" in NO_PROFILE_GAP
+def test_safety_gap_names_why_nothing_ran() -> None:
+    assert safety_gap(NO_ENV) == "테스트로 확인할 수 없음 (C++ 환경이 없음)"
+    assert safety_gap(SafetyNet("build_failed")) == "빌드가 실패함"
+
+
+def test_safety_net_of_a_run_carries_the_reason_nothing_ran() -> None:
+    assert SafetyNet.of(TestRun(unplanned="C++ 환경이 없음")) == NO_ENV
+    assert SafetyNet.of(TestRun(build=(StepRun("cmake", 2),))).status == "build_failed"

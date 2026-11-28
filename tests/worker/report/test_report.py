@@ -10,7 +10,9 @@ from app.worker.report import report
 from app.worker.report.report import render_result
 from app.worker.rules.doc_rules_pure import CallUsage, CheckerRef, Found, RuleChecked
 from app.worker.testing.test_lines import format_test_line
-from app.worker.testing.test_run_pure import NO_PROFILE_WHY, PytestRun, ReportSummary
+from app.worker.testing.test_run_pure import NO_PROFILE_WHY, StepRun, TestReport, TestRun
+
+from ..helpers import pytest_run
 
 SYMBOLS: Final = ("⚠️", "✅", "❌")
 HEAD: Final = "a" * 40
@@ -43,11 +45,12 @@ def _found(*lines: int, file: str = "orders/a.py", message: str = "`os` imported
     return Found((RuleChecked(CONFIG_RULE, ref),), violations, 0, CallUsage(0, 10, 0, (), 0, 0))
 
 
-def _render(run: PytestRun, doc_rules=None, base: BaseConfig | None = None):
+def _render(run: TestRun, doc_rules=None, base: BaseConfig | None = None):
     return render_result(run, HEAD, 3.0, doc_rules=doc_rules, base=base or _base())
 
 
-PASSED: Final = PytestRun(exit_code=0, summary=ReportSummary(passed=9, total=9))
+PASSED: Final = pytest_run(0, TestReport(passed=9, total=9))
+BUILD_FAILED: Final = TestRun(build=(StepRun("cmake --build build", 2, output="error: x"),))
 
 
 @pytest.mark.parametrize(
@@ -55,21 +58,26 @@ PASSED: Final = PytestRun(exit_code=0, summary=ReportSummary(passed=9, total=9))
     [
         (PASSED, "통과 (9개)"),
         (
-            PytestRun(exit_code=1, summary=ReportSummary(passed=7, failed=1, errors=1, total=9)),
+            pytest_run(1, TestReport(passed=7, failed=1, errors=1, total=9)),
             "실패 (9개 중 2개)",
         ),
-        (PytestRun(exit_code=5, summary=ReportSummary()), "실행된 테스트 없음"),
-        (PytestRun(exit_code=124, summary=None, timed_out=True), "시간 초과로 중단"),
-        (PytestRun(exit_code=None, summary=None, cancelled=True), "새 커밋이 올라와 중단"),
-        (PytestRun(exit_code=137, summary=None), "실행 불가 (메모리 한도 1GB를 넘어 종료됨)"),
+        (pytest_run(5, TestReport()), "실행된 테스트 없음"),
+        (pytest_run(124, None, timed_out=True), "시간 초과로 중단"),
+        (pytest_run(None, None, cancelled=True), "새 커밋이 올라와 중단"),
+        (pytest_run(137, None), "실행 불가 (메모리 한도 1GB를 넘어 종료됨)"),
         (
-            PytestRun(exit_code=None, summary=None, no_profile=True),
+            TestRun(unplanned=NO_PROFILE_WHY),
             f"돌리지 않음 ({NO_PROFILE_WHY})",
         ),
+        (TestRun(unplanned="C++ 환경이 없음"), "돌리지 않음 (C++ 환경이 없음)"),
+        (BUILD_FAILED, "빌드 실패로 테스트를 돌리지 못함"),
     ],
-    ids=["passed", "failed", "no_tests", "timeout", "cancelled", "unrunnable", "no_profile"],
-)
-def test_test_line_is_text_only(run: PytestRun, line: str) -> None:
+    ids=[
+        "passed", "failed", "no_tests", "timeout", "cancelled", "unrunnable", "no_env",
+        "no_env-other-reason", "build_failed",
+    ],
+)  # fmt: skip
+def test_test_line_is_text_only(run: TestRun, line: str) -> None:
     assert format_test_line(run) == line
     text = _render(run)
     assert f"**테스트:** {line}\n" in text
@@ -83,13 +91,13 @@ def test_passed_shows_counts_without_failures() -> None:
 
 
 def test_failed_lists_tests() -> None:
-    summary = ReportSummary(passed=1, failed=1, total=2, failed_tests=("tests/test_a.py::test_x",))
-    assert "- `tests/test_a.py::test_x`" in _render(PytestRun(exit_code=1, summary=summary))
+    summary = TestReport(passed=1, failed=1, total=2, failed_tests=("tests/test_a.py::test_x",))
+    assert "- `tests/test_a.py::test_x`" in _render(pytest_run(1, summary))
 
 
 def test_collection_error_lists_module() -> None:
-    summary = ReportSummary(errors=1, failed_tests=("tests/test_broken.py",))
-    text = _render(PytestRun(exit_code=2, summary=summary))
+    summary = TestReport(errors=1, failed_tests=("tests/test_broken.py",))
+    text = _render(pytest_run(2, summary))
     assert "**테스트:** 실패 (0개 중 1개)" in text
     assert "- `tests/test_broken.py`" in text
 
@@ -97,7 +105,7 @@ def test_collection_error_lists_module() -> None:
 def test_long_failure_list_is_truncated() -> None:
     count = report.MAX_LISTED_FAILURES + 3
     ids = tuple(f"tests/test_a.py::test_{i}" for i in range(count))
-    run = PytestRun(exit_code=1, summary=ReportSummary(failed=count, total=count, failed_tests=ids))
+    run = pytest_run(1, TestReport(failed=count, total=count, failed_tests=ids))
     text = _render(run)
     assert f"`tests/test_a.py::test_{report.MAX_LISTED_FAILURES - 1}`" in text
     assert f"`tests/test_a.py::test_{report.MAX_LISTED_FAILURES}`" not in text
@@ -105,34 +113,34 @@ def test_long_failure_list_is_truncated() -> None:
 
 
 def test_unrunnable_shows_output_without_counts() -> None:
-    text = _render(PytestRun(exit_code=4, summary=None, output="ERROR: usage"))
+    text = _render(pytest_run(4, None, output="ERROR: usage"))
     assert "실행 불가 (pytest 설정·인자 오류)" in text
     assert "ERROR: usage" in text
     assert "전체" not in text
 
 
 def test_timeout_hides_output() -> None:
-    assert "<details>" not in _render(PytestRun(exit_code=124, summary=None, timed_out=True))
+    assert "<details>" not in _render(pytest_run(124, None, timed_out=True))
 
 
 def test_memory_exceeded_points_to_base_setting() -> None:
-    text = _render(PytestRun(exit_code=137, summary=None), base=_base(memory_gb=2))
+    text = _render(pytest_run(137, None), base=_base(memory_gb=2))
     assert "**테스트:** 실행 불가 (메모리 한도 2GB를 넘어 종료됨)" in text
     assert "base 브랜치의 `.pipeline.yaml`에서 `sandbox.memory_gb`로 4GB까지" in text
 
 
 def test_memory_exceeded_at_max_has_no_raise_hint() -> None:
-    text = _render(PytestRun(exit_code=137, summary=None), base=_base(4, 4))
+    text = _render(pytest_run(137, None), base=_base(4, 4))
     assert "상한(4GB)" in text
     assert "늘릴 수 있습니다" not in text
 
 
 def test_fractional_memory_limit() -> None:
-    assert "메모리 한도 1.5GB" in _render(PytestRun(exit_code=137, summary=None), base=_base(1.5))
+    assert "메모리 한도 1.5GB" in _render(pytest_run(137, None), base=_base(1.5))
 
 
 def test_timeout_137_has_no_memory_hint() -> None:
-    assert "메모리 한도는" not in _render(PytestRun(exit_code=137, summary=None, timed_out=True))
+    assert "메모리 한도는" not in _render(pytest_run(137, None, timed_out=True))
 
 
 # --- 규칙 줄 --------------------------------------------------------------------
@@ -150,7 +158,7 @@ def test_result_has_two_top_lines_then_details() -> None:
 
 
 def test_failed_tests_still_show_rules() -> None:
-    run = PytestRun(exit_code=1, summary=ReportSummary(failed=1, total=1))
+    run = pytest_run(1, TestReport(failed=1, total=1))
     assert "**규칙:** ⚠️ 위반 1건" in _render(run, doc_rules=_found(3))
 
 
@@ -172,7 +180,7 @@ def test_install_failure_keeps_rules() -> None:
     assert "No matching distribution" in text
 
 
-NO_TESTS: Final = PytestRun(exit_code=5, summary=ReportSummary())
+NO_TESTS: Final = pytest_run(5, TestReport())
 
 
 @pytest.mark.parametrize(
@@ -181,16 +189,18 @@ NO_TESTS: Final = PytestRun(exit_code=5, summary=ReportSummary())
         (NO_TESTS, "pytest가 테스트를 하나도 찾지 못해 고친 것을 확인할 수 없으므로 모델 "
                    "수정안을 만들지 않습니다. 지금 테스트를 돌릴 수 있는 것은 Python(pytest) "
                    "테스트뿐입니다."),
-        (PytestRun(exit_code=124, summary=None, timed_out=True),
+        (pytest_run(124, None, timed_out=True),
          "테스트가 시간 안에 끝나지 않아 고친 것을 확인할 수 없으므로 수정안을 만들지 않습니다."),
-        (PytestRun(exit_code=4, summary=None, output="ERROR: usage"),
+        (pytest_run(4, None, output="ERROR: usage"),
          "테스트 결과를 얻지 못해 고친 것을 확인할 수 없으므로 수정안을 만들지 않습니다."),
-        (PytestRun(exit_code=None, summary=None, no_profile=True),
+        (TestRun(unplanned=NO_PROFILE_WHY),
          "테스트를 돌릴 수 없어 고친 것을 확인할 수 없으므로 수정안을 만들지 않습니다."),
+        (BUILD_FAILED,
+         "빌드가 실패해 고친 것을 확인할 수 없으므로 수정안을 만들지 않습니다."),
     ],
-    ids=["no_tests", "timeout", "unrunnable", "no_profile"],
+    ids=["no_tests", "timeout", "unrunnable", "no_env", "build_failed"],
 )  # fmt: skip
-def test_untested_run_with_violations_says_why_no_fix(run: PytestRun, note: str) -> None:
+def test_untested_run_with_violations_says_why_no_fix(run: TestRun, note: str) -> None:
     """테스트가 돌지 않았으면 위반이 있을 때 "테스트:" 줄 아래(펼친 부분)에 까닭을 적는다. 맨 위
     줄은 짧게 둔다."""
     text = _render(run, doc_rules=_found(3))
@@ -201,8 +211,8 @@ def test_untested_run_with_violations_says_why_no_fix(run: PytestRun, note: str)
 
 
 def test_runs_that_ran_or_stopped_have_no_untested_note() -> None:
-    failed = PytestRun(exit_code=1, summary=ReportSummary(failed=1, total=1))
-    cancelled = PytestRun(exit_code=None, summary=None, cancelled=True)
+    failed = pytest_run(1, TestReport(failed=1, total=1))
+    cancelled = pytest_run(None, None, cancelled=True)
     for run in (PASSED, failed, cancelled):
         assert report.untested_note(run, True) == []
     assert report.untested_note(NO_TESTS, False) == []
@@ -222,8 +232,8 @@ def test_environment_wait_shows_no_results() -> None:
 
 
 def test_flaky_tests_are_listed_separately() -> None:
-    summary = ReportSummary(passed=8, failed=1, total=9, failed_tests=("t::a",))
-    text = _render(PytestRun(exit_code=1, summary=summary, flaky=("t::a",)))
+    summary = TestReport(passed=8, failed=1, total=9, failed_tests=("t::a",))
+    text = _render(pytest_run(1, summary, flaky=("t::a",)))
     assert "**테스트:** 통과, 불안정한 테스트 1개" in text
     assert "불안정한 테스트 (처음엔 실패, 다시 돌려 통과):\n- `t::a`" in text
     assert "실패한 테스트:" not in text

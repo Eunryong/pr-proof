@@ -10,7 +10,7 @@ from app.worker.lang import python
 from app.worker.sandbox import docker_cli
 from app.worker.sandbox.container import ExecResult
 from app.worker.sandbox.docker_cli import SandboxError
-from app.worker.testing.test_run_pure import ReportSummary
+from app.worker.testing.test_run_pure import StepRun, TestReport
 
 
 def test_pythonpath_for_src_layout(tmp_path: Path) -> None:
@@ -26,13 +26,74 @@ def test_pytest_argv_writes_outputs_under_pipeline_out() -> None:
     assert "--cov-config=/pipeline/coveragerc" in argv
 
 
-def test_read_summary_missing_or_broken(tmp_path: Path) -> None:
+def test_read_report_missing_or_broken(tmp_path: Path) -> None:
     report = tmp_path / "report.json"
-    assert python.read_summary(report) is None
+    assert python.read_report(report) is None
     report.write_text("{not json")
-    assert python.read_summary(report) is None
+    assert python.read_report(report) is None
     report.write_text('{"summary": {"passed": 1, "total": 1}}')
-    assert python.read_summary(report) == ReportSummary(passed=1, total=1)
+    assert python.read_report(report) == TestReport(passed=1, total=1)
+
+
+def test_report_counts_failures_and_collection_errors() -> None:
+    data = {
+        "summary": {"passed": 2, "failed": 1, "error": 1, "skipped": 1, "total": 5},
+        "tests": [
+            {"nodeid": "tests/test_a.py::test_ok", "outcome": "passed"},
+            {"nodeid": "tests/test_a.py::test_bad", "outcome": "failed"},
+            {"nodeid": "tests/test_a.py::test_fixture", "outcome": "error"},
+            {"nodeid": "tests/test_a.py::test_skip", "outcome": "skipped"},
+        ],
+        "collectors": [
+            {"nodeid": "", "outcome": "passed"},
+            {"nodeid": "tests/test_broken.py", "outcome": "failed"},
+        ],
+    }
+    assert python.report_of(data) == TestReport(
+        passed=2,
+        failed=1,
+        errors=2,
+        skipped=1,
+        total=5,
+        failed_tests=(
+            "tests/test_a.py::test_bad",
+            "tests/test_a.py::test_fixture",
+            "tests/test_broken.py",
+        ),
+    )
+    assert python.report_of({}) == TestReport()
+
+
+ONE: Final = TestReport(passed=1, total=1)
+
+
+@pytest.mark.parametrize(
+    ("code", "report", "status", "reason"),
+    [
+        (0, ONE, "passed", None),
+        (1, ONE, "failed", None),
+        (2, ONE, "failed", None),  # 수집 오류
+        (5, TestReport(), "no_tests", None),
+        (5, None, "no_tests", None),
+        (0, None, "unrunnable", "결과 파일 없음 (conftest 등 수집 전 오류)"),
+        (1, None, "unrunnable", "결과 파일 없음 (conftest 등 수집 전 오류)"),
+        (3, ONE, "unrunnable", "pytest 내부 오류"),
+        (4, ONE, "unrunnable", "pytest 설정·인자 오류"),
+        (137, None, "unrunnable", "메모리 한도를 넘어 종료됨"),
+        (139, ONE, "unrunnable", "pytest 종료 코드 139"),
+    ],
+)
+def test_pytest_exit_code_decides_the_test_step(
+    code: int, report: TestReport | None, status: str, reason: str | None
+) -> None:
+    run = python.pytest_result(StepRun(python.PYTEST_STEP, code), report)
+    assert (run.status, run.unrunnable_reason) == (status, reason)
+
+
+def test_pytest_failures_that_all_pass_on_rerun_count_as_passed() -> None:
+    report = TestReport(passed=8, failed=1, total=9, failed_tests=("t::a",))
+    run = python.pytest_result(StepRun(python.PYTEST_STEP, 1), report, flaky=("t::a",))
+    assert run.status == "passed" and run.passed_count == 9 and not run.allows_code_fix
 
 
 # --- 실행 불가(PR 코드 문제)와 환경 오류(SandboxError) 구분 -------------------------
@@ -90,14 +151,14 @@ def test_live_container_without_report_is_unrunnable(fake_run) -> None:
 def test_oom_kill_inside_live_container_is_memory_exceeded(fake_run) -> None:
     worktree = fake_run(ExecResult(returncode=137, stdout="", stderr="Killed"))
     run = python.run_tests("job-1", worktree)
-    assert run.memory_exceeded and not run.oom_killed
+    assert run.memory_exceeded and not run.test.oom_killed
 
 
 def test_oom_killed_container_is_unrunnable_not_environment(fake_run) -> None:
     """메모리 한도로 컨테이너 자체가 죽어도 환경 오류가 아니라 PR 코드 문제다."""
     worktree = fake_run(ExecResult(returncode=137, stdout="", stderr=""), state=OOM_KILLED)
     run = python.run_tests("job-1", worktree)
-    assert run.status == "unrunnable" and run.oom_killed and run.memory_exceeded
+    assert run.status == "unrunnable" and run.test.oom_killed and run.memory_exceeded
 
 
 def test_failed_tests_with_report_are_not_environment_error(fake_run) -> None:
@@ -191,13 +252,13 @@ def test_report_that_is_a_fifo_or_symlink_is_missing(tmp_path) -> None:
     """PR 코드가 결과 파일을 FIFO로 바꿔도 워커가 멈추지 않고, 링크를 따라가지 않는다."""
     import os
 
-    from app.worker.lang.python import passed_ids, read_summary
+    from app.worker.lang.python import passed_ids, read_report
 
     fifo = tmp_path / "report.json"
     os.mkfifo(fifo)
-    assert read_summary(fifo) is None and passed_ids(fifo) == set()
+    assert read_report(fifo) is None and passed_ids(fifo) == set()
     secret = tmp_path / "secret.json"
     secret.write_text('{"summary": {"total": 1, "passed": 1}, "tests": []}')
     link = tmp_path / "link.json"
     link.symlink_to(secret)
-    assert read_summary(link) is None
+    assert read_report(link) is None
