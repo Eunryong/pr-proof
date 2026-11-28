@@ -253,3 +253,12 @@
 - [x] **6-10** 판단은 워커가 GitHub의 PR 조회에서 읽은 값으로 한다. `PRJob`에 OWNER가 실려 있어도 조회의 값이 NONE이면 막히고, 조회가 실패하면 실행되지 않는다. 2026-11-20: `test_job_value_owner_does_not_override_lookup_none`, `test_lookup_member_runs_even_when_the_job_carries_nothing`, `test_failed_lookup_runs_nothing`(update, `/fix`, `/recheck`), `test_unreadable_lookup_is_a_failed_lookup`, `test_failed_base_settings_read_runs_nothing`
 - [x] **6-11** `/recheck <커밋>`이 지금 head와 같으면 그 커밋만 실행되고 `approvals`에 기록된다. 커밋이 없거나, head와 다르거나, 전체 해시(40자)가 아니면 실행되지 않고 답이 달린다. 새 커밋이 오면 다시 막힌다. (2026-11-20 저장소 주인이 기준을 고쳤다. 전: "7자 미만이면", T31, 11.1) 2026-11-20: `test_recheck_with_the_current_head_runs_that_commit_and_records_it`(전체 해시, 대문자), `test_recheck_that_does_not_name_the_head_runs_nothing_and_replies`(커밋 없음, 지금 head의 앞 7자와 앞 39자, 16진수가 아님, 다른 head. 답글이 다시 달 명령을 전체 해시로 적는다), `test_new_commit_after_approval_is_blocked_again`, `test_approver_is_checked_against_github`, 모델 단위 `test_approval_arg`, `test_commit_matches_only_the_same_head`. 승인 안내 한 줄의 전체 해시는 `_assert_only_the_guide`가 본다. 신뢰된 작성자의 커밋 없는 `/recheck`는 그대로 돈다(`test_trusted_authors_recheck_runs_as_before`)
 
+### 7단계. 모델이 저장소에 맞는 도구를 정하고 설치한다 (pr-proof#107)
+
+2.3의 첫 줄을 코드로 옮긴다. 저장소 주인이 2026-11-29에 방향을 다시 말했다(11.1). 12.2의 "도구와 언어가 코드에 고정돼 있다"를 닫는 단계다.
+
+- 없앨 것: `toolcache.TOOLS`의 고정한 도구·판·해시, `tools_pure.TOOL_LIST`, `lang/python.py`에 손으로 적은 설치·테스트 명령.
+- 하지 않는 것: 목록에 도구나 판을 더하기, 언어 프로필을 하나 더 짜기(2.3).
+- 시작 전에 주인이 정할 것: 11.3의 "목록 없이 설치할 때의 경계", 위협 T40의 시점.
+- 완료 기준은 이 단계를 시작할 때 주인이 정한다. 운영자가 권한 첫 기준: Python이 아닌 저장소(`Eunryong/DemoCue`, CMake와 vcpkg)의 PR에서 빌드와 테스트가 샌드박스에서 돌고 그 결과가 결과 코멘트에 나온다. 주인이 정하지 않았다.
+
