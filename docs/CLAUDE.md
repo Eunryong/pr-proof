@@ -131,7 +131,7 @@ tests/          코드와 같은 이름의 폴더 (tests/api, tests/worker, test
 - `git/`: 체크아웃(`repo.py`)과 GitHub 쓰기(`github.py`), 그 데이터(`git_pure.py`)
 - `store/`: 상태와 처리 기록 쓰기(`state.py`), 호출 상한(`budget.py`), 과거 기록 저장(`records.py`)과 무엇을 기록할지(`records_pure.py`), 검색(`memory.py`: 임베딩, Chroma 저장과 top-k, 밀린 기록 임베딩, reindex, 큰 규칙 문서의 조각 검색)
 - `model/`: 모델 호출의 인터페이스(`model_backend.py`)와 구현 고르기(`backends.py`), 사용량 한도에 닿으면 로컬 모델로 넘기기(`usage_limit_pure.py`, `usage_fallback.py`), 공용 서브그래프 틀(`loop.py`), MCP 메시지와 도구 상한(`mcp_pure.py`). claude CLI 구현은 `model/claude/`: 호출(`claude_cli.py`, 모양 넷: 수정 작성의 `file_tools`·`fix_tools`, 읽기만 하는 `read_tools`, 도구 없는 `no_tools`), 모델 전용 폴더(`workdir.py`), 경로 감시 훅(`path_hook.py`), 수정 작성의 파이프라인 도구 서버(`tool_server.py`)와 CLI가 띄우는 중계(`mcp_relay.py`). 로컬 OpenAI 호환 서버 구현은 `model/local/`: `ModelBackend`의 구현(`local_backend.py`), 요청과 응답(`openai_client.py`, `openai_pure.py`), 모델 전용 폴더 안의 읽기·쓰기 도구(`sandbox_tools.py`)
-- `testing/`: 테스트 실행 결과(`test_run_pure.py`), 커버리지(`coverage.py`, `coverage_pure.py`), 고친 위반의 테스트 표시(`test_lines.py`), 모델이 만든 테스트(`generated_tests_pure.py`)
+- `testing/`: 테스트 실행 결과(`test_run_pure.py`: 빌드 단계와 테스트 단계, 상태), 결과 파일 읽기(`reports_pure.py`: JUnit XML), 커버리지(`coverage.py`, `coverage_pure.py`), 고친 위반의 테스트 표시(`test_lines.py`), 모델이 만든 테스트(`generated_tests_pure.py`)
 - `sandbox/`: `docker_cli`, `container`, `toolcache`, `checker_runner`, `safe_read`. 도구(ast-grep, ruff)와 Python 런타임은 지금 `toolcache.py`가 고정한 버전과 SHA256으로 받아 캐시한다(없앨 고정, DESIGN 12.2). 샌드박스 이미지에는 언어가 없다 (`debian:bookworm-slim`에 curl과 인증서)
 - `lang/python.py`: Python 언어 프로필 (런타임 준비, `.venv` 설치, pytest 실행과 결과 읽기, 위반 줄의 커버리지 읽기, ruff). 테스트 파일의 정의(`fix/scope_pure.py`), coverage.xml 파싱(`testing/coverage_pure.py`), ruff 설정 읽기와 도구 목록(`core/tools_pure.py`)은 순수 모듈에 있다. 손으로 짠 프로필은 이것 하나이고 언어를 더 짜 넣지 않는다. 모델이 저장소에 맞는 도구를 정하는 쪽으로 바꾼다(DESIGN 2.3, 13절 7단계)
 - 프롬프트: 모델에게 주는 지시문은 쓰는 단계의 `prompts/`에 있다(`rules/prompts/`, `fix/prompts/`, `feedback/prompts/`). 읽는 코드는 `core/prompt_text_pure.py`의 `load(__file__, "이름")`이고 부르는 모듈과 같은 폴더의 `prompts/`만 읽는다. 폴더마다 `README.md`에 목록이 있다
@@ -159,7 +159,7 @@ tests/          코드와 같은 이름의 폴더 (tests/api, tests/worker, test
 | `app/worker/lang/python.py` | `app/worker/lang/install_pure.py` |
 | `app/api/sync.py` | `app/api/sync_rules_pure.py` |
 
-나머지(`app/worker/core/`의 `_pure`, `app/worker/testing/`의 `test_run_pure`와 `generated_tests_pure`, `app/worker/model/mcp_pure.py`, `app/worker/config/`의 `access_pure`와 `repo_config_pure`, `shared/`의 `_pure` 등)는 여러 단계가 같이 쓰는 데이터 정의와 계산이라 짝이 없다.
+나머지(`app/worker/core/`의 `_pure`, `app/worker/testing/`의 `test_run_pure`, `reports_pure`, `generated_tests_pure`, `app/worker/model/mcp_pure.py`, `app/worker/config/`의 `access_pure`와 `repo_config_pure`, `shared/`의 `_pure` 등)는 여러 단계가 같이 쓰는 데이터 정의와 계산이라 짝이 없다.
 
 **계층.** `app/api/`는 `app/worker/`를, `app/worker/`는 `app/api/`를 import하지 않고, `app/shared/`는 둘 다 import하지 않는다. `app/worker/`는 세 층이다(pr-proof#98): 뼈대(맨 위의 진입점, 작업 흐름, 작업 종류, 가드레일, 재시도)는 단계 폴더(`rules`, `feedback`, `fix`, `report`, `evaluation`)를 부르기만 하고, 단계 폴더는 뼈대를, 공용 폴더(`core`, `sandbox`, `testing`, `lang`, `git`, `config`, `store`, `model`)는 단계 폴더와 뼈대를 import하지 않는다. 단계 폴더 사이는 `rules`·`feedback`에서 `fix`로, `fix`에서 `report`·`evaluation`으로만 읽는다. 폴더 사이의 방향은 `CONTRIBUTING.md`의 「계층」 절에 있다. `app/worker/sandbox/`는 sandbox와 순수 모듈만 import한다. 순수 모듈은 저장소 안에서 다른 순수 모듈만 import하고, 금지 목록의 라이브러리(파일 시스템, 프로세스, 네트워크, Redis, 큐, DB, 웹, 그래프, 벡터 저장소, 로그, 시계, 난수, 동적 import)와 내장 `open`을 쓰지 않는다. 이 규칙은 `CONTRIBUTING.md`의 「계층」·「순수 모듈」 절에 적혀 있고, pr-proof가 PR의 diff에서 검사한다.
 
