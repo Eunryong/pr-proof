@@ -1,7 +1,9 @@
+import threading
 from types import SimpleNamespace
 
 import pytest
 
+from app.worker.flow_state import keep_alive
 from app.worker.graph import timed
 
 
@@ -57,3 +59,32 @@ def test_a_failure_to_save_the_time_does_not_replace_the_error_of_the_stage() ->
 
     with pytest.raises(RuntimeError, match="docker가 없음"):
         timed(ctx, "checkout", broken, clock=_clock(0.0, 3.0))({})
+
+
+class _Beats:
+    def __init__(self, fail: bool = False) -> None:
+        self.beats: list[int] = []
+        self.fail = fail
+        self.seen = threading.Event()
+
+    def heartbeat(self, run_id: int) -> None:
+        self.beats.append(run_id)
+        self.seen.set()
+        if self.fail:
+            raise OSError("database is locked")
+
+
+def test_keep_alive_leaves_heartbeats_while_a_long_step_runs() -> None:
+    store = _Beats()
+    with keep_alive(SimpleNamespace(store=store, run_id=7), seconds=0.01):
+        assert store.seen.wait(5)
+    count = len(store.beats)
+    assert count >= 1 and set(store.beats) == {7}
+    store.seen.clear()
+    assert not store.seen.wait(0.05) and len(store.beats) == count  # 블록을 나가면 멈춘다
+
+
+def test_keep_alive_failure_does_not_stop_the_step() -> None:
+    store = _Beats(fail=True)
+    with keep_alive(SimpleNamespace(store=store, run_id=7), seconds=0.01):
+        assert store.seen.wait(5)

@@ -6,9 +6,10 @@
 
 import logging
 import sqlite3
+import threading
 import time
-from collections.abc import Callable, Mapping
-from contextlib import ExitStack
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final, Literal, TypedDict
@@ -24,6 +25,8 @@ from app.worker.config.access_pure import Author
 from app.worker.config.base_config import BaseConfig
 from app.worker.config.repo_config_pure import call_limits
 from app.worker.core.bundle_pure import MECHANICAL_BUNDLE, MODEL_BUNDLE
+from app.worker.env import use_pure
+from app.worker.env.use_pure import EnvRef
 from app.worker.fix import (
     fix_decision_pure,
     fix_pure,
@@ -39,6 +42,7 @@ from app.worker.fix.proposal_pure import ProposalResult
 from app.worker.git import repo
 from app.worker.git.github import GitHub
 from app.worker.git.repo import CHANGES_DIFF
+from app.worker.lang import python
 from app.worker.model import mcp_pure
 from app.worker.model.model_backend import ModelBackend
 from app.worker.report import report
@@ -79,6 +83,7 @@ JUDGE: Final = "judge"
 PR_CHECK: Final = "pr_check"
 PR_DESCRIPTION: Final = "pr_description"
 LINKED_ISSUES: Final = "linked_issues"
+PLAN_ENV: Final = "plan_env"
 TEST: Final = "test"
 DECIDE: Final = "decide"
 FIX_MECHANICAL: Final = "fix_mechanical"
@@ -99,6 +104,9 @@ STATE_KEYS: Final[Mapping[str, tuple[str, str]]] = {
 # 작업을 다시 시도할 때 처음부터 하지 않고 이어 가는 node. 앞 node의 결과(검증한 패치)가 저장돼 있다
 RESUMABLE: Final = frozenset({DELIVER_MECHANICAL, DELIVER_MODEL})
 TOOL_DIR: Final = "tools"  # 도구 캐시 (data_dir 아래, venvs와 같은 자리)
+# 긴 단계(환경 준비)가 생존 확인을 남기는 간격. 동기화가 죽은 워커로 보는 기준
+# (`sync.heartbeat_timeout_minutes`, 기본 20분)보다 훨씬 짧으면 된다
+KEEP_ALIVE_SECONDS: Final = 60
 # 체크포인트에서 되살릴 수 있는 상태 타입 (나머지는 langgraph가 막는다)
 _STATE_TYPES: Final = (
     ("app.shared.job_pure", "PRJob"),
@@ -117,6 +125,7 @@ _STATE_TYPES: Final = (
     *pr_check_pure.STATE_TYPES,
     *pr_description_pure.STATE_TYPES,
     *linked_issues_pure.STATE_TYPES,
+    *use_pure.STATE_TYPES,
 )
 
 
@@ -139,6 +148,8 @@ class FlowState(TypedDict, total=False):
     mechanical_requested: bool  # 사람이 `/fix`로 이 커밋의 기계적 묶음을 승인했거나 다시 돌림
     model_fix: ModelFix | None  # 모델 수정 묶음의 결과 (4.7, 4.8)
     model_requested: bool
+    # 환경 준비의 결과 (4.5). Python 프로필이 돌릴 것이 없는 저장소만. 처방 본문은 env_plans에 있다
+    env: EnvRef
     test_run: TestRun
     commented: bool
     fix_skill: str  # 승인 대기에서 `/fix`가 고른 묶음
@@ -214,6 +225,35 @@ def is_stale_for(ctx: FlowContext, job: PRJob) -> Callable[[], bool]:
         return ctx.store.is_stale(job)
 
     return is_stale
+
+
+def uses_plan(worktree: Path) -> bool:
+    """이 저장소를 환경 처방으로 돌리는지. Python 프로필이 돌릴 것이 없는 저장소만 처방으로 간다
+    (Python 저장소는 아직 `lang/python.py`로 돈다). 환경 준비 node와 테스트가 이 값 하나로 길을
+    가른다."""
+    return not python.has_work(worktree)
+
+
+@contextmanager
+def keep_alive(ctx: FlowContext, seconds: float = KEEP_ALIVE_SECONDS) -> Iterator[None]:
+    """블록 안에서 seconds마다 생존 확인을 남긴다. 테스트처럼 낡았는지를 폴링하지 않는 긴 단계가
+    동기화에게 죽은 워커로 보여 같은 커밋이 다시 큐에 들어가지 않게 한다."""
+    done = threading.Event()
+
+    def beat() -> None:
+        while not done.wait(seconds):
+            try:
+                ctx.store.heartbeat(ctx.run_id)
+            except Exception:  # noqa: BLE001 (생존 확인의 실패가 단계를 멈추지 않는다)
+                log.warning("생존 확인을 남기지 못함", exc_info=True)
+
+    thread = threading.Thread(target=beat, name="keep-alive", daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        done.set()
+        thread.join()
 
 
 def thread_id(repo_name: str, pr_number: int, head_sha: str) -> str:

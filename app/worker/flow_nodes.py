@@ -14,6 +14,9 @@ from langgraph.types import interrupt
 from app.shared.job_pure import PRJob
 from app.worker import records
 from app.worker.config.access_pure import is_trusted
+from app.worker.env import default_limits, use
+from app.worker.env.plan import plan_environment
+from app.worker.env.use_pure import EnvRef
 from app.worker.fix import (
     decide,
     mechanical_fix,
@@ -38,8 +41,10 @@ from app.worker.flow_state import (
     ensure_checkout,
     enter_checkout,
     fresh_worktree,
+    keep_alive,
     progress,
     rag_switch,
+    uses_plan,
 )
 from app.worker.lang import python
 from app.worker.model.model_backend import fix_unavailable
@@ -66,7 +71,7 @@ from app.worker.testing import coverage
 from app.worker.testing.generated_tests_pure import Suite
 from app.worker.testing.test_run_pure import TestRun
 
-TestsFn = Callable[[PRJob], TestRun]
+TestsFn = Callable[[PRJob, EnvRef | None], TestRun]
 SuiteFn = Callable[[PRJob, Mapping[str, bytes] | None, Sequence[str]], Suite]
 
 
@@ -254,10 +259,30 @@ def after_doc_step(ctx: FlowContext, state: FlowState) -> str:
     return "done" if "doc_rules" in state else "next"
 
 
+def plan_env(ctx: FlowContext, state: FlowState) -> FlowState:
+    """Python 프로필이 돌릴 것이 없는 저장소의 환경 처방을 정하거나 저장한 것을 쓴다 (4.5).
+
+    처방은 base에만 의존해 저장소 단위로 저장하고, 기댄 파일이 그대로면 모델도 설치도 부르지 않는다.
+    새 커밋이 와도 멈추지 않는다(구운 층은 다음 커밋에도 쓴다). 낡은 커밋이면 다음 분기가 멈춘다.
+    """
+    job = state["job"]
+    ensure_checkout(ctx, job)
+    if not uses_plan(ctx.worktree):
+        return {}
+    progress(ctx, job, "환경 준비")
+    rt = doc_runtime(ctx, state)
+    with keep_alive(ctx):
+        plan = plan_environment(
+            ctx.worktree, job.base_sha, store=rt.store, budget=rt.budget, model=rt.models.env,
+            read_code=rt.backend.reading, limits=default_limits(), names=ctx.sandbox_names,
+        )  # fmt: skip
+    return {"env": use.ref_of(plan)}
+
+
 def test(ctx: FlowContext, state: FlowState, *, tests_for: TestsFn) -> FlowState:
     job = state["job"]
     progress(ctx, job, "테스트 실행")
-    run = tests_for(job)
+    run = tests_for(job, state.get("env"))
     if run.cancelled:
         return {"test_run": run, "stopped": "cancelled"}
     out: FlowState = {"test_run": run}
@@ -356,6 +381,7 @@ def render(ctx: FlowContext, state: FlowState) -> str:
         carried=state.get("carried"),
         description=state.get("pr_description"),
         issues=state.get("linked_issues"),
+        env=use.view(ctx.store, state["test_run"].env),
     )
 
 
@@ -406,7 +432,7 @@ def fix_mechanical(ctx: FlowContext, state: FlowState, *, tests_for: TestsFn) ->
         found, picked, worktree=ctx.worktree, merge_base=ctx.merge_base,
         base_sha=job.base_sha, test_before=state["test_run"],
         checks=doc_rules.saved_checks(found, rt.store), sandbox=rt.sandbox,
-        run_tests=lambda: tests_for(job), is_stale=lambda: ctx.store.is_stale(job),
+        run_tests=lambda: tests_for(job, None), is_stale=lambda: ctx.store.is_stale(job),
         secrets=proposal.pipeline_secrets(), disabled=rt.disabled,
     )  # fmt: skip
     if outcome is None:

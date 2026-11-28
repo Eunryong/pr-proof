@@ -44,6 +44,8 @@ def _env(tmp_path: Path, monkeypatch, redis):
     def fake_checkout(data_dir, repo_name, pr_number, head_sha, base_sha, **kwargs):
         path = tmp_path / "wt"
         path.mkdir(exist_ok=True)
+        # Python 프로필이 돌릴 저장소로 둔다. 환경 처방으로 가는 흐름은 tests/worker/env가 본다
+        (path / "app.py").touch()
         yield Checkout(path=path, head_sha=head_sha, base_sha=base_sha, merge_base=base_sha)
 
     monkeypatch.setattr(repo, "checkout", fake_checkout)

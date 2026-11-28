@@ -23,6 +23,10 @@ from langgraph.types import Command
 
 from app.shared.job_pure import PRJob
 from app.worker import flow_nodes, records
+from app.worker.config.access_pure import is_trusted
+from app.worker.env import use
+from app.worker.env.use import PlannedRun
+from app.worker.env.use_pure import NOT_PREPARED, EnvRef, EnvSkipped
 from app.worker.fix import fix_decision_pure, proposal
 from app.worker.flow_state import (
     _STATE_TYPES,
@@ -44,6 +48,7 @@ from app.worker.flow_state import (
     LOAD_RULES,
     MECHANICAL,
     MODEL,
+    PLAN_ENV,
     PR_CHECK,
     PR_DESCRIPTION,
     RESUMABLE,
@@ -60,6 +65,7 @@ from app.worker.flow_state import (
     thread_config,
     thread_id,
     timed,
+    uses_plan,
 )
 from app.worker.git import repo
 from app.worker.lang import python
@@ -67,7 +73,7 @@ from app.worker.rules import doc_rules, pr_check_pure
 from app.worker.rules.doc_rules_pure import Found
 from app.worker.sandbox import container, docker_cli, toolcache
 from app.worker.testing.generated_tests_pure import Suite
-from app.worker.testing.test_run_pure import NO_PROFILE_WHY, TestRun
+from app.worker.testing.test_run_pure import TestRun
 
 __all__ = [
     "AUTHOR_CHECKERS",
@@ -88,6 +94,7 @@ __all__ = [
     "LOAD_RULES",
     "MECHANICAL",
     "MODEL",
+    "PLAN_ENV",
     "PR_CHECK",
     "PR_DESCRIPTION",
     "RESUMABLE",
@@ -114,6 +121,7 @@ __all__ = [
     "thread_config",
     "thread_id",
     "timed",
+    "uses_plan",
 ]
 
 
@@ -127,15 +135,23 @@ def run_pr_tests(
     memory_gb: float = docker_cli.MEMORY_LIMIT_GB,
     names: docker_cli.Names = docker_cli.DEFAULT_NAMES,
     contexts: bool = False,
+    env: PlannedRun | EnvSkipped | None = None,
 ) -> TestRun:
-    """테스트 단계: 이미지 준비 → Python 런타임(도구 캐시) → .venv 준비 → 작업 컨테이너에서 pytest
-    → 결과. 저장소에 Python 프로필이 돌릴 것이 없으면 아무것도 준비하지 않고 `no_env`다.
+    """테스트 단계. Python 프로필이 돌릴 것이 있으면 이미지 준비 → Python 런타임(도구 캐시) →
+    .venv 준비 → 작업 컨테이너에서 pytest → 결과다. 없으면(`uses_plan`) env의 환경 처방으로 층을
+    갖추고 빌드·테스트한다. 처방이 없으면 그 까닭으로 `no_env`다.
 
     Docker 실패와 런타임을 받지 못함은 docker_cli.SandboxError(환경 오류), pip 실패는
     python.DependencyInstallError로 올라간다. 처리는 app/worker/update.py가 정한다.
     """
-    if not python.has_work(worktree):
-        return TestRun(unplanned=NO_PROFILE_WHY)
+    if uses_plan(worktree):
+        match env:
+            case None:
+                return TestRun(unplanned=NOT_PREPARED)
+            case EnvSkipped(reason=reason):
+                return TestRun(unplanned=reason)
+            case PlannedRun():
+                return use.run_planned(env, worktree, names=names, job_id=job_id, is_stale=is_stale)
     image = docker_cli.ensure_image(names.image)
     runtime = python.ensure_runtime(tool_cache, names.image)
     venv_dir = python.ensure_venv(
@@ -149,11 +165,25 @@ def run_pr_tests(
 
 
 def pr_tests(
-    ctx: FlowContext, job: PRJob, worktree: Path | None = None, *, contexts: bool = False
+    ctx: FlowContext,
+    job: PRJob,
+    worktree: Path | None = None,
+    *,
+    contexts: bool = False,
+    env: EnvRef | None = None,
 ) -> TestRun:
     """ctx의 worktree(또는 worktree)에서 PR의 테스트를 샌드박스로 돌린다. 테스트 node와 수정 단계,
-    코멘트 수정(4.11)이 같이 쓴다."""
-    kw = {"contexts": True} if contexts else {}
+    코멘트 수정(4.11)이 같이 쓴다. env는 환경 준비가 정한 처방이다(테스트 node만 넘긴다).
+
+    처방으로 돌릴 때 의존성 입력을 PR의 것으로 쓸지는 작성자를 믿는지로 정한다. 믿는지는 규칙 문서를
+    PR의 것으로 읽을지와 같은 값이다(가드레일이 GitHub에서 읽은 작성자와 base의 `access.trusted`).
+    """
+    kw: dict[str, object] = {"contexts": True} if contexts else {}
+    if env is not None:
+        kw["env"] = use.prepare(
+            ctx.store, env, base_sha=job.base_sha, head_sha=job.head_sha,
+            trusted=is_trusted(ctx.author, ctx.base.access),
+        )  # fmt: skip
     return (ctx.run_tests or run_pr_tests)(
         worktree or ctx.worktree,
         job_id=f"{ctx.run_id}",
@@ -181,7 +211,7 @@ def pr_suite(
 
 
 def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
-    tests_for = lambda job: pr_tests(ctx, job)  # noqa: E731
+    tests_for = lambda job, env=None: pr_tests(ctx, job, env=env)  # noqa: E731
     suite_for = lambda job, generated, files: pr_suite(ctx, job, generated, files)  # noqa: E731
     route = lambda state: flow_nodes.route(ctx, state)  # noqa: E731
     after_doc = lambda state: flow_nodes.after_doc_step(ctx, state)  # noqa: E731
@@ -206,6 +236,7 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
         LINKED_ISSUES,
         timed(ctx, LINKED_ISSUES, lambda s: flow_nodes.check_issues(ctx, s)),
     )
+    graph.add_node(PLAN_ENV, timed(ctx, PLAN_ENV, lambda s: flow_nodes.plan_env(ctx, s)))
     graph.add_node(TEST, timed(ctx, TEST, lambda s: flow_nodes.test(ctx, s, tests_for=tests_for)))
     graph.add_node(DECIDE, timed(ctx, DECIDE, lambda s: flow_nodes.decide_fixes(ctx, s)))
     graph.add_node("comment", timed(ctx, "comment", lambda s: flow_nodes.comment(ctx, s)))
@@ -241,7 +272,8 @@ def build_graph(ctx: FlowContext, checkpointer: SqliteSaver | None = None):
     graph.add_conditional_edges(JUDGE, route, {"next": PR_CHECK, "stop": END})
     graph.add_conditional_edges(PR_CHECK, route, {"next": PR_DESCRIPTION, "stop": END})
     graph.add_conditional_edges(PR_DESCRIPTION, route, {"next": LINKED_ISSUES, "stop": END})
-    graph.add_conditional_edges(LINKED_ISSUES, route, {"next": TEST, "stop": END})
+    graph.add_conditional_edges(LINKED_ISSUES, route, {"next": PLAN_ENV, "stop": END})
+    graph.add_conditional_edges(PLAN_ENV, route, {"next": TEST, "stop": END})
     graph.add_conditional_edges(TEST, route, {"next": DECIDE, "stop": END})
     graph.add_conditional_edges(DECIDE, route, {"next": "comment", "stop": END})
     graph.add_conditional_edges("comment", next_fix, fix_targets)
