@@ -13,7 +13,8 @@ flowchart TD
     author -->|"끝내 실패: 방법 = model"| detect
     plan -->|"코드로 표현할 수 없음: 방법 = model"| detect
     plan -->|"확인 대상이 pr·run: 방법 = none<br/>(PR 단위 확인, 실행 결과의 규칙이 봄)"| detect
-    detect["detect<br/>도구·검사기 (샌드박스), 모델 판단"] --> baseline["baseline<br/>테스트 기준선, 커버리지 (샌드박스)"]
+    detect["detect<br/>도구·검사기 (샌드박스), 모델 판단"] --> plan_env["plan_env<br/>환경 처방 (Python 프로필이 돌릴 것이 없는 저장소만)"]
+    plan_env --> baseline["baseline<br/>테스트 기준선, 커버리지 (샌드박스)"]
     baseline --> decide["decide<br/>수정 판단: 파이프라인 먼저, 나머지는 모델"]
     decide --> report["report<br/>결과 코멘트 갱신"]
     report --> gate{"route_fix"}
@@ -36,6 +37,7 @@ flowchart TD
 - `plan_checks`와 `author_checker`는 규칙 묶음이 캐시에 있으면 통째로 건너뛴다.
 - `detect`(지금 코드의 `detect`, `judge`, `pr_check`) 다음, 테스트 전에 `pr_description` node가 돈다(4.5 끝 "PR 설명과 diff 견주기", 2026-11-22). 규칙이 없어 규칙 경로가 일찍 끝나도 이 node를 지나 테스트로 간다. `.pipeline.yaml`의 `pr_description.enabled: false`면 아무것도 하지 않는다. 결과는 상태의 `pr_description`에만 넣고, 수정 판단과 수정 묶음은 읽지 않는다.
 - `pr_description` 다음, 테스트 전에 `linked_issues` node가 돈다(4.5 끝 "연결된 이슈 확인", 2026-11-23). 규칙이 없어도 지난다. 연결된 이슈를 GitHub에서 읽고, 있으면 진행 글을 "이슈 확인"으로 고치고 모델이 견준다(없으면 진행 글도 고치지 않는다). `.pipeline.yaml`의 `linked_issues.enabled: false`면 아무것도 하지 않는다. 결과는 상태의 `linked_issues`에만 넣고(의존성 설치가 실패해도 코멘트에 보이게 `FlowContext`에도 둔다), 수정 판단과 수정 묶음은 읽지 않는다. `/fix`가 앞 node부터 다시 돌 때 이미 견준 결과가 있으면(호출 상한으로 남은 것이 아니면) 그대로 둔다.
+- `linked_issues` 다음, 테스트 전에 `plan_env` node가 돈다(4.5 "Python 프로필이 돌릴 것이 없는 저장소의 테스트", 2026-11-29). PR head의 worktree에 Python 프로필이 돌릴 것이 없을 때만(`flow_state.uses_plan`, `python.has_work`가 거짓) 진행 글을 "환경 준비"로 고치고 base 커밋의 환경 처방을 정하거나 저장한 것을 쓴다(`env/plan.py`). 상태에는 처방의 참조(`env`)만 넣고 처방 본문은 `env_plans`에서 다시 읽는다. 처방은 base에만 의존하므로 새 커밋이 와도 멈추지 않고(구운 층은 다음 커밋에도 쓴다), 낡은 커밋이면 다음 분기가 END로 간다. 처방 정하기는 테스트처럼 낡았는지를 폴링하지 않아 그동안 생존 확인을 60초마다 따로 남긴다(`flow_state.keep_alive`). Python 저장소에서는 아무것도 하지 않는다. 테스트 node는 `env`를 `pr_tests`에 넘기고, `run_pr_tests`가 같은 스위치로 처방 길과 Python 프로필 길을 가른다.
 - 부수 효과가 있는 노드는 `report`, `deliver`, `final_report`, `record`다. `report`와 `final_report`는 같은 코멘트를 덮어쓴다(3.1의 C5).
 
 ### 5.2 조건 분기
@@ -114,7 +116,7 @@ class FlowState(TypedDict, total=False):
     rules: list[Rule]                                   # 규칙 목록 (확인·수정 방법 포함)
     unchecked: Annotated[dict[str, str], merge]         # 규칙 id → 검사하지 못한 이유
     violations: Annotated[dict[str, Violation], merge]  # 위반 id → 위반 (커버 여부 포함)
-    test_run: TestRun
+    test_run: TestRun                                   # 처방으로 돌렸으면 env(EnvUse: 처방 id, 층마다 다시 썼는지, 의존성 입력의 커밋)가 붙는다
     diff_coverage: DiffCoverage | None
     decisions: Annotated[dict[str, FixDecision], merge] # 위반 id → 수정 판단
     fixes: Annotated[dict[str, FixOutcome], merge]      # 묶음(mechanical | model) → 결과. 패치는 fix_attempts의 id
@@ -122,6 +124,7 @@ class FlowState(TypedDict, total=False):
     carried: CarriedFrom                                # 수정안의 머지 커밋에 옮겨 적은 결과의 출처 (수정안 PR 번호, 묶음, 검증한 커밋)
     pr_description: PrDescription                       # PR 설명 확인의 결과 (4.5 끝). 알리기만 한다. 체크포인트 타입으로 등록
     linked_issues: LinkedIssues                         # 이슈 확인의 결과 (4.5 끝). 알리기만 한다. 체크포인트 타입으로 등록 (LinkedIssues, IssueGap)
+    env: EnvPlanned | EnvSkipped                        # 환경 준비의 결과 (4.5). 처방 id 또는 처방이 없는 까닭의 글. 체크포인트 타입으로 등록 (env/use_pure.py)
     commented: bool
     stopped: Literal["stale", "cancelled"]
 ```

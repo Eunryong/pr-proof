@@ -150,7 +150,7 @@ class Record:
 
 | 프로필이 답하는 것 | Python 프로필 (처음이자 지금 유일한 구현) |
 | --- | --- |
-| 이 저장소가 이 언어인가, 무엇이 필요한가 | `pyproject.toml`, `requirements*.txt`, `ruff.toml` 등 base의 설정 파일. 돌릴 것이 있는지는 테스트를 돌리는 폴더(PR head)에 의존성 파일(`requirements*.txt`, `pyproject.toml`)이나 `.py`·`.pyi` 파일이 있는지로 본다(`python.has_work`, 이름만 본다). 없으면 테스트 상태가 `no_env`이다(4.5) |
+| 이 저장소가 이 언어인가, 무엇이 필요한가 | `pyproject.toml`, `requirements*.txt`, `ruff.toml` 등 base의 설정 파일. 돌릴 것이 있는지는 테스트를 돌리는 폴더(PR head)에 의존성 파일(`requirements*.txt`, `pyproject.toml`)이나 `.py`·`.pyi` 파일이 있는지로 본다(`python.has_work`, 이름만 본다). 없으면 환경 처방으로 돈다(4.5 "Python 프로필이 돌릴 것이 없는 저장소의 테스트") |
 | 런타임 | Python. 도구 캐시의 python-build-standalone 배포본(버전과 SHA256 고정, 3.11.18 하나). 저장소가 요구하는 버전으로 고르는 일은 아직 없다(11.1) |
 | 도구 목록 (모두 밖에서 받아 오는 것) | `ruff`, `ruff-format` |
 | 의존성 설치와 캐시 | `.venv` (4.5). 캐시 키에 런타임 버전 |
@@ -229,7 +229,7 @@ class ToolUsage:                           # 수정 작성 호출들 안의 도�
 
 ### 7.10 환경 처방
 
-저장소를 빌드·테스트할 환경을 데이터로 적은 것이다(`app/worker/env/recipe_pure.py`, 2026-11-29). 사람이 쓴 JSON 파일은 수동 명령 `python -m app.worker.cli env-try <처방.json> <저장소 폴더>`가 받는다. 모델이 쓰고 base에서 확인하는 처방은 수동 명령 `env-plan`이 정한다(4.5 "환경 처방 정하기"). 흐름에 잇는 일은 13절 7단계의 다음 PR들이 한다.
+저장소를 빌드·테스트할 환경을 데이터로 적은 것이다(`app/worker/env/recipe_pure.py`, 2026-11-29). 사람이 쓴 JSON 파일은 수동 명령 `python -m app.worker.cli env-try <처방.json> <저장소 폴더>`가 받는다. 모델이 쓰고 base에서 확인하는 처방은 PR 흐름의 `plan_env` node(Python 프로필이 돌릴 것이 없는 저장소만)와 수동 명령 `env-plan`이 정한다(4.5 "환경 처방 정하기"). PR head는 그 처방의 층 위에서 돈다(4.5 "Python 프로필이 돌릴 것이 없는 저장소의 테스트").
 
 ```text
 EnvRecipe

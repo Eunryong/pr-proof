@@ -59,8 +59,9 @@ BACKLOG.md 형식:
 ## 지금의 방향과 상태
 
 - 원칙(DESIGN 2절): 모델이 일을 쥐고, 프로그램(저장소의 도구, 검사기, 샌드박스 테스트)은 모델이 필요할 때 부르는 도구다. 프로그램이 모델 밖에서 하는 것은 올리기 직전의 출구 검사와 경계(샌드박스, 허용 범위, 비밀값, 호출·시간·크기 상한)다. 머지는 사람이 한다.
-- PR 하나의 순서: 작성자 확인(가드레일) → 규칙 읽기(모델, base의 문서와 도구 설정) → 규칙마다 확인 방법(저장소의 도구 / 모델이 쓴 검사기 / 모델 판단) → 위반 찾기 → 테스트 기준선 → 수정 판단(정해진 것은 프로그램, 나머지는 모델) → 수정 작성 → 출구 검사 → 수정안 PR과 결과 코멘트.
+- PR 하나의 순서: 작성자 확인(가드레일) → 규칙 읽기(모델, base의 문서와 도구 설정) → 규칙마다 확인 방법(저장소의 도구 / 모델이 쓴 검사기 / 모델 판단) → 위반 찾기 → 환경 준비(Python 프로필이 돌릴 것이 없는 저장소만: 모델이 base를 읽고 쓴 환경 처방, 저장한 것이 있으면 다시 씀) → 테스트 기준선 → 수정 판단(정해진 것은 프로그램, 나머지는 모델) → 수정 작성 → 출구 검사 → 수정안 PR과 결과 코멘트.
 - 수정 작성(DESIGN 4.7)은 모델이 한 호출 안에서 한다: 있던 테스트가 위반 줄을 실행하지 않으면 테스트(`tests/test_pipeline_<이름>.py`)를 먼저 쓰고, 도구 `run_tests`(샌드박스)와 `check_rules`(검사기)로 돌려 보며 고치고 다시 확인한다.
+- 테스트 기준선(DESIGN 4.5)은 저장소에 따라 길이 둘이다. 스위치는 `flow_state.uses_plan` 하나다. Python 저장소는 `lang/python.py`(pytest, coverage.py)로 돈다. Python 프로필이 돌릴 것이 없는 저장소는 `plan_env` node가 정한 환경 처방의 층 위에서 빌드·테스트하고(`env/use.py`), 결과 코멘트에 "이 저장소를 돌린 환경"이 붙는다. 의존성 층의 입력은 base의 것이고 믿는 작성자의 PR이 바꿨을 때만 PR의 것을 쓴다. 처방으로 돈 저장소는 린트 단계를 아직 돌리지 않고 수정도 하지 않는다(DESIGN 12.2).
 - 출구 검사(DESIGN 4.8)는 프로그램이 같은 검사를 한 번 더 돌린다: 허용 범위, 비밀값, 설명 확인, 규칙 재검사, 만든 테스트의 조건(고치기 전 통과, 위반 줄 실행, 겹치지 않음, 고친 뒤 통과, 빈 테스트 아님), 테스트, 크기. 맞지 않는 만든 테스트는 그 파일만 뺀다.
 - 모델이 코드를 보는 방식은 단계마다 다르다(DESIGN 8.4). 수정 작성은 저장소를 읽고 쓰는 도구와 파이프라인 도구를 받는다. 위반 찾기의 모델 판단(DESIGN 4.5)과 PR 설명 확인(DESIGN 4.5 끝)은 읽기 도구(Read, Grep, Glob)로 PR의 코드에서 필요한 곳을 찾아 읽는다. 규칙 읽기, 검사기 작성, 수정 판단, PR 단위 확인은 도구 없이 프로그램이 골라 준 자료만 받는다.
 - 모델이 끼는 흐름의 확인은 실제 모델로 한다(DESIGN 11.1). 모델 자리에 정해진 답을 내는 가짜 모델은 없고, 만들지 않는다. 모델 없이 볼 수 있는 부분은 그 부분만 떼어 입력 값으로 시험한다. 평가 케이스(`eval/`)에는 모델의 답을 적지 않고 기대를 결과로 적는다.
@@ -137,14 +138,14 @@ tests/          코드와 같은 이름의 폴더 (tests/api, tests/worker, test
 - `testing/`: 테스트 실행 결과(`test_run_pure.py`: 빌드 단계와 테스트 단계, 상태), 결과 파일 읽기(`reports_pure.py`: JUnit XML), 커버리지(`coverage.py`, `coverage_pure.py`), 고친 위반의 테스트 표시(`test_lines.py`), 모델이 만든 테스트(`generated_tests_pure.py`)
 - `sandbox/`: `docker_cli`, `container`, `toolcache`, `checker_runner`, `safe_read`, `egress`. `egress.py`는 굽는 컨테이너의 내부 네트워크와 바깥 연결 프록시를 띄우고 지운다. 프록시는 프록시 컨테이너 안에서 도는 `egress_proxy.py`이고(이미지 `docker/proxy/Dockerfile`), 주소 판정과 요청 읽기는 `egress_pure.py`다. 도구(ast-grep, ruff)와 Python 런타임은 지금 `toolcache.py`가 고정한 버전과 SHA256으로 받아 캐시한다(없앨 고정, DESIGN 12.2). 샌드박스 이미지에는 언어가 없다 (`debian:bookworm-slim`에 curl과 인증서)
 - `lang/python.py`: Python 언어 프로필 (런타임 준비, `.venv` 설치, pytest 실행과 결과 읽기, 위반 줄의 커버리지 읽기, ruff). 테스트 파일의 정의(`fix/scope_pure.py`), coverage.xml 파싱(`testing/coverage_pure.py`), ruff 설정 읽기와 도구 목록(`core/tools_pure.py`)은 순수 모듈에 있다. 손으로 짠 프로필은 이것 하나이고 언어를 더 짜 넣지 않는다. 모델이 저장소에 맞는 도구를 정하는 쪽으로 바꾼다(DESIGN 2.3, 13절 7단계)
-- `env/`: 환경 처방(DESIGN 7.10). 처방의 데이터와 경계의 검사, 층의 키(`recipe_pure.py`), 시스템 층과 의존성 층을 Docker 이미지로 굽고 캐시하기(`install.py`, 실패 나누기는 `install_pure.py`), 구운 층 위의 작업 컨테이너에서 빌드·테스트 단계를 돌리고 결과 읽기(`run.py`, 판정은 `run_pure.py`). 굽는 컨테이너는 `sandbox/egress.py`의 내부 네트워크와 프록시로만 밖에 닿는다. 모델이 base를 읽기 도구로 읽고 처방을 쓰고 base에서 굽고 돌려 확인하는 처방 정하기(`plan.py`, 프롬프트·답 읽기·피드백·판정·다시 쓰기는 `plan_pure.py`, 지시문은 `prompts/plan_env.md`, 확인한 처방은 `env_plans`). 지금은 수동 명령 `env-try`와 `env-plan`만 부른다. `core`·`sandbox`·`testing`·`git`·`config`·`store`·`model`을 import하고, 그 폴더들은 `env`를 import하지 않는다
+- `env/`: 환경 처방(DESIGN 7.10). 처방의 데이터와 경계의 검사, 층의 키(`recipe_pure.py`), 시스템 층과 의존성 층을 Docker 이미지로 굽고 캐시하기(`install.py`, 실패 나누기는 `install_pure.py`), 구운 층 위의 작업 컨테이너에서 빌드·테스트 단계를 돌리고 결과 읽기(`run.py`, 판정은 `run_pure.py`). PR 흐름에서 처방을 쓰기(`use.py`: 상태의 참조를 처방으로, PR head를 처방으로 돌리기. 참조의 모양, 의존성 입력과 작성자 신뢰, 처방이 없는 까닭의 글은 `use_pure.py`). 굽는 컨테이너는 `sandbox/egress.py`의 내부 네트워크와 프록시로만 밖에 닿는다. 모델이 base를 읽기 도구로 읽고 처방을 쓰고 base에서 굽고 돌려 확인하는 처방 정하기(`plan.py`, 프롬프트·답 읽기·피드백·판정·다시 쓰기는 `plan_pure.py`, 지시문은 `prompts/plan_env.md`, 확인한 처방은 `env_plans`). PR 흐름의 `plan_env`·`test` node(Python 프로필이 돌릴 것이 없는 저장소)와 수동 명령 `env-try`·`env-plan`이 부른다. `core`·`sandbox`·`testing`·`git`·`config`·`store`·`model`을 import하고, 그 폴더들은 `env`를 import하지 않는다
 - 프롬프트: 모델에게 주는 지시문은 쓰는 폴더의 `prompts/`에 있다(`rules/prompts/`, `fix/prompts/`, `feedback/prompts/`, `env/prompts/`). 읽는 코드는 `core/prompt_text_pure.py`의 `load(__file__, "이름")`이고 부르는 모듈과 같은 폴더의 `prompts/`만 읽는다. 폴더마다 `README.md`에 목록이 있다
 
 **웹과 워커 사이의 계약 (`app/shared/`).** 웹과 워커는 메모리를 공유하지 않는다. 둘 사이에는 큐와 Redis·SQLite 상태만 오가고, 큐에 넣는 값은 작업 계약(`job_pure.py`의 `PRJob`)뿐이다. 키 형식과 큐 이름(`state_keys_pure.py`), SQLite 테이블 정의(`db_pure.py`)는 여기 두고, 읽기·쓰기 코드는 각자 자기 쪽에 둔다. 그 밖에 코멘트 표시(`comment_pure.py`), 운영 알림의 종류와 글(`ops_alert_pure.py`), 임베딩 모델 목록(`embed_models_pure.py`), 설정과 비밀값 읽기(`config.py`), macOS 알림(`notify.py`)이 있다.
 
 **순수 모듈.** 이름이 `_pure.py`로 끝나는 모듈은 바깥에 손대지 않는다: 파일, 프로세스, 네트워크, Redis, DB 연결을 쓰지 않고 받은 값으로 계산만 한다(데이터 정의, 판정, 프롬프트 만들기, 답 읽기). 순수 모듈은 그것이 속한 단계 폴더나 공용 폴더에 두고(`app/worker/fix/fix_decision_pure.py`, `app/worker/git/git_pure.py`), 어느 한 폴더에 속하지 않으면서 여러 단계가 쓰는 데이터 정의와 도구만 `app/worker/core/`에 둔다(`app/worker/core/bundle_pure.py`). 웹과 워커가 같이 쓰면 `app/shared/`, 웹만 쓰면 `app/api/`. `app/worker/` 맨 위의 순수 모듈은 `command_pure.py` 하나다.
 
-같은 폴더에 같은 이름의 실행 코드 `x.py`가 있는 순수 모듈: `command_pure`, `env/install_pure`, `env/plan_pure`, `env/run_pure`, `sandbox/egress_pure`, `feedback/feedback_triage_pure`, `fix/model_fix_pure`, `fix/proposal_pure`, `fix/scope_pure`, `rules/diff_batches_pure`, `rules/doc_rules_pure`, `rules/judge_pure`, `rules/linked_issues_pure`, `rules/pr_check_pure`, `rules/pr_description_pure`, `rules/run_check_pure`, `store/records_pure`, `testing/coverage_pure`. 아래는 주로 부르는 실행 코드와 이름이 다른 것이다.
+같은 폴더에 같은 이름의 실행 코드 `x.py`가 있는 순수 모듈: `command_pure`, `env/install_pure`, `env/plan_pure`, `env/run_pure`, `env/use_pure`, `sandbox/egress_pure`, `feedback/feedback_triage_pure`, `fix/model_fix_pure`, `fix/proposal_pure`, `fix/scope_pure`, `rules/diff_batches_pure`, `rules/doc_rules_pure`, `rules/judge_pure`, `rules/linked_issues_pure`, `rules/pr_check_pure`, `rules/pr_description_pure`, `rules/run_check_pure`, `store/records_pure`, `testing/coverage_pure`. 아래는 주로 부르는 실행 코드와 이름이 다른 것이다.
 
 | 실행 코드 | 순수 모듈 |
 | --- | --- |
@@ -155,7 +156,7 @@ tests/          코드와 같은 이름의 폴더 (tests/api, tests/worker, test
 | `app/worker/store/budget.py` | `app/worker/store/call_budget_pure.py` |
 | `app/worker/store/memory.py` | `app/worker/store/rag_pure.py`, `app/worker/store/rag_switch_pure.py` |
 | `app/worker/evaluation/evaluation.py` | `app/worker/evaluation/eval_run_pure.py` |
-| `app/worker/report/report.py` | `app/worker/report/pr_description_report_pure.py`, `app/worker/report/linked_issues_report_pure.py` |
+| `app/worker/report/report.py` | `app/worker/report/pr_description_report_pure.py`, `app/worker/report/linked_issues_report_pure.py`, `app/worker/report/env_report_pure.py` |
 | `app/worker/report/doc_rules_report.py` | `app/worker/report/pr_check_report_pure.py` |
 | `app/worker/rules/rules.py` | `app/worker/rules/rule_reading_pure.py`, `app/worker/rules/doc_sections_pure.py` |
 | `app/worker/rules/checkers.py` | `app/worker/rules/checker_authoring_pure.py`, `app/worker/rules/tool_choice_pure.py` |
