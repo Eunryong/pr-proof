@@ -59,3 +59,12 @@ def test_failed_pull_builds_from_the_local_base_and_waits_a_day(monkeypatch) -> 
     assert docker_cli.ensure_image("t", now=lambda: 0.0, pulled_at=pulled).id == "sha256:abc"
     docker_cli.ensure_image("t", now=lambda: 10.0, pulled_at=pulled)
     assert [("--pull" in b) for b in fake.builds] == [True, False, False]
+
+
+def test_other_folders_are_passed_as_named_build_contexts(docker: FakeDocker, tmp_path) -> None:
+    docker_cli.ensure_image("p", context=tmp_path / "proxy", contexts=(("src", tmp_path / "s"),),
+                            now=lambda: 0.0, pulled_at={})  # fmt: skip
+    (build,) = docker.builds
+    assert build[-1] == str(tmp_path / "proxy")
+    i = build.index("--build-context")
+    assert build[i + 1] == f"src={tmp_path / 's'}"

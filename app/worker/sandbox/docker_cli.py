@@ -21,6 +21,8 @@ PULL_EVERY_SECONDS: Final = 24 * 60 * 60
 CONTAINER_PREFIX: Final = "pr-proof-job"
 # 이미지 Dockerfile과 컨테이너에 읽기 전용으로 넣는 파이프라인 설정(coveragerc)
 IMAGE_DIR: Final = Path(__file__).resolve().parents[3] / "docker" / "sandbox"
+# 굽는 컨테이너의 바깥 연결 프록시 이미지 (app/worker/sandbox/egress.py)
+PROXY_IMAGE: Final = "pr-proof-proxy"
 
 # 설치·작업 컨테이너 공통 자원 제한. 메모리는 대상 리포의 sandbox.memory_gb로 바꿀 수 있다
 MEMORY_LIMIT_GB: Final = 1.0
@@ -107,6 +109,7 @@ class Names:
 
     image: str = IMAGE
     container_prefix: str = CONTAINER_PREFIX
+    proxy_image: str = PROXY_IMAGE
 
 
 DEFAULT_NAMES: Final = Names()  # 운영 기본값
@@ -115,26 +118,31 @@ DEFAULT_NAMES: Final = Names()  # 운영 기본값
 def ensure_image(
     tag: str = IMAGE,
     *,
+    context: Path = IMAGE_DIR,
+    contexts: tuple[tuple[str, Path], ...] = (),
     now: Callable[[], float] = time.monotonic,
     pulled_at: dict[str, float] = _pulled_at,
 ) -> Image:
-    """이미지를 빌드(캐시되면 즉시 끝남)하고 id를 돌려준다.
+    """context 폴더의 Dockerfile로 이미지를 빌드(캐시되면 즉시 끝남)하고 id를 돌려준다.
 
+    contexts는 Dockerfile이 `COPY --from=<이름>`으로 읽는 다른 폴더다(`--build-context`).
     기반 이미지의 보안 패치를 받으려고 프로세스가 처음 빌드할 때와 그 뒤 `PULL_EVERY_SECONDS`마다
     한 번 `--pull`로 빌드한다(위협 T25). 받기가 실패하면(네트워크) 있는 기반 이미지로 빌드하고
     다음 주기에 다시 받는다. pulled_at은 태그마다 마지막으로 받은 시각이고 테스트가 넘긴다.
     """
+    named = [arg for name, path in contexts for arg in ("--build-context", f"{name}={path}")]
+    build = ("build", "-q", *named, "-t", tag)
     last = pulled_at.get(tag)
     built = False
     if last is None or now() - last >= PULL_EVERY_SECONDS:
         pulled_at[tag] = now()
         try:
-            run("build", "-q", "--pull", "-t", tag, str(IMAGE_DIR), timeout=600)
+            run(*build, "--pull", str(context), timeout=600)
             built = True
         except SandboxError as e:
             log.warning("기반 이미지를 새로 받지 못해 있는 것으로 빌드함: %s", str(e)[-300:])
     if not built:
-        run("build", "-q", "-t", tag, str(IMAGE_DIR), timeout=600)
+        run(*build, str(context), timeout=600)
     return Image(id=run("image", "inspect", tag, "--format", "{{.Id}}").stdout.strip())
 
 

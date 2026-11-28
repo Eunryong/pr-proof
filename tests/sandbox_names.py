@@ -14,5 +14,7 @@ from app.worker.sandbox.docker_cli import Names
 # 이미지 이름은 3단계에 최소 이미지로 바꾸며 새로 지었다. 예전 태그(Python 이미지)를 빌드하는 다른
 # 작업 폴더의 테스트와 같은 태그를 번갈아 덮어쓰지 않는다
 TEST_NAMES: Final = Names(
-    image="pipeline-sandbox-minimal-test", container_prefix=f"pr-proof-test-{os.getpid()}"
+    image="pipeline-sandbox-minimal-test",
+    container_prefix=f"pr-proof-test-{os.getpid()}",
+    proxy_image="pr-proof-proxy-test",
 )
