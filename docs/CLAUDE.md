@@ -7,7 +7,8 @@
 - 모델이 일을 쥐고, 프로그램(저장소의 도구, 검사기, 샌드박스 테스트)은 모델이 필요할 때 부르는 도구다. 프로그램이 모델 밖에서 하는 것은 올리기 직전의 출구 검사와 경계(샌드박스, 허용 범위, 비밀값, 호출·시간·크기 상한)다. 머지는 사람이 한다(DESIGN 2절). 결정은 네 종류다(DESIGN 2.1): 규칙 선택(모델), 위반 판단(도구가 있으면 도구, 없으면 모델), 수정 판단(모델), 수정 작성과 확인(모델이 도구로, 출구 검사는 프로그램). 출구 검사는 모델의 말을 믿지 않고 프로그램이 직접 돌린다.
 - 모델의 결과는 입력 해시별로 저장하고 다시 쓴다. 재현성은 모델을 금지해서가 아니라 저장해서 보장한다.
 - 규칙은 대상 리포의 문서와 도구 설정에서만 나온다. 파이프라인은 내장 규칙도 내장 검사기도 갖지 않는다. 특정 구조(MVC 등)를 강제하지 않는다.
-- 도구는 미리 깔지 않고 규칙 계획에 필요할 때만 받아 캐시한다(DESIGN 2.3).
+- 저장소에 맞는 도구(언어, 빌드·테스트·린트 도구와 명령)는 모델이 정하고, 프로그램은 그것을 필요할 때 설치해 캐시하고 샌드박스에서 돌린다(DESIGN 2.3, pr-proof#107). 코드에 도구·판·해시의 목록과 손으로 짠 언어 프로필을 두지 않는다.
+- 지금 코드에 남은 고정(`toolcache.TOOLS`, `tools_pure.TOOL_LIST`, `lang/python.py`)은 지킬 규칙이 아니라 없앨 대상이다(DESIGN 12.2, 13절 7단계). 못 돌리는 저장소가 나왔을 때 목록에 도구나 해시를 더하기, 언어 프로필을 하나 더 짜기, 결과 코멘트의 글만 고치기를 해법으로 내지 않는다. "돌릴 수 없다"로 끝내지 않고 돌리는 길을 만든다(필요한 것을 설치하기, 저장소에 없는 CI·빌드 설정을 넣는 PR을 올리기). 보안의 경계가 정해지지 않았으면 그것을 주인에게 묻는다(DESIGN 11.3). 목록을 지킬 이유로 쓰지 않는다.
 - 웹(api)과 worker는 메모리를 공유하지 않는다. 넘길 값은 `app/shared/job_pure.py`의 `PRJob`으로만, 상태는 Redis(임시)·SQLite(영구)에 둔다.
 - PR에서 온 코드와 모델이 쓴 코드(수정안, 검사기, 만든 테스트)는 Docker 샌드박스에서만 실행한다. 호스트에서 대상 리포의 pytest를 돌리지 않는다. 모델에게 명령 실행 도구(Bash)를 주지 않는다. 모델이 부르는 도구는 파이프라인의 코드다.
 - 대상 리포의 설정과 규칙은 PR head가 아니라 base 브랜치에서 읽는다.
@@ -64,6 +65,7 @@ BACKLOG.md 형식:
 - 모델이 코드를 보는 방식은 단계마다 다르다(DESIGN 8.4). 수정 작성은 저장소를 읽고 쓰는 도구와 파이프라인 도구를 받는다. 위반 찾기의 모델 판단(DESIGN 4.5)과 PR 설명 확인(DESIGN 4.5 끝)은 읽기 도구(Read, Grep, Glob)로 PR의 코드에서 필요한 곳을 찾아 읽는다. 규칙 읽기, 검사기 작성, 수정 판단, PR 단위 확인은 도구 없이 프로그램이 골라 준 자료만 받는다.
 - 모델이 끼는 흐름의 확인은 실제 모델로 한다(DESIGN 11.1). 모델 자리에 정해진 답을 내는 가짜 모델은 없고, 만들지 않는다. 모델 없이 볼 수 있는 부분은 그 부분만 떼어 입력 값으로 시험한다. 평가 케이스(`eval/`)에는 모델의 답을 적지 않고 기대를 결과로 적는다.
 - 대상 저장소: 예제 `Eunryong/eval`(공개), 저장소 주인이 쓰는 `Eunryong/MathLLM`(비공개). 실제 모델 확인은 `PR_PROOF_REAL_AI=1`(CLI)과 `PR_PROOF_REAL_MODEL=1`(평가 케이스)로 켠다.
+- 도구와 언어의 고정을 없애는 일(pr-proof#107, DESIGN 13절 7단계)은 방향이 정해졌고 코드는 아직 그대로다. 시작 전에 주인이 정할 것은 DESIGN 11.3의 "목록 없이 설치할 때의 경계"다.
 - 열려 있는 완료 기준은 `docs/DESIGN.md` 13절, 문서와 코드가 다른 곳은 12.2, 주인에게 물은 것은 11.3에 있다. 코드 주석의 "DESIGN.md F7" 같은 번호는 v1의 절이고 12.3으로 읽는다.
 - 지나간 작업의 기록(지난 기록 `HISTORY.md`, 날짜별 문제 해결 일지 `JOURNAL.md`와 `journal/`)은 저장소에 두지 않는다. 저장소 주인의 작업 폴더 `.audit/records/`에 있고 git에 올리지 않는다. 설계 문서가 `docs/JOURNAL.md`나 `docs/HISTORY.md`를 가리키면 그곳의 파일이다. 지금의 지시가 아니다.
 - 작업은 기능 단위 브랜치와 PR로 진행한다.
@@ -130,8 +132,8 @@ tests/          코드와 같은 이름의 폴더 (tests/api, tests/worker, test
 - `store/`: 상태와 처리 기록 쓰기(`state.py`), 호출 상한(`budget.py`), 과거 기록 저장(`records.py`)과 무엇을 기록할지(`records_pure.py`), 검색(`memory.py`: 임베딩, Chroma 저장과 top-k, 밀린 기록 임베딩, reindex, 큰 규칙 문서의 조각 검색)
 - `model/`: 모델 호출의 인터페이스(`model_backend.py`)와 구현 고르기(`backends.py`), 사용량 한도에 닿으면 로컬 모델로 넘기기(`usage_limit_pure.py`, `usage_fallback.py`), 공용 서브그래프 틀(`loop.py`), MCP 메시지와 도구 상한(`mcp_pure.py`). claude CLI 구현은 `model/claude/`: 호출(`claude_cli.py`, 모양 넷: 수정 작성의 `file_tools`·`fix_tools`, 읽기만 하는 `read_tools`, 도구 없는 `no_tools`), 모델 전용 폴더(`workdir.py`), 경로 감시 훅(`path_hook.py`), 수정 작성의 파이프라인 도구 서버(`tool_server.py`)와 CLI가 띄우는 중계(`mcp_relay.py`). 로컬 OpenAI 호환 서버 구현은 `model/local/`: `ModelBackend`의 구현(`local_backend.py`), 요청과 응답(`openai_client.py`, `openai_pure.py`), 모델 전용 폴더 안의 읽기·쓰기 도구(`sandbox_tools.py`)
 - `testing/`: 테스트 실행 결과(`test_run_pure.py`), 커버리지(`coverage.py`, `coverage_pure.py`), 고친 위반의 테스트 표시(`test_lines.py`), 모델이 만든 테스트(`generated_tests_pure.py`)
-- `sandbox/`: `docker_cli`, `container`, `toolcache`, `checker_runner`, `safe_read`. 도구(ast-grep, ruff)와 Python 런타임은 `toolcache.py`가 고정한 버전과 SHA256으로 받아 캐시한다. 샌드박스 이미지에는 언어가 없다 (`debian:bookworm-slim`에 curl과 인증서)
-- `lang/python.py`: Python 언어 프로필 (런타임 준비, `.venv` 설치, pytest 실행과 결과 읽기, 위반 줄의 커버리지 읽기, ruff). 테스트 파일의 정의(`fix/scope_pure.py`), coverage.xml 파싱(`testing/coverage_pure.py`), ruff 설정 읽기와 도구 목록(`core/tools_pure.py`)은 순수 모듈에 있다. 두 번째 언어와 프로필 인터페이스는 만들지 않는다
+- `sandbox/`: `docker_cli`, `container`, `toolcache`, `checker_runner`, `safe_read`. 도구(ast-grep, ruff)와 Python 런타임은 지금 `toolcache.py`가 고정한 버전과 SHA256으로 받아 캐시한다(없앨 고정, DESIGN 12.2). 샌드박스 이미지에는 언어가 없다 (`debian:bookworm-slim`에 curl과 인증서)
+- `lang/python.py`: Python 언어 프로필 (런타임 준비, `.venv` 설치, pytest 실행과 결과 읽기, 위반 줄의 커버리지 읽기, ruff). 테스트 파일의 정의(`fix/scope_pure.py`), coverage.xml 파싱(`testing/coverage_pure.py`), ruff 설정 읽기와 도구 목록(`core/tools_pure.py`)은 순수 모듈에 있다. 손으로 짠 프로필은 이것 하나이고 언어를 더 짜 넣지 않는다. 모델이 저장소에 맞는 도구를 정하는 쪽으로 바꾼다(DESIGN 2.3, 13절 7단계)
 - 프롬프트: 모델에게 주는 지시문은 쓰는 단계의 `prompts/`에 있다(`rules/prompts/`, `fix/prompts/`, `feedback/prompts/`). 읽는 코드는 `core/prompt_text_pure.py`의 `load(__file__, "이름")`이고 부르는 모듈과 같은 폴더의 `prompts/`만 읽는다. 폴더마다 `README.md`에 목록이 있다
 
 **웹과 워커 사이의 계약 (`app/shared/`).** 웹과 워커는 메모리를 공유하지 않는다. 둘 사이에는 큐와 Redis·SQLite 상태만 오가고, 큐에 넣는 값은 작업 계약(`job_pure.py`의 `PRJob`)뿐이다. 키 형식과 큐 이름(`state_keys_pure.py`), SQLite 테이블 정의(`db_pure.py`)는 여기 두고, 읽기·쓰기 코드는 각자 자기 쪽에 둔다. 그 밖에 코멘트 표시(`comment_pure.py`), 운영 알림의 종류와 글(`ops_alert_pure.py`), 임베딩 모델 목록(`embed_models_pure.py`), 설정과 비밀값 읽기(`config.py`), macOS 알림(`notify.py`)이 있다.
