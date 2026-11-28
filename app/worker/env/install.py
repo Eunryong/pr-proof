@@ -19,9 +19,10 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
-from typing import Final, Literal
+from typing import Final
 
 from app.worker.env import install_pure
+from app.worker.env.install_pure import BakeFailed, LayerName
 from app.worker.env.recipe_pure import (
     ENV_ROOT,
     OVERLAY_DIR,
@@ -67,8 +68,6 @@ _FETCH_SCRIPT: Final = (
 
 log = logging.getLogger(__name__)
 
-LayerName = Literal["system", "deps"]
-
 
 @dataclass(frozen=True)
 class Limits:
@@ -111,20 +110,6 @@ class Layers:
     @property
     def top(self) -> str:
         return self.layers[-1].image
-
-
-@dataclass(frozen=True)
-class BakeFailed:
-    """처방의 잘못으로 층을 굽지 못함. step은 처방 JSON의 자리(`system.commands[2]` 등)다.
-
-    output_tail은 명령 출력의 끝이고, 그 단계에서 프록시가 거절한 요청이 있으면 뒤에 붙는다.
-    """
-
-    layer: LayerName
-    step: str
-    exit_code: int | None
-    output_tail: str
-    timed_out: bool = False
 
 
 def ensure_layers(

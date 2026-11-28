@@ -12,6 +12,12 @@
 - `python -m app.worker.cli env-try <처방.json> <저장소 폴더>`: 환경 처방(DESIGN 7.10)을 검사하고
   층을 구워(있으면 다시 쓴다) 그 폴더에서 빌드·테스트를 돌린다. 층, 단계, 상태, 테스트 수를 보이고
   상태가 passed일 때만 0으로 끝난다. 처방이 틀리면 고칠 곳을 한 줄씩 보이고 2로 끝난다.
+- `python -m app.worker.cli env-plan <git 저장소 폴더> [--base 참조] [--repo owner/name]`: 설정된
+  모델이 그 저장소의 base 커밋(기본 HEAD)을 읽고 환경 처방을 쓰고, 처방을 base에서 굽고 돌려
+  확인한다(DESIGN 4.5 "환경 처방 정하기"). 설정된 모델을 실제로 부른다. 저장한 처방을 다시
+  썼는지, 회차마다의 확인 결과, 처방, 덮어쓰기 파일과 까닭, base 실행의 결과를 보이고 처방이
+  정해졌을 때만 0으로 끝난다. `--repo`는 처방을 저장하고 찾는 저장소 이름이다(기본
+  `local/<폴더 이름>`).
 """
 
 import argparse
@@ -30,9 +36,14 @@ REPO_ROOT: Final = Path(__file__).resolve().parents[2]
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m app.worker.cli")
-    parser.add_argument("command", choices=["reindex", "eval", "env-try"])
-    parser.add_argument("paths", nargs="*", type=Path, help="env-try: 처방 JSON과 저장소 폴더")
-    parser.add_argument("--repo", action="append", help="reindex할 저장소 (여러 번 줄 수 있음)")
+    parser.add_argument("command", choices=["reindex", "eval", "env-try", "env-plan"])
+    parser.add_argument(
+        "paths", nargs="*", type=Path, help="env-try: 처방 JSON과 저장소, env-plan: git 저장소"
+    )
+    parser.add_argument("--base", default="HEAD", help="env-plan: 처방을 정할 커밋 (기본 HEAD)")
+    parser.add_argument(
+        "--repo", action="append", help="reindex할 저장소 (여러 번), env-plan: 처방의 저장소 이름"
+    )
     parser.add_argument("--baseline", action="store_true", help="eval: 기준선으로 남긴다")
     parser.add_argument("--label", default="", help="eval: 이 실행의 이름")
     parser.add_argument("--db", type=Path, help="eval: 저장할 SQLite (기본은 설정의 data_dir)")
@@ -42,6 +53,11 @@ def main(argv: list[str] | None = None) -> int:
         if len(args.paths) != 2:
             parser.error("env-try는 처방 JSON과 저장소 폴더를 받는다")
         return env_try(args.paths[0], args.paths[1])
+    if args.command == "env-plan":
+        if len(args.paths) != 1:
+            parser.error("env-plan은 git 저장소 폴더 하나를 받는다")
+        name = args.repo[0] if args.repo else f"local/{args.paths[0].resolve().name}"
+        return env_plan(config.load_config(), args.paths[0], base=args.base, repo_name=name)
     if args.command == "eval":
         db = args.db or config.load_config().db_path
         return evaluate(db, baseline=args.baseline, label=args.label, out=args.out)
@@ -122,6 +138,66 @@ def env_try(recipe_file: Path, repo: Path) -> int:
     if run.status != "passed":
         print(run.output[-2000:])
     return 0 if run.status == "passed" else 1
+
+
+def env_plan(settings: config.PipelineConfig, clone: Path, *, base: str, repo_name: str) -> int:
+    """clone의 base 커밋에서 환경 처방을 정하고 보인다. 모델 구현과 모델은 설정을 따른다."""
+    from app.worker.config.repo_config_pure import (
+        CallSettings,
+        RepoConfig,
+        call_limits,
+        with_default_model,
+    )
+    from app.worker.env import default_limits, recipe_pure
+    from app.worker.env.plan import EnvReady, plan_environment
+    from app.worker.git import repo
+    from app.worker.model import backends
+    from app.worker.sandbox.docker_cli import SandboxError
+    from app.worker.store.budget import CallBudget
+    from app.worker.store.state import Store
+
+    clone = clone.resolve()
+    model = with_default_model(RepoConfig(), settings.model.default).model.env
+    limits_of_calls = call_limits(CallSettings(), **settings.model.calls.model_dump())
+    store = Store(settings.db_path, Redis.from_url(settings.redis_url))
+    repo.record_git_dir(clone)
+    try:
+        base_sha = repo.resolve_commit(clone, base)
+        budget = CallBudget(store, repo_name, 0, base_sha, limits_of_calls)
+        print(f"{repo_name} {base_sha[:12]}: 모델 {model} ({settings.model.backend})")
+        result = plan_environment(
+            clone, base_sha, store=store, budget=budget, model=model,
+            read_code=backends.from_config(settings.model).reading, limits=default_limits(),
+        )  # fmt: skip
+    except (SandboxError, repo.GitError) as e:
+        print(f"환경 오류: {e}", file=sys.stderr)
+        return 1
+    finally:
+        repo.forget_git_dir(clone)
+    for r in result.rounds:
+        print(f"회차 {r.number}: {r.summary}")
+        if r.feedback:
+            print("  " + r.feedback.replace("\n", "\n  "))
+    if not isinstance(result, EnvReady):
+        print(f"처방을 정하지 못함 ({result.kind}): {result.reason}")
+        return 1
+    how = "저장한 처방을 다시 씀 (모델 호출 없음)" if result.cached else "새로 정함"
+    print(f"처방 #{result.plan_id}: {how}")
+    print(json.dumps(recipe_pure.recipe_json(result.recipe), ensure_ascii=False, indent=2))
+    for overlay in result.recipe.overlays:
+        print(f"저장소의 파일 대신 쓴 것: {overlay.path}: {overlay.why}")
+    run = result.base_run
+    print(f"base 실행: {run.status}")
+    for step in run.steps:
+        print(f"  {step.name}: 종료 코드 {step.exit_code}, {step.seconds:.1f}초")
+    if run.report is not None:
+        r = run.report
+        print(f"  테스트: 전체 {r.total}, 통과 {r.passed}, 실패 {r.failed}, 오류 {r.errors}, "
+              f"건너뜀 {r.skipped}")  # fmt: skip
+    if run.base_is_red:
+        print(f"base가 빨갛다고 판단함: {run.base_is_red}")
+    print(f"기댄 파일: {', '.join(sorted(result.reads))}")
+    return 0
 
 
 def reindex(settings: config.PipelineConfig, repos: list[str] | None, encoder=None) -> int:  # noqa: ANN001

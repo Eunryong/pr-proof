@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import create_engine, inspect, text
 
 from app.shared import state_keys_pure
-from app.shared.db_pure import FixAttempt, SeenViolation
+from app.shared.db_pure import EnvPlanEntry, FixAttempt, SeenViolation
 from app.shared.job_pure import PRJob
 from app.worker.config.access_pure import Author
 from app.worker.store.rag_switch_pure import Evidence, Outcomes
@@ -368,3 +368,20 @@ def test_stage_times_pile_up_in_order_on_the_run(store: Store) -> None:
     (run,) = store.runs("o/r", 1, "abc")
     assert json.loads(run.stage_seconds) == [["checkout", 1.23], ["test", 20.0], ["checkout", 0.5]]
     store.add_stage_time(0, "checkout", 1.0)  # runs 기록이 없는 작업은 남길 줄이 없다
+
+
+def _env_plan(repo: str, recipe: str) -> EnvPlanEntry:
+    return EnvPlanEntry(repo=repo, model="sonnet", prompt_version="v", recipe_json=recipe,
+                        reads_json='{"Makefile": "1"}', base_run_json="{}")  # fmt: skip
+
+
+def test_env_plans_come_back_newest_first_per_repository(tmp_path: Path) -> None:
+    store = Store(tmp_path / "pipeline.db", MemoryKeys())
+    first = store.save_env_plan(_env_plan("o/r", '{"n": 1}'))
+    store.save_env_plan(_env_plan("o/other", '{"n": 9}'))
+    second = store.save_env_plan(_env_plan("o/r", '{"n": 2}'))
+    again = Store(tmp_path / "pipeline.db", MemoryKeys())  # 다시 연 데이터베이스에서 읽는다
+    rows = again.env_plans("o/r")
+    assert [(r.id, r.recipe_json) for r in rows] == [(second, '{"n": 2}'), (first, '{"n": 1}')]
+    assert rows[0].reads_json == '{"Makefile": "1"}' and rows[0].created_at is not None
+    assert again.env_plans("o/none") == []

@@ -93,7 +93,7 @@ def record_git_dir(worktree: Path) -> None:
     _git_dir_record(worktree).write_text(git_dir)
 
 
-def _forget_git_dir(worktree: Path) -> None:
+def forget_git_dir(worktree: Path) -> None:
     _git_dir_record(worktree).unlink(missing_ok=True)
 
 
@@ -292,6 +292,19 @@ def list_base_files(worktree: Path, base_sha: str) -> tuple[str, ...]:
     """base 커밋의 모든 파일 경로 (저장소 기준). 내용은 읽지 않는다."""
     listed = _tree_git(worktree, "ls-tree", "-r", "--name-only", "-z", base_sha)
     return tuple(filter(None, listed.split("\0")))
+
+
+def resolve_commit(worktree: Path, ref: str) -> str:
+    """ref(브랜치, 태그, 해시)가 가리키는 커밋의 40자리 해시. 없으면 GitError."""
+    commit = f"{ref}^{{commit}}"
+    return _tree_git(worktree, "rev-parse", "--verify", "--end-of-options", commit).strip()
+
+
+def reset_worktree(worktree: Path) -> None:
+    """worktree를 그 커밋 그대로 되돌린다. 고친 파일을 되돌리고 추적하지 않는 파일(무시한 것 포함)을
+    지운다. 샌드박스에서 돈 빌드가 남긴 것을 다음 실행 전에 치운다."""
+    _tree_git(worktree, "reset", "--hard", "--quiet")
+    _tree_git(worktree, "clean", "-ffdxq")
 
 
 def read_blob(worktree: Path, sha: str) -> str:
@@ -552,7 +565,7 @@ def side_worktree(worktree: Path, sha: str) -> Iterator[Path]:
         record_git_dir(path)
         yield path
     finally:
-        _forget_git_dir(path)
+        forget_git_dir(path)
         try:
             _tree_git(worktree, "worktree", "remove", "--force", str(path))
         except GitError:
@@ -584,7 +597,7 @@ def checkout(
         write_changes_diff(path, fork_point, head_sha)
         yield Checkout(path=path, head_sha=head_sha, base_sha=base_sha, merge_base=fork_point)
     finally:
-        _forget_git_dir(path)
+        forget_git_dir(path)
         try:
             _git("worktree", "remove", "--force", str(path), cwd=bare)
         except GitError:

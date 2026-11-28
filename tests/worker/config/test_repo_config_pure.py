@@ -136,7 +136,7 @@ def test_pipeline_default_model_fills_only_stages_the_repo_did_not_write() -> No
     filled = with_default_model(config, "opus")
     assert _stage_models(filled) == {
         "rules": "opus", "checker": "opus", "judge": "haiku", "decide": "opus",
-        "light": "opus", "heavy": "opus",
+        "light": "opus", "heavy": "opus", "env": "opus",
     }  # fmt: skip
     assert filled.model.calls.pr_max == 3  # 다른 설정은 그대로
     assert with_default_model(filled, "opus") == filled  # 두 번 불러도 같다
@@ -159,7 +159,7 @@ def test_without_a_pipeline_default_the_code_defaults_are_unchanged() -> None:
     assert with_default_model(config, None) is config
     assert _stage_models(with_default_model(RepoConfig(), None)) == {
         "rules": "sonnet", "checker": "sonnet", "judge": "sonnet", "decide": "sonnet",
-        "light": "sonnet", "heavy": "sonnet",
+        "light": "sonnet", "heavy": "sonnet", "env": "sonnet",
     }  # fmt: skip
 
 

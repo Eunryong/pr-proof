@@ -86,6 +86,7 @@ pip install -e '.[rag]'   # 과거 기록 검색을 쓸 때만(rag.enabled: on, 
 python -m app.worker.cli reindex # 벡터 저장소(data_dir/chroma/)를 SQLite의 기록으로 다시 만든다
 python -m app.worker.cli eval --baseline --db <경로>  # 평가 세트 전부를 돌려 eval_runs에 기준선으로 남긴다. --baseline 없이 돌리면 기준선과 비교 (설정된 모델을 실제로 부른다. --out <폴더>는 junit·호출 기록을 남기고 그 폴더의 memo.jsonl을 다시 쓴다)
 python -m app.worker.cli env-try <처방.json> <저장소 폴더>  # 환경 처방의 층을 굽고(있으면 다시 씀) 그 폴더에서 빌드·테스트를 돌린다 (Docker, 처음 굽기에 네트워크)
+python -m app.worker.cli env-plan <저장소 폴더> [--base 참조] [--repo owner/name]  # 설정된 모델이 base를 읽고 처방을 쓰고 base에서 확인한다 (실제 모델 호출, Docker)
 PR_PROOF_REAL_EMBED=1 PR_PROOF_EMBED_DIR=<모델 폴더> pytest tests/worker/store/test_real_embed.py  # 실제 임베딩 모델의 recall@k
 ```
 
@@ -113,7 +114,7 @@ app/
     testing/    테스트 실행 결과와 커버리지
     sandbox/    언어와 무관한 docker 도구
     lang/       Python 언어 프로필
-    env/        환경 처방의 층 굽기와 그 위의 빌드·테스트 실행
+    env/        환경 처방: 모델이 처방을 정하고, 층을 굽고, 그 위에서 빌드·테스트를 돌린다
   shared/       웹과 워커 사이의 계약 (둘 다 import하는 것만)
 tests/          코드와 같은 이름의 폴더 (tests/api, tests/worker, tests/shared. app 단계는 두지 않는다)
 ```
@@ -136,14 +137,14 @@ tests/          코드와 같은 이름의 폴더 (tests/api, tests/worker, test
 - `testing/`: 테스트 실행 결과(`test_run_pure.py`: 빌드 단계와 테스트 단계, 상태), 결과 파일 읽기(`reports_pure.py`: JUnit XML), 커버리지(`coverage.py`, `coverage_pure.py`), 고친 위반의 테스트 표시(`test_lines.py`), 모델이 만든 테스트(`generated_tests_pure.py`)
 - `sandbox/`: `docker_cli`, `container`, `toolcache`, `checker_runner`, `safe_read`, `egress`. `egress.py`는 굽는 컨테이너의 내부 네트워크와 바깥 연결 프록시를 띄우고 지운다. 프록시는 프록시 컨테이너 안에서 도는 `egress_proxy.py`이고(이미지 `docker/proxy/Dockerfile`), 주소 판정과 요청 읽기는 `egress_pure.py`다. 도구(ast-grep, ruff)와 Python 런타임은 지금 `toolcache.py`가 고정한 버전과 SHA256으로 받아 캐시한다(없앨 고정, DESIGN 12.2). 샌드박스 이미지에는 언어가 없다 (`debian:bookworm-slim`에 curl과 인증서)
 - `lang/python.py`: Python 언어 프로필 (런타임 준비, `.venv` 설치, pytest 실행과 결과 읽기, 위반 줄의 커버리지 읽기, ruff). 테스트 파일의 정의(`fix/scope_pure.py`), coverage.xml 파싱(`testing/coverage_pure.py`), ruff 설정 읽기와 도구 목록(`core/tools_pure.py`)은 순수 모듈에 있다. 손으로 짠 프로필은 이것 하나이고 언어를 더 짜 넣지 않는다. 모델이 저장소에 맞는 도구를 정하는 쪽으로 바꾼다(DESIGN 2.3, 13절 7단계)
-- `env/`: 환경 처방(DESIGN 7.10). 처방의 데이터와 경계의 검사, 층의 키(`recipe_pure.py`), 시스템 층과 의존성 층을 Docker 이미지로 굽고 캐시하기(`install.py`, 실패 나누기는 `install_pure.py`), 구운 층 위의 작업 컨테이너에서 빌드·테스트 단계를 돌리고 결과 읽기(`run.py`, 판정은 `run_pure.py`). 굽는 컨테이너는 `sandbox/egress.py`의 내부 네트워크와 프록시로만 밖에 닿는다. 지금은 수동 명령 `env-try`만 부른다. `core`·`sandbox`·`testing`만 import한다
-- 프롬프트: 모델에게 주는 지시문은 쓰는 단계의 `prompts/`에 있다(`rules/prompts/`, `fix/prompts/`, `feedback/prompts/`). 읽는 코드는 `core/prompt_text_pure.py`의 `load(__file__, "이름")`이고 부르는 모듈과 같은 폴더의 `prompts/`만 읽는다. 폴더마다 `README.md`에 목록이 있다
+- `env/`: 환경 처방(DESIGN 7.10). 처방의 데이터와 경계의 검사, 층의 키(`recipe_pure.py`), 시스템 층과 의존성 층을 Docker 이미지로 굽고 캐시하기(`install.py`, 실패 나누기는 `install_pure.py`), 구운 층 위의 작업 컨테이너에서 빌드·테스트 단계를 돌리고 결과 읽기(`run.py`, 판정은 `run_pure.py`). 굽는 컨테이너는 `sandbox/egress.py`의 내부 네트워크와 프록시로만 밖에 닿는다. 모델이 base를 읽기 도구로 읽고 처방을 쓰고 base에서 굽고 돌려 확인하는 처방 정하기(`plan.py`, 프롬프트·답 읽기·피드백·판정·다시 쓰기는 `plan_pure.py`, 지시문은 `prompts/plan_env.md`, 확인한 처방은 `env_plans`). 지금은 수동 명령 `env-try`와 `env-plan`만 부른다. `core`·`sandbox`·`testing`·`git`·`config`·`store`·`model`을 import하고, 그 폴더들은 `env`를 import하지 않는다
+- 프롬프트: 모델에게 주는 지시문은 쓰는 폴더의 `prompts/`에 있다(`rules/prompts/`, `fix/prompts/`, `feedback/prompts/`, `env/prompts/`). 읽는 코드는 `core/prompt_text_pure.py`의 `load(__file__, "이름")`이고 부르는 모듈과 같은 폴더의 `prompts/`만 읽는다. 폴더마다 `README.md`에 목록이 있다
 
 **웹과 워커 사이의 계약 (`app/shared/`).** 웹과 워커는 메모리를 공유하지 않는다. 둘 사이에는 큐와 Redis·SQLite 상태만 오가고, 큐에 넣는 값은 작업 계약(`job_pure.py`의 `PRJob`)뿐이다. 키 형식과 큐 이름(`state_keys_pure.py`), SQLite 테이블 정의(`db_pure.py`)는 여기 두고, 읽기·쓰기 코드는 각자 자기 쪽에 둔다. 그 밖에 코멘트 표시(`comment_pure.py`), 운영 알림의 종류와 글(`ops_alert_pure.py`), 임베딩 모델 목록(`embed_models_pure.py`), 설정과 비밀값 읽기(`config.py`), macOS 알림(`notify.py`)이 있다.
 
 **순수 모듈.** 이름이 `_pure.py`로 끝나는 모듈은 바깥에 손대지 않는다: 파일, 프로세스, 네트워크, Redis, DB 연결을 쓰지 않고 받은 값으로 계산만 한다(데이터 정의, 판정, 프롬프트 만들기, 답 읽기). 순수 모듈은 그것이 속한 단계 폴더나 공용 폴더에 두고(`app/worker/fix/fix_decision_pure.py`, `app/worker/git/git_pure.py`), 어느 한 폴더에 속하지 않으면서 여러 단계가 쓰는 데이터 정의와 도구만 `app/worker/core/`에 둔다(`app/worker/core/bundle_pure.py`). 웹과 워커가 같이 쓰면 `app/shared/`, 웹만 쓰면 `app/api/`. `app/worker/` 맨 위의 순수 모듈은 `command_pure.py` 하나다.
 
-같은 폴더에 같은 이름의 실행 코드 `x.py`가 있는 순수 모듈: `command_pure`, `env/install_pure`, `env/run_pure`, `sandbox/egress_pure`, `feedback/feedback_triage_pure`, `fix/model_fix_pure`, `fix/proposal_pure`, `fix/scope_pure`, `rules/diff_batches_pure`, `rules/doc_rules_pure`, `rules/judge_pure`, `rules/linked_issues_pure`, `rules/pr_check_pure`, `rules/pr_description_pure`, `rules/run_check_pure`, `store/records_pure`, `testing/coverage_pure`. 아래는 주로 부르는 실행 코드와 이름이 다른 것이다.
+같은 폴더에 같은 이름의 실행 코드 `x.py`가 있는 순수 모듈: `command_pure`, `env/install_pure`, `env/plan_pure`, `env/run_pure`, `sandbox/egress_pure`, `feedback/feedback_triage_pure`, `fix/model_fix_pure`, `fix/proposal_pure`, `fix/scope_pure`, `rules/diff_batches_pure`, `rules/doc_rules_pure`, `rules/judge_pure`, `rules/linked_issues_pure`, `rules/pr_check_pure`, `rules/pr_description_pure`, `rules/run_check_pure`, `store/records_pure`, `testing/coverage_pure`. 아래는 주로 부르는 실행 코드와 이름이 다른 것이다.
 
 | 실행 코드 | 순수 모듈 |
 | --- | --- |

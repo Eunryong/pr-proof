@@ -16,6 +16,7 @@ from app.shared.db_pure import (
     CallGrant,
     CheckerEntry,
     CommandRecord,
+    EnvPlanEntry,
     EvalRun,
     Feedback,
     FixAttempt,
@@ -30,7 +31,7 @@ from app.shared.db_pure import (
 )
 from app.shared.job_pure import PRJob
 from app.worker.config.access_pure import Author
-from app.worker.store.call_budget_pure import RulesetScope, Scope, Spent
+from app.worker.store.call_budget_pure import EnvScope, RulesetScope, Scope, Spent
 from app.worker.store.rag_switch_pure import COUNTED_KINDS, Evidence, FixOutcome, Outcomes, outcomes
 from app.worker.store.records_pure import NewRecord
 
@@ -292,13 +293,14 @@ class Store:
             session.commit()
 
     def calls_spent(self, repo: str, pr_number: int, scope: Scope, since: datetime) -> Spent:
-        """상한에서 센 값. 규칙 묶음 상한은 그 묶음 키의 since 이후 호출을 PR과 무관하게, PR 상한은
-        그 PR의 나머지 호출을 모든 커밋에 걸쳐, 하루 상한은 since 이후 저장소 전체를 센다.
+        """상한에서 센 값. 규칙 묶음 상한과 환경 처방 상한은 그 키의 since 이후 호출을 PR과
+        무관하게, PR 상한은 그 PR의 나머지 호출을 모든 커밋에 걸쳐, 하루 상한은 since 이후 저장소
+        전체를 센다.
 
         규칙 묶음 상한에 기간이 없으면 한 번 걸린 묶음은 상한을 올릴 때까지 영영 멈춘다. 기간을
         두면 다음 날의 검사가 남은 규칙부터 이어 한다 (채택한 검사기는 저장돼 있다)."""
         total = select(func.coalesce(func.sum(ModelCall.counted), 0)).where(ModelCall.repo == repo)
-        if isinstance(scope, RulesetScope):
+        if isinstance(scope, RulesetScope | EnvScope):
             in_scope = total.where(
                 ModelCall.ruleset_key == scope.key, ModelCall.created_at >= since
             )
@@ -356,6 +358,21 @@ class Store:
         with Session(self.engine) as session:
             session.merge(entry)
             session.commit()
+
+    # --- 환경 처방 (env_plans) ---
+
+    def save_env_plan(self, entry: EnvPlanEntry) -> int:
+        entry.created_at = _now()
+        with Session(self.engine) as session:
+            session.add(entry)
+            session.commit()
+            return entry.id
+
+    def env_plans(self, repo: str) -> list[EnvPlanEntry]:
+        """그 저장소의 처방, 최신부터."""
+        with Session(self.engine) as session:
+            stmt = select(EnvPlanEntry).where(EnvPlanEntry.repo == repo)
+            return list(session.exec(stmt.order_by(EnvPlanEntry.id.desc())))
 
     # --- 수정 시도, 위반, 과거 기록 (fix_attempts, violations, records) ---
 

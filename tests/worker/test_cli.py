@@ -60,3 +60,11 @@ def test_env_try_rejects_unreadable_json_and_wrong_arguments(tmp_path, capsys) -
     assert "처방을 읽지 못함" in capsys.readouterr().err
     with pytest.raises(SystemExit):
         cli.main(["env-try", str(recipe)])
+
+
+def test_env_plan_takes_exactly_one_repository_folder(tmp_path) -> None:
+    import pytest
+
+    for argv in (["env-plan"], ["env-plan", str(tmp_path), str(tmp_path)]):
+        with pytest.raises(SystemExit):
+            cli.main(argv)

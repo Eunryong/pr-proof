@@ -196,7 +196,8 @@ class ModelCall(SQLModel, table=True):
     pr_number: int = Field(index=True)
     head_sha: str
     stage: str  # call_budget.Stage
-    # 규칙 묶음 상한에서 센 호출이면 그 묶음의 캐시 키. PR 상한에서 센 호출이면 None
+    # 규칙 묶음 상한에서 센 호출이면 그 묶음의 캐시 키, 환경 처방 상한이면 `env:<저장소>`
+    # (`call_budget_pure.EnvScope`). PR 상한에서 센 호출이면 None
     ruleset_key: str | None = Field(default=None, index=True)
     model: str  # claude --model에 넘긴 이름
     model_id: str = ""  # 모델이 알려준 전체 id (별칭이 가리킨 것)
@@ -248,6 +249,24 @@ class CheckerEntry(SQLModel, table=True):
     # (app/worker/rules/checker_authoring_pure.py의 `JudgeRoute`).
     # 경로 규칙과 도구 선택의 줄은 없다
     judge_route: str | None = None
+
+
+class EnvPlanEntry(SQLModel, table=True):
+    """base에서 확인한 환경 처방 (DESIGN.md 4.5 "환경 처방 정하기", 7.10). 저장소의 처방을 최신부터
+    보고, 모델과 프롬프트 판이 같고 reads의 경로가 모두 지금 base에서 같은 blob인 것을 다시 쓴다
+    (`app/worker/env/plan_pure.py`의 `is_fresh`). 확인하지 못한 처방, 호출 상한·모델 호출 실패로
+    끝난 시도는 저장하지 않는다."""
+
+    __tablename__ = "env_plans"
+
+    id: int | None = Field(default=None, primary_key=True)
+    repo: str = Field(index=True)
+    model: str  # 설정에 적힌 모델 이름 (`model.env`). 찾을 때 이 이름으로 견준다
+    prompt_version: str
+    recipe_json: str  # recipe_pure.recipe_json의 값
+    reads_json: str  # {저장소 기준 경로: base에서의 git 객체 해시}
+    base_run_json: str  # plan_pure.BaseRun (base에서 돌린 결과, base가 빨갛다는 모델의 까닭)
+    created_at: datetime
 
 
 class FixAttempt(SQLModel, table=True):

@@ -245,13 +245,14 @@ class _Problems:
 
     def path(self, value: str, where: str) -> bool:
         """상대 경로이고 `..`·`.`·빈 조각이 없고 `-`나 `/`로 시작하지 않는지."""
-        why = _path_problem(value)
+        why = path_problem(value)
         if why is not None:
             self.add(where, f"{why} ({value!r})")
         return why is None
 
 
-def _path_problem(path: str) -> str | None:
+def path_problem(path: str) -> str | None:
+    """저장소 기준 상대 경로로 쓸 수 없으면 그 까닭."""
     if not path:
         return "경로가 비어 있음"
     if len(path) > MAX_PATH_CHARS:

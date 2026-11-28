@@ -20,12 +20,13 @@ Tier = Literal["light", "heavy"]
 # ai_calls의 단계 (7.8). 규칙 읽기, 검사기 작성, PR 패턴 작성(pr_plan)은 규칙 묶음 상한에서,
 # 나머지는 PR 상한에서 센다. pr_judge는 PR 단위 확인의 모델 판단(4.5 끝), run_judge는 실행 결과의
 # 규칙의 모델 판단이다 (4.5). feedback은 PR 코멘트의 판단이다 (4.11). pr_description은 PR 설명과
-# diff 견주기, linked_issues는 연결된 이슈가 요구한 것과 diff 견주기다 (4.5 끝)
+# diff 견주기, linked_issues는 연결된 이슈가 요구한 것과 diff 견주기다 (4.5 끝). env는 환경 처방
+# 정하기이고 저장소마다 환경 처방 상한에서 센다 (4.5 "환경 처방 정하기")
 Stage = Literal[
     "rules", "checker", "pr_plan", "judge", "pr_judge", "run_judge", "decide", "fix", "feedback",
-    "pr_description", "linked_issues",
+    "pr_description", "linked_issues", "env",
 ]  # fmt: skip
-Cap = Literal["pr", "ruleset", "repo_daily"]
+Cap = Literal["pr", "ruleset", "env", "repo_daily"]
 
 TIER_COST: Final[Mapping[str, int]] = {"light": 1, "heavy": 3}
 # 호출 하나의 claude `--max-budget-usd` (9.2 "호출 하나"). 호출 하나가 끝없이 도는 것을 막을 뿐
@@ -37,6 +38,7 @@ HEAVY_STOP_RATIO: Final = 0.8
 CAP_LABEL: Final[Mapping[str, str]] = {
     "pr": "PR 상한",
     "ruleset": "규칙 묶음 상한",
+    "env": "환경 처방 상한",
     "repo_daily": "저장소 하루 상한",
 }
 
@@ -54,20 +56,32 @@ class RulesetScope:
     rule_count: int = 0
 
 
-Scope = PrScope | RulesetScope
+@dataclass(frozen=True)
+class EnvScope:
+    """환경 처방 상한에서 세는 호출. 처방은 PR이 아니라 저장소의 base에 딸려서 저장소마다 센다."""
+
+    repo: str
+
+    @property
+    def key(self) -> str:
+        """`ai_calls.ruleset_key`에 적는 값. 규칙 묶음의 키(sha256 16진수)와 겹치지 않는다."""
+        return f"env:{self.repo}"
+
+
+Scope = PrScope | RulesetScope | EnvScope
 
 
 @dataclass(frozen=True)
 class CallLimits:
-    scope_cap: Cap  # "pr" 또는 "ruleset"
+    scope_cap: Cap  # "pr", "ruleset", "env"
     scope: int  # 그 상한의 값
     repo_daily: int
 
 
 @dataclass(frozen=True)
 class Spent:
-    """지금까지 센 값. scope는 그 PR(전체 기간) 또는 규칙 묶음(최근 24시간)에서, repo_daily는 최근
-    24시간 저장소에서."""
+    """지금까지 센 값. scope는 그 PR(전체 기간), 규칙 묶음이나 환경 처방(최근 24시간)에서,
+    repo_daily는 최근 24시간 저장소에서."""
 
     scope: int
     repo_daily: int
@@ -104,6 +118,8 @@ def limits_for(
     `/fix`가 더 준 몫은 `pr_max`씩이다: `min(pr_base + targets × per_violation, pr_max)`에
     `pr_max × pr_grants`를 더한다.
     """
+    if isinstance(scope, EnvScope):
+        return CallLimits("env", settings.ruleset_base, settings.repo_daily)
     if isinstance(scope, RulesetScope):
         if scope.rule_count < 0:
             raise ValueError(f"규칙 수가 음수다: {scope.rule_count}")
