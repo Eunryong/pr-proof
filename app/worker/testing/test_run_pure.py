@@ -46,6 +46,7 @@ class StepRun:
     cancelled: bool = False
     oom_killed: bool = False  # 컨테이너가 메모리 한도로 죽음 (docker inspect OOMKilled)
     output: str = field(default="", repr=False)
+    seconds: float = 0.0  # 걸린 시간. 환경 처방의 실행만 잰다
 
 
 @dataclass(frozen=True)

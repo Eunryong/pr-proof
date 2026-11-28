@@ -226,3 +226,24 @@ class ToolUsage:                           # 수정 작성 호출들 안의 도�
 
 `ModelFix`(5.5의 `fixes["model"]`)는 `generated`, `line_runs`, `tool_usage`를 가진다. 판정에 쓰는 테스트 결과는 `Suite`(테스트 파일마다 결과와 수, 대상 위반이 있는 파일의 줄마다 실행한 테스트 파일)이고, 그래프 상태에는 넣지 않는다.
 
+### 7.10 환경 처방
+
+저장소를 빌드·테스트할 환경을 데이터로 적은 것이다(`app/worker/env/recipe_pure.py`, 2026-11-29). 지금은 사람이 쓴 JSON 파일을 수동 명령 `python -m app.worker.cli env-try <처방.json> <저장소 폴더>`가 받는다. 처방을 모델이 쓰는 일과 흐름에 잇는 일은 13절 7단계의 다음 PR들이 한다.
+
+```text
+EnvRecipe
+├─ system: SystemLayer          시작 이미지 image, root로 돌릴 commands, git 받기 fetches
+│   └─ fetches: GitFetch        url(https만), rev(40자리 커밋), dest(/opt/env 아래 상대 경로)
+├─ deps: DepsLayer | None       저장소에서 복사해 넣을 inputs, 호스트 UID로 돌릴 commands
+├─ overlays: Overlay            path, content, why. /opt/env/overlay/<path>에 쓴다
+├─ env: (이름, 값)               빌드·테스트 단계의 환경 변수
+├─ build: Step(name, command)   차례로 돌리고 처음 실패에서 멈춘다
+├─ test: TestStep | None        report는 junit(결과 파일 .pipeline-out/<이름>) 또는 exit
+└─ outputs                      빌드 산출물 폴더 (저장소 기준)
+```
+
+- **경계의 검사.** `validate`가 믿지 않는 JSON을 한 번 검사해 `EnvRecipe`나 고칠 곳의 목록(한국어, `칸: 까닭`)을 돌려준다. 이미지 참조의 모양, https 주소, 40자리 커밋, 상대 경로(`..`, `.`, 빈 조각이 없고 `-`나 `/`로 시작하지 않음), 환경 변수 이름, 단계 이름(`^[a-z0-9][a-z0-9_-]{0,31}$`, build와 test에서 겹치지 않음), 결과 파일 자리, 개수와 길이의 상한, 모르는 칸을 본다. 덮어쓰기 파일은 의존성 층에 쓰므로 `deps`가 있어야 한다.
+- **층.** 시스템 층은 시작 이미지 위에서 root로 `system.commands`, `system.fetches`를 돌리고 `/opt/env`를 호스트 UID에게 준다. 의존성 층은 그 위에서 호스트 UID로 `deps.inputs`를 `/opt/env/src/<경로>`에, `overlays`를 `/opt/env/overlay/<경로>`에 복사해 넣고 `/opt/env/src`에서 `deps.commands`를 돌린다. 덮어쓰기 파일은 저장소에 쓰지 않는다. 층 이미지는 `pr-proof-env:<키>`이고 라벨 `pr-proof.env=1`을 단다.
+- **층의 키.** 시스템 층은 (시작 이미지 digest, `system`의 JSON, 호스트 UID, 굽는 방법의 판)의 sha256이다. 의존성 층은 (시스템 층 키, `deps`의 JSON, 호스트 UID, 입력 파일 내용의 해시, 덮어쓰기 파일의 경로와 내용, 굽는 방법의 판)의 sha256이다. 덮어쓰기 파일의 `why`, `env`, `build`, `test`는 층의 키에 들어가지 않는다. 처방 전체의 키(`recipe_key`)는 따로 있다.
+- **테스트 단계의 판정.** junit이면 결과 파일이 없거나 읽히지 않을 때 `unrunnable`(까닭에 종료 코드), 테스트가 0개면 `no_tests`, 실패·오류가 하나라도 있으면 `failed`, 모두 통과하고 0으로 끝나면 `passed`, 모두 통과했는데 0이 아니면 `unrunnable`이다. exit이면 0은 `passed`, 그 밖은 `failed`이고 결과 요약이 없다. 테스트 단계가 없으면 `no_tests`다. 상태는 7단계 첫 PR의 순서(취소, 시간 초과, 빌드 실패, 테스트 단계의 판정)로 정한다.
+- **처방에 없는 칸.** 네트워크, 마운트, UID, 자원·시간 상한은 프로그램이 정한다(`env/install.py`의 `Limits`, 8.1).

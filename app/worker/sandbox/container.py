@@ -46,23 +46,26 @@ def running(
     *,
     job_id: str | None = None,
     memory_gb: float = docker_cli.MEMORY_LIMIT_GB,
+    cpus: float = 1,
     names: docker_cli.Names = docker_cli.DEFAULT_NAMES,
+    image: str | None = None,
 ) -> Iterator[str]:
     """작업 컨테이너를 띄우고 이름을 돌려준다. 블록을 나가면 지운다.
 
     네트워크 없음, 자원 제한, 호스트 UID·GID. mounts(호스트 경로, 컨테이너 경로)와 파이프라인 설정은
-    읽기 전용이다. 언어 프로필이 .venv와 런타임을 넘긴다.
+    읽기 전용이다. 언어 프로필이 .venv와 런타임을 넘긴다. image를 주지 않으면 names.image다
+    (환경 처방은 구운 층을 넘긴다).
     """
     name = f"{names.container_prefix}-{job_id or uuid.uuid4().hex[:12]}"
     (worktree / OUT_DIR).mkdir(exist_ok=True)
     readonly = [arg for host, inside in mounts for arg in ("-v", f"{host.resolve()}:{inside}:ro")]
     docker_cli.run(
-        "run", "-d", "--name", name, "--network", "none", *docker_cli.limits(memory_gb),
+        "run", "-d", "--name", name, "--network", "none", *docker_cli.limits(memory_gb, cpus),
         "--user", docker_cli.user(), "-e", "HOME=/tmp",
         "-v", f"{worktree.resolve()}:{WORKDIR}", "-w", WORKDIR,
         *readonly,
         "-v", f"{docker_cli.IMAGE_DIR}:{PIPELINE_DIR}:ro",
-        names.image, "sleep", "infinity",
+        image or names.image, "sleep", "infinity",
     )  # fmt: skip
     try:
         yield name
