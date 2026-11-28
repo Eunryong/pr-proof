@@ -19,7 +19,6 @@ import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Literal
 
 from app.shared.db_pure import EnvPlanEntry
 from app.worker.env.install import Limits, ensure_layers
@@ -39,10 +38,12 @@ from app.worker.env.plan_pure import (
     Platform,
     Previous,
     RecipeAnswer,
+    UnplannedKind,
     bake_feedback,
     base_run_of,
     base_run_to_json,
     build_prompt,
+    failing_step,
     is_fresh,
     judge_base_run,
     plan_reads,
@@ -73,7 +74,6 @@ from app.worker.testing.test_run_pure import TestRun
 
 log = logging.getLogger(__name__)
 
-UnplannedKind = Literal["nothing_to_run", "model_failed", "cap", "unverified"]
 _TREE_MODE = "040000"
 
 
@@ -315,7 +315,9 @@ class _Planner:
         verified = _Verified(recipe, run, found)
         built = ", ".join(f"{layer.name} {'다시 씀' if layer.reused else '구움'}"
                           for layer in layers.layers)  # fmt: skip
-        summary = f"층 {built}, base 실행 {run.status}"
+        failing = failing_step(run) if not run.ok else None
+        where = f" ({failing.name})" if failing is not None else ""
+        summary = f"층 {built}, base 실행 {run.status}{where}"
         match judge_base_run(run, has_test_step=recipe.test is not None):
             case "proven":
                 self.ready = (verified, "")
