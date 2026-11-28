@@ -201,3 +201,28 @@ def test_worktree_without_record_is_refused(tmp_path: Path) -> None:
     _git(path, "init", "-q")
     with pytest.raises(GitError, match="저장소 기록"):
         repo.status(path)
+
+
+def test_reset_worktree_restores_the_commit_and_removes_build_leftovers(tmp_path: Path) -> None:
+    path = tmp_path / "wt"
+    path.mkdir()
+    _git(path, "init", "-q")
+    (path / ".gitignore").write_text("build/\n")
+    (path / "app.c").write_text("int main(void) { return 0; }\n")
+    _git(path, "add", "-A")
+    _git(path, "commit", "-q", "-m", "c")
+    repo.record_git_dir(path)
+    head = _git(path, "rev-parse", "HEAD").strip()
+    assert repo.resolve_commit(path, "HEAD") == head
+    with pytest.raises(GitError):
+        repo.resolve_commit(path, "no-such-branch")
+    (path / "app.c").write_text("broken\n")
+    (path / "build").mkdir()
+    (path / "build" / "CMakeCache.txt").write_text("x\n")
+    (path / "stray.o").write_text("x\n")
+    repo.reset_worktree(path)
+    assert sorted(p.name for p in path.iterdir() if p.name != ".git") == [".gitignore", "app.c"]
+    assert (path / "app.c").read_text() == "int main(void) { return 0; }\n"
+    repo.forget_git_dir(path)
+    with pytest.raises(GitError, match="저장소 기록"):
+        repo.status(path)
