@@ -45,7 +45,7 @@ LIMITS: typing.Final[Mapping[str, int]] = {"pr": 14}
 
 - 뼈대: `app/worker/` 바로 아래의 `main`, `graph`, `flow_state`, `flow_nodes`, `update`, `command`, `command_pure`, `feedback_job`, `guard`, `retry`, `deps`, `cli`, `preflight`, `records`. 단계를 부르기만 한다.
 - 단계 폴더: `rules`, `feedback`, `fix`, `report`, `evaluation`. 한 단계가 하는 일 전부를 둔다.
-- 공용 폴더: `core`, `sandbox`, `testing`, `lang`, `git`, `config`, `store`, `model`. 모든 단계가 쓰는 데이터 정의와 도구를 둔다.
+- 공용 폴더: `core`, `sandbox`, `testing`, `lang`, `env`, `git`, `config`, `store`, `model`. 모든 단계가 쓰는 데이터 정의와 도구를 둔다.
 
 단계 폴더 아래 모듈은 뼈대 모듈을 import하지 않는다.
 
@@ -53,7 +53,7 @@ LIMITS: typing.Final[Mapping[str, int]] = {"pr": 14}
 
 단계 폴더 사이에는 `fix`가 `rules`·`feedback`을, `report`와 `evaluation`이 `rules`·`feedback`·`fix`를 import하는 방향만 쓴다.
 
-공용 폴더 사이에는 다음 방향만 쓴다: `sandbox`는 `core`를, `testing`은 `core`·`sandbox`를, `lang`은 `core`·`sandbox`·`testing`을, `git`은 `core`·`sandbox`를, `config`는 `core`·`sandbox`·`git`을, `store`는 `core`·`sandbox`·`git`·`config`를, `model`은 `core`·`sandbox`·`git`·`config`·`store`를 import하고, `core`는 다른 폴더를 import하지 않는다.
+공용 폴더 사이에는 다음 방향만 쓴다: `sandbox`는 `core`를, `testing`은 `core`·`sandbox`를, `lang`은 `core`·`sandbox`·`testing`을, `env`는 `core`·`sandbox`·`testing`을, `git`은 `core`·`sandbox`를, `config`는 `core`·`sandbox`·`git`을, `store`는 `core`·`sandbox`·`git`·`config`를, `model`은 `core`·`sandbox`·`git`·`config`·`store`를 import하고, `core`는 다른 폴더를 import하지 않는다.
 
 `app/worker/sandbox/` 아래 모듈은 `app` 안에서 `app.worker.sandbox`의 모듈과 순수 모듈만 import한다.
 
