@@ -42,6 +42,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
+from app.worker.core.rule_pure import PYTHON_SUFFIXES
 from app.worker.core.text_edit_pure import TextEdit
 from app.worker.core.tools_pure import RUFF_CODE, RuffConfig
 from app.worker.core.violation_pure import Violation
@@ -250,6 +251,18 @@ def dependency_files(worktree: Path) -> list[Path]:
     if (worktree / "pyproject.toml").is_file():
         files.append(worktree / "pyproject.toml")
     return files
+
+
+def has_work(worktree: Path) -> bool:
+    """이 저장소에 Python 프로필이 돌릴 것이 있는지 (7.7): 의존성 파일이나 Python 파일. 이름만 보고
+    내용은 읽지 않는다."""
+    if dependency_files(worktree):
+        return True
+    for _, dirs, files in os.walk(worktree):
+        dirs[:] = [d for d in dirs if d != ".git"]
+        if any(name.endswith(PYTHON_SUFFIXES) for name in files):
+            return True
+    return False
 
 
 def cache_key(worktree: Path, image: Image, runtime_version: str) -> str:

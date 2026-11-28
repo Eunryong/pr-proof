@@ -129,11 +129,13 @@ def run_pr_tests(
     contexts: bool = False,
 ) -> PytestRun:
     """테스트 단계: 이미지 준비 → Python 런타임(도구 캐시) → .venv 준비 → 작업 컨테이너에서 pytest
-    → 결과.
+    → 결과. 저장소에 Python 프로필이 돌릴 것이 없으면 아무것도 준비하지 않고 `no_profile`이다.
 
     Docker 실패와 런타임을 받지 못함은 docker_cli.SandboxError(환경 오류), pip 실패는
     python.DependencyInstallError로 올라간다. 처리는 app/worker/update.py가 정한다.
     """
+    if not python.has_work(worktree):
+        return PytestRun(exit_code=None, summary=None, no_profile=True)
     image = docker_cli.ensure_image(names.image)
     runtime = python.ensure_runtime(tool_cache, names.image)
     venv_dir = python.ensure_venv(

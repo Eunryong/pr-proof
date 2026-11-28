@@ -55,6 +55,8 @@ SUMMARY: Final = ReportSummary(passed=1, total=1)
         (PytestRun(exit_code=137, summary=None), "unrunnable"),  # OOM
         (PytestRun(exit_code=137, summary=None, cancelled=True), "cancelled"),
         (PytestRun(exit_code=137, summary=None, timed_out=True), "timeout"),
+        (PytestRun(exit_code=None, summary=None, no_profile=True), "no_profile"),
+        (PytestRun(exit_code=None, summary=None, no_profile=True, cancelled=True), "cancelled"),
     ],
 )
 def test_status(run: PytestRun, status: str) -> None:
@@ -125,3 +127,11 @@ def test_partly_flaky_is_still_failed() -> None:
 def test_errors_are_never_flaky() -> None:
     summary = ReportSummary(passed=8, errors=1, total=9, failed_tests=("t::a",))
     assert PytestRun(exit_code=1, summary=summary, flaky=("t::a",)).status == "failed"
+
+
+def test_a_repo_the_profile_cannot_run_allows_no_fix_and_is_not_unrunnable() -> None:
+    """프로필이 돌릴 것이 없으면 돌리지 않은 것이다. 고친 것을 확인할 수 없으므로 어느 수정도
+    허용하지 않고, PR 코드 때문에 못 돌린 것(unrunnable)과 섞이지 않는다."""
+    run = PytestRun(exit_code=None, summary=None, no_profile=True)
+    assert not run.allows_mechanical_fix and not run.allows_code_fix
+    assert run.unrunnable_reason is None and not run.memory_exceeded

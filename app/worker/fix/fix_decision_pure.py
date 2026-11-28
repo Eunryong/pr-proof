@@ -18,7 +18,7 @@ from app.worker.core.prompt_text_pure import load
 from app.worker.core.rule_pure import CheckMethod, Rule, RuleSource
 from app.worker.core.violation_pure import Violation
 from app.worker.store.rag_pure import Retrieval, cited
-from app.worker.testing.test_run_pure import RunStatus
+from app.worker.testing.test_run_pure import NO_PROFILE_WHY, RunStatus
 
 # changes_behavior·not_a_violation은 모델이 고르는 skip 이유다. risky는 모델이 이유를 고르지 않은
 # skip이다. needs_other_file은 저장된 옛 판단에만 있다
@@ -36,6 +36,7 @@ _TESTS_BROKEN: Final[Mapping[str, str]] = {
     "unrunnable": "테스트를 돌리지 못함",
     "cancelled": "테스트가 중단됨",
 }
+NO_PROFILE_GAP: Final = f"테스트로 확인할 수 없음 ({NO_PROFILE_WHY})"
 
 
 @dataclass(frozen=True)
@@ -80,6 +81,8 @@ def decide_by_table(
         return _skip(v, "notify_only", "도구의 자동 수정이 없음")
     if tests.status in _TESTS_BROKEN:
         return _skip(v, "tests_failed", _TESTS_BROKEN[tests.status])
+    if tests.status == "no_profile":
+        return _skip(v, "no_safety_net", NO_PROFILE_GAP)
     if v.mechanical_fix:  # 테스트 상태는 passed 또는 no_tests다
         return FixDecision(v.id, "fix", "pipeline", method="mechanical")
     if tests.status == "no_tests" or tests.flaky:
@@ -93,6 +96,8 @@ def safety_gap(tests: SafetyNet) -> str | None:
     확인할 수 있으면 None. 코멘트 수정(4.11)이 고치기 전에 본다."""
     if tests.status in _TESTS_BROKEN:
         return _TESTS_BROKEN[tests.status]
+    if tests.status == "no_profile":
+        return NO_PROFILE_GAP
     if tests.status == "no_tests" or tests.flaky:
         why = "테스트가 없음" if tests.status == "no_tests" else "불안정한 테스트가 있음"
         return f"테스트로 확인할 수 없음 ({why})"

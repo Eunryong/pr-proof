@@ -324,3 +324,28 @@ def test_install_container_is_removed_when_install_times_out(
         python.ensure_venv(repo, IMAGE, RUNTIME, cache_dir=tmp_path / "cache")
     assert len(no_container_removal) == 1
     assert list((tmp_path / "cache").iterdir()) == []
+
+
+# --- 프로필이 돌릴 것이 있는가 ---------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("files", "expected"),
+    [
+        ((), False),
+        (("CMakeLists.txt", "engine/src/version.cpp", "docs/design.md"), False),
+        (("README.md", ".git/hooks/pre-commit.py"), False),  # .git 안은 저장소의 파일이 아니다
+        (("pyproject.toml",), True),
+        (("requirements-dev.txt",), True),
+        (("engine/tools/gen.py",), True),
+        (("stubs/x.pyi", "main.cpp"), True),
+    ],
+)
+def test_has_work_looks_for_dependency_files_or_python_files(
+    tmp_path: Path, files: tuple[str, ...], expected: bool
+) -> None:
+    for name in files:
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("")
+    assert python.has_work(tmp_path) is expected

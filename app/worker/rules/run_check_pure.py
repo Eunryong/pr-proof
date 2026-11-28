@@ -20,8 +20,8 @@ from pydantic import BaseModel, ConfigDict
 from app.worker.core.cache_key_pure import model_cache_key, prompt_version, text_hash
 from app.worker.core.prompt_text_pure import load
 from app.worker.core.rule_pure import CheckMethod, Rule, RuleSource
-from app.worker.rules.doc_rules_pure import Found, RuleChecked, RuleUnchecked
-from app.worker.testing.test_run_pure import PytestRun
+from app.worker.rules.doc_rules_pure import Found, RuleChecked, RuleUnchecked, RunJudged
+from app.worker.testing.test_run_pure import NO_PROFILE_WHY, PytestRun
 
 MAX_WHY_CHARS: Final = 300
 
@@ -54,6 +54,8 @@ def summarize_tests(run: PytestRun) -> str:
             return "새 커밋이 올라와 중단"
         case "unrunnable":
             return f"실행 불가 ({run.unrunnable_reason})"
+        case "no_profile":
+            return "돌리지 않음"
 
 
 def lint_text(found: Found) -> str:
@@ -138,6 +140,14 @@ def answer_from_json(text: str) -> Answer:
 
 def facts_for(found: Found, run: PytestRun) -> RunFacts:
     return RunFacts(summarize_tests(run), lint_text(found))
+
+
+def without_profile(found: Found, run: PytestRun) -> tuple[RunJudged, ...] | None:
+    """언어 프로필이 돌릴 것이 없는 저장소의 답: 돌린 것이 없으므로 모델에게 묻지 않고 run 규칙을
+    모두 확인하지 못한 것으로 두고 까닭을 적는다 (7.7). 프로필이 돌렸으면 None."""
+    if run.status != "no_profile":
+        return None
+    return tuple(RunJudged(rule.id, "left", NO_PROFILE_WHY, "") for rule in run_rules(found))
 
 
 def run_rules(found: Found) -> Sequence[Rule]:

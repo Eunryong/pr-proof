@@ -66,6 +66,7 @@ _UNTESTED_NOTE: Final[Mapping[str, str]] = {
         "테스트가 시간 안에 끝나지 않아 고친 것을 확인할 수 없으므로 수정안을 만들지 않습니다."
     ),
     "unrunnable": "테스트 결과를 얻지 못해 고친 것을 확인할 수 없으므로 수정안을 만들지 않습니다.",
+    "no_profile": "테스트를 돌릴 수 없어 고친 것을 확인할 수 없으므로 수정안을 만들지 않습니다.",
 }
 # 의존성 설치가 실패하면 테스트도 수정 판단도 하지 않고 끝난다 (update.py)
 INSTALL_FAILED_NOTE: Final = (

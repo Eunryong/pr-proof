@@ -10,7 +10,7 @@ from app.worker.report import report
 from app.worker.report.report import render_result
 from app.worker.rules.doc_rules_pure import CallUsage, CheckerRef, Found, RuleChecked
 from app.worker.testing.test_lines import format_test_line
-from app.worker.testing.test_run_pure import PytestRun, ReportSummary
+from app.worker.testing.test_run_pure import NO_PROFILE_WHY, PytestRun, ReportSummary
 
 SYMBOLS: Final = ("⚠️", "✅", "❌")
 HEAD: Final = "a" * 40
@@ -62,8 +62,12 @@ PASSED: Final = PytestRun(exit_code=0, summary=ReportSummary(passed=9, total=9))
         (PytestRun(exit_code=124, summary=None, timed_out=True), "시간 초과로 중단"),
         (PytestRun(exit_code=None, summary=None, cancelled=True), "새 커밋이 올라와 중단"),
         (PytestRun(exit_code=137, summary=None), "실행 불가 (메모리 한도 1GB를 넘어 종료됨)"),
+        (
+            PytestRun(exit_code=None, summary=None, no_profile=True),
+            f"돌리지 않음 ({NO_PROFILE_WHY})",
+        ),
     ],
-    ids=["passed", "failed", "no_tests", "timeout", "cancelled", "unrunnable"],
+    ids=["passed", "failed", "no_tests", "timeout", "cancelled", "unrunnable", "no_profile"],
 )
 def test_test_line_is_text_only(run: PytestRun, line: str) -> None:
     assert format_test_line(run) == line
@@ -181,8 +185,10 @@ NO_TESTS: Final = PytestRun(exit_code=5, summary=ReportSummary())
          "테스트가 시간 안에 끝나지 않아 고친 것을 확인할 수 없으므로 수정안을 만들지 않습니다."),
         (PytestRun(exit_code=4, summary=None, output="ERROR: usage"),
          "테스트 결과를 얻지 못해 고친 것을 확인할 수 없으므로 수정안을 만들지 않습니다."),
+        (PytestRun(exit_code=None, summary=None, no_profile=True),
+         "테스트를 돌릴 수 없어 고친 것을 확인할 수 없으므로 수정안을 만들지 않습니다."),
     ],
-    ids=["no_tests", "timeout", "unrunnable"],
+    ids=["no_tests", "timeout", "unrunnable", "no_profile"],
 )  # fmt: skip
 def test_untested_run_with_violations_says_why_no_fix(run: PytestRun, note: str) -> None:
     """테스트가 돌지 않았으면 위반이 있을 때 "테스트:" 줄 아래(펼친 부분)에 까닭을 적는다. 맨 위

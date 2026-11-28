@@ -8,6 +8,7 @@ import pytest
 from app.worker.core.rule_pure import CheckMethod, Rule, RuleSource
 from app.worker.core.violation_pure import Violation
 from app.worker.fix.fix_decision_pure import (
+    NO_PROFILE_GAP,
     SYSTEM_PROMPT,
     FixDecision,
     Question,
@@ -20,6 +21,7 @@ from app.worker.fix.fix_decision_pure import (
     parse_answer,
     plan,
     reconcile,
+    safety_gap,
 )
 
 V: Final = Violation(
@@ -46,6 +48,9 @@ def test_covered_violation_with_passing_tests_goes_to_the_model() -> None:
          "테스트로 확인할 수 없음 (테스트가 없음)"),
         (V, "model", SafetyNet("passed", flaky=True), "no_safety_net",
          "테스트로 확인할 수 없음 (불안정한 테스트가 있음)"),
+        (V, "model", SafetyNet("no_profile"), "no_safety_net", NO_PROFILE_GAP),
+        (replace(V, mechanical_fix=True), "mechanical", SafetyNet("no_profile"), "no_safety_net",
+         NO_PROFILE_GAP),
     ],
 )  # fmt: skip
 def test_table_skips_with_the_reason(violation, rule_fix, tests, reason, why) -> None:
@@ -224,3 +229,8 @@ def test_tool_settings_violation_without_a_tool_fix_is_notify_only() -> None:
     assert decision is not None and (decision.action, decision.reason) == ("skip", "notify_only")
     fixable = replace(v, mechanical_fix=True)
     assert decide_by_table(fixable, "mechanical", SafetyNet("no_tests")).method == "mechanical"
+
+
+def test_safety_gap_names_the_missing_profile() -> None:
+    assert safety_gap(SafetyNet("no_profile")) == NO_PROFILE_GAP
+    assert "Python뿐" in NO_PROFILE_GAP
