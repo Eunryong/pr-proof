@@ -174,9 +174,10 @@ class Record:
 | `proposaltarget` | 수정안이 고친 위반의 (파일, 규칙, 줄 내용) | v1 lint 경로만 썼다. 3단계부터 쓰지 않는다(거절은 `records`). 예전 데이터베이스에 남은 테이블은 지우지 않는다 |
 | `commandrecord` | 처리한 명령의 코멘트 ID | 있음 |
 | `call_grants` | `/fix`가 PR 호출 상한을 한 번 더 준 기록: 저장소, PR, 커밋, 코멘트 ID (9.2) | 있음 (2026-11-20) |
-| `ai_calls` | 모델 호출 한 번의 기록 | 있음. 4단계(2026-11-20)에 `judge`가 처음 쓰인다. `skill`이 단계(`rules`·`checker`·`judge`·`decide`·`fix`)가 되고, 입력·출력 토큰 수, 호출 상한에서 센 값, 캐시 적중 여부를 더한다. 달러 비용 칸은 API 백엔드일 때만 채운다 |
+| `ai_calls` | 모델 호출 한 번의 기록 | 있음. 환경 처방 상한에서 센 호출은 `ruleset_key`에 `env:<저장소>`를 적는다(2026-11-29). 4단계(2026-11-20)에 `judge`가 처음 쓰인다. `skill`이 단계(`rules`·`checker`·`judge`·`decide`·`fix`)가 되고, 입력·출력 토큰 수, 호출 상한에서 센 값, 캐시 적중 여부를 더한다. 달러 비용 칸은 API 백엔드일 때만 채운다 |
 | `rulesets` | 캐시 키 → 규칙 묶음 | 새로 |
 | `checkers` | 채택한 검사기와 실패한 시도 | 새로 |
+| `env_plans` | base에서 확인한 환경 처방: 저장소, 설정의 모델 이름, 프롬프트 판, 처방 JSON, 기댄 경로 → base의 git 객체 해시, base 실행의 요약(4.5 "환경 처방 정하기") | 있음 (2026-11-29). 새 테이블이라 예전 데이터베이스는 그대로 열린다 |
 | `model_cache` | 해시 키 → 모델 결과 (단계, 모델, 프롬프트 버전, 결과 JSON) | 있음. 모델 판단은 (규칙, hunk) 쌍마다 한 줄 (4단계, 2026-11-20). 테이블은 그대로다 |
 | `feedback` | 처리한 PR 코멘트(4.11): 종류, 코멘트 id, 스레드, 글쓴이, 처리한 커밋, 판단(`accepted`·`rejected`·`no_action`·`deferred`·`error`), 까닭, 답글 id, 수정안 번호, 스레드를 해결한 때. (repo, kind, item_id)마다 하나 | 있음 (2026-11-22. `deferred`와 처리하며 바로 해결한 `resolved_at`은 둘째 덩어리) |
 | `violations` | 검사별 위반. 다음 커밋에서 "작성자가 직접 고침"을 알아내는 데 쓴다 | 있음 (문서 규칙 위반, 2026-11-20) |
@@ -228,7 +229,7 @@ class ToolUsage:                           # 수정 작성 호출들 안의 도�
 
 ### 7.10 환경 처방
 
-저장소를 빌드·테스트할 환경을 데이터로 적은 것이다(`app/worker/env/recipe_pure.py`, 2026-11-29). 지금은 사람이 쓴 JSON 파일을 수동 명령 `python -m app.worker.cli env-try <처방.json> <저장소 폴더>`가 받는다. 처방을 모델이 쓰는 일과 흐름에 잇는 일은 13절 7단계의 다음 PR들이 한다.
+저장소를 빌드·테스트할 환경을 데이터로 적은 것이다(`app/worker/env/recipe_pure.py`, 2026-11-29). 사람이 쓴 JSON 파일은 수동 명령 `python -m app.worker.cli env-try <처방.json> <저장소 폴더>`가 받는다. 모델이 쓰고 base에서 확인하는 처방은 수동 명령 `env-plan`이 정한다(4.5 "환경 처방 정하기"). 흐름에 잇는 일은 13절 7단계의 다음 PR들이 한다.
 
 ```text
 EnvRecipe

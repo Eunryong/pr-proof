@@ -28,6 +28,7 @@ model:
   judge: sonnet                        # 모델의 직접 판단 (4.5). 검사기를 만들지 못한 규칙 (4단계)
   light: sonnet                        # 수정 작성의 가벼운 모델. heavy와 같으면 올리지 않는다
   heavy: sonnet                        # 수정 작성에서 실패가 이어지면 한 번 올리는 모델
+  env: sonnet                          # 환경 처방 정하기 (4.5). base를 읽고 빌드·테스트 환경을 쓴다
   calls:                               # 모델 호출 수 상한 (9.2). 넉넉한 초깃값이고 측정 뒤 조정한다
     pr_base: 20                        # PR 상한 = pr_base + 대상 위반 수 × per_violation, 최대 pr_max
     per_violation: 4
@@ -97,4 +98,4 @@ rag:
   embed_model: intfloat/multilingual-e5-small   # 로컬 임베딩 모델. app/worker/store/rag_pure.py의 EMBED_MODELS에 판과 해시를 고정한 것만
 ```
 
-**모델이 정해지는 순서 (2026-11-23, pr-proof#79).** 단계(`rules`, `checker`, `decide`, `judge`, `light`, `heavy`)마다 저장소의 `.pipeline.yaml`에 그 단계를 적었으면 그 값, 적지 않았으면 파이프라인 쪽 `model.default`, 그것도 없으면 위 스키마의 기본값이다. 적었는지는 저장소가 그 키를 썼는지로 가린다(기본값과 같은 값을 적어도 적은 것이다. pydantic의 `model_fields_set`, `app/worker/config/repo_config_pure.with_default_model`). `.pipeline.yaml`을 읽지 못해 기본값으로 읽은 저장소는 아무 단계도 적지 않은 것으로 본다. 파이프라인 쪽 값을 정하면 수정 작성의 `light`와 `heavy`도 그 모델 하나가 된다. 두 단계가 같은 모델이면 무거운 단계로 올리지 않고 회차를 모두 가벼운 단계로 센다(올려도 모델이 같아 호출 수만 셋으로 센다. `app/worker/fix/model_fix.py`). 저장한 판단은 키에 모델이 들어 있어(9.1) 모델이 바뀐 단계는 다음 검사에서 다시 묻는다. 이름은 꼴(`claude --model`이 받는 이름, 영문·숫자로 시작)만 확인하고 그 모델이 있는지는 부르기 전에는 보지 않는다. 없는 모델이면 그 단계의 호출이 실패로 끝나고 결과 코멘트에 그 단계가 실패했다고 나온다(규칙 읽기면 "규칙: 검사하지 못함"). 서버는 `config.yaml`을 시작할 때만 읽는다.
+**모델이 정해지는 순서 (2026-11-23, pr-proof#79).** 단계(`rules`, `checker`, `decide`, `judge`, `light`, `heavy`, `env`)마다 저장소의 `.pipeline.yaml`에 그 단계를 적었으면 그 값, 적지 않았으면 파이프라인 쪽 `model.default`, 그것도 없으면 위 스키마의 기본값이다. 적었는지는 저장소가 그 키를 썼는지로 가린다(기본값과 같은 값을 적어도 적은 것이다. pydantic의 `model_fields_set`, `app/worker/config/repo_config_pure.with_default_model`). `.pipeline.yaml`을 읽지 못해 기본값으로 읽은 저장소는 아무 단계도 적지 않은 것으로 본다. 파이프라인 쪽 값을 정하면 수정 작성의 `light`와 `heavy`도 그 모델 하나가 된다. 두 단계가 같은 모델이면 무거운 단계로 올리지 않고 회차를 모두 가벼운 단계로 센다(올려도 모델이 같아 호출 수만 셋으로 센다. `app/worker/fix/model_fix.py`). 저장한 판단은 키에 모델이 들어 있어(9.1) 모델이 바뀐 단계는 다음 검사에서 다시 묻는다. 이름은 꼴(`claude --model`이 받는 이름, 영문·숫자로 시작)만 확인하고 그 모델이 있는지는 부르기 전에는 보지 않는다. 없는 모델이면 그 단계의 호출이 실패로 끝나고 결과 코멘트에 그 단계가 실패했다고 나온다(규칙 읽기면 "규칙: 검사하지 못함"). 서버는 `config.yaml`을 시작할 때만 읽는다.
