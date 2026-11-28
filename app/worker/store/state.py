@@ -374,6 +374,10 @@ class Store:
             stmt = select(EnvPlanEntry).where(EnvPlanEntry.repo == repo)
             return list(session.exec(stmt.order_by(EnvPlanEntry.id.desc())))
 
+    def env_plan(self, plan_id: int) -> EnvPlanEntry | None:
+        with Session(self.engine) as session:
+            return session.get(EnvPlanEntry, plan_id)
+
     # --- 수정 시도, 위반, 과거 기록 (fix_attempts, violations, records) ---
 
     def save_fix_attempt(self, attempt: FixAttempt) -> int:

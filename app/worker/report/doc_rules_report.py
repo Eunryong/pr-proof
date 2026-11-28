@@ -19,6 +19,7 @@ from app.worker.core.violation_pure import Violation
 from app.worker.fix.fix_decision_pure import (
     FLAKY_GAP,
     NO_TESTS_GAP,
+    PLANNED_GAP,
     Decided,
     FixDecision,
     SkipReason,
@@ -149,6 +150,10 @@ _LEFT_REASON: Final[Mapping[str, tuple[str, str]]] = {
         "테스트로 확인할 수 없음",
         "이 저장소의 테스트를 돌릴 수 없어 고친 것을 확인할 수 없으므로 수정안을 만들지 "
         "않았습니다.",
+    ),
+    "planned": (
+        "고친 것을 확인할 수 없음",
+        "환경 처방으로 돌린 저장소의 수정은 아직 하지 않아 수정안을 만들지 않았습니다.",
     ),
     "team_pattern": (
         "팀이 닫은 수정과 비슷함",
@@ -795,7 +800,9 @@ def _left_reason(d: FixDecision, v: Violation | None) -> tuple[str, str]:
             return _LEFT_REASON["notify_file"]
         return _LEFT_REASON["notify_tool" if d.why == NO_AUTOFIX_WHY else "notify_rule"]
     if reason == "no_safety_net":
-        gap = {NO_TESTS_GAP: "no_tests", FLAKY_GAP: "flaky"}.get(d.why, "no_env")
+        gap = {NO_TESTS_GAP: "no_tests", FLAKY_GAP: "flaky", PLANNED_GAP: "planned"}.get(
+            d.why, "no_env"
+        )
         return _LEFT_REASON[gap]
     if reason == "undecided" and d.why in _UNDECIDED:
         return _UNDECIDED[d.why]

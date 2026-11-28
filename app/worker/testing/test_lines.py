@@ -43,7 +43,11 @@ def format_test_line(run: TestRun, memory_gb: float = MEMORY_LIMIT_GB) -> str:
                 return "실패"
             return f"실패 ({s.total}개 중 {s.failed + s.errors}개)"
         case "build_failed":
-            return "빌드 실패로 테스트를 돌리지 못함"
+            step = run.failed_build
+            if step is None:  # 상태가 build_failed면 늘 있다
+                return "빌드 실패로 테스트를 돌리지 못함"
+            what = "메모리 한도로 종료됨" if step.oom_killed else f"종료 코드 {step.exit_code}"
+            return f"빌드 실패로 테스트를 돌리지 못함 ({inline_code(step.name, 100)} 단계, {what})"
         case "no_tests":
             return "실행된 테스트 없음"
         case "timeout":

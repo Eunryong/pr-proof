@@ -45,6 +45,8 @@ MAX_FAILED_TESTS: Final = 20
 NOT_FOUND_EXITS: Final = (126, 127)
 
 AnswerKind = Literal["recipe", "nothing_to_run", "base_is_red"]
+# 처방이 없는 까닭: 모델이 돌릴 것이 없다고 답함, 모델 호출 실패, 호출 상한, 회차 안에 확인하지 못함
+UnplannedKind = Literal["nothing_to_run", "model_failed", "cap", "unverified"]
 # proven: 처방이 맞음. repair: 처방이 틀림, 출력으로 고친다. choose: 설치는 됐고 빌드·테스트가
 # 실패함, 다음 회차의 모델이 처방을 고칠지 base가 빨갛다고 할지 고른다
 BaseVerdict = Literal["proven", "repair", "choose"]
@@ -319,7 +321,7 @@ def judge_base_run(run: TestRun, *, has_test_step: bool) -> BaseVerdict:
         case "no_tests":
             return "repair" if has_test_step else "proven"
         case "build_failed" | "failed":
-            failing = _failing_step(run)
+            failing = failing_step(run)
             not_found = failing is not None and failing.exit_code in NOT_FOUND_EXITS
             return "repair" if not_found else "choose"
         case "timeout" | "unrunnable" | "cancelled" | "no_env":
@@ -328,7 +330,8 @@ def judge_base_run(run: TestRun, *, has_test_step: bool) -> BaseVerdict:
             assert_never(run.status)
 
 
-def _failing_step(run: TestRun) -> StepRun | None:
+def failing_step(run: TestRun) -> StepRun | None:
+    """처음 실패한 빌드 단계, 없으면 테스트 단계."""
     return next((s for s in run.build if s.exit_code != 0), None) or run.test
 
 
@@ -360,7 +363,7 @@ def run_feedback(run: TestRun) -> str:
             lines.append(f"- (그 밖에 {len(r.failed_tests) - MAX_FAILED_TESTS}개)")
     if run.unrunnable_reason:
         lines.append(f"실행 불가의 까닭: {run.unrunnable_reason}")
-    failing = _failing_step(run)
+    failing = failing_step(run)
     if failing is not None and failing.output:
         lines += [f"{failing.name}의 출력 끝:", failing.output]
     return "\n".join(lines)

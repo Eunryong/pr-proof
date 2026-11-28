@@ -70,7 +70,10 @@ BUILD_FAILED: Final = TestRun(build=(StepRun("cmake --build build", 2, output="e
             f"돌리지 않음 ({NO_PROFILE_WHY})",
         ),
         (TestRun(unplanned="C++ 환경이 없음"), "돌리지 않음 (C++ 환경이 없음)"),
-        (BUILD_FAILED, "빌드 실패로 테스트를 돌리지 못함"),
+        (
+            BUILD_FAILED,
+            "빌드 실패로 테스트를 돌리지 못함 (`cmake --build build` 단계, 종료 코드 2)",
+        ),
     ],
     ids=[
         "passed", "failed", "no_tests", "timeout", "cancelled", "unrunnable", "no_env",

@@ -14,12 +14,13 @@ KILLED_EXIT: Final = 137  # SIGKILL. 컨테이너 메모리 한도를 넘어 OOM
 # 환경 오류(Docker·설치·컨테이너 문제)는 상태가 아니라 SandboxError로 올라간다.
 # unrunnable은 컨테이너 안에서 테스트가 돌았지만 PR 코드 때문에 결과를 못 낸 경우다.
 # no_env는 저장소에 돌릴 환경이 없어 아무것도 돌리지 않은 경우다 (7.7). 까닭은 TestRun.unplanned다.
+InputsSource = Literal["base", "head"]
 RunStatus = Literal[
     "passed", "failed", "build_failed", "no_tests", "timeout", "cancelled", "unrunnable", "no_env"
 ]  # fmt: skip
 TestVerdict = Literal["passed", "failed", "no_tests", "unrunnable"]
 
-# Python 프로필이 돌릴 것이 없을 때의 까닭 (graph.run_pr_tests)
+# 이 모양 전의 체크포인트에 남은 "Python 프로필이 돌릴 것이 없음"의 까닭 (파일 끝의 복원만 쓴다)
 NO_PROFILE_WHY: Final = (
     "이 저장소에는 Python 파일이 없고, pr-proof가 빌드·테스트·정적 검사를 돌릴 수 있는 언어는 "
     "지금 Python뿐임"
@@ -31,6 +32,7 @@ STATE_TYPES: Final = (
     ("app.worker.testing.test_run_pure", "StepRun"),
     ("app.worker.testing.test_run_pure", "TestReport"),
     ("app.worker.testing.test_run_pure", "TestRun"),
+    ("app.worker.testing.test_run_pure", "EnvUse"),
     ("app.worker.testing.test_run_pure", "PytestRun"),  # 이 모양 전의 체크포인트 (파일 끝)
     ("app.worker.testing.test_run_pure", "ReportSummary"),
 )
@@ -64,6 +66,20 @@ class TestReport:
 
 
 @dataclass(frozen=True)
+class EnvUse:
+    """환경 처방으로 돌렸을 때의 환경. 처방 본문은 env_plans에서 plan_id로 다시 읽는다.
+
+    layers는 (층 이름, 다시 씀)이다. inputs는 의존성 층을 구운 입력이 어느 커밋의 것인지이고,
+    changed_inputs는 PR이 바꾼 deps.inputs다. inputs가 base면 그 파일은 쓰지 않았다.
+    """
+
+    plan_id: int
+    layers: tuple[tuple[str, bool], ...] = ()
+    inputs: InputsSource = "base"
+    changed_inputs: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class TestRun:
     """빌드 단계들과 테스트 단계를 한 번 돌린 결과. 산출물 경로는 worktree의 .pipeline-out/ 아래다.
 
@@ -83,6 +99,7 @@ class TestRun:
     # 처음 실행에서 실패했다가 한 번 더 돌려 통과한 테스트 (DESIGN.md F8 flaky)
     flaky: tuple[str, ...] = ()
     unplanned: str = ""
+    env: EnvUse | None = None  # 환경 처방으로 돌렸으면 그 환경. Python 프로필이면 None
 
     @property
     def _steps(self) -> tuple[StepRun, ...]:
@@ -90,7 +107,8 @@ class TestRun:
         return (*self.build, *((self.test,) if self.test is not None else ()))
 
     @property
-    def _failed_build(self) -> StepRun | None:
+    def failed_build(self) -> StepRun | None:
+        """처음 실패한 빌드 단계. 빌드 단계는 처음 실패에서 멈춘다."""
         return next((s for s in self.build if s.exit_code != 0), None)
 
     @property
@@ -100,7 +118,7 @@ class TestRun:
     @property
     def output(self) -> str:
         """상태를 설명하는 출력: 빌드가 실패했으면 그 단계의 것, 아니면 테스트 단계의 것."""
-        step = self._failed_build or self.test
+        step = self.failed_build or self.test
         return step.output if step is not None else ""
 
     @property
@@ -131,7 +149,7 @@ class TestRun:
             return "no_env"
         if any(s.timed_out for s in self._steps):
             return "timeout"
-        if self._failed_build is not None:
+        if self.failed_build is not None:
             return "build_failed"
         if self.verdict == "failed" and self.passed_on_rerun:
             return "passed"  # 불안정한 테스트가 있다 (flaky). 코드 수정을 확인하는 데는 쓰지 않는다

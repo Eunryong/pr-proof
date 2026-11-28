@@ -8,6 +8,7 @@ import pytest
 from app.worker.core.rule_pure import CheckMethod, Rule, RuleSource
 from app.worker.core.violation_pure import Violation
 from app.worker.fix.fix_decision_pure import (
+    PLANNED_GAP,
     SYSTEM_PROMPT,
     FixDecision,
     Question,
@@ -22,7 +23,7 @@ from app.worker.fix.fix_decision_pure import (
     reconcile,
     safety_gap,
 )
-from app.worker.testing.test_run_pure import StepRun, TestRun
+from app.worker.testing.test_run_pure import EnvUse, StepRun, TestRun
 
 V: Final = Violation(
     id="v1", rule_id="R-1", file="orders/a.py", line=3, message="m", found_by="checker",
@@ -241,3 +242,20 @@ def test_safety_gap_names_why_nothing_ran() -> None:
 def test_safety_net_of_a_run_carries_the_reason_nothing_ran() -> None:
     assert SafetyNet.of(TestRun(unplanned="C++ 환경이 없음")) == NO_ENV
     assert SafetyNet.of(TestRun(build=(StepRun("cmake", 2),))).status == "build_failed"
+
+
+def test_a_run_from_a_recipe_skips_every_fix_with_a_program_reason() -> None:
+    """수정 작성의 테스트 도구와 만든 테스트는 아직 Python 프로필만 돌린다. 처방으로 돌린 실행이면
+    통과했어도 기계적 수정까지 고치지 않고 까닭을 남긴다."""
+    run = TestRun(test=StepRun("ctest", 0), verdict="passed", env=EnvUse(3))
+    tests = SafetyNet.of(run)
+    assert tests.planned and tests.status == "passed"
+    for violation in (V, replace(V, mechanical_fix=True)):
+        decision = decide_by_table(violation, "model", tests)
+        assert decision is not None
+        assert (decision.action, decision.reason, decision.why) == (
+            "skip", "no_safety_net", PLANNED_GAP,
+        )  # fmt: skip
+    assert safety_gap(tests) == PLANNED_GAP
+    failed = SafetyNet.of(TestRun(build=(StepRun("build", 2),), env=EnvUse(3)))
+    assert safety_gap(failed) == "빌드가 실패함"  # 깨진 테스트가 먼저다

@@ -14,11 +14,13 @@ from typing import Final
 from app.worker.config.base_config import PIPELINE_YAML, BaseConfig
 from app.worker.core.checker_pure import Checker
 from app.worker.core.markdown_pure import code_fence, inline_code
+from app.worker.env.use_pure import EnvView
 from app.worker.fix.fix_decision_pure import Decided
 from app.worker.fix.merged_fix_pure import CarriedFrom
 from app.worker.lang.install_pure import InstallFailureKind
 from app.worker.report import (
     doc_rules_report,
+    env_report_pure,
     linked_issues_report_pure,
     pr_check_report_pure,
     pr_description_report_pure,
@@ -151,6 +153,7 @@ def _compose(
     pr: PrChecks | None = None,
     description: PrDescription | None = None,
     issues: LinkedIssues | None = None,
+    tail: list[str] | None = None,
 ) -> str:
     lines = [HEADER, "", f"**테스트:** {test_line}"]
     rules_line = doc_rules_report.title(doc_rules, fixes, pr, decisions)
@@ -179,6 +182,7 @@ def _compose(
     lines += doc_rules_report.section(
         doc_rules, checkers or {}, decisions, fixes, rag, pr, more=more
     )
+    lines += tail or []
     if base is not None and base.problems:
         lines += ["", "설정:"] + [f"- {p}" for p in base.problems]
     lines += ["", _footer(head_sha, seconds, from_sync=from_sync)]
@@ -246,18 +250,23 @@ def render_result(
     carried: CarriedFrom | None = None,
     description: PrDescription | None = None,
     issues: LinkedIssues | None = None,
+    env: EnvView | None = None,
 ) -> str:
     """결과 코멘트. fixes는 묶음마다 수정했으면 그 결과, 아니면 상태(대기, 진행 중 등)다. rag는 이
     검사의 검색 상태다(규칙 절에 한 줄로 보인다). pr은 PR 단위 확인의 결과다. carried는 수정안을
     머지한 커밋이라 결과를 옮겨 적었을 때 그 출처다(테스트 줄 아래에 안내가 붙는다). description은
     PR 설명 확인의 결과다(이 확인을 끈 저장소는 None). issues는 이슈 확인의 결과다(끈 저장소는
-    None)."""
+    None). env는 환경 처방으로 돌렸을 때 그 환경이다(안내가 테스트 줄 아래에, 접는 블록 「이
+    저장소를 돌린 환경」이 규칙 절 아래에 붙는다)."""
     memory_gb = base.memory_gb if base else MEMORY_LIMIT_GB
     max_memory_gb = base.max_memory_gb if base else MEMORY_LIMIT_GB
     note = untested_note(run, doc_rules_report.has_violations(doc_rules, decisions))
     return _compose(
         format_test_line(run, memory_gb),
-        carried_lines(carried) + note + format_test_details(run, memory_gb, max_memory_gb),
+        carried_lines(carried)
+        + note
+        + format_test_details(run, memory_gb, max_memory_gb)
+        + env_report_pure.expanded(env),
         head_sha,
         base=base,
         seconds=seconds,
@@ -271,6 +280,7 @@ def render_result(
         pr=pr,
         description=description,
         issues=issues,
+        tail=env_report_pure.folded(env),
     )
 
 
