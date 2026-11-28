@@ -9,7 +9,7 @@ import pytest
 from app.worker.config.repo_config_pure import CallSettings
 from app.worker.model.loop import LoopPolicy, choose_tier
 from app.worker.store.budget import CallBudget
-from app.worker.store.call_budget_pure import Allowed, Denied, PrScope, RulesetScope
+from app.worker.store.call_budget_pure import Allowed, Denied, EnvScope, PrScope, RulesetScope
 from app.worker.store.state import Store
 
 from ...redis_stand_ins import MemoryKeys
@@ -90,6 +90,21 @@ def test_ruleset_cap_is_a_rolling_24_hours(store: Store) -> None:
     assert isinstance(_budget(store, pr=2, **settings).decide(scope, "light"), Denied)
     clock.at = T0 + timedelta(hours=24, minutes=1)
     assert _budget(store, pr=2, **settings).decide(scope, "light") == Allowed(1)
+
+
+def test_env_cap_is_per_repository_and_shared_across_prs(store: Store) -> None:
+    """환경 처방은 PR이 아니라 저장소의 base에 딸려 저장소마다 `ruleset_base`까지 센다."""
+    settings = {"ruleset_base": 2, "per_rule": 5, "pr_max": 1}
+    _spend(_budget(store, pr=1, **settings), EnvScope("o/r"), 1)
+    _spend(_budget(store, pr=2, **settings), EnvScope("o/r"), 1)
+    third = _budget(store, pr=3, **settings)
+    assert third.decide(EnvScope("o/r"), "light") == Denied("env", 2, 2, 1)
+    # 다른 저장소의 처방, 같은 저장소의 PR 상한과 규칙 묶음 상한은 따로 센다
+    assert _budget(store, pr=1, **settings).decide(EnvScope("o/other"), "light") == Allowed(1)
+    assert _budget(store, pr=1, **settings).decide(PrScope(), "light") == Allowed(1)
+    assert _budget(store, pr=1, **settings).decide(RulesetScope("k"), "light") == Allowed(1)
+    assert {c.ruleset_key for c in store.model_calls("o/r", 1)} == {"env:o/r"}
+    assert Denied("env", 2, 2, 1).reason.startswith("호출 상한: 환경 처방 상한")
 
 
 def test_repo_daily_cap_is_a_rolling_24_hours(store: Store) -> None:

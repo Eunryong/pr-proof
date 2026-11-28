@@ -37,6 +37,7 @@ STAGE_LABELS: Final[Mapping[str, str]] = {
     "decide": "수정 판단",
     "light": "수정 작성",
     "heavy": "수정 작성 (올린 뒤)",  # 가벼운 모델이 이어 실패하면 한 번 올린다
+    "env": "환경 처방",
 }
 _REPO: Final = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/[A-Za-z0-9._-]{1,100}")
 

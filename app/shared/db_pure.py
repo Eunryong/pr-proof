@@ -196,7 +196,8 @@ class ModelCall(SQLModel, table=True):
     pr_number: int = Field(index=True)
     head_sha: str
     stage: str  # call_budget.Stage
-    # 규칙 묶음 상한에서 센 호출이면 그 묶음의 캐시 키. PR 상한에서 센 호출이면 None
+    # 규칙 묶음 상한에서 센 호출이면 그 묶음의 캐시 키, 환경 처방 상한이면 `env:<저장소>`
+    # (`call_budget_pure.EnvScope`). PR 상한에서 센 호출이면 None
     ruleset_key: str | None = Field(default=None, index=True)
     model: str  # claude --model에 넘긴 이름
     model_id: str = ""  # 모델이 알려준 전체 id (별칭이 가리킨 것)

@@ -15,6 +15,7 @@ from app.worker.store.call_budget_pure import (
     DAILY_WINDOW,
     Allowed,
     Denied,
+    EnvScope,
     RulesetScope,
     Scope,
     Stage,
@@ -93,8 +94,9 @@ class CallBudget:
     def _row(
         self, scope: Scope, *, stage: Stage, tier: Tier, model: str, attempt: int, counted: int
     ) -> ModelCall:
+        keyed = isinstance(scope, RulesetScope | EnvScope)
         return ModelCall(
             repo=self.repo, pr_number=self.pr_number, head_sha=self.head_sha, stage=stage,
-            ruleset_key=scope.key if isinstance(scope, RulesetScope) else None, model=model,
-            tier=tier, attempt=attempt, counted=counted, created_at=self.now().astimezone(UTC),
+            ruleset_key=scope.key if keyed else None, model=model, tier=tier, attempt=attempt,
+            counted=counted, created_at=self.now().astimezone(UTC),
         )  # fmt: skip

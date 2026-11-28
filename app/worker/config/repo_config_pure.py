@@ -36,7 +36,7 @@ DEFAULT_MAX_RETRIES: Final = 3
 # 회차마다 테스트를 다시 돌리므로 리포 설정으로 무한히 늘리지 못하게. 넘는 값은 이 값으로 줄인다
 MAX_RETRIES_CAP: Final = 5
 # 모델을 고르는 단계 (`ModelSettings`의 필드). 파이프라인 쪽 `model.default`가 채우는 것도 이것이다
-STAGE_MODELS: Final = ("rules", "checker", "judge", "decide", "light", "heavy")
+STAGE_MODELS: Final = ("rules", "checker", "judge", "decide", "light", "heavy", "env")
 DEFAULT_RULE_DOCS: Final = ("README.md", "CONTRIBUTING.md")
 LINT: Final = "lint"
 # 2단계에 없앤 설정 (10절 "v1 스키마에서 바뀐 키"). 있으면 무시하고 "설정:"에 알린다
@@ -154,6 +154,7 @@ class ModelSettings(BaseModel):
     # 같으면 올리지 않는다
     light: str = Field(default="sonnet", pattern=MODEL_NAME_PATTERN)
     heavy: str = Field(default="sonnet", pattern=MODEL_NAME_PATTERN)
+    env: str = Field(default="sonnet", pattern=MODEL_NAME_PATTERN)  # 환경 처방 정하기 (4.5)
     calls: CallSettings = CallSettings()
 
 
