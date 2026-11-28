@@ -64,9 +64,9 @@ from app.worker.store.call_budget_pure import RulesetScope
 from app.worker.store.rag_pure import Retrieval
 from app.worker.testing import coverage
 from app.worker.testing.generated_tests_pure import Suite
-from app.worker.testing.test_run_pure import PytestRun
+from app.worker.testing.test_run_pure import TestRun
 
-TestsFn = Callable[[PRJob], PytestRun]
+TestsFn = Callable[[PRJob], TestRun]
 SuiteFn = Callable[[PRJob, Mapping[str, bytes] | None, Sequence[str]], Suite]
 
 
@@ -289,7 +289,7 @@ def decide_fixes(ctx: FlowContext, state: FlowState) -> FlowState:
     progress(ctx, job, "수정 판단")
     rt, run = doc_runtime(ctx, state), state["test_run"]
     decided = decide.decide(
-        found, SafetyNet(run.status, flaky=bool(run.flaky)), ctx.changes_diff, store=rt.store,
+        found, SafetyNet.of(run), ctx.changes_diff, store=rt.store,
         budget=rt.budget, model=rt.models.decide, ask=rt.backend.ask, retriever=rt.retriever,
         context_of=records.context_of(ctx.worktree),
         manual=bool(state.get("model_requested")), current_pr=job.pr_number,

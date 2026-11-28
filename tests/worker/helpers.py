@@ -1,13 +1,14 @@
 """워커 흐름 테스트의 공용 값과 도우미 (test_main, test_command)."""
 
 import json
-from typing import Final
+from typing import Any, Final
 
 from app.worker import graph
 from app.worker.config.base_config import BaseConfig
 from app.worker.config.repo_config_pure import FixSettings, PrDescriptionSettings, RepoConfig
 from app.worker.core.tools_pure import RuffSetup
-from app.worker.testing.test_run_pure import PytestRun, ReportSummary
+from app.worker.lang import python
+from app.worker.testing.test_run_pure import StepRun, TestReport, TestRun
 
 from .git.test_github import FakeGh
 
@@ -15,7 +16,20 @@ HEAD: Final = "a" * 40
 # 흐름 테스트의 서버 id와 판 (결과 코멘트의 표시에 실린다)
 ME: Final = "0e0e0e0e"
 ME_VERSION: Final = "0.1.3"
-PASSED: Final = PytestRun(exit_code=0, summary=ReportSummary(passed=9, total=9))
+
+
+def pytest_run(
+    exit_code: int | None,
+    report: TestReport | None = None,
+    *,
+    flaky: tuple[str, ...] = (),
+    **step: Any,
+) -> TestRun:
+    """pytest 한 번의 결과를 Python 프로필이 만드는 모양으로. step은 StepRun의 나머지 값이다."""
+    return python.pytest_result(StepRun(python.PYTEST_STEP, exit_code, **step), report, flaky=flaky)
+
+
+PASSED: Final = pytest_run(0, TestReport(passed=9, total=9))
 # 흐름 테스트는 승인 대기(/fix)를 단계별로 보려고 require_approval: true로 둔다.
 # 기본값(자동 수정)의 흐름은 test_fix_flow·test_auto_flow가 본다. PR 설명 확인(4.5 끝)은 꺼서 가짜
 # 모델의 차례에 끼어들지 않게 한다 (그 확인은 test_pr_description*이 본다)

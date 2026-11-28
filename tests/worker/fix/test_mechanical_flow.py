@@ -28,10 +28,10 @@ from app.worker.model.claude import claude_cli
 from app.worker.rules import doc_rules
 from app.worker.rules.doc_rules_pure import Found, NoRuleDocs, RuleChecked
 from app.worker.sandbox.checker_runner import CheckerRun, Match, Ran
-from app.worker.testing.test_run_pure import PytestRun, ReportSummary
+from app.worker.testing.test_run_pure import TestReport
 
 from ..git.test_github import is_reply
-from ..helpers import PASSED, bodies, use_runner
+from ..helpers import PASSED, bodies, pytest_run, use_runner
 from ..rules.test_doc_rules_flow import make_remote
 
 REAL_CHECKOUT: Final = repo.checkout
@@ -306,7 +306,7 @@ def test_v1_skill_names_are_not_supported(mech_env, text: str) -> None:
 
 def test_failing_tests_block_the_fix(mech_env) -> None:
     _open(mech_env)
-    failed = PytestRun(exit_code=1, summary=ReportSummary(passed=8, failed=1, total=9))
+    failed = pytest_run(1, TestReport(passed=8, failed=1, total=9))
     use_runner(mech_env, lambda *a, **k: failed)
     assert _update(mech_env) == "failed"
     body = _comment(mech_env)
@@ -334,7 +334,7 @@ def test_new_violation_after_the_fix_discards_it(mech_env) -> None:
 
 def test_tests_changing_after_the_fix_discards_it(mech_env) -> None:
     _open(mech_env)
-    runs = iter([PASSED, PytestRun(exit_code=0, summary=ReportSummary(passed=8, total=8))])
+    runs = iter([PASSED, pytest_run(0, TestReport(passed=8, total=8))])
     use_runner(mech_env, lambda *a, **k: next(runs))
     _update(mech_env)
     assert "수정안을 버림: 고친 뒤 테스트 결과가 달라짐" in _comment(mech_env)

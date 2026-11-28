@@ -59,7 +59,7 @@ from app.worker.rules.rule_docs_source_pure import read_commit, source_for
 from app.worker.store.budget import CallBudget
 from app.worker.store.records_pure import targets_from_json
 from app.worker.store.state import Store
-from app.worker.testing.test_run_pure import PytestRun
+from app.worker.testing.test_run_pure import TestRun
 
 log = logging.getLogger(__name__)
 
@@ -258,8 +258,8 @@ def fix_accepted(
     ctx = update.flow_context(deps, run_id=0, comment_id=None)
     checked = graph.checked_values(work, ctx)
     before = checked.get("test_run")
-    if isinstance(before, PytestRun):  # 같은 커밋의 규칙 검사가 이미 본 테스트 결과
-        gap = safety_gap(SafetyNet(before.status, flaky=bool(before.flaky)))
+    if isinstance(before, TestRun):  # 같은 커밋의 규칙 검사가 이미 본 테스트 결과
+        gap = safety_gap(SafetyNet.of(before))
         if gap is not None:
             return FixResult("deferred", reason=gap)
     base = checked.get("doc_rules")
@@ -275,7 +275,7 @@ def fix_accepted(
         run = graph.pr_tests(ctx, work)
         if run.cancelled:
             return None
-        gap = safety_gap(SafetyNet(run.status, flaky=bool(run.flaky)))
+        gap = safety_gap(SafetyNet.of(run))
         if gap is not None:
             return FixResult("deferred", reason=gap)
         files = sorted({f for a in accepted for f in a.triage.files})
@@ -307,7 +307,7 @@ def fix_accepted(
 
 
 def _write_fix(ctx: graph.FlowContext, work: PRJob, deps: Deps, found: Found, picked: Picked,
-               run: PytestRun, base: Found | None, count: int):  # fmt: skip
+               run: TestRun, base: Found | None, count: int):  # fmt: skip
     """`model_fix.fix_violations`를 부르고 시도를 저장한다. 규칙 재검사는 같은 커밋의 규칙 검사가
     채택한 검사기로 한다(그 결과가 없으면 돌릴 검사기가 없다)."""
     store, settings = deps.store, ctx.base.repo

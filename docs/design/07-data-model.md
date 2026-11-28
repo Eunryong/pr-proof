@@ -150,7 +150,7 @@ class Record:
 
 | 프로필이 답하는 것 | Python 프로필 (처음이자 지금 유일한 구현) |
 | --- | --- |
-| 이 저장소가 이 언어인가, 무엇이 필요한가 | `pyproject.toml`, `requirements*.txt`, `ruff.toml` 등 base의 설정 파일. 돌릴 것이 있는지는 테스트를 돌리는 폴더(PR head)에 의존성 파일(`requirements*.txt`, `pyproject.toml`)이나 `.py`·`.pyi` 파일이 있는지로 본다(`python.has_work`, 이름만 본다). 없으면 테스트 상태가 `no_profile`이다(4.5) |
+| 이 저장소가 이 언어인가, 무엇이 필요한가 | `pyproject.toml`, `requirements*.txt`, `ruff.toml` 등 base의 설정 파일. 돌릴 것이 있는지는 테스트를 돌리는 폴더(PR head)에 의존성 파일(`requirements*.txt`, `pyproject.toml`)이나 `.py`·`.pyi` 파일이 있는지로 본다(`python.has_work`, 이름만 본다). 없으면 테스트 상태가 `no_env`이다(4.5) |
 | 런타임 | Python. 도구 캐시의 python-build-standalone 배포본(버전과 SHA256 고정, 3.11.18 하나). 저장소가 요구하는 버전으로 고르는 일은 아직 없다(11.1) |
 | 도구 목록 (모두 밖에서 받아 오는 것) | `ruff`, `ruff-format` |
 | 의존성 설치와 캐시 | `.venv` (4.5). 캐시 키에 런타임 버전 |

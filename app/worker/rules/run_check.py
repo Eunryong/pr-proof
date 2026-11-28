@@ -23,17 +23,17 @@ from app.worker.rules.run_check_pure import (
     read_answer,
     run_key,
     run_rules,
-    without_profile,
+    without_env,
 )
 from app.worker.store.call_budget_pure import CALL_BUDGET_USD, Denied, PrScope
-from app.worker.testing.test_run_pure import PytestRun
+from app.worker.testing.test_run_pure import TestRun
 
 log = logging.getLogger(__name__)
 
 
 def judge_runs(
     found: Found,
-    run: PytestRun,
+    run: TestRun,
     rt: Runtime,
     *,
     is_stale: Callable[[], bool] = lambda: False,
@@ -42,7 +42,7 @@ def judge_runs(
     rules = run_rules(found)
     if not rules:
         return ()
-    unasked = without_profile(found, run)
+    unasked = without_env(found, run)
     if unasked is not None:
         return unasked
     facts = facts_for(found, run)

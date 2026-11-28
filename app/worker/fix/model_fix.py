@@ -93,7 +93,7 @@ from app.worker.testing.generated_tests_pure import (
     render_now,
 )
 from app.worker.testing.test_lines import format_test_line
-from app.worker.testing.test_run_pure import PytestRun
+from app.worker.testing.test_run_pure import TestRun
 
 log = logging.getLogger(__name__)
 
@@ -333,7 +333,7 @@ def fix_violations(
     *,
     worktree: Path,
     merge_base: str,
-    test_before: PytestRun,
+    test_before: TestRun,
     store: Store,
     budget: CallBudget,
     models: ModelSettings,
@@ -579,14 +579,14 @@ def fix_violations(
             raise _Cancelled
         check = after_check(judged, test_before, after)
         if check.broken:
-            failed = [n for n in (after.run.summary.failed_tests if after.run.summary else ())]
+            failed = [n for n in (after.run.report.failed_tests if after.run.report else ())]
             detail = f"만든 테스트 {len(check.broken)}개가 고치기 전에는 통과했는데 고친 뒤 실패함"
             feedback = [f"만든 테스트가 고친 뒤 실패함 (수정이 동작을 바꿈): {f}"
                         for f in check.broken]  # fmt: skip
             return Verdict("retry", detail, (*feedback, *(f"실패한 테스트: {n}" for n in failed)))
         if not check.existing_ok:
             line = format_test_line(after.run)
-            failed = list(after.run.summary.failed_tests) if after.run.summary else []
+            failed = list(after.run.report.failed_tests) if after.run.report else []
             return Verdict(
                 "retry",
                 f"고친 뒤 테스트: {line}",

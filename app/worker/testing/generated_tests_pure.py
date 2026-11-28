@@ -16,7 +16,7 @@ from typing import Final, Literal
 
 from app.worker.core.violation_pure import Violation
 from app.worker.testing.coverage_pure import FileCoverage, line_covered, statements
-from app.worker.testing.test_run_pure import PytestRun
+from app.worker.testing.test_run_pure import TestRun
 
 # 만든 테스트의 상한 (9.2). 수정의 크기 상한(파일 20개, 바뀐 줄 500줄)과 따로 센다. 테스트 줄이
 # 수정의 상한을 먹어 수정이 못 올라가는 일이 없게 한다
@@ -57,7 +57,7 @@ class Suite:
     """샌드박스에서 pytest를 한 번 돈 결과 중 판단에 쓰는 것. outcomes와 counts는 테스트 파일마다,
     lines는 대상 위반이 있는 소스 파일마다다."""
 
-    run: PytestRun
+    run: TestRun
     outcomes: Mapping[str, Outcome]
     counts: Mapping[str, int]
     lines: Mapping[str, FileLines]
@@ -298,7 +298,7 @@ class AfterCheck:
         return self.existing_ok and not self.broken
 
 
-def after_check(tests: Sequence[GeneratedTest], before: PytestRun, after: Suite) -> AfterCheck:
+def after_check(tests: Sequence[GeneratedTest], before: TestRun, after: Suite) -> AfterCheck:
     """있던 테스트는 모두 통과하고 수정 전과 같은 수가 돌아야 한다. 받아들인 만든 테스트는 고친
     뒤에도 통과해야 한다. 고치기 전에 통과한 테스트가 고친 뒤 실패하면 수정이 동작을 바꾼 것이라,
     테스트를 빼지 않고 수정을 다시 쓰게 한다(호출하는 쪽이 회차를 넘긴다). broken이 있으면
@@ -307,14 +307,14 @@ def after_check(tests: Sequence[GeneratedTest], before: PytestRun, after: Suite)
         _with_after(t, after.outcomes.get(t.file, "not_run")) if t.accepted else t for t in tests
     )
     broken = tuple(t.file for t in filled if t.accepted and t.after != "passed")
-    run, summary = after.run, after.run.summary
+    run, report = after.run, after.run.report
     generated = sum(after.counts.get(t.file, 0) for t in filled if t.accepted)
     existing_ok = (
         run.allows_code_fix
-        and before.summary is not None
-        and summary is not None
-        and (run.passed_count - generated, summary.total - generated)
-        == (before.passed_count, before.summary.total)
+        and before.report is not None
+        and report is not None
+        and (run.passed_count - generated, report.total - generated)
+        == (before.passed_count, before.report.total)
     )
     return AfterCheck(filled, existing_ok, broken)
 
@@ -392,8 +392,8 @@ def render_check(
     return "\n".join(lines)
 
 
-def _run_line(run: PytestRun) -> str:
-    s = run.summary
+def _run_line(run: TestRun) -> str:
+    s = run.report
     if s is None:
         return f"테스트 결과를 읽지 못함 (상태 {run.status})"
     counts = f"통과 {run.passed_count}, 실패 {s.failed}, 오류 {s.errors}, 전체 {s.total}"
@@ -421,7 +421,7 @@ def render_before(
             and not any(v.id in t.covers for t in tests if t.accepted)]  # fmt: skip
     if left:
         lines += _violation_lines("있던 테스트도 받아들인 테스트도 실행하지 않는 대상 위반", left)
-    failed = suite.run.summary.failed_tests if suite.run.summary else ()
+    failed = suite.run.report.failed_tests if suite.run.report else ()
     if failed:
         lines += ["실패한 테스트:", *(f"- {n}" for n in failed[:MAX_LISTED])]
     if suite.run.status != "passed" and suite.run.output:
@@ -434,7 +434,7 @@ def render_now(suite: Suite, generated: Sequence[str]) -> str:
     lines = [f"지금 코드 + 모든 테스트: {_run_line(suite.run)}"]
     for file in generated:
         lines.append(f"- 만든 테스트 {file}: {suite.outcomes.get(file, 'not_run')}")
-    failed = suite.run.summary.failed_tests if suite.run.summary else ()
+    failed = suite.run.report.failed_tests if suite.run.report else ()
     if failed:
         lines += ["실패한 테스트:", *(f"- {n}" for n in failed[:MAX_LISTED])]
     if suite.run.status != "passed" and suite.run.output:

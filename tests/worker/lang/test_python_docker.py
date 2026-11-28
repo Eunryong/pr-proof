@@ -46,7 +46,7 @@ def _exists(name: str) -> bool:
 
 def test_passing_tests_leave_report_and_relative_coverage(job: str, worktree: Path) -> None:
     run = python.run_tests(job, worktree)
-    assert run.ok and (run.summary.passed, run.summary.failed, run.summary.total) == (9, 0, 9)
+    assert run.ok and (run.report.passed, run.report.failed, run.report.total) == (9, 0, 9)
     assert run.report_path == worktree / ".pipeline-out" / "report.json"
     xml = run.coverage_xml.read_text()
     assert 'filename="orders/services/pricing.py"' in xml
@@ -70,15 +70,15 @@ def test_failing_test_is_reported(job: str, worktree: Path) -> None:
         pricing.read_text().replace("FREE_SHIPPING_MIN = 50_000", "FREE_SHIPPING_MIN = 1")
     )
     run = python.run_tests(job, worktree)
-    assert run.status == "failed" and run.summary.failed >= 1
-    assert any(t.startswith("tests/test_pricing.py::") for t in run.summary.failed_tests)
+    assert run.status == "failed" and run.report.failed >= 1
+    assert any(t.startswith("tests/test_pricing.py::") for t in run.report.failed_tests)
 
 
 def test_collection_error_is_reported(job: str, worktree: Path) -> None:
     (worktree / "tests" / "test_broken.py").write_text("import no_such_module\n")
     run = python.run_tests(job, worktree)
-    assert run.status == "failed" and run.summary.errors >= 1
-    assert "tests/test_broken.py" in run.summary.failed_tests
+    assert run.status == "failed" and run.report.errors >= 1
+    assert "tests/test_broken.py" in run.report.failed_tests
 
 
 def test_no_network(job: str) -> None:

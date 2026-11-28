@@ -31,13 +31,15 @@ from app.worker.rules.doc_rules_pure import CallUsage, CheckerRef, Found, RuleCh
 from app.worker.rules.linked_issues_pure import IssueGap, LinkedIssues
 from app.worker.rules.pr_check_pure import PrChecks, PrRuleResult
 from app.worker.rules.pr_description_pure import Mismatch, PrDescription
-from app.worker.testing.test_run_pure import PytestRun, ReportSummary
+from app.worker.testing.test_run_pure import TestReport
+
+from ..helpers import pytest_run
 
 NOW: Final = datetime(2026, 11, 22, tzinfo=UTC)
 V: Final = "v" * 40  # 수정안을 검증한 커밋
 M: Final = "m" * 40  # 수정안의 머지 커밋
 CODE: Final = "c" * 40  # 지금 파이프라인 코드의 커밋
-PASSED: Final = PytestRun(exit_code=0, summary=ReportSummary(passed=9, total=9))
+PASSED: Final = pytest_run(0, TestReport(passed=9, total=9))
 RULE: Final = Rule(id="R1", text="print를 쓰지 않는다", source=RuleSource("README.md", "s", "x"),
                    origin="document", scope=("orders/**",), check=CheckMethod("checker"),
                    fix="model")  # fmt: skip

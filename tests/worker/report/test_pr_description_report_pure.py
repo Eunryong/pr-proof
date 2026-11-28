@@ -12,7 +12,9 @@ from app.worker.report.pr_description_report_pure import (
     title,
 )
 from app.worker.rules.pr_description_pure import DescriptionUsage, Mismatch, PrDescription
-from app.worker.testing.test_run_pure import PytestRun, ReportSummary
+from app.worker.testing.test_run_pure import TestReport
+
+from ..helpers import pytest_run
 
 ITEMS: Final = (
     Mismatch("unrelated", "config.py에서 기본 타임아웃을 30초에서 5초로 줄였습니다. 설명에는 파서 "
@@ -116,7 +118,7 @@ def test_usage_goes_to_the_folded_block() -> None:
 
 
 def test_result_comment_puts_the_line_on_top_and_the_items_expanded() -> None:
-    run = PytestRun(exit_code=0, summary=ReportSummary(passed=2, total=2))
+    run = pytest_run(0, TestReport(passed=2, total=2))
     body = report.render_result(run, "a" * 40, 1.0, description=PrDescription("checked", ITEMS[:1],
                                 usage=USAGE))  # fmt: skip
     lines = body.splitlines()

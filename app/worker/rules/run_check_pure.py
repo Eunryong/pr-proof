@@ -21,7 +21,7 @@ from app.worker.core.cache_key_pure import model_cache_key, prompt_version, text
 from app.worker.core.prompt_text_pure import load
 from app.worker.core.rule_pure import CheckMethod, Rule, RuleSource
 from app.worker.rules.doc_rules_pure import Found, RuleChecked, RuleUnchecked, RunJudged
-from app.worker.testing.test_run_pure import NO_PROFILE_WHY, PytestRun
+from app.worker.testing.test_run_pure import TestRun
 
 MAX_WHY_CHARS: Final = 300
 
@@ -38,14 +38,16 @@ class RunFacts:
         return f"테스트 {self.tests} · 정적 검사 {self.lint}"
 
 
-def summarize_tests(run: PytestRun) -> str:
-    s = run.summary
+def summarize_tests(run: TestRun) -> str:
+    s = run.report
     match run.status:
         case "passed":
             flaky = f", 불안정한 테스트 {len(run.flaky)}개" if run.flaky else ""
             return f"통과 ({s.total}개{flaky})" if s else "통과"
         case "failed":
             return f"실패 ({s.total}개 중 {s.failed + s.errors}개)" if s else "실패"
+        case "build_failed":
+            return "빌드 실패"
         case "no_tests":
             return "실행된 테스트 없음"
         case "timeout":
@@ -54,7 +56,7 @@ def summarize_tests(run: PytestRun) -> str:
             return "새 커밋이 올라와 중단"
         case "unrunnable":
             return f"실행 불가 ({run.unrunnable_reason})"
-        case "no_profile":
+        case "no_env":
             return "돌리지 않음"
 
 
@@ -138,16 +140,16 @@ def answer_from_json(text: str) -> Answer:
     return read_answer(json.loads(text))
 
 
-def facts_for(found: Found, run: PytestRun) -> RunFacts:
+def facts_for(found: Found, run: TestRun) -> RunFacts:
     return RunFacts(summarize_tests(run), lint_text(found))
 
 
-def without_profile(found: Found, run: PytestRun) -> tuple[RunJudged, ...] | None:
-    """언어 프로필이 돌릴 것이 없는 저장소의 답: 돌린 것이 없으므로 모델에게 묻지 않고 run 규칙을
-    모두 확인하지 못한 것으로 두고 까닭을 적는다 (7.7). 프로필이 돌렸으면 None."""
-    if run.status != "no_profile":
+def without_env(found: Found, run: TestRun) -> tuple[RunJudged, ...] | None:
+    """돌릴 환경이 없는 저장소의 답: 돌린 것이 없으므로 모델에게 묻지 않고 run 규칙을 모두 확인하지
+    못한 것으로 두고 까닭(`run.unplanned`)을 적는다 (7.7). 돌렸으면 None."""
+    if run.status != "no_env":
         return None
-    return tuple(RunJudged(rule.id, "left", NO_PROFILE_WHY, "") for rule in run_rules(found))
+    return tuple(RunJudged(rule.id, "left", run.unplanned, "") for rule in run_rules(found))
 
 
 def run_rules(found: Found) -> Sequence[Rule]:

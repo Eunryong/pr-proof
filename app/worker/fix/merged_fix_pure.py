@@ -20,7 +20,7 @@ from app.worker.fix.model_fix_pure import ModelFix
 from app.worker.rules import linked_issues_pure, pr_check_pure, pr_description_pure
 from app.worker.rules.doc_rules_pure import Found, RuleJudged
 from app.worker.rules.pr_description_pure import PrDescription
-from app.worker.testing.test_run_pure import PytestRun
+from app.worker.testing.test_run_pure import TestRun
 
 # 규칙 수정안의 묶음. 코멘트 수정안(feedback)은 규칙 검사의 결과를 고친 것이 아니라 넣지 않는다
 RULE_BUNDLES: Final = frozenset({MECHANICAL_BUNDLE, MODEL_BUNDLE})
@@ -53,7 +53,7 @@ class VerifiedCheck:
     finished: bool  # 그래프가 멈춘 node 없이 코멘트까지 갔다
     base_sha: str | None  # 그 검사가 규칙과 설정을 읽은 base 커밋
     found: object  # doc_rules
-    test_run: PytestRun | None
+    test_run: TestRun | None
     decisions: Decided | None
     fix: MechanicalFix | ModelFix | None  # 머지한 묶음의 수정 결과
     pr_checks: object  # PR 단위 확인의 결과. PR 규칙이 없으면 None

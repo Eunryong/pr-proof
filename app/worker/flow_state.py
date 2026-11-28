@@ -60,9 +60,9 @@ from app.worker.store.budget import CallBudget
 from app.worker.store.rag_pure import Retrieval
 from app.worker.store.rag_switch_pure import RagSwitch
 from app.worker.store.state import Store
-from app.worker.testing import generated_tests_pure
+from app.worker.testing import generated_tests_pure, test_run_pure
 from app.worker.testing.coverage import DiffCoverage
-from app.worker.testing.test_run_pure import PytestRun
+from app.worker.testing.test_run_pure import TestRun
 
 log = logging.getLogger(__name__)
 
@@ -102,14 +102,13 @@ TOOL_DIR: Final = "tools"  # 도구 캐시 (data_dir 아래, venvs와 같은 자
 # 체크포인트에서 되살릴 수 있는 상태 타입 (나머지는 langgraph가 막는다)
 _STATE_TYPES: Final = (
     ("app.shared.job_pure", "PRJob"),
-    ("app.worker.testing.test_run_pure", "PytestRun"),
-    ("app.worker.testing.test_run_pure", "ReportSummary"),
     ("app.worker.fix.proposal_pure", "ProposalResult"),
     ("app.worker.testing.coverage", "DiffCoverage"),
     *doc_rules_pure.STATE_TYPES,
     *fix_decision_pure.STATE_TYPES,
     *model_fix_pure.STATE_TYPES,
     *generated_tests_pure.STATE_TYPES,
+    *test_run_pure.STATE_TYPES,
     *mcp_pure.STATE_TYPES,
     *merged_fix_pure.STATE_TYPES,
     *fix_pure.STATE_TYPES,
@@ -140,7 +139,7 @@ class FlowState(TypedDict, total=False):
     mechanical_requested: bool  # 사람이 `/fix`로 이 커밋의 기계적 묶음을 승인했거나 다시 돌림
     model_fix: ModelFix | None  # 모델 수정 묶음의 결과 (4.7, 4.8)
     model_requested: bool
-    test_run: PytestRun
+    test_run: TestRun
     commented: bool
     fix_skill: str  # 승인 대기에서 `/fix`가 고른 묶음
     proposals: dict[str, ProposalResult]  # 묶음 → 수정안 PR
@@ -176,7 +175,7 @@ class FlowContext:
     first_call: int = 0  # 규칙 경로를 시작하기 전 마지막 호출 기록의 id
     dirty: bool = False  # 수정이 worktree를 바꿨다. 다음 수정은 새 worktree에서 한다
     changes_diff: bytes = b""  # 테스트 전에 읽은 PR의 diff (테스트 뒤에는 샌드박스가 바꿀 수 있다)
-    run_tests: Callable[..., PytestRun] | None = None  # 없으면 run_pr_tests
+    run_tests: Callable[..., TestRun] | None = None  # 없으면 run_pr_tests
     rag_model: str = E5_SMALL  # 파이프라인 쪽 `rag.embed_model`. 저장소가 검색을 켰을 때만 쓴다
     # 파이프라인 쪽 `rag.allowed` (`pr-proof rag on|off`). False면 이 컴퓨터에서 검색하지 않는다
     rag_allowed: bool | None = None

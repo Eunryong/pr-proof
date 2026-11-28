@@ -114,7 +114,7 @@ class FlowState(TypedDict, total=False):
     rules: list[Rule]                                   # 규칙 목록 (확인·수정 방법 포함)
     unchecked: Annotated[dict[str, str], merge]         # 규칙 id → 검사하지 못한 이유
     violations: Annotated[dict[str, Violation], merge]  # 위반 id → 위반 (커버 여부 포함)
-    test_run: PytestRun
+    test_run: TestRun
     diff_coverage: DiffCoverage | None
     decisions: Annotated[dict[str, FixDecision], merge] # 위반 id → 수정 판단
     fixes: Annotated[dict[str, FixOutcome], merge]      # 묶음(mechanical | model) → 결과. 패치는 fix_attempts의 id

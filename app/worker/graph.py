@@ -67,7 +67,7 @@ from app.worker.rules import doc_rules, pr_check_pure
 from app.worker.rules.doc_rules_pure import Found
 from app.worker.sandbox import container, docker_cli, toolcache
 from app.worker.testing.generated_tests_pure import Suite
-from app.worker.testing.test_run_pure import PytestRun
+from app.worker.testing.test_run_pure import NO_PROFILE_WHY, TestRun
 
 __all__ = [
     "AUTHOR_CHECKERS",
@@ -127,15 +127,15 @@ def run_pr_tests(
     memory_gb: float = docker_cli.MEMORY_LIMIT_GB,
     names: docker_cli.Names = docker_cli.DEFAULT_NAMES,
     contexts: bool = False,
-) -> PytestRun:
+) -> TestRun:
     """테스트 단계: 이미지 준비 → Python 런타임(도구 캐시) → .venv 준비 → 작업 컨테이너에서 pytest
-    → 결과. 저장소에 Python 프로필이 돌릴 것이 없으면 아무것도 준비하지 않고 `no_profile`이다.
+    → 결과. 저장소에 Python 프로필이 돌릴 것이 없으면 아무것도 준비하지 않고 `no_env`다.
 
     Docker 실패와 런타임을 받지 못함은 docker_cli.SandboxError(환경 오류), pip 실패는
     python.DependencyInstallError로 올라간다. 처리는 app/worker/update.py가 정한다.
     """
     if not python.has_work(worktree):
-        return PytestRun(exit_code=None, summary=None, no_profile=True)
+        return TestRun(unplanned=NO_PROFILE_WHY)
     image = docker_cli.ensure_image(names.image)
     runtime = python.ensure_runtime(tool_cache, names.image)
     venv_dir = python.ensure_venv(
@@ -150,7 +150,7 @@ def run_pr_tests(
 
 def pr_tests(
     ctx: FlowContext, job: PRJob, worktree: Path | None = None, *, contexts: bool = False
-) -> PytestRun:
+) -> TestRun:
     """ctx의 worktree(또는 worktree)에서 PR의 테스트를 샌드박스로 돌린다. 테스트 node와 수정 단계,
     코멘트 수정(4.11)이 같이 쓴다."""
     kw = {"contexts": True} if contexts else {}

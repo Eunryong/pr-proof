@@ -20,7 +20,7 @@ from app.worker.testing.generated_tests_pure import (
     group_lines,
     line_runs,
 )
-from app.worker.testing.test_run_pure import NO_PROFILE_WHY, PytestRun
+from app.worker.testing.test_run_pure import TestRun
 
 MAX_LINES_SHOWN: Final = 30
 MAX_WHY_CHARS: Final = 300
@@ -30,9 +30,9 @@ def _gb(value: float) -> str:
     return f"{value:g}GB"
 
 
-def format_test_line(run: PytestRun, memory_gb: float = MEMORY_LIMIT_GB) -> str:
+def format_test_line(run: TestRun, memory_gb: float = MEMORY_LIMIT_GB) -> str:
     """'테스트:' 줄의 글자 표시. 기호를 쓰지 않는다."""
-    s = run.summary
+    s = run.report
     match run.status:
         case "passed":
             if run.flaky:
@@ -42,6 +42,8 @@ def format_test_line(run: PytestRun, memory_gb: float = MEMORY_LIMIT_GB) -> str:
             if s is None:
                 return "실패"
             return f"실패 ({s.total}개 중 {s.failed + s.errors}개)"
+        case "build_failed":
+            return "빌드 실패로 테스트를 돌리지 못함"
         case "no_tests":
             return "실행된 테스트 없음"
         case "timeout":
@@ -52,8 +54,8 @@ def format_test_line(run: PytestRun, memory_gb: float = MEMORY_LIMIT_GB) -> str:
             if run.memory_exceeded:
                 return f"실행 불가 (메모리 한도 {_gb(memory_gb)}를 넘어 종료됨)"
             return f"실행 불가 ({run.unrunnable_reason})"
-        case "no_profile":
-            return f"돌리지 않음 ({NO_PROFILE_WHY})"
+        case "no_env":
+            return f"돌리지 않음 ({run.unplanned})"
 
 
 def _numbers(lines: Sequence[int]) -> str:

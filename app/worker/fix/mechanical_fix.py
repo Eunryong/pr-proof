@@ -40,7 +40,7 @@ from app.worker.rules.doc_rules_pure import Found
 from app.worker.store import records_pure
 from app.worker.store.state import Store
 from app.worker.testing.test_lines import format_test_line
-from app.worker.testing.test_run_pure import PytestRun
+from app.worker.testing.test_run_pure import TestRun
 
 log = logging.getLogger(__name__)
 
@@ -63,10 +63,10 @@ def fix_violations(
     worktree: Path,
     merge_base: str,
     base_sha: str,
-    test_before: PytestRun,
+    test_before: TestRun,
     checks: Sequence[RuleCheck],
     sandbox: FormatsFiles,
-    run_tests: Callable[[], PytestRun],
+    run_tests: Callable[[], TestRun],
     is_stale: Callable[[], bool],
     secrets: Sequence[str],
     disabled: Collection[str] = (),

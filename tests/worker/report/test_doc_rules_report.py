@@ -29,7 +29,9 @@ from app.worker.rules.doc_rules_pure import (
 )
 from app.worker.rules.judge_pure import JudgeUsage
 from app.worker.rules.rule_docs_source_pure import DocsSource, RuleChange
-from app.worker.testing.test_run_pure import NO_PROFILE_WHY, PytestRun, ReportSummary
+from app.worker.testing.test_run_pure import NO_PROFILE_WHY, TestReport
+
+from ..helpers import pytest_run
 
 USAGE: Final = CallUsage(calls=3, limit=14, cache_hits=1, models=("claude-haiku-5-5",),
                          input_tokens=3000, output_tokens=300)  # fmt: skip
@@ -212,7 +214,7 @@ def test_install_failure_comment_keeps_doc_rules() -> None:
 
 
 def test_result_without_doc_rules_has_no_section() -> None:
-    text = report.render_result(PytestRun(exit_code=0, summary=None), "a" * 40, 1.0)
+    text = report.render_result(pytest_run(0, None), "a" * 40, 1.0)
     assert "문서 규칙" not in text
 
 
@@ -356,6 +358,11 @@ def test_each_reason_has_one_sentence_per_rule() -> None:
          "테스트가 시간 안에 끝나지 않아 고친 것을 확인할 수 없으므로 수정안을 만들지 않았습니다."),
         (_skip(v, "tests_failed", "테스트를 돌리지 못함"),
          "테스트를 돌리지 못해 고친 것을 확인할 수 없으므로 수정안을 만들지 않았습니다."),
+        (_skip(v, "tests_failed", "빌드가 실패함"),
+         "빌드가 실패해 고친 것을 확인할 수 없으므로 수정안을 만들지 않았습니다."),
+        (_skip(v, "no_safety_net", "테스트로 확인할 수 없음 (C++ 환경이 없음)"),
+         "이 저장소의 테스트를 돌릴 수 없어 고친 것을 확인할 수 없으므로 수정안을 만들지 "
+         "않았습니다."),
         (_skip(v, "no_safety_net", "테스트로 확인할 수 없음 (테스트가 없음)"),
          "테스트가 없어 고친 것을 확인할 수 없으므로 수정안을 만들지 않았습니다."),
         (_skip(v, "no_safety_net", "테스트로 확인할 수 없음 (불안정한 테스트가 있음)"),
@@ -483,7 +490,7 @@ def ts_comment() -> str:
     )  # fmt: skip
     found = _found(RuleChecked(TS_RULE, ref), violations=violations)
     decided = Decided(tuple(_skip(v, "notify_only", "알리기만 하는 규칙") for v in violations))
-    run = PytestRun(exit_code=5, summary=ReportSummary())
+    run = pytest_run(5, TestReport())
     return report.render_result(run, "a" * 40, 12.0, doc_rules=found, decisions=decided)
 
 
@@ -493,7 +500,7 @@ def test_the_reported_typescript_comment_explains_what_and_why() -> None:
     text = ts_comment()
     head, _, folded = text.partition(doc_rules_report.DETAILS_SUMMARY)
     assert "**테스트:** 실행된 테스트 없음\n**규칙:** ⚠️ 위반 12건 (규칙 1개)\n" in text
-    assert report.untested_note(PytestRun(exit_code=5, summary=ReportSummary()), True)[1] in head
+    assert report.untested_note(pytest_run(5, TestReport()), True)[1] in head
     assert (
         "- `R-readme-9b6db85d` `New files and contracts are written in TypeScript or .d.ts (S1).` "
         "· 12건\n"
@@ -790,7 +797,7 @@ RESULTS: Final = (
 
 
 def _comment(result) -> str:
-    run = PytestRun(exit_code=0, summary=ReportSummary(passed=1, total=1))
+    run = pytest_run(0, TestReport(passed=1, total=1))
     return report.render_result(run, "a" * 40, 1.0, doc_rules=result)
 
 
