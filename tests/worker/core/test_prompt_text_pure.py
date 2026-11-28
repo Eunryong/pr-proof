@@ -22,8 +22,9 @@ def _loaded_names(folder: Path) -> set[str]:
     return names
 
 
-def test_prompt_folders_are_the_three_stage_folders() -> None:
+def test_prompt_folders_are_the_stage_folders_and_env() -> None:
     assert [str(p.relative_to(WORKER)) for p in PROMPT_DIRS] == [
+        "env/prompts",
         "feedback/prompts",
         "fix/prompts",
         "rules/prompts",

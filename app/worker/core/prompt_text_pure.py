@@ -1,5 +1,5 @@
-"""모델에게 주는 지시문(시스템 프롬프트)의 글. 글은 그것을 쓰는 단계의 폴더 아래 `prompts/`의
-마크다운 파일에 있고(`rules/prompts/`, `fix/prompts/`, `feedback/prompts/`), 단계의 모듈은
+"""모델에게 주는 지시문(시스템 프롬프트)의 글. 글은 그것을 쓰는 폴더 아래 `prompts/`의 마크다운
+파일에 있고(`rules/prompts/`, `fix/prompts/`, `feedback/prompts/`, `env/prompts/`), 그 폴더의 모듈은
 import할 때 여기서 읽어 상수로 둔다. 폴더마다 README.md에 목록이 있다.
 
 읽는 곳은 부르는 모듈 옆의 `prompts/` 폴더뿐이다(`load(__file__, "이름")`). 이름은 코드에 적은 것만

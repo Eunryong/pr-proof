@@ -11,6 +11,7 @@ host"를 낸다. 프록시가 이름 서버나 공용 주소에 닿지 못한 �
 """
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Final, Literal
 
 from app.worker.sandbox.egress_pure import Event, Verdict
@@ -39,6 +40,7 @@ DOCKER_ERROR_MARKERS: Final = (
 DOCKER_ERROR_EXIT: Final = 125  # docker 자신의 오류
 
 FailureKind = Literal["network", "recipe"]
+LayerName = Literal["system", "deps"]
 # 프록시가 이름 서버나 공용 주소에 닿지 못함. 네트워크 자체의 문제라 처방이 고칠 수 없다
 NETWORK_VERDICTS: Final[frozenset[Verdict]] = frozenset({"dns_failed", "unreachable"})
 _REFUSED: Final[Mapping[Verdict, str]] = {
@@ -52,6 +54,20 @@ NO_PROXY_HINT: Final = (
     "(굽는 컨테이너는 HTTP_PROXY·HTTPS_PROXY의 프록시로만 밖에 닿는다. 프록시를 쓰지 않는 도구는 "
     "이름을 풀지 못하고 연결하지 못한다)"
 )
+
+
+@dataclass(frozen=True)
+class BakeFailed:
+    """처방의 잘못으로 층을 굽지 못함. step은 처방 JSON의 자리(`system.commands[2]` 등)다.
+
+    output_tail은 명령 출력의 끝이고, 그 단계에서 프록시가 거절한 요청이 있으면 뒤에 붙는다.
+    """
+
+    layer: LayerName
+    step: str
+    exit_code: int | None
+    output_tail: str
+    timed_out: bool = False
 
 
 def bake_failure_kind(output: str) -> FailureKind:
