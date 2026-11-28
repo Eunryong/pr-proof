@@ -16,10 +16,13 @@ from app.worker.rules.doc_rules_pure import (
 )
 from app.worker.rules.run_check_pure import (
     ANSWER_SCHEMA,
+    PLAN_LINT,
     RunFacts,
     answer_from_json,
     answer_to_json,
+    build_lines,
     build_prompt,
+    facts_for,
     lint_text,
     read_answer,
     run_key,
@@ -27,7 +30,13 @@ from app.worker.rules.run_check_pure import (
     summarize_tests,
     without_env,
 )
-from app.worker.testing.test_run_pure import NO_PROFILE_WHY, StepRun, TestReport, TestRun
+from app.worker.testing.test_run_pure import (
+    NO_PROFILE_WHY,
+    EnvUse,
+    StepRun,
+    TestReport,
+    TestRun,
+)
 
 from ..helpers import pytest_run
 
@@ -71,17 +80,60 @@ def test_tests_text_names_the_result(run: TestRun, text: str) -> None:
     assert summarize_tests(run) == text
 
 
+PY_RUN: Final = pytest_run(0, TestReport(passed=6, total=6))
+
+
 def test_lint_part_comes_from_the_repo_config_rule_only() -> None:
-    assert lint_text(Found((), (), 0, USAGE)) == "저장소에 린트 설정이 없어 돌리지 않음"
+    assert lint_text(Found((), (), 0, USAGE), PY_RUN) == "저장소에 린트 설정이 없어 돌리지 않음"
     ref = CheckerRef("k", "id", "ruff", True)
     ruff_hit = Violation(id="v1", rule_id="F401", file="a.py", line=1, message="m",
                          found_by="tool", code="F401")  # fmt: skip
     doc_hit = Violation(id="v2", rule_id="R-x", file="a.py", line=2, message="m",
                         found_by="tool", code="T201")  # fmt: skip
     found = Found((RuleChecked(CONFIG, ref),), (ruff_hit, doc_hit), 0, USAGE)
-    assert lint_text(found) == "ruff(저장소 설정)가 PR이 바꾼 줄에서 찾은 위반 1건"
+    assert lint_text(found, PY_RUN) == "ruff(저장소 설정)가 PR이 바꾼 줄에서 찾은 위반 1건"
     failed = Found((RuleUnchecked(CONFIG, "tool_unavailable", "x"),), (), 0, USAGE)
-    assert lint_text(failed) == "ruff를 돌리지 못함"
+    assert lint_text(failed, PY_RUN) == "ruff를 돌리지 못함"
+
+
+def test_a_run_from_a_recipe_says_lint_is_not_run_yet() -> None:
+    """환경 처방으로 돌린 저장소는 린트 설정이 없다고 하지 않고, 아직 돌리지 않는다고 한다."""
+    planned = TestRun(build=(StepRun("build", 0),), test=StepRun("ctest", 0), verdict="passed",
+                      env=EnvUse(1))  # fmt: skip
+    assert lint_text(Found((), (), 0, USAGE), planned) == PLAN_LINT
+    assert "린트 설정이 없어" not in PLAN_LINT
+
+
+def test_build_steps_are_one_line_each_with_their_outcome() -> None:
+    run = TestRun(build=(StepRun("configure", 0), StepRun("build", 2)))
+    assert build_lines(run) == ("configure: 통과", "build: 실패 (종료 코드 2)")
+    assert build_lines(TestRun(build=(StepRun("build", None, timed_out=True),))) == (
+        "build: 실패 (시간 초과)",
+    )
+    assert build_lines(TestRun(build=(StepRun("build", 137, oom_killed=True),))) == (
+        "build: 실패 (메모리 한도로 종료됨)",
+    )
+    assert build_lines(PY_RUN) == ()
+
+
+def test_the_model_sees_each_build_step_and_the_summary_names_the_build() -> None:
+    facts = facts_for(Found((), (), 0, USAGE), TestRun(build=(StepRun("configure", 0),
+                                                              StepRun("build", 2))))  # fmt: skip
+    prompt = build_prompt(RULE, facts)
+    assert (
+        "빌드 단계(수정 전 PR 코드, 샌드박스):\n- configure: 통과\n- build: 실패 (종료 코드 2)\n"
+        in (prompt)
+    )
+    assert facts.summary().startswith("빌드 실패 · 테스트 빌드 실패")
+    python = facts_for(Found((), (), 0, USAGE), PY_RUN)
+    assert "빌드 단계(수정 전 PR 코드, 샌드박스): 빌드 단계 없음\n" in build_prompt(RULE, python)
+    assert python.summary() == "테스트 통과 (6개) · 정적 검사 저장소에 린트 설정이 없어 돌리지 않음"
+
+
+def test_build_results_change_the_cache_key() -> None:
+    ok = RunFacts("통과", "x", ("build: 통과",))
+    broken = RunFacts("통과", "x", ("build: 실패 (종료 코드 2)",))
+    assert run_key(RULE, ok, "haiku") != run_key(RULE, broken, "haiku")
 
 
 def test_only_run_rules_are_asked() -> None:

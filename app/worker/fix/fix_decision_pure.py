@@ -39,6 +39,8 @@ _TESTS_BROKEN: Final[Mapping[str, str]] = {
 }
 NO_TESTS_GAP: Final = "테스트로 확인할 수 없음 (테스트가 없음)"
 FLAKY_GAP: Final = "테스트로 확인할 수 없음 (불안정한 테스트가 있음)"
+# 환경 처방으로 돌린 저장소. 수정 작성의 테스트 도구와 만든 테스트는 아직 Python 프로필만 돌린다
+PLANNED_GAP: Final = "고친 것을 확인할 수 없음 (환경 처방으로 돌린 저장소의 수정은 아직 하지 않음)"
 
 
 @dataclass(frozen=True)
@@ -59,10 +61,13 @@ class SafetyNet:
     status: RunStatus
     flaky: bool = False  # 불안정한 테스트가 있다. 모델 수정을 확인하는 데 쓰지 않는다
     unplanned: str = ""  # status가 no_env일 때 돌리지 않은 까닭
+    planned: bool = False  # 환경 처방으로 돌렸다. 수정을 확인할 길이 아직 없다
 
     @classmethod
     def of(cls, run: TestRun) -> "SafetyNet":
-        return cls(run.status, flaky=bool(run.flaky), unplanned=run.unplanned)
+        return cls(
+            run.status, flaky=bool(run.flaky), unplanned=run.unplanned, planned=run.env is not None
+        )
 
 
 def _skip(v: Violation, reason: SkipReason, why: str) -> FixDecision:
@@ -90,6 +95,8 @@ def decide_by_table(
         return _skip(v, "tests_failed", _TESTS_BROKEN[tests.status])
     if tests.status == "no_env":
         return _skip(v, "no_safety_net", _untestable(tests.unplanned))
+    if tests.planned:
+        return _skip(v, "no_safety_net", PLANNED_GAP)
     if v.mechanical_fix:  # 테스트 상태는 passed 또는 no_tests다
         return FixDecision(v.id, "fix", "pipeline", method="mechanical")
     if tests.status == "no_tests" or tests.flaky:
@@ -108,6 +115,8 @@ def safety_gap(tests: SafetyNet) -> str | None:
         return _TESTS_BROKEN[tests.status]
     if tests.status == "no_env":
         return _untestable(tests.unplanned)
+    if tests.planned:
+        return PLANNED_GAP
     if tests.status == "no_tests" or tests.flaky:
         return NO_TESTS_GAP if tests.status == "no_tests" else FLAKY_GAP
     return None
