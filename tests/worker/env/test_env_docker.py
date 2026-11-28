@@ -1,6 +1,7 @@
 """환경 처방 통합 테스트. 실제 Docker로 작은 처방의 층을 굽고 작은 저장소에서 단계를 돌린다.
 
-시작 이미지는 debian:bookworm-slim이고 큰 것을 받지 않는다. 결과 파일은 printf로 쓴다.
+시작 이미지는 debian:bookworm-slim이고 큰 것을 받지 않는다. 결과 파일은 printf로 쓴다. 시스템 층의
+`apt-get update`는 굽기가 프록시로 밖에 닿는지 본다(굽는 컨테이너는 이름을 직접 풀지 못한다).
 """
 
 import os
@@ -26,13 +27,13 @@ FAILING = '<testsuite><testcase classname="t" name="one"><failure/></testcase></
 
 def _recipe(*, test_command: str, build: str = "true", report: str = "junit", **extra) -> EnvRecipe:
     data = {
-        "system": {"image": "debian:bookworm-slim"},
+        "system": {
+            "image": "debian:bookworm-slim",
+            "commands": ["apt-get update -qq && date > /opt/env/reached"],
+        },
         "deps": {
             "inputs": ["dep.txt"],
-            "commands": [
-                "cat /opt/env/src/dep.txt /opt/env/overlay/x/o.txt > /opt/env/both.txt",
-                "getent hosts deb.debian.org > /opt/env/resolved",
-            ],
+            "commands": ["cat /opt/env/src/dep.txt /opt/env/overlay/x/o.txt > /opt/env/both.txt"],
         },
         "overlays": [{"path": "x/o.txt", "content": "from-overlay\n", "why": "시험"}],
         "env": {"GREETING": "hi"},
@@ -102,7 +103,7 @@ def test_leftover_report_is_cleared_before_the_run(repo: Path) -> None:
 
 def test_run_stage_has_no_network_but_the_bake_did(repo: Path) -> None:
     recipe = _recipe(
-        test_command="test -s /opt/env/resolved && getent hosts github.com", report="exit"
+        test_command="test -s /opt/env/reached && getent hosts github.com", report="exit"
     )
     run = _run(recipe, repo)
     assert run.status == "failed" and run.test.exit_code == 2
