@@ -251,6 +251,24 @@ class CheckerEntry(SQLModel, table=True):
     judge_route: str | None = None
 
 
+class EnvPlanEntry(SQLModel, table=True):
+    """base에서 확인한 환경 처방 (DESIGN.md 4.5 "환경 처방 정하기", 7.10). 저장소의 처방을 최신부터
+    보고, 모델과 프롬프트 판이 같고 reads의 경로가 모두 지금 base에서 같은 blob인 것을 다시 쓴다
+    (`app/worker/env/plan_pure.py`의 `is_fresh`). 확인하지 못한 처방, 호출 상한·모델 호출 실패로
+    끝난 시도는 저장하지 않는다."""
+
+    __tablename__ = "env_plans"
+
+    id: int | None = Field(default=None, primary_key=True)
+    repo: str = Field(index=True)
+    model: str  # 설정에 적힌 모델 이름 (`model.env`). 찾을 때 이 이름으로 견준다
+    prompt_version: str
+    recipe_json: str  # recipe_pure.recipe_json의 값
+    reads_json: str  # {저장소 기준 경로: base에서의 git 객체 해시}
+    base_run_json: str  # plan_pure.BaseRun (base에서 돌린 결과, base가 빨갛다는 모델의 까닭)
+    created_at: datetime
+
+
 class FixAttempt(SQLModel, table=True):
     """수정 묶음 하나의 시도 결과 (DESIGN.md 4.8, 7.8). 검증을 통과했으면 그 패치, 설명, 고친 뒤
     파일의 해시가 있다. 전달이 실패해 다시 올릴 때는 모델을 부르지 않고 이 패치를 새 worktree에

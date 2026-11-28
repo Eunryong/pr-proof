@@ -16,6 +16,7 @@ from app.shared.db_pure import (
     CallGrant,
     CheckerEntry,
     CommandRecord,
+    EnvPlanEntry,
     EvalRun,
     Feedback,
     FixAttempt,
@@ -357,6 +358,21 @@ class Store:
         with Session(self.engine) as session:
             session.merge(entry)
             session.commit()
+
+    # --- 환경 처방 (env_plans) ---
+
+    def save_env_plan(self, entry: EnvPlanEntry) -> int:
+        entry.created_at = _now()
+        with Session(self.engine) as session:
+            session.add(entry)
+            session.commit()
+            return entry.id
+
+    def env_plans(self, repo: str) -> list[EnvPlanEntry]:
+        """그 저장소의 처방, 최신부터."""
+        with Session(self.engine) as session:
+            stmt = select(EnvPlanEntry).where(EnvPlanEntry.repo == repo)
+            return list(session.exec(stmt.order_by(EnvPlanEntry.id.desc())))
 
     # --- 수정 시도, 위반, 과거 기록 (fix_attempts, violations, records) ---
 
