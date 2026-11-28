@@ -76,6 +76,7 @@ def evaluate(db: Path, *, baseline: bool, label: str, out: Path | None = None,
 def env_try(recipe_file: Path, repo: Path) -> int:
     """처방을 검사하고 층을 구워 repo에서 빌드·테스트를 돌린다."""
     from app.worker import env
+    from app.worker.env import install_pure
     from app.worker.sandbox.docker_cli import SandboxError
 
     try:
@@ -99,6 +100,9 @@ def env_try(recipe_file: Path, repo: Path) -> int:
         for layer in layers.layers:
             how = "다시 씀" if layer.reused else f"구움 {layer.seconds:.0f}초"
             print(f"층 {layer.name}: {how} ({layer.image})")
+            if not layer.reused:
+                hosts = ", ".join(install_pure.contacted(layer.egress)) or "없음"
+                print(f"  바깥 연결: {hosts}")
         with env.open_environment(layers, recipe, repo, limits) as box:
             run = box.run()
     except SandboxError as e:
