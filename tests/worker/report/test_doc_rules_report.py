@@ -29,7 +29,7 @@ from app.worker.rules.doc_rules_pure import (
 )
 from app.worker.rules.judge_pure import JudgeUsage
 from app.worker.rules.rule_docs_source_pure import DocsSource, RuleChange
-from app.worker.testing.test_run_pure import PytestRun, ReportSummary
+from app.worker.testing.test_run_pure import NO_PROFILE_WHY, PytestRun, ReportSummary
 
 USAGE: Final = CallUsage(calls=3, limit=14, cache_hits=1, models=("claude-haiku-5-5",),
                          input_tokens=3000, output_tokens=300)  # fmt: skip
@@ -737,9 +737,24 @@ def test_run_rule_shows_the_models_answer_and_the_results_it_saw() -> None:
     assert "확인하지 못한 규칙" not in _text(kept)
     before_tests = _text(_found(RuleChecked(RULE, REF), outcome))
     assert "규칙 2개 중 1개를 확인함" in before_tests
-    assert (
-        "모델이 테스트·정적 검사 결과로 판단하지 못함: `테스트를 돌리기 전에 끝남`" in before_tests
+    assert "· 확인하지 못함: `테스트를 돌리기 전에 끝남`" in before_tests
+    undecided = replace(broken, runs=(RunJudged("R-run", "undecided", "결과가 없음", facts),))
+    assert "모델이 테스트·정적 검사 결과로 판단하지 못함: `결과가 없음`" in _text(undecided)
+
+
+def test_run_rule_the_model_was_not_asked_shows_the_programs_reason() -> None:
+    """모델에게 묻지 못한 run 규칙(프로필 없음, 호출 상한)은 모델이 판단하지 못했다고 쓰지 않고
+    프로그램이 적은 까닭을 보인다."""
+    run_rule = replace(RULE, id="R-run", target="run", runs=("tests",))
+    found = replace(
+        _found(RuleChecked(RULE, REF), RuleUnchecked(run_rule, "run", "")),
+        runs=(RunJudged("R-run", "left", NO_PROFILE_WHY, ""),),
     )
+    text = _text(found)
+    assert "규칙 2개 중 1개를 확인함" in text
+    assert f"· 확인하지 못함: `{NO_PROFILE_WHY}`" in text
+    assert f"확인: 테스트·정적 검사 결과로 확인하지 못함: `{NO_PROFILE_WHY}`" in text
+    assert "모델이" not in text.partition("확인하지 못한 규칙")[2].partition("<details>")[0]
 
 
 def test_reasked_pairs_with_a_prior_answer_get_one_folded_line() -> None:

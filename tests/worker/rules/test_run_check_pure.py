@@ -6,7 +6,14 @@ import pytest
 
 from app.worker.core.rule_pure import CheckMethod, Rule, RuleSource
 from app.worker.core.violation_pure import Violation
-from app.worker.rules.doc_rules_pure import CallUsage, CheckerRef, Found, RuleChecked, RuleUnchecked
+from app.worker.rules.doc_rules_pure import (
+    CallUsage,
+    CheckerRef,
+    Found,
+    RuleChecked,
+    RuleUnchecked,
+    RunJudged,
+)
 from app.worker.rules.run_check_pure import (
     ANSWER_SCHEMA,
     RunFacts,
@@ -18,8 +25,9 @@ from app.worker.rules.run_check_pure import (
     run_key,
     run_rules,
     summarize_tests,
+    without_profile,
 )
-from app.worker.testing.test_run_pure import PytestRun, ReportSummary
+from app.worker.testing.test_run_pure import NO_PROFILE_WHY, PytestRun, ReportSummary
 
 RULE: Final = Rule(
     id="R-readme-run", text="문법/정적 검사 및 데이터 생성기 테스트 통과",
@@ -103,3 +111,21 @@ def test_prompt_keeps_rule_and_results_inside_tagged_blocks() -> None:
     tag = prompt.split("<<<RULE id=R-readme-run tag=")[1].split(">>>")[0]
     assert prompt.count(f"<<<END RESULTS tag={tag}>>>") == 1
     assert prompt.rstrip().endswith(f"<<<END RESULTS tag={tag}>>>")
+
+
+def test_without_a_profile_every_run_rule_is_left_with_the_programs_reason() -> None:
+    """프로필이 돌릴 것이 없는 저장소는 돌린 결과가 없다. 모델에게 묻지 않고 프로그램이 까닭을
+    적는다. 프로필이 돌렸으면(테스트가 없는 Python 저장소 포함) 모델에게 묻는다."""
+    other = Rule(
+        id="R-doc", text="t", source=RuleSource("README.md", "s", "0"), origin="document",
+        scope=(), check=CheckMethod("none"), fix="none",
+    )  # fmt: skip
+    found = Found(
+        (RuleUnchecked(RULE, "run", ""), RuleUnchecked(other, "no_checker", "")), (), 0, USAGE
+    )
+    no_profile = PytestRun(exit_code=None, summary=None, no_profile=True)
+    assert without_profile(found, no_profile) == (
+        RunJudged("R-readme-run", "left", NO_PROFILE_WHY, ""),
+    )
+    assert without_profile(found, PytestRun(exit_code=5, summary=ReportSummary())) is None
+    assert summarize_tests(no_profile) == "돌리지 않음"

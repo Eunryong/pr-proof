@@ -14,7 +14,16 @@ KILLED_EXIT: Final = 137  # SIGKILL. 컨테이너 메모리 한도를 넘어 OOM
 
 # 환경 오류(Docker·설치·컨테이너 문제)는 상태가 아니라 SandboxError로 올라간다.
 # unrunnable은 컨테이너 안에서 pytest가 돌았지만 PR 코드 때문에 결과를 못 낸 경우다.
-RunStatus = Literal["passed", "failed", "no_tests", "timeout", "cancelled", "unrunnable"]
+# no_profile은 저장소에 언어 프로필이 돌릴 것이 없어 테스트를 돌리지 않은 경우다 (7.7).
+RunStatus = Literal[
+    "passed", "failed", "no_tests", "timeout", "cancelled", "unrunnable", "no_profile"
+]  # fmt: skip
+
+# 프로필이 없어 돌리지 못한 것의 까닭. 결과 코멘트의 여러 줄이 같은 글을 쓴다
+NO_PROFILE_WHY: Final = (
+    "이 저장소에는 Python 파일이 없고, pr-proof가 빌드·테스트·정적 검사를 돌릴 수 있는 언어는 "
+    "지금 Python뿐임"
+)
 
 
 @dataclass(frozen=True)
@@ -62,6 +71,7 @@ class PytestRun:
     output: str = field(default="", repr=False)
     # 처음 실행에서 실패했다가 한 번 더 돌려 통과한 테스트 (DESIGN.md F8 flaky)
     flaky: tuple[str, ...] = ()
+    no_profile: bool = False  # 언어 프로필이 돌릴 것이 없어 돌리지 않음. 나머지 값은 비어 있다
 
     @property
     def passed_on_rerun(self) -> bool:
@@ -87,6 +97,8 @@ class PytestRun:
         # 취소·시간 초과를 먼저 본다. 이때 파이프라인이 컨테이너를 지워 137이 나올 수 있다
         if self.cancelled:
             return "cancelled"
+        if self.no_profile:
+            return "no_profile"
         if self.timed_out:
             return "timeout"
         if self.exit_code == 0 and self.summary is not None:

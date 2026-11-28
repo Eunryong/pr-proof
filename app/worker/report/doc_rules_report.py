@@ -16,7 +16,7 @@ from app.worker.core.checker_pure import TOOL_KINDS, Checker
 from app.worker.core.markdown_pure import code_fence, inline_code
 from app.worker.core.rule_pure import Rule
 from app.worker.core.violation_pure import Violation
-from app.worker.fix.fix_decision_pure import Decided, FixDecision, SkipReason
+from app.worker.fix.fix_decision_pure import NO_PROFILE_GAP, Decided, FixDecision, SkipReason
 from app.worker.fix.fix_pure import MechanicalFix
 from app.worker.fix.model_fix_pure import ModelFix
 from app.worker.fix.proposal_pure import ProposalResult
@@ -139,6 +139,11 @@ _LEFT_REASON: Final[Mapping[str, tuple[str, str]]] = {
         "테스트로 확인할 수 없음",
         "불안정한 테스트가 있어 고친 것을 확인할 수 없으므로 수정안을 만들지 않았습니다.",
     ),
+    "no_profile": (
+        "테스트로 확인할 수 없음",
+        "이 저장소의 테스트를 돌릴 수 없어 고친 것을 확인할 수 없으므로 수정안을 만들지 "
+        "않았습니다.",
+    ),
     "team_pattern": (
         "팀이 닫은 수정과 비슷함",
         "팀이 전에 닫은 수정안과 비슷하다고 모델이 보아 수정안을 만들지 않았습니다.",
@@ -225,12 +230,14 @@ class FixView:
 @dataclass(frozen=True)
 class RunAnswer:
     """run 규칙 하나의 답 (4.5). verdict는 모델의 판단이고, unknown은 판단하지 못했거나 묻지 못한
-    것이다. basis는 모델에게 준 실행 결과의 요약, why는 모델의 까닭이나 묻지 못한 이유다."""
+    것이다. basis는 모델에게 준 실행 결과의 요약, why는 모델의 까닭이나 묻지 못한 이유다. unasked는
+    모델에게 묻지 못한 것이고 그때 why는 프로그램이 적은 까닭이다."""
 
     rule: Rule
     verdict: Literal["kept", "broken", "unknown"]
     basis: str
     why: str
+    unasked: bool = False
 
 
 def run_answers(found: Found) -> dict[str, RunAnswer]:
@@ -241,10 +248,16 @@ def run_answers(found: Found) -> dict[str, RunAnswer]:
     for o in _unchecked(found.outcomes, frozenset({"run"})):
         r = judged.get(o.rule.id)
         if r is None:
-            out[o.rule.id] = RunAnswer(o.rule, "unknown", "", "테스트를 돌리기 전에 끝남")
+            out[o.rule.id] = RunAnswer(o.rule, "unknown", "", "테스트를 돌리기 전에 끝남", True)
             continue
         verdict = r.verdict if r.verdict in ("kept", "broken") else "unknown"
-        out[o.rule.id] = RunAnswer(o.rule, verdict, r.facts, r.why)  # type: ignore[arg-type]
+        out[o.rule.id] = RunAnswer(
+            o.rule,
+            verdict,
+            r.facts,
+            r.why,
+            unasked=r.verdict == "left",  # type: ignore[arg-type]
+        )
     return out
 
 
@@ -527,6 +540,8 @@ def _how_checked(outcome: RuleOutcome, answers: Mapping[str, RunAnswer] | None =
             left += f", 모델이 판단하지 못한 바뀐 곳 {outcome.undecided}군데"
         return f"모델 판단 ({why}{left})"
     answer = (answers or {}).get(outcome.rule.id)
+    if answer is not None and answer.unasked:
+        return f"테스트·정적 검사 결과로 확인하지 못함: {inline_code(answer.why, MAX_DETAIL_CHARS)}"
     if answer is not None:
         verdict = {"kept": "지킴", "broken": "어김", "unknown": "판단하지 못함"}[answer.verdict]
         basis = f" · 근거: {answer.basis}" if answer.basis else ""
@@ -773,6 +788,8 @@ def _left_reason(d: FixDecision, v: Violation | None) -> tuple[str, str]:
             return _LEFT_REASON["notify_file"]
         return _LEFT_REASON["notify_tool" if d.why == NO_AUTOFIX_WHY else "notify_rule"]
     if reason == "no_safety_net":
+        if d.why == NO_PROFILE_GAP:
+            return _LEFT_REASON["no_profile"]
         return _LEFT_REASON["flaky" if "불안정한 테스트" in d.why else "no_tests"]
     if reason == "undecided" and d.why in _UNDECIDED:
         return _UNDECIDED[d.why]
@@ -1020,8 +1037,12 @@ def _unresolved(found: Found, answers: Mapping[str, RunAnswer], flagged: set[str
             lines.append(f"{head}모델이 코드를 보고 판단하지 못함{part}: {why}")
         elif o.rule.id in answers and answers[o.rule.id].verdict == "unknown":
             answer = answers[o.rule.id]
-            lines.append(f"{head}모델이 테스트·정적 검사 결과로 판단하지 못함: "
-                         f"{inline_code(answer.why, MAX_DETAIL_CHARS)}")  # fmt: skip
+            who = (
+                "확인하지 못함"
+                if answer.unasked
+                else "모델이 테스트·정적 검사 결과로 판단하지 못함"
+            )
+            lines.append(f"{head}{who}: {inline_code(answer.why, MAX_DETAIL_CHARS)}")
         elif isinstance(o, RuleUnchecked) and o.kind not in (*_UNCHECKED_TEXT, "run"):
             lines.append(head + OLD_KIND_TEXT)
     if not lines:

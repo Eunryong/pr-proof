@@ -20,7 +20,7 @@ from app.worker.testing.generated_tests_pure import (
     group_lines,
     line_runs,
 )
-from app.worker.testing.test_run_pure import PytestRun
+from app.worker.testing.test_run_pure import NO_PROFILE_WHY, PytestRun
 
 MAX_LINES_SHOWN: Final = 30
 MAX_WHY_CHARS: Final = 300
@@ -52,6 +52,8 @@ def format_test_line(run: PytestRun, memory_gb: float = MEMORY_LIMIT_GB) -> str:
             if run.memory_exceeded:
                 return f"실행 불가 (메모리 한도 {_gb(memory_gb)}를 넘어 종료됨)"
             return f"실행 불가 ({run.unrunnable_reason})"
+        case "no_profile":
+            return f"돌리지 않음 ({NO_PROFILE_WHY})"
 
 
 def _numbers(lines: Sequence[int]) -> str:
