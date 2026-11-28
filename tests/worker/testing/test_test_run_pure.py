@@ -1,8 +1,12 @@
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Final
 
 import pytest
+from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 
-from app.worker.testing.test_run_pure import StepRun, TestReport, TestRun
+from app.worker import flow_state
+from app.worker.testing.test_run_pure import NO_PROFILE_WHY, StepRun, TestReport, TestRun
 
 SUMMARY: Final = TestReport(passed=1, total=1)
 FLAKY_SUMMARY: Final = TestReport(passed=8, failed=1, total=9, failed_tests=("t::a",))
@@ -144,3 +148,74 @@ def test_errors_are_never_flaky() -> None:
     report = TestReport(passed=8, errors=1, total=9, failed_tests=("t::a",))
     run = TestRun(test=StepRun("test", 1), verdict="failed", report=report, flaky=("t::a",))
     assert run.status == "failed"
+
+
+# 이 모양 전의 체크포인트에 저장된 값: 그때의 클래스 이름과 필드 그대로
+@dataclass(frozen=True)
+class _OldSummary:
+    passed: int = 0
+    failed: int = 0
+    errors: int = 0
+    skipped: int = 0
+    total: int = 0
+    failed_tests: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class _OldRun:
+    exit_code: int | None
+    summary: _OldSummary | None
+    report_path: Path | None = None
+    coverage_xml: Path | None = None
+    timed_out: bool = False
+    cancelled: bool = False
+    oom_killed: bool = False
+    output: str = field(default="", repr=False)
+    flaky: tuple[str, ...] = ()
+    no_profile: bool = False
+
+
+for _cls, _name in ((_OldSummary, "ReportSummary"), (_OldRun, "PytestRun")):
+    _cls.__module__, _cls.__name__ = "app.worker.testing.test_run_pure", _name
+
+
+def _restore(value: object) -> object:
+    serde = JsonPlusSerializer(allowed_msgpack_modules=list(flow_state._STATE_TYPES))
+    return serde.loads_typed(serde.dumps_typed({"test_run": value}))["test_run"]
+
+
+@pytest.mark.parametrize(
+    ("old", "status", "passed", "reason"),
+    [
+        (_OldRun(0, _OldSummary(passed=9, total=9), report_path=Path("/w/r.json")), "passed", 9,
+         None),
+        (_OldRun(1, _OldSummary(passed=8, failed=1, total=9, failed_tests=("t::a",)),
+                 flaky=("t::a",)), "passed", 9, None),
+        (_OldRun(1, _OldSummary(passed=8, failed=1, total=9)), "failed", 8, None),
+        (_OldRun(5, _OldSummary()), "no_tests", 0, None),
+        (_OldRun(4, None, output="usage"), "unrunnable", 0, "pytest 설정·인자 오류"),
+        (_OldRun(137, None), "unrunnable", 0, "메모리 한도를 넘어 종료됨"),
+        (_OldRun(None, None, cancelled=True), "cancelled", 0, None),
+        (_OldRun(None, None, no_profile=True), "no_env", 0, None),
+    ],
+    ids=["passed", "flaky", "failed", "no_tests", "usage", "oom", "cancelled", "no_profile"],
+)  # fmt: skip
+def test_a_checkpoint_from_before_this_shape_restores_as_a_test_run(
+    old: _OldRun, status: str, passed: int, reason: str | None
+) -> None:
+    run = _restore(old)
+    assert isinstance(run, TestRun)
+    assert (run.status, run.passed_count, run.unrunnable_reason) == (status, passed, reason)
+    assert run.report_path == old.report_path
+    if old.no_profile:
+        assert run.unplanned == NO_PROFILE_WHY
+
+
+def test_a_new_run_survives_the_checkpoint() -> None:
+    run = TestRun(
+        build=(StepRun("cmake", 0),), test=StepRun("ctest", 8, output="1 failed"), verdict="failed",
+        report=TestReport(passed=16, failed=1, total=17, failed_tests=("a.b",)),
+    )  # fmt: skip
+    restored = _restore(run)
+    assert isinstance(restored, TestRun)
+    assert (restored.status, restored.output, restored.passed_count) == ("failed", "1 failed", 16)

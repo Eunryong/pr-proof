@@ -4,6 +4,7 @@
 다른 종료 코드의 뜻은 여기에 두지 않는다.
 """
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final, Literal
@@ -30,6 +31,8 @@ STATE_TYPES: Final = (
     ("app.worker.testing.test_run_pure", "StepRun"),
     ("app.worker.testing.test_run_pure", "TestReport"),
     ("app.worker.testing.test_run_pure", "TestRun"),
+    ("app.worker.testing.test_run_pure", "PytestRun"),  # 이 모양 전의 체크포인트 (파일 끝)
+    ("app.worker.testing.test_run_pure", "ReportSummary"),
 )
 
 
@@ -164,3 +167,57 @@ class TestRun:
         불안정한 테스트(flaky)가 있으면 수정 뒤 결과를 믿을 수 없으므로 막는다.
         """
         return self.status == "passed" and not self.flaky
+
+
+# --- 이 모양 전의 체크포인트 (2026-11-29 전) ---
+# langgraph는 체크포인트의 값을 (모듈, 클래스 이름)으로 찾아 저장한 필드로 다시 만든다. 그 전의
+# 이름 PytestRun·ReportSummary로 저장된 값을 새 모양으로 바꾼다. 옛 값에는 판정이 없어 그때의
+# pytest 종료 코드 표로 정한다. 저장된 형식의 해석이라 Python 프로필이 바뀌어도 바꾸지 않는다.
+
+_OLD_UNRUNNABLE_WHY: Final[Mapping[int, str]] = {3: "pytest 내부 오류", 4: "pytest 설정·인자 오류"}
+
+
+def _old_verdict(exit_code: int | None, report: TestReport | None) -> tuple[TestVerdict, str]:
+    if exit_code == 5:
+        return "no_tests", ""
+    if report is not None and exit_code == 0:
+        return "passed", ""
+    if report is not None and exit_code in (1, 2):
+        return "failed", ""
+    if exit_code in _OLD_UNRUNNABLE_WHY:
+        return "unrunnable", _OLD_UNRUNNABLE_WHY[exit_code]
+    if report is None:
+        return "unrunnable", "결과 파일 없음 (conftest 등 수집 전 오류)"
+    return "unrunnable", f"pytest 종료 코드 {exit_code}"
+
+
+def _restore_pytest_run(
+    *,
+    exit_code: int | None,
+    summary: TestReport | None,
+    report_path: Path | None = None,
+    coverage_xml: Path | None = None,
+    timed_out: bool = False,
+    cancelled: bool = False,
+    oom_killed: bool = False,
+    output: str = "",
+    flaky: tuple[str, ...] = (),
+    no_profile: bool = False,
+) -> TestRun:
+    if no_profile:
+        return TestRun(unplanned=NO_PROFILE_WHY)
+    verdict, why = _old_verdict(exit_code, summary)
+    step = StepRun("pytest", exit_code, timed_out, cancelled, oom_killed, output)
+    return TestRun(
+        test=step,
+        verdict=verdict,
+        unrunnable_why=why,
+        report=summary,
+        report_path=report_path,
+        coverage_xml=coverage_xml,
+        flaky=flaky,
+    )
+
+
+PytestRun: Final = _restore_pytest_run
+ReportSummary: Final = TestReport  # 필드가 같다
